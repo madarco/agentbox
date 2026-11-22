@@ -80,6 +80,7 @@ import {
   accountConfigVolume,
   generateBoxId,
   isDefaultAccount,
+  namedAccounts,
   type ResolvedCarryEntry,
   type ResyncResult,
 } from '@agentbox/core';
@@ -1214,12 +1215,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // a per-box channel token — a host file the agent asked for, landing 0600 at
   // a path it named — so it rides the same step. Validated by the caller.
   carryEntries.push(
-    ...(await borrowedCredentialCarry(
-      opts.borrowCredentials ?? [],
-      log,
-      undefined,
-      opts.accounts,
-    )),
+    ...(await borrowedCredentialCarry(opts.borrowCredentials ?? [], log, undefined, opts.accounts)),
   );
   if (carryEntries.length > 0) {
     log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
@@ -1421,15 +1417,4 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   }
 
   return { record, imageBuilt: built, resync: resyncResult };
-}
-
-/** The non-default entries of an accounts map, or undefined when there are none. */
-function namedAccounts(
-  accounts: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  const out: Record<string, string> = {};
-  for (const [agent, id] of Object.entries(accounts ?? {})) {
-    if (!isDefaultAccount(id)) out[agent] = id;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
 }

@@ -756,7 +756,8 @@ async function withAccountStager(
   const row = findAccount(await readAccounts(), registry.id, account);
   if (!cred || row?.kind !== 'login') {
     log(`${spec.kind}: account '${account}' authenticates by env; no credential file to seed`);
-    const { stageCredentials: _omit, ...rest } = spec;
+    const rest: AgentSpec = { ...spec };
+    delete rest.stageCredentials;
     return rest;
   }
   const secret = accountSecretPath(registry, account, STATE_DIR);

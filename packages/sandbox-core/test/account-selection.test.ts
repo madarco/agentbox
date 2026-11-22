@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { LoadedConfig } from '@agentbox/config';
 import type { AgentSyncSpec } from '@agentbox/core';
 import {
   accountEnvPolicy,
@@ -22,15 +23,18 @@ let dir: string;
 let store: AccountStoreOptions;
 const claude = (): AgentSyncSpec => resolveAgentSpec('claude');
 
-const layers = (o: { workspace?: object; project?: object; global?: object } = {}) => ({
-  layers: {
-    cli: { values: {} },
-    workspace: { path: null, values: o.workspace ?? {} },
-    project: { path: '/p', values: o.project ?? {} },
-    global: { path: '/g', values: o.global ?? {} },
-    defaults: {},
-  },
-});
+const layers = (
+  o: { workspace?: object; project?: object; global?: object } = {},
+): Pick<LoadedConfig, 'layers'> =>
+  ({
+    layers: {
+      cli: { values: {} },
+      workspace: { path: null, values: o.workspace ?? {} },
+      project: { path: '/p', values: o.project ?? {} },
+      global: { path: '/g', values: o.global ?? {} },
+      defaults: {},
+    },
+  }) as unknown as Pick<LoadedConfig, 'layers'>;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agentbox-acct-sel-'));

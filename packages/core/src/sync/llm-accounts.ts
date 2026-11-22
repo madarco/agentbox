@@ -293,3 +293,18 @@ export function migrateAccountsFile(
 export function findAccount(file: AccountsFile, agent: string, id: string): LlmAccount | undefined {
   return file.accounts.find((a) => a.agent === agent && a.id === id);
 }
+
+/**
+ * The NAMED entries of an agent→account map (`BoxRecord.accounts`), or
+ * undefined when every agent is on `default`. The one place "named" is decided,
+ * so seeding, the fan-out guard and propagate can never disagree about a box.
+ */
+export function namedAccounts(
+  accounts: Readonly<Record<string, string>> | undefined,
+): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const [agent, id] of Object.entries(accounts ?? {})) {
+    if (!isDefaultAccount(id)) out[agent] = id;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}

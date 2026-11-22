@@ -9,7 +9,12 @@
  * volume holds no login, so there is nothing to mirror.
  */
 import { relative } from 'node:path';
-import { accountSecretPath, findAccount, isDefaultAccount } from '@agentbox/core';
+import {
+  accountConfigVolume,
+  accountSecretPath,
+  findAccount,
+  isDefaultAccount,
+} from '@agentbox/core';
 import { boxAccount, readAccounts, resolveAgentSpec, STATE_DIR } from '@agentbox/sandbox-core';
 import { syncClaudeCredentials, type BoxRecord } from '@agentbox/sandbox-docker';
 import { SHARED_CLAUDE_VOLUME } from '../docker-sync.js';
@@ -26,6 +31,11 @@ export async function syncBoxClaudeCredentials(
     );
     return;
   }
+  // Only the account's OWN volume. A box that records an account but mounts
+  // another volume (an agentless `create --account` that claude joined later)
+  // would otherwise mirror the account's login with the shared default volume,
+  // in both directions.
+  if (volume !== accountConfigVolume(SHARED_CLAUDE_VOLUME, account)) return;
   const row = findAccount(await readAccounts(), 'claude', account);
   if (row?.kind !== 'login') return;
   const secret = accountSecretPath(resolveAgentSpec('claude'), account, STATE_DIR);

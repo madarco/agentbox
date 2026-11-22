@@ -29,7 +29,7 @@ import type {
   ResyncResult,
   SyncContext,
 } from '@agentbox/core';
-import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
+import { dryRunProviderSync, namedAccounts, SYNC_DRYRUN_ENV } from '@agentbox/core';
 import { agentIds, renderCarryEntries } from '@agentbox/sandbox-core';
 import { seedAgentDeclaredFilesViaTransport } from './agent-seed.js';
 import { registeredAgentCloudModules } from './agent-cloud-module.js';
@@ -187,8 +187,8 @@ export function makeCloudSync(
 }
 
 /** Agents running on a named account — never extracted over the default login. */
-export function namedAccountAgents(accounts: Readonly<Record<string, string>> | undefined): string[] {
-  return Object.entries(accounts ?? {})
-    .filter(([, id]) => id !== 'default')
-    .map(([agent]) => agent);
+export function namedAccountAgents(
+  accounts: Readonly<Record<string, string>> | undefined,
+): string[] {
+  return Object.keys(namedAccounts(accounts) ?? {});
 }

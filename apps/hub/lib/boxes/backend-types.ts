@@ -990,6 +990,8 @@ export type PrepareCloneResult =
       persistent?: boolean;
       /** The source box's borrowed model logins, so the clone borrows the same. */
       borrowedCredentials?: string[];
+      /** The source box's named LLM accounts, so the clone runs on the same. */
+      accounts?: Record<string, string>;
     }
   | { ok: false; error: string };
 

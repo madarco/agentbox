@@ -18,6 +18,7 @@
  */
 
 import { execa } from 'execa';
+import { namedAccounts } from '@agentbox/core';
 import {
   parseCredentialsUpdate,
   readCredentialBackup,
@@ -52,14 +53,21 @@ export interface CredentialsFanoutDeps {
   boxAccountFor?: (boxId: string, agent: CredentialAgentKind) => Promise<string | undefined>;
 }
 
+/**
+ * Fails CLOSED: when the box registry cannot be read, the update is treated as
+ * coming from a named account and dropped. A box that cannot be checked must
+ * not be able to overwrite the default login everywhere; a default box simply
+ * re-posts on its next refresh.
+ */
 async function stateBoxAccount(boxId: string, agent: string): Promise<string | undefined> {
+  let state;
   try {
-    const box = (await readState()).boxes.find((b) => b.id === boxId);
-    const account = box?.accounts?.[agent];
-    return account && account !== 'default' ? account : undefined;
+    state = await readState();
   } catch {
-    return undefined;
+    return '(unverifiable: box registry unreadable)';
   }
+  const box = state.boxes.find((b) => b.id === boxId);
+  return namedAccounts(box?.accounts)?.[agent];
 }
 
 /** The single write this needs from a custody store (structural: no import cycle). */

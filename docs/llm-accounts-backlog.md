@@ -133,3 +133,10 @@ The two Phase 3 must-fix items above are done: `prune --all` keeps every
 - **`agentbox create --account` on an agentless box** records the account; an
   agent added to that box later with `agentbox <agent> start` keeps whatever
   volume docker mounted at create (docker cannot add one).
+- **A remote control box refuses `--account`** (it has no account store until
+  Phase 5): the hub re-resolves `opts.accounts` against its own store and
+  answers "no claude account 'work' on this machine". Deliberate — the CLI
+  cannot hand a remote hub a secret it never received — but the message could
+  say "this control box" instead of "this machine".
+- **Each cloud create reads `accounts.json` once per agent** (stager, env
+  policy). Correct, small; pass one read down if it ever shows up in a profile.

@@ -130,7 +130,6 @@ import {
   diffFileManifests,
   listProviderDescriptors,
   resolveProviderDescriptor,
-  resolveBoxAccounts,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
@@ -201,6 +200,7 @@ import type {
 } from './boxes/backend-types';
 import { vncUnavailableReason } from './boxes/vnc-link';
 import { hubProfile } from './auth-config';
+import { resolveCreateAccounts } from './backend/accounts';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import { createProjectDir } from './boxes/create-project';
@@ -2673,20 +2673,14 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
         if (gated.cancelled) return { ok: false, error: 'create cancelled' };
-        // Named LLM accounts, resolved HERE against this machine's store and the
-        // project's config (never the repo's agentbox.yaml): the box agent plus
-        // each borrowed lender, whose account must be a login.
         let accounts: Record<string, string> = {};
         try {
-          const lenders = gated.borrowCredentials.filter((id) => !id.startsWith('env:'));
-          const agents = input.agent ? [input.agent, ...lenders] : Object.keys(o.accounts ?? {});
-          const r = await resolveBoxAccounts({
-            agents,
-            ...(o.accounts ? { flags: o.accounts } : {}),
-            config: await loadEffectiveConfig(workspace),
-            loginOnly: lenders,
+          accounts = await resolveCreateAccounts({
+            workspace,
+            ...(input.agent ? { agent: input.agent } : {}),
+            ...(o.accounts ? { accounts: o.accounts } : {}),
+            borrowCredentials: gated.borrowCredentials,
           });
-          accounts = r.accounts;
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
@@ -3957,6 +3951,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           ...(persistent !== undefined ? { persistent } : {}),
           ...(rp.box.borrowedCredentials?.length
             ? { borrowedCredentials: [...rp.box.borrowedCredentials] }
+            : {}),
+          // A clone stays on the source box's accounts (the box agent's and
+          // each lender's) instead of falling back to config.
+          ...(rp.box.accounts && Object.keys(rp.box.accounts).length > 0
+            ? { accounts: { ...rp.box.accounts } }
             : {}),
         };
       } catch (err) {

@@ -25,9 +25,15 @@ import type {
   ResyncResult,
   SyncContext,
 } from '@agentbox/core';
+import { existsSync } from 'node:fs';
 import { relative } from 'node:path';
 import { execa } from 'execa';
-import { accountSecretPath, dryRunProviderSync, findAccount, SYNC_DRYRUN_ENV } from '@agentbox/core';
+import {
+  accountSecretPath,
+  dryRunProviderSync,
+  findAccount,
+  SYNC_DRYRUN_ENV,
+} from '@agentbox/core';
 import {
   AGENT_SYNC_SPECS,
   readAccounts,
@@ -296,6 +302,9 @@ async function seedNamedAccountCredential(
   const row = findAccount(await readAccounts(), agent, account);
   if (row?.kind !== 'login') return null;
   const secret = accountSecretPathFor(agent, account);
+  // Never bind-mount a missing file: docker would create a root-owned
+  // DIRECTORY at that host path, breaking every later login of the account.
+  if (!existsSync(secret)) return null;
   const rel = cred.boxRelPath;
   const res = await execa(
     'docker',
