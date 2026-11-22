@@ -51,6 +51,7 @@ import {
   sourceAddress,
 } from './lib/peer';
 import { createDeviceService, type DeviceService } from './lib/backend/devices';
+import { createHistoryService, type HistoryService } from './lib/backend/history';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -112,6 +113,20 @@ function relayDeviceAuth(devices: DeviceService): {
   };
 }
 
+async function openHistoryService(dbPath: string, archiveDir: string): Promise<HistoryService> {
+  const { openSqliteHistoryRepo } = await import('./lib/history-sqlite');
+  const { fsHistoryArchive } = await import('./lib/history-archive-fs');
+  const retentionDays = await loadEffectiveConfig(homedir())
+    .then((c) => c.effective.history.retentionDays)
+    .catch(() => 90);
+  return createHistoryService({
+    repo: await openSqliteHistoryRepo(dbPath),
+    archive: fsHistoryArchive(archiveDir),
+    retentionDays: Math.max(1, retentionDays),
+    log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+  });
+}
+
 /** Parse a positive-int env override; undefined (→ the relay's default) if unset or junk. */
 function positiveIntFromEnv(raw: string | undefined): number | undefined {
   if (!raw) return undefined;
@@ -123,7 +138,8 @@ async function main(): Promise<void> {
   // localhost: provision the token gate secret and hand it to the middleware via
   // env (unless auth is explicitly off). Do this before Next starts so the mode
   // is settled for the first request.
-  const { authMode, DEVICES_DB_PATH, STORE_DB_PATH } = await import('./lib/auth-config');
+  const { authMode, DEVICES_DB_PATH, HISTORY_ARCHIVE_DIR, HISTORY_DB_PATH, STORE_DB_PATH } =
+    await import('./lib/auth-config');
   if (process.env.AGENTBOX_HUB_PROFILE === 'localhost' && process.env.AGENTBOX_HUB_AUTH !== 'off') {
     const { ensureHubToken } = await import('./lib/hub-token');
     process.env.AGENTBOX_HUB_TOKEN = await ensureHubToken();
@@ -227,6 +243,20 @@ async function main(): Promise<void> {
     .then((c) => c.effective.hub.gitAuth)
     .catch(() => undefined);
 
+  // Session history (docs/agent-history-plan.md). Built before the relay, which
+  // ships docker boxes into it in-process and forwards in-box shippers' frames.
+  // A failure to open it costs the hub its history, never its boot.
+  const history = await openHistoryService(HISTORY_DB_PATH, HISTORY_ARCHIVE_DIR).catch(
+    (e: unknown) => {
+      process.stdout.write(
+        `agentbox-hub: session history disabled — ${e instanceof Error ? e.message : String(e)}\n`,
+      );
+      return undefined;
+    },
+  );
+  globalThis.__AGENTBOX_HUB_HISTORY = history;
+  history?.start();
+
   const daemon = await startRelayDaemon({
     port,
     host,
@@ -234,6 +264,7 @@ async function main(): Promise<void> {
     store,
     custody,
     adminToken,
+    ...(history ? { history } : {}),
     // A device token is accepted wherever a PC used the shared admin token.
     ...(devices ? { deviceAuth: relayDeviceAuth(devices) } : {}),
     // Custody carries project seed tars, which dwarf the relay's 1 MiB
@@ -444,6 +475,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string): void => {
     process.stdout.write(`agentbox-hub: ${signal} — shutting down\n`);
+    history?.stop();
     void (worker?.stop() ?? Promise.resolve()).finally(() =>
       daemon.stop().finally(() => process.exit(0)),
     );

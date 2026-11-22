@@ -17,7 +17,8 @@
  * watches for the running→stopped edge) so a restart only resumes an agent that
  * was actually running when the box went down, not one the user already exited.
  */
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { HISTORY_BINDINGS_FILE } from '@agentbox/core';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -85,6 +86,56 @@ export function recordAgentSessionId(agent: string, id: string): void {
   // junk we'd later hand to `--resume`.
   if (!/^[0-9a-fA-F][0-9a-fA-F-]{7,}$/.test(id)) return;
   writePointer(pointer.path, `${id}\n`);
+}
+
+/** Where the append-only binding log lives in this box. */
+export const HISTORY_BINDINGS_PATH = join(homedir(), HISTORY_BINDINGS_FILE);
+
+/**
+ * Append `session_id -> this box` to the binding log the history shippers read.
+ *
+ * The pointer above is ONE slot, overwritten by a concurrent `claude -p` and
+ * cleared by its SessionEnd while the TUI session is still live (Phase 0,
+ * docs/agent-history-plan.md). The log is append-only and never cleared, so
+ * every session that passed through a capture hook stays bound. Consecutive
+ * duplicates (every Stop re-captures the same id) are skipped.
+ */
+export function appendHistoryBinding(
+  agent: string,
+  id: string,
+  transcriptPath?: string,
+  path: string = HISTORY_BINDINGS_PATH,
+): void {
+  if (!/^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$/.test(id)) return;
+  try {
+    if (lastBindingKey(path) === `${agent}\0${id}`) return;
+    mkdirSync(dirname(path), { recursive: true });
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      agent,
+      sessionId: id,
+      ...(transcriptPath ? { transcriptPath } : {}),
+    });
+    appendFileSync(path, `${line}\n`, 'utf8');
+  } catch {
+    // Best-effort: a hook must never fail a turn.
+  }
+}
+
+function lastBindingKey(path: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = text.trimEnd().split('\n');
+  try {
+    const v = JSON.parse(lines[lines.length - 1] ?? '') as { agent?: string; sessionId?: string };
+    return `${v.agent ?? ''}\0${v.sessionId ?? ''}`;
+  } catch {
+    return null;
+  }
 }
 
 /**

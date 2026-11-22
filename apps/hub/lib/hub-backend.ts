@@ -48,6 +48,7 @@ import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
+import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
 import type { BackendDeps } from './backend/deps';
 import {
@@ -2466,6 +2467,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
       try {
         const provider = await providerForBox(box);
+        await flushBoxHistory(box, {
+          ...(handle.history ? { relayHistory: handle.history } : {}),
+          exec: (b, argv, o) => provider.exec(b, argv, o),
+          log: (line) => console.warn(`[hub] ${line}`),
+        });
         await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});

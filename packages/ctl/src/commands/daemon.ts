@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { HistoryLoop } from '../history-shipper.js';
 import { DEFAULT_BOX_RELAY_PORT, startRelayServer, type RelayServerHandle } from '@agentbox/relay';
 import { loadConfig, type CtlConfig } from '../config.js';
 import { mergeAgentUnits, type AgentUnits } from '../agent-units.js';
@@ -310,8 +311,17 @@ export const daemonCommand = new Command('daemon')
       );
     });
 
+    // Session history (docs/agent-history-plan.md). After the forwarder for the
+    // same reason as `toolLinks.start()`: it talks RPC through :8788.
+    const historyLoop =
+      process.env.AGENTBOX_HISTORY === '0'
+        ? null
+        : new HistoryLoop({ log: (line) => process.stderr.write(`agentbox-ctl: ${line}\n`) });
+    historyLoop?.start();
+
     const shutdown = async (signal: string): Promise<void> => {
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
+      historyLoop?.stop();
       if (codexScraper) codexScraper.stop();
       if (claudeScraper) claudeScraper.stop();
       if (credentialsWatcher) {

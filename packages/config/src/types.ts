@@ -335,6 +335,12 @@ export interface UserConfig {
     pruneProjectConfigs?: boolean;
     pruneProjectConfigsEvery?: number;
   };
+  history?: {
+    /** Ship this project's box agent transcripts to the hub (default true). */
+    capture?: boolean;
+    /** Days the hub keeps a session's transcript after its last activity (default 90). */
+    retentionDays?: number;
+  };
   update?: {
     /**
      * Daily background check for a newer published CLI (npm registry) and
@@ -522,6 +528,10 @@ export interface EffectiveConfig {
   maintenance: {
     pruneProjectConfigs: boolean;
     pruneProjectConfigsEvery: number;
+  };
+  history: {
+    capture: boolean;
+    retentionDays: number;
   };
   update: {
     check: boolean;
@@ -721,6 +731,10 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   maintenance: {
     pruneProjectConfigs: true,
     pruneProjectConfigsEvery: 50,
+  },
+  history: {
+    capture: true,
+    retentionDays: 90,
   },
   update: {
     check: true,
@@ -1417,6 +1431,18 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'maintenance.pruneProjectConfigsEvery',
     type: 'int',
     description: 'Run the orphan project-config sweep every N successful `agentbox create`.',
+  },
+  {
+    key: 'history.capture',
+    type: 'bool',
+    description:
+      "Ship the agent transcripts of this project's boxes to the hub's session history (default true). Set false in a project's config to keep that project's sessions out of the hub; the relay drops its boxes' transcripts at the host boundary.",
+  },
+  {
+    key: 'history.retentionDays',
+    type: 'int',
+    description:
+      "How many days the hub keeps a box session's transcript after the session's last activity (default 90). Read by the hub on its own machine; older sessions are deleted by the hub's hourly sweep.",
   },
   {
     key: 'update.check',

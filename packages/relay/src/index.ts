@@ -355,3 +355,14 @@ export {
   type BoxTimelineContext,
   type GitPushOrigin,
 } from './timeline-hooks.js';
+export {
+  HistoryRelay,
+  parseFrame as parseHistoryFrame,
+  projectCaptureEnabled,
+  shippedAgents,
+  type HistoryConfigReply,
+  type HistoryRelayDeps,
+} from './history/history-relay.js';
+export { dockerHistorySource, untarSingleFile } from './history/docker-source.js';
+export { collectHostSecrets } from './history/host-secrets.js';
+export { runHistoryRpc } from './history/rpc.js';

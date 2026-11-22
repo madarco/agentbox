@@ -1,3 +1,4 @@
+import type { AgentHistorySpec } from '../history/types.js';
 /**
  * `AgentSyncSpec` — the single source of truth for every per-agent datum the
  * sync layer needs: paths, credential locations, forwarded env keys, install
@@ -824,6 +825,12 @@ export interface AgentSyncSpec {
    * other box.
    */
   credential?: AgentCredential;
+  /**
+   * Where this agent's transcripts live, for the hub's session history. Data
+   * only; the parser is the agent module's `AgentHistoryModule`. Absent means
+   * the agent's sessions are not captured.
+   */
+  history?: AgentHistorySpec;
   /** Host env keys forwarded into the box so an env-authed agent finds its creds. */
   forwardedEnvKeys: readonly string[];
   /**
