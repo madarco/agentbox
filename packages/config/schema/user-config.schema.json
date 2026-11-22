@@ -604,6 +604,22 @@
         }
       }
     },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Session history in the hub (see agentbox docs: configuration#history).",
+      "properties": {
+        "capture": {
+          "type": "boolean",
+          "description": "Ship this project's box transcripts to the hub (default true)."
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Days the hub keeps a session after its last activity (default 90)."
+        }
+      }
+    },
     "update": {
       "type": "object",
       "additionalProperties": false,

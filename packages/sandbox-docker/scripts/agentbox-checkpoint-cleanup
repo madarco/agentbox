@@ -48,6 +48,12 @@ find /var/log/agentbox -type f -not -path '/var/log/agentbox/state/*' \
 chown vscode:vscode /home/vscode/.bash_history 2>/dev/null
 chmod 600 /home/vscode/.bash_history 2>/dev/null
 
+# Session-history binding log: which agent sessions THIS box ran. Per-box
+# state, so it must not ride a checkpoint into the boxes made from it (each
+# line also names its box and shippers skip foreign lines; this is the
+# backstop). The resume pointers beside it are left alone on purpose.
+rm -f /home/vscode/.local/state/agentbox/history-bindings.jsonl 2>/dev/null
+
 # Anthropic's installer writes a transient marker; redundant once the binary
 # is in place. Safe to wipe.
 rm -rf /home/vscode/.claude-installer 2>/dev/null

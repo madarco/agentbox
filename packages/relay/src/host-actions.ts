@@ -106,6 +106,11 @@ import type {
 } from './types.js';
 
 export interface CloudActionExecutorDeps {
+  /**
+   * Session-history RPCs (`history.*`) for this box, bound to its registration.
+   * Absent on a path that cannot ingest (the multi-PC host-reach executor).
+   */
+  history?: (method: string, params: unknown) => Promise<HostActionResult>;
   /** From BoxRegistration.backend (e.g. 'daytona'). */
   backendName: string;
   /**
@@ -405,6 +410,18 @@ export async function executeCloudAction(
     return {
       exitCode: 0,
       stdout: JSON.stringify(buildAgentDescriptors({ boxAgents: deps.boxAgents })),
+      stderr: '',
+    };
+  }
+  if (action.method.startsWith('history.')) {
+    if (deps.history) return deps.history(action.method, action.params);
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify(
+        action.method === 'history.config'
+          ? { enabled: false, reason: 'not ingested on this path', agents: [], credentialFiles: [] }
+          : { ok: false, code: 'disabled', message: 'not ingested on this path' },
+      ),
       stderr: '',
     };
   }

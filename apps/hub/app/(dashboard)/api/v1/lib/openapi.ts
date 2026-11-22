@@ -196,6 +196,11 @@ export function buildOpenApi(): Record<string, unknown> {
           'Which machine has which repo checked out where, keyed by machine id and repo key.',
       },
       {
+        name: 'History',
+        description:
+          'Agent session history: raw transcript ingest from the edges. Read endpoints arrive in Phase 2.',
+      },
+      {
         name: 'Workspaces',
         description:
           'Folders grouping one or more projects, each owning a task list and its manager sessions.',
@@ -1091,6 +1096,88 @@ export function buildOpenApi(): Record<string, unknown> {
                       },
                     },
                     required: ['checkouts'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/chunks': {
+        post: {
+          tags: ['History'],
+          summary: 'Ingest one transcript frame',
+          description:
+            "One slice of an agent transcript file, shipped by a relay or an in-box shipper. Accepted only at the offset the hub holds for `(origin.boxId, agent, path)`, with `sha256Prefix` equal to the hash it recorded; otherwise the answer is `ok: false, code: offset_mismatch` carrying the hub's `offset` and `sha256`, and the shipper resumes from there (or re-ships from 0 with `reset: true` when its file was rewritten). `data` is base64 of bytes already redacted at the edge; hashes cover the raw file. The hub's own relay calls the same ingest in-process. Always 200 for a well-formed frame, whatever the outcome.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    origin: {
+                      type: 'object',
+                      properties: {
+                        boxId: { type: 'string' },
+                        boxName: { type: 'string' },
+                        provider: { type: 'string' },
+                        hostId: { type: 'string' },
+                        projectRepoUrl: { type: 'string' },
+                      },
+                      required: ['boxId'],
+                    },
+                    agent: { type: 'string', description: 'Agent id, e.g. `claude`.' },
+                    path: {
+                      type: 'string',
+                      description:
+                        'Relative to the agent config dir, e.g. `projects/-workspace/<sessionId>.jsonl`. No empty or `..` segments.',
+                    },
+                    offset: { type: 'integer', minimum: 0 },
+                    sha256Prefix: {
+                      type: 'string',
+                      description: 'sha256 hex of raw bytes [0, offset); empty at 0.',
+                    },
+                    sha256: {
+                      type: 'string',
+                      description: 'sha256 hex of raw bytes [0, offset + length).',
+                    },
+                    data: {
+                      type: 'string',
+                      format: 'byte',
+                      description: 'base64, at most 8 MiB decoded.',
+                    },
+                    reset: {
+                      type: 'boolean',
+                      description: 'The file was rewritten: start a new generation at 0.',
+                    },
+                  },
+                  required: ['origin', 'agent', 'path', 'offset', 'sha256Prefix', 'sha256', 'data'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The ingest result',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { type: 'boolean' },
+                      offset: { type: 'integer' },
+                      sha256: { type: 'string' },
+                      code: {
+                        type: 'string',
+                        enum: ['offset_mismatch', 'disabled', 'invalid', 'unavailable'],
+                      },
+                      message: { type: 'string' },
+                    },
+                    required: ['ok'],
                   },
                 },
               },
