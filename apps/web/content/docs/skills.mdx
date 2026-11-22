@@ -122,7 +122,7 @@ Without a flag a box gets every library skill. The choice is recorded on the box
 
 If the hub has no library, or can't be reached, nothing changes: boxes keep receiving your skills from your machine as described in [Keeping boxes in sync](#keeping-boxes-in-sync). Delivery needs a box image from this version or later; an older Docker image or cloud base keeps the old behaviour until it is rebuilt (`agentbox prepare`).
 
-Downloading a skill's files from the hub (`agentbox skills --download`) needs more than the API key the menu-bar app and web UI hold: the admin token, a device enrolled with `agentbox hub login`, or, on a local hub, a request from the same machine.
+Downloading a skill's files from the hub (`agentbox skills --download` / `--download-all`) is treated like reading custody, so it needs more than the API key the menu-bar app and web UI hold: the admin token, a computer enrolled with [`agentbox hub login`](/docs/deployed-hub), or, on a local hub, a request from the same machine. A computer that only holds the hub's API key (configured with `agentbox hub set-url` and `AGENTBOX_HUB_API_KEY`) can still list the library, but a download is refused (`401`); enroll it with `agentbox hub login` instead. Boxes are unaffected: they fetch their skills over the relay, authenticated as the box.
 
 ### Cloud bases go stale when your skills change
 

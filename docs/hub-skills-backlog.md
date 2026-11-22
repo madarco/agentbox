@@ -337,3 +337,50 @@ doc comment; stale flag names in comments. Still open:
   dirs are now unique per pass, so neither clobbers the other's half-written
   tree, but both rewrite `.manifest.json` and the last writer wins. Take a lock
   file in the library dir.
+
+## From the independent review of PR #441 (2026-11-22)
+
+`/workspace/REVIEW-441.md`. Fixed in the PR: B1 (the ctl
+`agent-registry-fetch` expectations lacked the new `skillDirs`, CI red) and B2
+(`sanctionBranch` re-registered a docker box without its skill selection, so a
+host branch switch widened a `--no-skills` / `--skip-skills` box to the whole
+library; the hosted plane's own register handler now carries it too). R1 is
+accepted as intended: `GET /api/v1/skills/{name}/tarball` takes custody's
+elevated read, so a PC holding only the hub API key can list but not download
+(documented on the public skills page). Still open:
+
+- **L1. Every `skills.get` and `skills.blob` chunk reads and hashes the whole
+  `skills/` scope.** `resolveBoxSkills` → `custody.list('skills')` →
+  `FsCustodyStore.list` `readFile`s and sha256s every stored tarball of every
+  version, per chunk, on the hub's event loop: ~(chunks + 1) × library bytes per
+  box boot. Harmless for KB-sized skills. Fix: check `.seeded` with a `get`,
+  enumerate names without hashing, cache the resolved set per box for a pass
+  (supersedes the per-chunk note above).
+- **L2. `sudo -n install -d -o <vscode>` chowns an existing root-owned dir.** The
+  path comes from `agents.list`, which includes `agentbox agent add` agents. No
+  new boundary (vscode has passwordless sudo; plugin recipes run as root), and
+  for claude the dir never exists beforehand. Harden: sudo-create only when
+  missing, never chown an existing dir, optionally allowlist the prefix.
+- **L3. The manifest is written only at the end of a pass.** If a `symlink()` or
+  `rm` throws halfway, skills installed in that pass go unrecorded and become
+  orphan trees/links later removal never deletes. Write it in a `finally`, or
+  after each step.
+- **L4. Manifest keys aren't re-checked against the name rule** before
+  `rm(join(root, name), {recursive})`. Only a same-user (vscode) tamper reaches
+  it; cheap belt-and-braces.
+- **L5. On a cloud box with the host off, `skills.get` parks on
+  `HostActionQueue`.** ctl gives up after 60 s, but the queue slot and socket
+  stay open (the same leak as `agents.list`).
+- **L6. `readSkillTree` now skips out-of-tree link targets**, so the cloud-bake
+  skills digest misses edits to a linked file, and such skills are blocked from
+  upload and the auto-seed (the host carry still delivers them).
+- **L7. Find the elevated token per target URL.** `agentbox skills` takes the
+  admin token from `resolveCustodyTarget`, which returns nothing for a hub
+  exposed on this Mac after `hub unset-url`, so that download 401s. Use
+  `hubBearerFor(<target url>, 'admin', …)`, which also ties the token to the hub
+  that issued it.
+- **L8. A new ctl against an old hub appends an `rpc-unknown` event on every
+  boot** and logs "skills.get failed". Cosmetic.
+- **L9. Claude's inject dir is in every box's descriptor whatever the box's
+  agent** (not `runsHere`-gated), so a codex-only box still sudo-creates
+  `/etc/claude-code/.claude/skills` and installs the set. Harmless.

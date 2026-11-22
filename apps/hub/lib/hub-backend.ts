@@ -1647,6 +1647,9 @@ async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
         worktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+        // A register REPLACES the registration: without this a branch switch
+        // would widen a `--no-skills` / `--skip-skills` box to the whole library.
+        ...(box.skills ? { skills: box.skills } : {}),
         agent: box.agents?.[0] ?? box.lastAgent,
       });
     } catch (err) {
