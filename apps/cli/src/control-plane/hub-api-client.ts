@@ -177,6 +177,8 @@ export interface HubApiCreateBoxInput {
   /** Exactly one of projectId / repoUrl. */
   projectId?: string;
   repoUrl?: string;
+  /** `repoUrl`'s key with this machine's ssh aliases expanded (with repoUrl only). */
+  repoKey?: string;
   agent: AgentId | 'none';
   provider?: string;
   name?: string;
@@ -516,6 +518,24 @@ export interface HubApiWorkspaceAdd {
   projects: { path: string; name?: string; repoUrl?: string }[];
   /** Refresh this record instead of matching by (host, root) then by repo. */
   id?: string;
+}
+
+/** One machine's checkout of one repo (`GET /checkouts`). */
+export interface HubApiCheckout {
+  repoKey: string;
+  machineId: string;
+  folder: string;
+  label: string;
+  seenAt: string;
+  head?: string;
+}
+
+/** `PUT /checkouts`: this machine's report. */
+export interface HubApiCheckoutReport {
+  machineId: string;
+  label: string;
+  entries: { repoKey: string; folder: string; head?: string }[];
+  removed?: { repoKey: string; folder: string }[];
 }
 
 export type HubApiTaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done';
@@ -1345,6 +1365,25 @@ export class HubApiClient {
    */
   async addWorkspace(body: HubApiWorkspaceAdd): Promise<HubApiWorkspace> {
     return normalizeWorkspace(await this.request<HubApiWorkspace>('POST', '/workspaces', body));
+  }
+
+  async listCheckouts(
+    filter: { repoKey?: string; machineId?: string } = {},
+  ): Promise<HubApiCheckout[]> {
+    const q = new URLSearchParams();
+    if (filter.repoKey) q.set('repoKey', filter.repoKey);
+    if (filter.machineId) q.set('machineId', filter.machineId);
+    const qs = q.toString();
+    const res = await this.request<{ checkouts: HubApiCheckout[] }>(
+      'GET',
+      `/checkouts${qs ? `?${qs}` : ''}`,
+    );
+    return res.checkouts ?? [];
+  }
+
+  async reportCheckouts(report: HubApiCheckoutReport): Promise<HubApiCheckout[]> {
+    const res = await this.request<{ checkouts: HubApiCheckout[] }>('PUT', '/checkouts', report);
+    return res.checkouts ?? [];
   }
 
   async removeWorkspace(id: string, opts: { force?: boolean } = {}): Promise<void> {

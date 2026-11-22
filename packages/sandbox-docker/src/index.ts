@@ -21,6 +21,7 @@ export {
   buildTmuxSessionArgs,
   tmuxSessionEnvArgs,
   CONTAINER_USER,
+  hostRsyncStep,
   TERM_FALLBACK_SNIPPET,
 } from './sync/agents/shared.js';
 

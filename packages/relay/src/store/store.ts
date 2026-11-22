@@ -32,6 +32,12 @@ export interface PromptRow {
 export interface CreateJobRequest {
   /** Repo origin URL the new box's workspace is cloned from (via a leased token). */
   repoUrl: string;
+  /**
+   * `repoUrl`'s repo key as the REQUESTING machine computed it, its
+   * `~/.ssh/config` aliases expanded. The PC filed the seed under this key's
+   * slug and the box registers with it; the worker cannot recompute it.
+   */
+  repoKey?: string;
   /** Cloud provider to create the box on (e.g. 'e2b', 'vercel', 'daytona', 'hetzner'). */
   provider: string;
   /** Base branch to fork the box's `agentbox/<name>` branch from (default: repo HEAD). */

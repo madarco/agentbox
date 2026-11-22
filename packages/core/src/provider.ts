@@ -112,6 +112,13 @@ export interface CreateBoxRequest {
   workspacePath: string;
   name?: string;
   /**
+   * The repo key to register the box under, when the machine running the
+   * create cannot compute it itself: a control box building from a PC's
+   * request, whose ssh aliases it does not have. Otherwise the registration
+   * derives it from the workspace's origin.
+   */
+  repoKey?: string;
+  /**
    * What to derive the default name from when `name` is absent and
    * `workspacePath` is not a meaningful identity — specifically a control box's
    * per-job clone (`/tmp/agentbox-hub-worker-<jobId>`), a directory deleted the

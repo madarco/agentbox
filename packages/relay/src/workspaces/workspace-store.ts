@@ -16,7 +16,6 @@ import {
   type MachineRef,
   type ProjectEntry,
 } from '@agentbox/config';
-import { normalizeRepoUrl } from './timeline-pr.js';
 import {
   WORKSPACES_DIR,
   type Workspace,
@@ -161,8 +160,45 @@ export async function scanWorkspaceProjects(root: string): Promise<string[]> {
  * workspace's `projectIds`, so every join through that id missed.
  */
 export function repoProjectKey(originUrl: string): string | undefined {
-  const repo = normalizeRepoUrl(originUrl);
-  return repo === undefined ? undefined : hashProjectPath(repo);
+  const key = repoMatchKey(originUrl);
+  return key === undefined ? undefined : hashProjectPath(key);
+}
+
+/**
+ * What workspace project ids and workspace joins key a repo by: the
+ * pre-`repoKey` normaliser, kept BYTE FOR BYTE. Workspace records, the tasks
+ * filed under their project ids and box registrations already hold hashes of
+ * this exact string, and `repoKey` spells some remotes differently (an scp
+ * absolute path `host:/srv/x`, a percent-encoded path, `.GIT`, a local path),
+ * so routing ids through `repoKey` would re-key those projects on their next
+ * scan. Machine-independent identity for everything else (checkouts, custody)
+ * is `repoKey`; moving workspace ids onto it is backlog B1.
+ */
+export function repoMatchKey(raw: string | undefined | null): string | undefined {
+  const url = (raw ?? '').trim();
+  if (!url) return undefined;
+  const strip = (s: string): string => {
+    let out = s;
+    while (out.endsWith('/')) out = out.slice(0, -1);
+    if (out.endsWith('.git')) out = out.slice(0, -'.git'.length);
+    return out.toLowerCase();
+  };
+  if (url.startsWith('/')) return strip(url) || undefined;
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i.exec(url);
+  if (scheme) {
+    const rest = scheme[2]!;
+    const authEnd = rest.indexOf('@');
+    const afterAuth = authEnd === -1 ? rest : rest.slice(authEnd + 1);
+    const slash = afterAuth.indexOf('/');
+    if (slash === -1) return undefined;
+    const host = afterAuth.slice(0, slash).replace(/:\d+$/, '');
+    const path = afterAuth.slice(slash + 1);
+    if (!path) return undefined;
+    return strip(host ? `${host}/${path}` : `/${path}`) || undefined;
+  }
+  const scp = /^(?:[^@/]+@)?([^/:]+):(.+)$/.exec(url);
+  if (scp) return strip(`${scp[1]!}/${scp[2]!}`) || undefined;
+  return strip(url) || undefined;
 }
 
 /**
@@ -555,14 +591,14 @@ function matchWorkspace(
     if (adopted) return adopted;
   }
   const repos = new Set(
-    projects.map((p) => normalizeRepoUrl(p.repoUrl)).filter((r): r is string => Boolean(r)),
+    projects.map((p) => repoMatchKey(p.repoUrl)).filter((r): r is string => Boolean(r)),
   );
   if (repos.size === 0) return undefined;
   return records.find(
     (r) =>
       hostEntryOf(r.hosts, input.machine) === undefined &&
       r.projects.some((p) => {
-        const repo = normalizeRepoUrl(p.repoUrl);
+        const repo = repoMatchKey(p.repoUrl);
         return repo !== undefined && repos.has(repo);
       }),
   );
@@ -850,11 +886,9 @@ export function workspaceForBox<
     const here = findWorkspaceContaining(records, key.projectRoot, key.host ?? localHost);
     if (here) return here;
   }
-  const repo = normalizeRepoUrl(key.originUrl);
+  const repo = repoMatchKey(key.originUrl);
   if (repo) {
-    return (
-      records.find((r) => r.projects.some((p) => normalizeRepoUrl(p.repoUrl) === repo)) ?? null
-    );
+    return records.find((r) => r.projects.some((p) => repoMatchKey(p.repoUrl) === repo)) ?? null;
   }
   return null;
 }

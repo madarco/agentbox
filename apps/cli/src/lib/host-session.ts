@@ -22,6 +22,7 @@ import type {
   HubApiManagerDetect,
   HubApiWorkspace,
 } from '../control-plane/hub-api-client.js';
+import { reportCheckoutInBackground } from './checkouts-report.js';
 
 /** Identity env vars each agent exports into the shell of the commands it runs,
  *  so a bare `agentbox fork` (no --agent) can tell which agent launched it:
@@ -388,6 +389,7 @@ export async function registerHostManager(
       home: homedir(),
     };
     const res = await client.detectManager(body);
+    if (scan) reportCheckoutInBackground(...scan.projects.map((p) => p.path));
     return { managerId: res.manager.id, workspace: res.workspace };
   } catch (err) {
     if (err instanceof HubApiError && err.code === 'invalid_request') {

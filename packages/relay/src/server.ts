@@ -19,13 +19,14 @@ import { canAutoApproveTransfer } from './safe-transfer.js';
 import { offerBrowserOpen } from './open-link.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { HostReachQueue, type HostReachUnreachable } from './host-reach.js';
-import { cpCachePrefix } from './cp-cache.js';
+import { cpCachePrefixes } from './cp-cache.js';
 import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from './cp-cache-serve.js';
 import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from './cp-outbox.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
-import { buildAgentDescriptors, projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import { buildAgentDescriptors } from '@agentbox/sandbox-core';
 import { registrationAgents } from './registration-to-record.js';
+import { mergeRegistrationOrigin } from './registration-origin.js';
 import {
   isScratchBranch,
   landRefspec,
@@ -67,6 +68,7 @@ import { readCreateJobLog } from './job-log-tail.js';
 import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
 import type { CustodyStore } from './custody/store.js';
 import {
+  custodySlugCandidates,
   isValidToolName,
   loadGrantedTools,
   resolveProjectToolsFile,
@@ -1274,14 +1276,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // binary it names is installed THERE. Executing here read grants from
         // that same deleted directory and would have run the control box's
         // binaries under the user's tool name.
-        const cachePrefix = cpCachePrefix({
-          projectSlug: reg.originUrl
-            ? (projectSlugFromOriginUrl(reg.originUrl) ?? undefined)
-            : undefined,
-          boxId: reg.boxId,
-        });
+        // Captures write under the first prefix; a cached read tries them all.
+        const cachePrefixes = cpCachePrefixes(reg);
         const outcome = await hostReach.request(reg.boxId, body.method, body.params, {
-          cachePrefix,
+          cachePrefix: cachePrefixes[0]!,
         });
         if (outcome.kind === 'result') {
           send(res, outcome.result.exitCode === 0 ? 200 : 500, outcome.result);
@@ -1307,7 +1305,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             params: body.params as CpRpcParams | undefined,
             reg,
             custody,
-            cachePrefix,
+            cachePrefixes,
             prompts,
             subscribers,
             log,
@@ -1721,6 +1719,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.projectSlug === 'string' && body.projectSlug.length > 0
             ? body.projectSlug
             : undefined,
+        ...mergeRegistrationOrigin(body, await store.getBox(body.boxId).catch(() => undefined)),
       };
       await store.registerBox(reg);
       log(
@@ -2635,9 +2634,7 @@ async function parkOutboundCp(args: {
     boxId: reg.boxId,
     boxName: reg.name,
     prefix: cpOutboxPrefix({
-      projectSlug: reg.originUrl
-        ? (projectSlugFromOriginUrl(reg.originUrl) ?? undefined)
-        : undefined,
+      projectSlug: custodySlugCandidates(reg)[0],
       boxId: reg.boxId,
     }),
     maxBytes,
@@ -2753,12 +2750,12 @@ async function serveCachedCp(args: {
   params: CpRpcParams | undefined;
   reg: BoxRegistration;
   custody: CustodyStore | null;
-  cachePrefix: string;
+  cachePrefixes: readonly string[];
   prompts: PendingPrompts;
   subscribers: PromptSubscribers;
   log: (line: string) => void;
 }): Promise<GitRpcResult | null> {
-  const { params, reg, custody, cachePrefix, prompts, subscribers, log } = args;
+  const { params, reg, custody, cachePrefixes, prompts, subscribers, log } = args;
   if (!custody) return null;
   let sources: string[];
   try {
@@ -2769,8 +2766,19 @@ async function serveCachedCp(args: {
   // Keyed by the request as the box spelled it — NOT by a path resolved here.
   // This machine's idea of the box's workspace is the create job's temp clone,
   // so resolving would produce a key the owning machine never writes.
-  const lookup = await lookupCpCache(sources, { custody, cachePrefix });
-  if (lookup.missing.length > 0) return null;
+  // The first prefix holding every source answers: entries captured before
+  // the repo key existed live under the legacy slug.
+  let cachePrefix: string | undefined;
+  let lookup: Awaited<ReturnType<typeof lookupCpCache>> | undefined;
+  for (const prefix of cachePrefixes) {
+    const found = await lookupCpCache(sources, { custody, cachePrefix: prefix });
+    if (found.missing.length === 0) {
+      cachePrefix = prefix;
+      lookup = found;
+      break;
+    }
+  }
+  if (!cachePrefix || !lookup) return null;
 
   const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
     kind: 'confirm',

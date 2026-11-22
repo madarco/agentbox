@@ -39,13 +39,12 @@ import {
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
-  projectSlugFromOriginUrl,
   readCredentialBackup,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
 } from '@agentbox/sandbox-core';
 import {
-  applyProjectSeed,
+  applyProjectSeedForRepo,
   startDetachedCloudAgent,
   type MaterializedCarryEntry,
 } from '@agentbox/sandbox-cloud';
@@ -184,24 +183,23 @@ async function applySeedFromCustody(
   repoUrl: string,
   dest: string,
   log: (l: string) => void,
+  repoKey?: string,
 ): Promise<{
   files: number;
   capturedAt?: string;
   repoHeadSha?: string;
   carry?: MaterializedCarryEntry[];
 } | null> {
-  const slug = projectSlugFromOriginUrl(repoUrl);
-  if (!slug) return null;
   // The hub IS the custody host, so it reads the store directly rather than
-  // over HTTP. The overlay itself is shared with the laptop worker.
-  return applyProjectSeed({
-    source: {
-      get: async (rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
-    },
+  // over HTTP. The overlay itself is shared with the laptop worker. `carry:`
+  // payloads land BESIDE the checkout, not inside it: a carry entry's
+  // destination is an arbitrary in-box path, so the provider copies them from
+  // there rather than the workspace overlaying them. Removed with the clone.
+  return applyProjectSeedForRepo({
+    repoUrl,
+    repoKeys: [repoKey],
+    get: async (slug, rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
     dest,
-    // `carry:` payloads land BESIDE the checkout, not inside it: a carry entry's
-    // destination is an arbitrary in-box path, so the provider copies them from
-    // here rather than the workspace overlaying them. Removed with the clone.
     carryStageDir: `${dest}.carry`,
     log,
   });
@@ -288,6 +286,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       workspacePath,
       name,
       repoUrl,
+      repoKey,
       carry,
       provider,
       agent,
@@ -331,6 +330,9 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         workspacePath,
         name,
         ...(nameBasis ? { nameBasis } : {}),
+        // The requester's key, so the box registers under the scope its seed
+        // and cp cache were filed in (this hub cannot expand the PC's aliases).
+        ...(repoKey ? { repoKey } : {}),
         // Approved `carry:` entries, staged from custody beside the clone. The
         // provider's own applyCarry takes it from here — placeholder rendering
         // included, now with a real box context — so a hub-built box gets the
@@ -434,7 +436,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       }
       return { id: created.record.id };
     },
-    fetchSeedMaterial: (repoUrl, dest) => applySeedFromCustody(custody, repoUrl, dest, log),
+    fetchSeedMaterial: (repoUrl, dest, repoKey) =>
+      applySeedFromCustody(custody, repoUrl, dest, log, repoKey),
     tmpDir: (jobId) => join(tmpdir(), `${HUB_WORKER_CLONE_PREFIX}${jobId}`),
     cleanup: async (dir) => {
       // The carry staging dir is a sibling of the clone (see applySeedFromCustody),

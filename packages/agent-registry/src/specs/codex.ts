@@ -87,6 +87,15 @@ export const codexSpec: AgentSyncSpec = {
         'plugins/.plugin-appserver',
         'computer-use',
         'archived_sessions',
+        // The desktop app's live runtime state: unix sockets it recreates
+        // constantly (rsync then exits 24, "file has vanished"), pid files and
+        // locks of host processes nothing in the box can reach. Anchored, since
+        // a plugin checkout may well hold an `ipc/` of its own.
+        '/app-server-daemon',
+        '/app-server-control',
+        '/ipc',
+        '/process_manager',
+        '/thread-writer-locks',
       ],
     },
   ],

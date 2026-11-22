@@ -9,7 +9,7 @@
 // no folder for any of it — its record of a project is a repo and nothing else —
 // and reading one from disk is what used to make the sync answer `unavailable`
 // there. One code path serves both hubs.
-import { hashProjectPath, type MachineRef } from '@agentbox/config';
+import { hashProjectPath, repoKey, type MachineRef } from '@agentbox/config';
 import { execa } from 'execa';
 import {
   appendTimelineEvent,
@@ -18,7 +18,6 @@ import {
   ghRepoArg,
   isPrReady,
   listWorkspaces,
-  normalizeRepoUrl,
   prTimelineEvents,
   readTasks,
   readTimeline,
@@ -125,7 +124,7 @@ export function createGithubPrSync(
   }
 
   async function repoOf(project: WorkspaceProject): Promise<RepoRef | null> {
-    const key = normalizeRepoUrl(project.repoUrl);
+    const key = repoKey(project.repoUrl);
     // No remote: the project exists only where its folder is, and there is
     // nothing on GitHub to poll for it.
     if (!key) return null;
@@ -304,7 +303,7 @@ export function createGithubPrSync(
       return states.get(wsId)?.confirmed ?? false;
     },
     webUrlForRepoUrl(repoUrl) {
-      const key = normalizeRepoUrl(repoUrl);
+      const key = repoKey(repoUrl);
       return key === undefined ? undefined : (repoByUrl.get(key)?.webUrl ?? undefined);
     },
     webUrlForProject(projectId) {

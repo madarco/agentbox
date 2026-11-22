@@ -176,6 +176,22 @@ describe('makeControlPlaneCreateBox', () => {
     expect(created[0]?.startAgent).toBe(true);
   });
 
+  it("hands the requester's repo key to the seed fetch and the provider", async () => {
+    const seen: Array<string | undefined> = [];
+    const { deps, created } = harness({
+      fetchSeedMaterial: (_url, _dest, repoKey) => {
+        seen.push(repoKey);
+        return Promise.resolve(null);
+      },
+    });
+    await makeControlPlaneCreateBox(deps)(
+      { ...request, repoKey: 'github.com/acme/widgets' },
+      'job-11',
+    );
+    expect(seen).toEqual(['github.com/acme/widgets']);
+    expect(created[0]?.repoKey).toBe('github.com/acme/widgets');
+  });
+
   it('cleans up the per-job clone even when the create throws', async () => {
     const { deps, cleaned } = harness({
       createBox: () => Promise.reject(new Error('provider exploded')),

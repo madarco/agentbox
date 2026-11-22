@@ -10,6 +10,7 @@ import { handleCustodyRequest, type CustodyRouteDeps } from '../custody/routes.j
 import { handleRemoteBoxesRequest } from '../remote-boxes.js';
 import type { CustodyStore } from '../custody/store.js';
 import { isScratchBranch } from '@agentbox/core';
+import { mergeRegistrationOrigin } from '../registration-origin.js';
 import type {
   BoxRegistration,
   GitRpcParams,
@@ -228,6 +229,7 @@ export async function handleRelayRequest(
       autoApproveHostActions: body.autoApproveHostActions === true,
       autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
       originUrl: body.originUrl || undefined,
+      ...mergeRegistrationOrigin(body, await store.getBox(body.boxId).catch(() => undefined)),
     };
     await store.registerBox(reg);
     log(`registered ${reg.kind ?? 'docker'} box ${reg.boxId} (${reg.name})`);

@@ -19,6 +19,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { custodySlugCandidates } from '@agentbox/config';
 
 /** Sidecar recorded next to each cached tar. */
 export interface CpCacheMeta {
@@ -32,6 +33,12 @@ export interface CpCacheMeta {
   size: number;
   /** Hostname of the machine it came from — an entry outlives the session that wrote it. */
   capturedOn?: string;
+  /**
+   * `getMachineId()` of that machine. The hostname alone cannot tell an entry
+   * from the box's origin machine apart from one another machine with the same
+   * repo wrote (`hostCandidatesFor`).
+   */
+  capturedOnMachineId?: string;
 }
 
 /**
@@ -42,6 +49,25 @@ export interface CpCacheMeta {
 export function cpCachePrefix(opts: { projectSlug?: string; boxId: string }): string {
   const slug = (opts.projectSlug ?? '').trim();
   return slug.length > 0 ? `projects/${slug}/cp` : `boxes/${opts.boxId}/cp`;
+}
+
+/**
+ * Every cp-cache prefix a box's lookup should try, best first; element 0 is
+ * where a capture writes. The slugs come from the box's repo key (new) down to
+ * the legacy `owner__repo` slug entries written before the repo key existed
+ * still sit under (docs/box-sources-plan.md §6). A box with no remote has only
+ * its own box-scoped prefix.
+ */
+export function cpCachePrefixes(reg: {
+  boxId: string;
+  repoKey?: string;
+  originUrl?: string;
+  projectSlug?: string;
+}): string[] {
+  const slugs = custodySlugCandidates(reg);
+  return slugs.length > 0
+    ? slugs.map((projectSlug) => cpCachePrefix({ projectSlug, boxId: reg.boxId }))
+    : [cpCachePrefix({ boxId: reg.boxId })];
 }
 
 /**
@@ -111,6 +137,9 @@ export function parseCpCacheMeta(raw: string): CpCacheMeta | null {
       capturedAt: parsed.capturedAt,
       size: typeof parsed.size === 'number' ? parsed.size : 0,
       ...(typeof parsed.capturedOn === 'string' ? { capturedOn: parsed.capturedOn } : {}),
+      ...(typeof parsed.capturedOnMachineId === 'string'
+        ? { capturedOnMachineId: parsed.capturedOnMachineId }
+        : {}),
     };
   } catch {
     return null;

@@ -20,6 +20,14 @@ describe('controlPlaneCreateRequest', () => {
     });
   });
 
+  it("carries the requester's repo key so the worker finds the seed it pushed", () => {
+    const m = controlPlaneCreateRequest(
+      { provider: 'e2b', repoKey: 'github.com/acme/widgets' },
+      REPO,
+    );
+    expect(m.ok && m.request.repoKey).toBe('github.com/acme/widgets');
+  });
+
   it('carries name, base branch and seed prompt', () => {
     const m = controlPlaneCreateRequest(
       {

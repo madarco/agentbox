@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { agentPushExcludes, LIVE_DATABASE_EXCLUDES, requireAgentCredential } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { volumeExcludeFlags, volumeIncludeFlags, volumePurgeCommand } from '../src/docker-sync.js';
+import { execa } from 'execa';
+import {
+  buildCodexVolumeSyncScript,
+  volumeExcludeFlags,
+  volumeIncludeFlags,
+  volumePurgeCommand,
+} from '../src/docker-sync.js';
 
 /**
  * The docker volume push and the cloud snapshot push render ONE list.
@@ -70,6 +76,41 @@ describe('codex docker-volume excludes', () => {
     expect(purge).not.toContain('/dst//');
     expect(purge).not.toMatch(/\/dst\/\.tmp(\s|$)/);
     expect(purge).toContain('/dst/*.sqlite*');
+  });
+});
+
+describe('codex docker-volume sync script', () => {
+  it('excludes the desktop app runtime dirs, anchored at the ~/.codex root', () => {
+    const script = buildCodexVolumeSyncScript(false);
+    for (const dir of [
+      'app-server-daemon',
+      'app-server-control',
+      'ipc',
+      'process_manager',
+      'thread-writer-locks',
+    ]) {
+      expect(script).toContain(`--exclude=/${dir} `);
+      // Never purged from the shared volume: a running box may own a live copy.
+      expect(volumePurgeCommand()).not.toContain(`/dst/${dir}`);
+    }
+  });
+
+  it('skips sockets and tolerates vanished source files', () => {
+    const script = buildCodexVolumeSyncScript(true);
+    expect(script.startsWith('{ rsync -a --no-specials --include=/.tmp/ ')).toBe(true);
+    expect(script).toContain('--exclude=skills /src/ /dst/ || { rc=$?; [ "$rc" -eq 24 ]');
+  });
+
+  it('still purges and chowns when rsync exits 24', async () => {
+    // Every command the script runs, stubbed to echo its name; rsync exits 24.
+    // The `find` purges are guarded by `[ -d /dst/... ]`, which is false here.
+    const stubs =
+      'rsync() { echo rsync; return 24; }; rm() { echo rm; }; find() { echo find; }; chown() { echo "chown $*"; }; ';
+    const r = await execa('sh', ['-c', stubs + buildCodexVolumeSyncScript(true)], {
+      reject: false,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(String(r.stdout).split('\n')).toEqual(['rsync', 'rm', 'chown -R 1000:1000 /dst']);
   });
 });
 

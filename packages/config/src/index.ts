@@ -157,3 +157,13 @@ export {
   tryGetMachineId,
   type MachineRef,
 } from './machine-id.js';
+export {
+  custodySlugCandidates,
+  custodySlugForRepoKey,
+  legacyProjectSlugFromOriginUrl,
+  legacySeedMatches,
+  localRepoPath,
+  ownerRepoFromOriginUrl,
+  repoKey,
+  type RepoKeyOptions,
+} from './repo-key.js';

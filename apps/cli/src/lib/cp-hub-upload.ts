@@ -2,7 +2,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { log } from '@clack/prompts';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
-import { projectSlugFromOriginUrl } from '@agentbox/sandbox-core';
+import { projectSlugAtEdge } from '@agentbox/sandbox-core';
 import { captureCpCacheEntry, cpCachePrefix } from '@agentbox/relay';
 
 /**
@@ -38,7 +38,7 @@ export async function uploadToHubCache(hostSrcs: string[], projectRoot: string):
   // Key by project, matching what a box's own `cp fromHost` uses — otherwise the
   // upload lands somewhere the box will never look.
   const originUrl = await readGitOriginUrl(projectRoot).catch(() => undefined);
-  const projectSlug = originUrl ? (projectSlugFromOriginUrl(originUrl) ?? undefined) : undefined;
+  const projectSlug = (await projectSlugAtEdge(originUrl)) ?? undefined;
   if (!projectSlug) {
     throw new Error(
       'this project has no git `origin` remote, so there is no project key to file the upload under. ' +

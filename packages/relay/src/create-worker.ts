@@ -66,6 +66,8 @@ export interface CreateBoxDeps {
      * directory.
      */
     repoUrl: string;
+    /** The requester's alias-expanded repo key (CreateJobRequest.repoKey). */
+    repoKey?: string;
     provider: string;
     /**
      * Agent the box is being created for. Registered on the control plane so a
@@ -100,6 +102,7 @@ export interface CreateBoxDeps {
   fetchSeedMaterial?(
     repoUrl: string,
     dest: string,
+    repoKey?: string,
   ): Promise<{
     files: number;
     capturedAt?: string;
@@ -210,7 +213,7 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
       let carry: CarryEntryLike[] | undefined;
       if (deps.fetchSeedMaterial) {
         try {
-          const seed = await deps.fetchSeedMaterial(request.repoUrl, dir);
+          const seed = await deps.fetchSeedMaterial(request.repoUrl, dir, request.repoKey);
           carry = seed?.carry?.length ? seed.carry : undefined;
           if (seed && seed.files > 0) {
             // Report what the seed was captured from: it can lag the branch tip
@@ -247,6 +250,7 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
         workspacePath: dir,
         name: request.name,
         repoUrl: request.repoUrl,
+        ...(request.repoKey ? { repoKey: request.repoKey } : {}),
         provider: request.provider,
         ...(carry ? { carry } : {}),
         // Carry the job's agent through to the box record + its plane
