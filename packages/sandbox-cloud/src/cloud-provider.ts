@@ -1085,7 +1085,14 @@ export function createCloudProvider(
         );
         // A borrowed model login lands the same way, 0600 at the lending
         // agent's own path, before the in-box bootstrap starts the supervisor.
-        carryEntries.push(...(await borrowedCredentialCarry(req.borrowCredentials ?? [], log)));
+        carryEntries.push(
+          ...(await borrowedCredentialCarry(
+            req.borrowCredentials ?? [],
+            log,
+            undefined,
+            req.accounts,
+          )),
+        );
         if (carryEntries.length > 0) {
           log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
           const result = await sync.applyCarry(syncCtx, carryEntries);

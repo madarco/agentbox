@@ -276,6 +276,21 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
   const bc = optionalStringArray(v.borrowCredentials, 'opts.borrowCredentials');
   if (!bc.ok) return bc;
   if (bc.value !== undefined) out.borrowCredentials = bc.value;
+  // Named LLM account per agent (`{ "claude": "work" }`). Only the shape here:
+  // the backend resolves it against this machine's account store.
+  if (v.accounts !== undefined) {
+    if (v.accounts === null || typeof v.accounts !== 'object' || Array.isArray(v.accounts)) {
+      return { ok: false, message: 'opts.accounts must be an object of { agent: account }' };
+    }
+    const accounts: Record<string, string> = {};
+    for (const [agent, id] of Object.entries(v.accounts as Record<string, unknown>)) {
+      if (typeof id !== 'string' || !/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(id)) {
+        return { ok: false, message: `opts.accounts.${agent} must be an account name` };
+      }
+      accounts[agent] = id;
+    }
+    out.accounts = accounts;
+  }
   // promptAnswers: PromptAnswer[] — the client's answers to create-preflight.
   // Only the shape is checked here; the backend matches each id against the
   // question it actually asks, and refuses a stale one.

@@ -68,6 +68,8 @@ export interface ControlPlaneCreateInput {
      * selection and never a secret.
      */
     borrowCredentials?: string[];
+    /** Named LLM account per agent — a selection, never a secret. */
+    accounts?: Record<string, string>;
   };
 }
 

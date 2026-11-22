@@ -1213,7 +1213,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // A borrowed model login (`borrowCredentials`) is the same kind of thing as
   // a per-box channel token — a host file the agent asked for, landing 0600 at
   // a path it named — so it rides the same step. Validated by the caller.
-  carryEntries.push(...(await borrowedCredentialCarry(opts.borrowCredentials ?? [], log)));
+  carryEntries.push(
+    ...(await borrowedCredentialCarry(
+      opts.borrowCredentials ?? [],
+      log,
+      undefined,
+      opts.accounts,
+    )),
+  );
   if (carryEntries.length > 0) {
     log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
     const result = await sync.applyCarry(syncCtx, carryEntries);

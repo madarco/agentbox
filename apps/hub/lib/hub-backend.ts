@@ -130,6 +130,7 @@ import {
   diffFileManifests,
   listProviderDescriptors,
   resolveProviderDescriptor,
+  resolveBoxAccounts,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
@@ -2672,6 +2673,23 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
         if (gated.cancelled) return { ok: false, error: 'create cancelled' };
+        // Named LLM accounts, resolved HERE against this machine's store and the
+        // project's config (never the repo's agentbox.yaml): the box agent plus
+        // each borrowed lender, whose account must be a login.
+        let accounts: Record<string, string> = {};
+        try {
+          const lenders = gated.borrowCredentials.filter((id) => !id.startsWith('env:'));
+          const agents = input.agent ? [input.agent, ...lenders] : Object.keys(o.accounts ?? {});
+          const r = await resolveBoxAccounts({
+            agents,
+            ...(o.accounts ? { flags: o.accounts } : {}),
+            config: await loadEffectiveConfig(workspace),
+            loginOnly: lenders,
+          });
+          accounts = r.accounts;
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
         // Declined after a re-review: withdraw the standing approval, or the
         // next create would silently copy what the user just refused.
         if (gated.carryDeclined && !isHubWorkerClone(workspace)) {
@@ -2751,6 +2769,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             // resolution is ours.
             carry: gated.carry as QueueJobCreateOpts['carry'],
             borrowCredentials: gated.borrowCredentials,
+            ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
             // Restore only. Not reachable from the wire — `parseCreateBox` does
             // not accept it — so a plain create cannot ask the worker to push an
             // arbitrary directory into a box's agent config dir.

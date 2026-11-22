@@ -40,6 +40,10 @@ export interface AgentCreateOptions {
   /** `--model-auth <source...>`: which host model-provider logins to seed.
    *  Only present for an agent whose row declares sources. */
   modelAuth?: string[];
+  /** `--account <name>` (or `<agent>=<name>` for a borrowed lender): the named
+   *  LLM account the box runs on. Only for an agent whose row declares
+   *  `accountKinds`. */
+  account?: string[];
   /** `--dangerously-with-credentials`: copy a git credential into the box
    *  (git.pushMode=direct); cloud only. Token-vs-SSH is chosen ONLY at the
    *  interactive prompt (TTY required). */
@@ -242,6 +246,12 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
   // whose every value is an error.
   if (a.spec.modelAuth?.sources.length) {
     cmd.option('--model-auth <source...>', modelAuthHelp(a.spec));
+  }
+  if (agentAccountKinds(a.spec).length > 0 || a.spec.modelAuth?.sources.length) {
+    cmd.option(
+      '--account <name...>',
+      `named LLM account the box runs on (see \`agentbox accounts\`; default: ${a.spec.id}.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login. Fixed at create.`,
+    );
   }
   cmd.description(`Create a sandboxed box and launch ${productName} in a detachable tmux session`);
   return cmd;

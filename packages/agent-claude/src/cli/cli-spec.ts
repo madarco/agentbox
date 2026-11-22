@@ -17,7 +17,7 @@ import type { AgentCliSpec } from '@agentbox/cli-kit';
 import { log, TeleportError } from '@agentbox/cli-kit';
 import { resolveAgentLauncher } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { syncClaudeCredentials } from '@agentbox/sandbox-docker';
+import { syncBoxClaudeCredentials } from './box-credentials.js';
 import type { Command } from 'commander';
 import { rebuildPluginNativeDeps, SHARED_CLAUDE_VOLUME } from '../docker-sync.js';
 import { claudeRuntime } from './runtime.js';
@@ -216,10 +216,8 @@ export const claudeCliSpec: Omit<AgentCliSpec, 'attachWrapped'> = {
       // of --no-sync-config (this is not the host ~/.claude rsync) — it keeps the
       // backup fresh as the in-box claude rotates its token, and seeds an isolate
       // box's volume from an up-front sign-in.
-      await syncClaudeCredentials(
-        { volume },
-        { image: box.image, isolate: volume !== SHARED_CLAUDE_VOLUME },
-      );
+      // Per account: a named box mirrors with its own secret (box-credentials.ts).
+      await syncBoxClaudeCredentials(box, volume);
     },
 
     async afterConfigSync(box, { volume, message }) {

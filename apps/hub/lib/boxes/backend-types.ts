@@ -180,6 +180,11 @@ export interface CreateBoxOpts {
   persistent?: boolean;
   /** Other agents' host logins to seed as model auth (`--model-auth`; service agents). */
   borrowCredentials?: string[];
+  /**
+   * Named LLM account per agent (`--account`). Resolved and validated against
+   * THIS machine's account store; agents left out fall back to `<agent>.account`.
+   */
+  accounts?: Record<string, string>;
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;

@@ -87,6 +87,11 @@ export async function resolveBoxAccounts(o: {
   flags?: Record<string, string>;
   config?: Pick<LoadedConfig, 'layers'>;
   store?: AccountStoreOptions;
+  /**
+   * Agents whose account must be a `login`: a borrowed model-auth lender, whose
+   * login travels as a FILE — a pasted token has none to lend.
+   */
+  loginOnly?: readonly string[];
 }): Promise<ResolvedBoxAccounts> {
   const flags = o.flags ?? {};
   const warnings: string[] = [];
@@ -115,9 +120,15 @@ export async function resolveBoxAccounts(o: {
       throw new Error(`${spec.id} does not support named accounts (account '${id}')`);
     }
     file ??= await readAccounts(o.store);
-    if (!findAccount(file, spec.id, id)) {
+    const row = findAccount(file, spec.id, id);
+    if (!row) {
       throw new Error(
         `no ${spec.id} account '${id}' on this machine: add it with \`agentbox ${spec.id} login --account ${id}\` (see \`agentbox accounts\`)`,
+      );
+    }
+    if (o.loginOnly?.includes(spec.id) && row.kind !== 'login') {
+      throw new Error(
+        `${spec.id} account '${id}' is a ${row.kind}; a borrowed model-auth login needs a login account`,
       );
     }
     accounts[spec.id] = id;
