@@ -13,7 +13,12 @@ import {
   createDockerSyncTransport,
 } from '@agentbox/sandbox-docker';
 import { ensureAgentInstalled, AgentInstallError, resolveAgentSpec } from '@agentbox/sandbox-core';
-import { agentPushExcludes, DOCKER_HOST_ALIAS, type LoopbackEndpoint } from '@agentbox/core';
+import {
+  agentPushExcludes,
+  DOCKER_HOST_ALIAS,
+  requireAgentCredential,
+  type LoopbackEndpoint,
+} from '@agentbox/core';
 import {
   mergeCodexConfigForBox,
   sanitizeCodexConfigForBox,
@@ -83,8 +88,17 @@ export function volumePurgeCommand(): string {
  * `hasAgents`: the host uses the shared `~/.agents` dir, so `skills` is
  * excluded and purged (see {@link ensureCodexVolume}).
  */
-export function buildCodexVolumeSyncScript(hasAgents: boolean): string {
+export function buildCodexVolumeSyncScript(
+  hasAgents: boolean,
+  opts: { namedAccount?: boolean } = {},
+): string {
   const skillsExclude = hasAgents ? ' --exclude=skills' : '';
+  // A named LLM account's volume never gets the host's login: it is the
+  // owner's default account, and one more copy is one more holder a refresh
+  // can revoke (llm-accounts Phase 0).
+  const credentialExclude = opts.namedAccount
+    ? ` --exclude=/${requireAgentCredential(resolveAgentSpec('codex')).boxRelPath}`
+    : '';
   const skillsPurge = hasAgents
     ? ' && { [ -d /dst/skills ] && find /dst/skills -mindepth 1 -maxdepth 1 ! -name .system -exec rm -rf {} + || true; }'
     : '';
@@ -119,7 +133,7 @@ export function buildCodexVolumeSyncScript(hasAgents: boolean): string {
   // ~1.5 GB and every create's rsync crawls.
   return (
     hostRsyncStep(
-      `${volumeIncludeFlags(CODEX_SPEC_PATH)} ${volumeExcludeFlags()}${skillsExclude} /src/ /dst/`,
+      `${volumeIncludeFlags(CODEX_SPEC_PATH)} ${volumeExcludeFlags()}${skillsExclude}${credentialExclude} /src/ /dst/`,
     ) +
     ` && ${volumePurgeCommand()}` +
     ' && { [ -d /dst/.tmp ] && find /dst/.tmp -mindepth 1 -maxdepth 1 ! -name marketplaces -exec rm -rf {} + || true; }' +
@@ -252,6 +266,8 @@ export interface EnsureCodexVolumeOptions {
   syncFromHost: boolean;
   /** Image used by the throwaway sync helper container (the box image). */
   image: string;
+  /** A NAMED LLM account's volume: never copy the host's `auth.json` into it. */
+  account?: string;
 }
 
 export interface EnsureCodexVolumeResult {
@@ -328,7 +344,7 @@ export async function ensureCodexVolume(
       opts.image,
       'sh',
       '-c',
-      buildCodexVolumeSyncScript(hasAgents),
+      buildCodexVolumeSyncScript(hasAgents, { namedAccount: opts.account !== undefined }),
     ]);
     const { loopbackEndpoints } = await reconcileVolumeCodexConfig(spec.volume, opts.image);
     return { created, synced: true, loopbackEndpoints };

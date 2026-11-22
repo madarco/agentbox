@@ -122,6 +122,41 @@ $ agentbox claude
 
 Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_KEY` (Codex) on the host forwards it into the box and skips the sign-in offer. Host `~/.claude` stays the source of truth — every `create` / `claude` syncs it in, so skills, plugins, MCP, and login flow into the next box. Cloud providers capture the login to `~/.agentbox` and push it in on create — see [hetzner](/docs/hetzner), [daytona](/docs/daytona), and [vercel](/docs/vercel).
 
+## Several accounts per agent
+
+Claude and Codex can keep more than one login: a personal and a work
+subscription, a long-lived token for CI, or an API key. The plain
+`agentbox <agent> login` is the **default** account, as before. A named account
+gets its own name:
+
+```bash
+agentbox claude login --account work --label "Work"   # a second subscription login
+agentbox codex login --account work
+agentbox claude login --account ci --setup-token      # paste a `claude setup-token` token
+agentbox claude login --account overflow --api-key    # paste an API key
+```
+
+A named login signs in against its own config volume, separate from the default
+one. Your host's login and its cached profile are never copied into it, so each
+account shows its own email and plan. A setup token or API key is read from a
+hidden prompt, or from stdin without a terminal (`… --setup-token < token.txt`).
+It is never read from the command line, which would leave it in your shell
+history. Account names are lowercase letters, digits and dashes.
+
+Prefer a **setup token** for an account that several boxes use at the same time.
+A subscription login renews itself, and each renewal signs out every other copy
+of that login until AgentBox hands them the new one. A setup token never renews.
+
+```bash
+agentbox accounts                     # agent, account, kind, label, email/plan, whether a secret is stored
+agentbox accounts label claude/work "Work laptop"
+agentbox accounts rm claude/work      # its stored login and its config volume
+```
+
+Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
+secret 0600 under `~/.agentbox/credentials/`. Choosing which account a box runs
+on is coming next. Until then, every box uses the default account.
+
 ## Share a login you already have
 
 Some agents can run on a model-provider login another agent holds, so you do not

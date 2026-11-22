@@ -17,6 +17,8 @@ import {
   accountProblem,
   decodePastedSecret,
   encodePastedSecret,
+  pastedSecretProblem,
+  resolveLoginAccount,
   readAccounts,
   readAccountSecret,
   removeAccount,
@@ -403,5 +405,55 @@ describe('pasted secret codec', () => {
     expect(decodePastedSecret('{"kind":"login","token":"x"}')).toBeNull();
     expect(decodePastedSecret('{"kind":"api-key","token":""}')).toBeNull();
     expect(decodePastedSecret('nope')).toBeNull();
+  });
+});
+
+describe('resolveLoginAccount (Phase 2)', () => {
+  const claude = specsFor('/x')[0]!;
+  const codex = specsFor('/x')[1]!;
+
+  it('no --account is the plain default login', () => {
+    expect(resolveLoginAccount(claude, {})).toBeNull();
+    expect(resolveLoginAccount(claude, { account: 'default' })).toBeNull();
+  });
+
+  it('a named login, with an optional label', () => {
+    expect(resolveLoginAccount(claude, { account: 'work' })).toEqual({ id: 'work', kind: 'login' });
+    expect(resolveLoginAccount(claude, { account: 'work', label: ' Work ' })).toEqual({
+      id: 'work',
+      kind: 'login',
+      label: 'Work',
+    });
+  });
+
+  it('pasted kinds need a named account and a supporting agent', () => {
+    expect(resolveLoginAccount(claude, { account: 'ci', setupToken: true })).toEqual({
+      id: 'ci',
+      kind: 'setup-token',
+    });
+    expect(() => resolveLoginAccount(claude, { apiKey: true })).toThrow(/needs a named account/);
+    expect(() => resolveLoginAccount(codex, { account: 'ci', setupToken: true })).toThrow(
+      /setup-token/,
+    );
+    expect(() =>
+      resolveLoginAccount(claude, { account: 'x', apiKey: true, setupToken: true }),
+    ).toThrow(/choose one/);
+  });
+
+  it('refuses a bad id, a label without an account, and an agent with no accounts', () => {
+    expect(() => resolveLoginAccount(claude, { account: 'Work' })).toThrow(/lowercase/);
+    expect(() => resolveLoginAccount(claude, { label: 'x' })).toThrow(/--label/);
+    expect(() => resolveLoginAccount({ id: 'pi' } as AgentSyncSpec, { account: 'work' })).toThrow(
+      /does not support named accounts/,
+    );
+  });
+});
+
+describe('pastedSecretProblem', () => {
+  it('accepts a token and refuses empty, spaced or short input', () => {
+    expect(pastedSecretProblem('sk-ant-usr-' + 'x'.repeat(20))).toBeNull();
+    expect(pastedSecretProblem('')).toMatch(/empty/);
+    expect(pastedSecretProblem('two words here and more')).toMatch(/whitespace/);
+    expect(pastedSecretProblem('short')).toMatch(/too short/);
   });
 });
