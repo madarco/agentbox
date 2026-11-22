@@ -1,8 +1,8 @@
 # LLM accounts and the hub egress proxy — plan
 
 Status: **Phase 0 partly done (2026-11-22)** — see [Phase 0 results](#phase-0-results).
-Single-account facts are measured; the two-account half of (a)/(b) and every live
-codex turn are blocked on the owner. One phase per session.
+Single-account facts are measured for claude and codex; the two-account half of
+(a)/(b) is blocked on account B. One phase per session.
 
 ## Why
 
@@ -290,18 +290,32 @@ keyed by cwd, `-workspace`, the same for every box). Drop the
 
 ### (b) Codex `auth.json`
 
-- **Blocked: the codex login carried into this box is dead.** Its access token
-  expired 2026-10-24 and the refresh is refused (`401`, "Your access token could
-  not be refreshed. Please log out and sign in again."). No live codex turn was
-  possible, so neither the swap nor billing could be measured.
-- Measured layout: in a docker box the volume holds `~/.codex/auth.json` as a
-  symlink to `~/.agentbox-creds/codex/auth.json`. Whether codex's refresh write
-  keeps that symlink (claude's does not) is **untested** and is the first check to
-  run once codex is logged in again. Codex has no `oauthAccount` equivalent in a
-  shared file: `auth.json` carries `account_id` itself.
-- Codex refreshes proactively once `last_refresh` is older than about 8 days
-  (observed: it refreshed on start with a 39-day-old `last_refresh`), so the
-  revocation risk above applies to codex copies too (assumed, not measured).
+The first run found the carried codex login dead (access token expired
+2026-10-24, refresh refused with `401`). The owner logged in again
+(`last_refresh` 2026-11-22T10:20Z); the results below come from that login.
+
+- **Live turns work (measured).** Five one-prompt `codex exec` turns ran on the
+  ChatGPT login, through the `~/.codex/auth.json` →
+  `~/.agentbox-creds/codex/auth.json` symlink that docker boxes already use.
+- **A normal turn never writes `auth.json` (measured).** Across all five turns
+  the file kept its inode, mtime and hash, and the symlink stayed. Codex writes
+  the file only on a refresh: proactively once `last_refresh` is older than about
+  8 days (observed in the first run, with a 39-day-old `last_refresh`), or after
+  a `401`.
+- **Whether codex's refresh write keeps the symlink: not measured.** Measuring
+  it needs a refresh, and refreshing the real login would revoke the other
+  holders' copies, as happened with claude. The test, for a throwaway account B
+  only: put B's `auth.json` behind the same symlink, set `last_refresh` in that
+  one copy to 9 days ago, run one turn, then check whether `~/.codex/auth.json`
+  is still a symlink, and which of the two paths holds the new tokens (compare
+  hashes).
+- Codex has no `oauthAccount` equivalent in a shared file: `auth.json` carries
+  `account_id` itself, and every backend request sends it as
+  `chatgpt-account-id` (measured at the forwarder in (d)). A shared codex config
+  volume therefore cannot mislabel an account. The only open risk is the
+  symlink on refresh.
+- The revocation risk is assumed to apply to codex copies too (not measured).
+- Billing on account B is **blocked** (needs account B).
 
 ### (c) CONNECT proxy
 
@@ -313,11 +327,13 @@ Both agents honour `HTTPS_PROXY=http://user:token@host:port` and send
   `API Error: Couldn't connect through your proxy (ERR_PROXY_TUNNEL)`, exit 1, in
   under 45 s. **A proxy that refuses the connection gives no error at all**:
   claude kept retrying silently for over 100 s.
-- **codex:** reqwest routes through the proxy with auth, and so does the token
-  refresh (`POST auth.openai.com/oauth/token`).
+- **codex:** a live turn on the ChatGPT login works through the proxy, including
+  the responses WebSocket on `chatgpt.com`. The token refresh also goes through
+  it (`POST auth.openai.com/oauth/token`, seen with the dead login).
 
 **Tool subprocesses inherit `HTTPS_PROXY` (measured).** Claude's Bash tool saw
-it. Codex's own `git ls-remote` of a plugin marketplace went to the proxy for
+it, and so did codex's shell tool (`env` printed `HTTPS_PROXY`). Codex's own
+`git ls-remote` of a plugin marketplace went to the proxy for
 `github.com`, sent no proxy auth, and failed (`Proxy CONNECT aborted`). With the
 hub proxy directly in the agent's env, every tool would send its traffic to the
 hub, and would also see the relay token in the URL. The split proxy is needed.
@@ -334,6 +350,7 @@ hub, and would also see the relay token in the URL. The split proxy is needed.
 | codex | `ab.chatgpt.com` | feature flags |
 | codex | `auth.openai.com` | OAuth refresh |
 | codex | `github.com` | plugin marketplace `git`, not an LLM host |
+| codex | `*.oaiusercontent.com` (`sdmntpr<region>…`) | seen once, on a turn that failed with an unsupported model; content storage, probably not needed |
 
 Not seen in this run (no interactive login, no API-key mode): `claude.ai` and
 `console.anthropic.com` (login), `api.openai.com` (codex API-key mode). Add them
@@ -353,18 +370,35 @@ the split proxy.
   returned 200. **Everything else bypassed it**: 8 other `api.anthropic.com`
   calls in one `-p` turn, `mcp-proxy.anthropic.com`, telemetry, and OAuth
   refreshes (`platform.claude.com`) all went direct.
-- **codex (measured with the dead login, so routing only):**
-  `OPENAI_BASE_URL` is **ignored** under ChatGPT auth; all traffic stayed on
-  `chatgpt.com`. `-c chatgpt_base_url=…` reroutes the ChatGPT backend side calls
-  (`/backend-api/wham/*`, `/ps/plugins/*`, `/ps/mcp`,
-  `/codex/analytics-events/*`), but some `chatgpt.com` calls stayed direct, and so
-  did the refresh. Whether the `/codex/responses` inference call follows it could
-  not be measured. A custom `model_providers.<id>` with `base_url` and
-  `requires_openai_auth = true` is the next candidate (**untested**).
+- **codex, ChatGPT login (measured, live).** Ran against a forwarder to
+  `chatgpt.com`, with the CONNECT proxy logging whatever went direct:
+  - `OPENAI_BASE_URL` is **ignored** under ChatGPT auth (dead-login run: all
+    traffic stayed on `chatgpt.com`).
+  - `chatgpt_base_url` over plain `http://` is **refused for inference**: the
+    side calls followed it, but the turn failed with
+    `workspace backend must use an HTTPS origin without credentials`.
+  - `chatgpt_base_url="https://<hub>/backend-api/"` (TLS, with the test CA passed
+    through `CODEX_CA_CERTIFICATE`): **the turn works and inference follows it**.
+    The `/backend-api/codex/responses` WebSocket upgraded (101) at the forwarder,
+    with `Authorization: Bearer` and `chatgpt-account-id`. The side calls
+    followed too (`/wham/*`, `/ps/plugins/*`, `/ps/mcp`,
+    `/codex/analytics-events/*`). Still direct: one `chatgpt.com` connection,
+    `ab.chatgpt.com` and `github.com`; refreshes to `auth.openai.com` would be
+    direct too.
+  - A **custom provider**:
+    `model_provider="hub"`, `model_providers.hub.base_url="<hub>/backend-api/codex"`,
+    `wire_api="responses"`, `requires_openai_auth=true`. **The turn works on the
+    ChatGPT login, over `https` and over plain `http`.** Only inference moves:
+    `GET /codex/models` and `POST /codex/responses` (HTTP streaming, not
+    WebSocket) arrive with the ChatGPT Bearer and `chatgpt-account-id`. Every
+    side call (8 `chatgpt.com` connections) and `ab.chatgpt.com` stayed direct.
 
-So reverse moves **inference only**. The account's identity, flag and refresh
-traffic still leaves from the box's IP, which defeats "every call from one
-address".
+So reverse moves **inference** (codex's `chatgpt_base_url` also moves the
+backend side calls), but the identity, flag and refresh traffic still leaves from
+the box's IP for both agents, which defeats "every call from one address". For
+codex, the custom provider is the cleaner reverse knob: it accepts plain `http`
+and leaves `chatgpt_base_url` alone. `chatgpt_base_url` needs a TLS origin the
+box trusts, so a tunnel URL with a public certificate.
 
 ### Recommendations
 
@@ -396,21 +430,27 @@ address".
   reason when the hub is unreachable. A refused connection makes claude retry
   silently for minutes, which is not the clear failure the fail-closed rule
   requires.
-- **Reverse** (Phase 8): claude `ANTHROPIC_BASE_URL` only; codex needs the
-  custom-provider route verified first, since `OPENAI_BASE_URL` is ignored under
-  ChatGPT auth.
+- **Reverse** (Phase 8): claude `ANTHROPIC_BASE_URL`; codex a generated
+  `model_providers.agentbox` (`base_url` = hub, `wire_api = "responses"`,
+  `requires_openai_auth = true`) selected with `model_provider`, written into the
+  box's codex config at launch. Not `OPENAI_BASE_URL`, which is ignored under
+  ChatGPT auth. Not `chatgpt_base_url`, which needs a trusted HTTPS origin. The
+  hub forwards `/backend-api/codex/*` to `chatgpt.com` without changing the
+  `Authorization` or `chatgpt-account-id` headers.
+- **Codex docker storage:** keep codex's credential pivot as it is (normal turns
+  never write `auth.json`) until the throwaway-account symlink-on-refresh test
+  runs. If codex replaces the symlink, as claude does, codex gets the same
+  per-account config volume as claude.
 
 ### Still blocked on the owner
 
-1. **Re-login codex** (the carried login is dead): on the host,
-   `agentbox codex login`, then recreate or refresh the PoC box so the new
-   `auth.json` is carried in.
+1. ~~Re-login codex~~: done 2026-11-22T10:20Z; the codex results above use it.
 2. **Account B for claude**, without touching account A. In this box (Linux, so
    the credential is a file rather than the macOS Keychain), type in the session:
    `! CLAUDE_CONFIG_DIR=/home/vscode/poc-account-b/claude claude auth login`.
    The credential lands at `/home/vscode/poc-account-b/claude/.credentials.json`,
    in the container layer, outside the shared `agentbox-claude-config` volume.
-3. **Account B for codex**:
+3. **Account B for codex** (also unblocks the symlink-on-refresh test in (b)):
    `! CODEX_HOME=/home/vscode/poc-account-b/codex codex login --device-auth` →
    `/home/vscode/poc-account-b/codex/auth.json`.
 
