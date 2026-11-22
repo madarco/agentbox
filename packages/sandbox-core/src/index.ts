@@ -286,13 +286,22 @@ export {
 } from './runtime-root.js';
 
 export { BOX_IMAGE_REGISTRY, registryRefForSha } from './box-registry.js';
+export { checkoutEntriesFor } from './checkout-entries.js';
 export {
   boxNameBasisFromOriginUrl,
   deriveRepoLabel,
+  CP_WORKER_CLONE_PREFIX,
   HUB_WORKER_CLONE_PREFIX,
+  isEphemeralWorkerClone,
   isHubWorkerClone,
+  custodySlugCandidates,
+  legacyProjectSlugFromOriginUrl,
   ownerRepoFromOriginUrl,
+  projectSlugAtEdge,
   projectSlugFromOriginUrl,
+  registrationOrigin,
+  repoKeyAtEdge,
+  type RegistrationOrigin,
 } from './project-slug.js';
 
 // ── Create-time host-boundary gates ──

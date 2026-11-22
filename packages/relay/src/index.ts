@@ -54,6 +54,7 @@ export {
   cpCacheKeyInput,
   cpCacheMetaPath,
   cpCachePrefix,
+  cpCachePrefixes,
   cpCacheTarPath,
   describeCacheAge,
   type CpCacheMeta,
@@ -336,6 +337,8 @@ export {
 // manager agent session. Exported as one surface — the hub's workspace backend
 // slice is the only consumer and it needs all three together.
 export * from './workspaces/index.js';
+export * from './checkouts/index.js';
+export { mergeRegistrationOrigin } from './registration-origin.js';
 export {
   prMergeRepo,
   prMergeTarget,

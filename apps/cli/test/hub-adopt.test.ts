@@ -12,7 +12,7 @@ import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'agentbox-hub-adopt-home-'));
 process.env['HOME'] = TEST_HOME;
 
-const { adoptHubBox, normalizeOriginUrl } = await import('../src/control-plane/hub-adopt.js');
+const { adoptHubBox } = await import('../src/control-plane/hub-adopt.js');
 const { CustodyClient } = await import('../src/control-plane/custody-client.js');
 const { readState } = await import('@agentbox/sandbox-core');
 
@@ -95,27 +95,6 @@ async function makeRepo(origin: string): Promise<string> {
   await execa('git', ['-C', dir, 'remote', 'add', 'origin', origin]);
   return dir;
 }
-
-describe('normalizeOriginUrl', () => {
-  it('treats every git URL shape for the same repo as equal', () => {
-    const forms = [
-      'https://github.com/madarco/agentbox.git',
-      'https://github.com/madarco/agentbox',
-      'git@github.com:madarco/agentbox.git',
-      'ssh://git@github.com/madarco/agentbox.git',
-      'https://github.com/madarco/agentbox/',
-    ];
-    const normalized = forms.map(normalizeOriginUrl);
-    expect(new Set(normalized).size).toBe(1);
-    expect(normalized[0]).toBe('github.com/madarco/agentbox');
-  });
-
-  it('does not conflate different repos', () => {
-    expect(normalizeOriginUrl('git@github.com:o/a.git')).not.toBe(
-      normalizeOriginUrl('git@github.com:o/b.git'),
-    );
-  });
-});
 
 describe('adoptHubBox', () => {
   it('rebuilds a hetzner box record from the payload and pulls its ssh keys', async () => {

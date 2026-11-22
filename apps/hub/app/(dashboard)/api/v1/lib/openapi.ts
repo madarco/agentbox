@@ -181,6 +181,11 @@ export function buildOpenApi(): Record<string, unknown> {
         description: 'What the control box holds in custody (metadata only — never values).',
       },
       {
+        name: 'Checkouts',
+        description:
+          'Which machine has which repo checked out where, keyed by machine id and repo key.',
+      },
+      {
         name: 'Workspaces',
         description:
           'Folders grouping one or more projects, each owning a task list and its manager sessions.',
@@ -962,6 +967,127 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '401': errorResponse,
+          },
+        },
+      },
+      '/checkouts': {
+        get: {
+          tags: ['Checkouts'],
+          summary: 'List the checkouts registry',
+          description:
+            'Which machine has which repo checked out where, keyed by machine id and repo key, newest report first. Two machines with the same repo at different folders are two rows under one `repoKey`. Filled by `PUT /checkouts` (the CLI reports on create, workspace add/rescan and manager registration) and by projects registered on the hub itself. Rows not reported for 90 days are dropped. Empty on the hosted control plane.',
+          parameters: [
+            {
+              name: 'repoKey',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Only checkouts of this repo (e.g. `github.com/acme/web`).',
+            },
+            {
+              name: 'machineId',
+              in: 'query',
+              required: false,
+              schema: { type: 'string', format: 'uuid' },
+              description: "Only one machine's checkouts.",
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Checkouts',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      checkouts: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Checkout' },
+                      },
+                    },
+                    required: ['checkouts'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Checkouts'],
+          summary: "Report a machine's checkouts",
+          description:
+            "A machine reports the folders it has, keyed by the repo key it computed itself (ssh aliases expanded on that machine; the hub accepts the key as sent and never re-derives one). Idempotent: the last report per (repoKey, machineId, folder) wins. `removed` drops checkouts the machine no longer finds on disk; a report only ever touches the reporter's own rows. A report without a `machineId` is refused (400).",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    machineId: {
+                      type: 'string',
+                      format: 'uuid',
+                      description: "The reporter's `~/.agentbox/machine-id`.",
+                    },
+                    label: {
+                      type: 'string',
+                      description: "The reporter's hostname (display only).",
+                    },
+                    entries: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          repoKey: { type: 'string' },
+                          folder: {
+                            type: 'string',
+                            description: 'Absolute, realpath\u2019d folder.',
+                          },
+                          head: {
+                            type: 'string',
+                            description: 'Checked-out branch, informational.',
+                          },
+                        },
+                        required: ['repoKey', 'folder'],
+                      },
+                    },
+                    removed: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: { repoKey: { type: 'string' }, folder: { type: 'string' } },
+                        required: ['repoKey', 'folder'],
+                      },
+                    },
+                  },
+                  required: ['machineId', 'label', 'entries'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The rows this report wrote',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      checkouts: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/Checkout' },
+                      },
+                    },
+                    required: ['checkouts'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
           },
         },
       },
@@ -3578,6 +3704,23 @@ export function buildOpenApi(): Record<string, unknown> {
         },
       },
       schemas: {
+        Checkout: {
+          type: 'object',
+          description: 'One machine\u2019s checkout of one repo.',
+          properties: {
+            repoKey: {
+              type: 'string',
+              description:
+                'Machine-independent repo identity: `host/path`, lowercased, without scheme, user, port or `.git` (`github.com/acme/web`); `local:<machineId>:<path>` for a local-path remote.',
+            },
+            machineId: { type: 'string', format: 'uuid' },
+            folder: { type: 'string', description: 'Absolute folder on that machine.' },
+            label: { type: 'string', description: 'The machine\u2019s hostname, display only.' },
+            seenAt: { type: 'string', format: 'date-time', description: 'Last report.' },
+            head: { type: 'string', description: 'Checked-out branch at the last report.' },
+          },
+          required: ['repoKey', 'machineId', 'folder', 'label', 'seenAt'],
+        },
         Health: {
           type: 'object',
           properties: {

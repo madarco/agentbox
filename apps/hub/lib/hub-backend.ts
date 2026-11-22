@@ -48,6 +48,7 @@ import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
+import { createCheckoutBackend } from './backend/checkouts';
 import type { BackendDeps } from './backend/deps';
 import {
   configureBoxPushStat,
@@ -631,7 +632,7 @@ async function hostBranchOf(repo: string): Promise<string | null> {
 
 /**
  * The repo's `origin` remote URL, or null. Lets a locally-registered project
- * resolve its custody slug (`seedSlugFor`) the same way a remote registration
+ * resolve its custody slug (`seedSlugsFor`) the same way a remote registration
  * does — so the seed/custody panel works uniformly regardless of source.
  */
 async function hostOriginOf(repo: string): Promise<string | null> {
@@ -2129,6 +2130,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // `direct` push), and has no provider modules to measure it with — it never
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
+  const checkouts = createCheckoutBackend(backendDeps);
   const workspaces = createWorkspaceBackend(backendDeps);
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
@@ -2210,6 +2212,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     return { ok: true, jobId: id };
   }
   const hub: HubBackend = {
+    ...checkouts,
     ...workspaces,
     ...managers,
     ...timeline,
@@ -2313,7 +2316,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
           // The registration carries the box's git identity — thread it onto the
           // synthetic project so the seed/custody panel can resolve its custody
-          // slug (`seedSlugFor`). Without this, the primary self-hosted control
+          // slug (`seedSlugsFor`). Without this, the primary self-hosted control
           // box (SQLite store, no Postgres source) shows an empty panel even when
           // custody genuinely holds the seed.
           ...custodyIdentityFromRegistration(reg),

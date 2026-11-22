@@ -657,7 +657,7 @@ exit 0
     // `alias=real;alias=real`; anything unmapped resolves to itself.
     const sshScript = `#!/usr/bin/env bash
 if [ -n "\${STUB_SSH_FAIL-}" ]; then exit 1; fi
-dest="$2"
+dest="\${@: -1}" # last arg: ssh -G -- <dest>
 mapped="$dest"
 IFS=';' read -ra entries <<< "\${STUB_SSH_MAP-}"
 for e in "\${entries[@]}"; do

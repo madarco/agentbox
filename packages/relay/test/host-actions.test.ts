@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   cloudHandleOf,
   executeCloudAction,
+  resolveCloudGitTarget,
   resolveHostGitRepo,
   resolveHostPath,
 } from '../src/host-actions.js';
@@ -205,6 +206,57 @@ describe('executeCloudAction routing', () => {
  * throwaway repo and pushes to the box's REGISTERED origin — never one the box
  * supplied, which could redirect the host's credentials to an attacker.
  */
+describe('resolveCloudGitTarget (box-sources A10)', () => {
+  const ws = '/Users/me/app';
+  const ok = (top: string, hostNested: string[] = ['web']) =>
+    resolveCloudGitTarget({ probe: { exitCode: 0, top }, workspacePath: ws, hostNested });
+
+  it('uses the root repo for /workspace and for a path that is not a repo', () => {
+    expect(resolveCloudGitTarget({ probe: null, workspacePath: ws, hostNested: [] })).toEqual({
+      ok: true,
+      containerPath: '/workspace',
+      hostRepoDir: ws,
+    });
+    expect(
+      resolveCloudGitTarget({
+        probe: { exitCode: 128, top: '' },
+        workspacePath: ws,
+        hostNested: [],
+      }),
+    ).toMatchObject({ ok: true, containerPath: '/workspace' });
+    expect(ok('/workspace')).toMatchObject({ ok: true, containerPath: '/workspace' });
+  });
+
+  it('maps a seeded nested repo to its own host folder', () => {
+    expect(ok('/workspace/web')).toEqual({
+      ok: true,
+      containerPath: '/workspace/web',
+      hostRepoDir: '/Users/me/app/web',
+    });
+  });
+
+  it('refuses a nested repo the host did not seed (a box-made git init)', () => {
+    expect(ok('/workspace/vendor').ok).toBe(false);
+    expect(ok('/workspace/web/deep', ['web']).ok).toBe(false);
+  });
+
+  it('refuses any nested repo when the host has no checkout', () => {
+    expect(
+      resolveCloudGitTarget({
+        probe: { exitCode: 0, top: '/workspace/web' },
+        workspacePath: '',
+        hostNested: [],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('refuses a repo outside /workspace, including a /workspaceX lookalike', () => {
+    expect(ok('/home/vscode/other').ok).toBe(false);
+    expect(ok('/workspaceX').ok).toBe(false);
+    expect(ok('/workspace/../etc').ok).toBe(false);
+  });
+});
+
 describe('resolveHostGitRepo', () => {
   const made: string[] = [];
   afterEach(async () => {

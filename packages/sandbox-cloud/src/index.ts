@@ -48,6 +48,7 @@ export {
   adminCustodySink,
   applyProjectSeed,
   buildCarrySeed,
+  applyProjectSeedForRepo,
   buildProjectSeed,
   CarrySeedError,
   isCarrySeedError,

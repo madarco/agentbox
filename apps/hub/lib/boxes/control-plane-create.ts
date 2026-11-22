@@ -14,6 +14,8 @@ import {
 } from '@agentbox/relay/control-plane';
 
 export interface ControlPlaneCreateInput {
+  /** The sender's alias-expanded key of the repo (see CreateJobRequest.repoKey). */
+  repoKey?: string;
   provider?: string;
   agent?: string;
   name?: string;
@@ -189,6 +191,7 @@ export function controlPlaneCreateRequest(
     dropped,
     request: {
       repoUrl,
+      ...(input.repoKey ? { repoKey: input.repoKey } : {}),
       provider,
       ...(branch ? { branch } : {}),
       ...(name ? { name } : {}),

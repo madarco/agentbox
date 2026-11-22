@@ -13,7 +13,7 @@ export const WORKSPACES_DIR = join(STATE_DIR, 'workspaces');
  */
 export interface WorkspaceProject {
   /**
-   * `hashProjectPath(normalizeRepoUrl(repoUrl))` when the project has a remote,
+   * `repoProjectKey(repoUrl)` (the hash of its `repoKey`) when the project has a remote,
    * else `hashProjectPath('<host>:<folder>')` — a project with no remote exists
    * only on the machine holding it, so its id says so.
    */

@@ -9,6 +9,9 @@ import type { AgentId } from '@agentbox/core';
 import type {
   AddWorkspaceInput,
   BoxTaskSummary,
+  CheckoutFilter,
+  CheckoutRecord,
+  CheckoutReport,
   HostSession,
   ManagerBoxTarget,
   ManagerHeartbeat,
@@ -302,6 +305,9 @@ export interface CreateBoxInput {
   // repoUrl (or a projectId with no local folder) → control-plane clone queue.
   projectId?: string;
   repoUrl?: string;
+  // `repoUrl`'s key as the sender computed it (ssh aliases expanded on its
+  // machine). With repoUrl only; the hub uses it to find the seed the PC pushed.
+  repoKey?: string;
   // 'none' = just create the box (like `agentbox create`), don't start an agent.
   agent: AgentId | 'none';
   // Sandbox provider to create on. Defaults to 'docker'. A bare provider name
@@ -526,7 +532,8 @@ export type BoxLogAttachSpec =
 // actions.ts) reaches it ONLY through that global, so the heavy Node/docker
 // packages never enter Next's bundle. This is a pure-type module (no runtime
 // imports) so both the implementation and the ambient global can share it.
-export interface HubBackend extends WorkspaceBackend, ManagerBackend, TimelineBackend {
+export interface HubBackend
+  extends WorkspaceBackend, ManagerBackend, TimelineBackend, CheckoutBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
   // backend — so the backend produces everything else. `live` (opt-in, expensive
   // — mirrors providers' `?freshness=1`) refreshes each cloud box's `state` with
@@ -1371,6 +1378,17 @@ export interface ManagerBackend {
  * monolithic backend so new domains land in their own file; `HubBackend`
  * extends it, so callers still see one object.
  */
+/** The checkouts registry (`apps/hub/lib/backend/checkouts.ts`). */
+export interface CheckoutBackend {
+  listCheckouts(filter?: CheckoutFilter): Promise<CheckoutRecord[]>;
+  /** Apply one machine's report (idempotent; only its own rows are touched). */
+  reportCheckouts(
+    report: CheckoutReport,
+  ): Promise<{ ok: true; checkouts: CheckoutRecord[] } | { ok: false; error: string }>;
+  /** Record folders on THIS hub's own disk (project registration). Best-effort. */
+  recordLocalCheckouts(folders: readonly string[]): Promise<void>;
+}
+
 export interface WorkspaceBackend {
   listWorkspaces(): Promise<WorkspaceView[]>;
   getWorkspace(id: string): Promise<WorkspaceView | null>;

@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   boxNameBasisFromOriginUrl,
   deriveRepoLabel,
+  custodySlugCandidates,
+  isEphemeralWorkerClone,
   isHubWorkerClone,
+  legacyProjectSlugFromOriginUrl,
   ownerRepoFromOriginUrl,
   projectSlugFromOriginUrl,
+  repoKeyAtEdge,
 } from '../src/project-slug.js';
 
 /**
@@ -52,18 +56,33 @@ describe('projectSlugFromOriginUrl', () => {
       'ssh://git@github.com/madarco/agentbox.git',
     ].map(projectSlugFromOriginUrl);
     expect(new Set(slugs).size).toBe(1);
-    expect(slugs[0]).toBe('madarco__agentbox');
+    expect(slugs[0]).toBe('github.com__madarco__agentbox');
+  });
+
+  it('ignores case, keeps the host and keeps subgroups (the legacy slug did none)', () => {
+    expect(projectSlugFromOriginUrl('git@github.com:Madarco/AgentBox.git')).toBe(
+      projectSlugFromOriginUrl('https://github.com/madarco/agentbox'),
+    );
+    expect(projectSlugFromOriginUrl('https://gitlab.com/madarco/agentbox')).not.toBe(
+      projectSlugFromOriginUrl('https://github.com/madarco/agentbox'),
+    );
+    expect(projectSlugFromOriginUrl('ssh://git@gitlab.example.com:2222/group/sub/repo.git')).toBe(
+      'gitlab.example.com__group__sub__repo',
+    );
   });
 
   it('sanitizes characters that are illegal in a custody path segment', () => {
     // A custody segment is [A-Za-z0-9._-]; anything else must be replaced, not
     // passed through to be rejected (or to escape the scope) at the store.
-    expect(projectSlugFromOriginUrl('https://example.com/some~owner/re po.git')).toBe(
-      'some-owner__re-po',
+    expect(projectSlugFromOriginUrl('https://example.com/some~owner/re po.git')).toMatch(
+      /^example\.com__some-owner__re-po-[0-9a-f]{16}$/,
     );
   });
 
-  it('agrees across URL shapes even for a path needing percent-encoding', () => {
+  it('agrees across URL shapes even for a percent-encoded path', () => {
+    expect(projectSlugFromOriginUrl('https://example.com/o/re%20po.git')).toBe(
+      projectSlugFromOriginUrl('git@example.com:o/re po.git'),
+    );
     // `new URL` encodes the pathname but the scp-like parse doesn't, so without
     // decoding these two spellings of one repo produced different slugs
     // (`re-20po` vs `re-po`) — a seed pushed under one is invisible under the other.
@@ -78,8 +97,92 @@ describe('projectSlugFromOriginUrl', () => {
     );
   });
 
-  it('returns null when the origin carries no owner/repo', () => {
-    expect(projectSlugFromOriginUrl('https://github.com/onlyowner')).toBeNull();
+  it('returns null when the origin carries no repo path', () => {
+    expect(projectSlugFromOriginUrl('https://github.com')).toBeNull();
+    expect(projectSlugFromOriginUrl('/srv/repos/app.git')).toBeNull();
+  });
+});
+
+describe('repoKeyAtEdge', () => {
+  const sshConfig: Record<string, string> = {
+    'github-work': 'github.com',
+    'github.com-work': 'github.com',
+    'work.github.com': 'github.com',
+    // `Host github.com / HostName ssh.github.com / Port 443`
+    'github.com': 'ssh.github.com',
+    'gitlab.com': 'altssh.gitlab.com',
+  };
+  const resolveHost = (h: string) => Promise.resolve(sshConfig[h] ?? h);
+
+  it('expands an alias whenever ssh -G names a different host, dotted or not', async () => {
+    for (const url of [
+      'git@github-work:Acme/Web.git',
+      'git@github.com-work:acme/web.git',
+      'ssh://git@work.github.com/acme/web',
+    ]) {
+      expect(await repoKeyAtEdge(url, { resolveHost }), url).toBe('github.com/acme/web');
+    }
+  });
+
+  it('maps the ssh-over-443 endpoints back, so ssh and https keys agree', async () => {
+    expect(await repoKeyAtEdge('git@github.com:acme/web.git', { resolveHost })).toBe(
+      'github.com/acme/web',
+    );
+    expect(await repoKeyAtEdge('git@gitlab.com:g/sub/r.git', { resolveHost })).toBe(
+      'gitlab.com/g/sub/r',
+    );
+    expect(await repoKeyAtEdge('https://github.com/acme/web', { resolveHost })).toBe(
+      'github.com/acme/web',
+    );
+  });
+
+  it('never consults ssh config for an https remote', async () => {
+    const asked: string[] = [];
+    await repoKeyAtEdge('https://github-work/acme/web', {
+      resolveHost: (h) => {
+        asked.push(h);
+        return Promise.resolve('github.com');
+      },
+    });
+    expect(asked).toEqual([]);
+  });
+});
+
+describe('legacyProjectSlugFromOriginUrl', () => {
+  it('is the pre-repo-key owner__repo slug, case kept', () => {
+    expect(legacyProjectSlugFromOriginUrl('git@github.com:Madarco/AgentBox.git')).toBe(
+      'Madarco__AgentBox',
+    );
+    expect(legacyProjectSlugFromOriginUrl('https://gitlab.com/group/sub/repo.git')).toBe(
+      'sub__repo',
+    );
+  });
+});
+
+describe('custodySlugCandidates', () => {
+  it('reads the new slug first and the legacy one last, deduplicated', () => {
+    expect(custodySlugCandidates({ originUrl: 'git@github.com:Madarco/AgentBox.git' })).toEqual([
+      'github.com__madarco__agentbox',
+      'Madarco__AgentBox',
+    ]);
+  });
+
+  it('puts the PC-computed (alias-expanded) key ahead of the hub-derived one', () => {
+    expect(
+      custodySlugCandidates({
+        repoKey: 'github.com/madarco/agentbox',
+        originUrl: 'git@github-work:madarco/agentbox.git',
+        projectSlug: 'madarco__agentbox',
+      }),
+    ).toEqual([
+      'github.com__madarco__agentbox',
+      'github-work__madarco__agentbox',
+      'madarco__agentbox',
+    ]);
+  });
+
+  it('is empty for a box with no remote', () => {
+    expect(custodySlugCandidates({})).toEqual([]);
   });
 });
 
@@ -105,6 +208,15 @@ describe('hub-worker clone recognition', () => {
     // A user whose checkout happens to live under a similarly-named parent must
     // not have their own folder mistaken for a throwaway clone.
     expect(isHubWorkerClone('/tmp/agentbox-hub-worker-abc/nested-real-repo')).toBe(false);
+  });
+});
+
+describe('isEphemeralWorkerClone', () => {
+  it("matches both workers' per-job clones and nothing else", () => {
+    expect(isEphemeralWorkerClone('/tmp/agentbox-hub-worker-74d5')).toBe(true);
+    expect(isEphemeralWorkerClone('/var/folders/x/T/agentbox-cp-worker-job-1')).toBe(true);
+    expect(isEphemeralWorkerClone('/Users/me/src/agentbox')).toBe(false);
+    expect(isEphemeralWorkerClone('/tmp/agentbox-cp-worker-1/nested')).toBe(false);
   });
 });
 

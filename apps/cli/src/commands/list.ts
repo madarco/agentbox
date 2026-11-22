@@ -2,6 +2,7 @@ import { log } from '@clack/prompts';
 import { LEGACY_AGENT_STATUS_KEYS, type AgentStatusEntry } from '@agentbox/core';
 import { execa } from 'execa';
 import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
+import { repoMatchKey } from '@agentbox/relay';
 import { deriveRepoLabel, isHubWorkerClone, serviceAgentForBox } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
@@ -17,7 +18,6 @@ import {
   dockerHiddenListHint,
   isDockerProvider,
 } from '../control-plane/remote-hub.js';
-import { normalizeOriginUrl } from '../control-plane/hub-adopt.js';
 import { withWatchOptions, watchRender, type WatchableOptions } from '../watch.js';
 import type { AgentId } from '@agentbox/core';
 
@@ -539,7 +539,8 @@ export function boxInProject(
   const originMatches =
     ctx.origin !== undefined &&
     b.originUrl != null &&
-    normalizeOriginUrl(b.originUrl) === normalizeOriginUrl(ctx.origin);
+    repoMatchKey(b.originUrl) !== undefined &&
+    repoMatchKey(b.originUrl) === repoMatchKey(ctx.origin);
   return originMatches && (b.projectRoot == null || ctx.projectRootForeign);
 }
 

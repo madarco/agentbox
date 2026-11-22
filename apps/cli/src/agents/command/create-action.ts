@@ -87,6 +87,7 @@ import { makeHostServices } from './host-services.js';
 import { detectHostSession, registerHostManager } from '../../lib/host-session.js';
 import { workspaceHub } from '../../lib/workspace-ref.js';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
+import { reportCheckoutInBackground } from '../../lib/checkouts-report.js';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
 function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<UserConfig> {
@@ -382,6 +383,9 @@ export async function runAgentCreate(
   } catch {
     /* best-effort UI memory */
   }
+  // The checkouts registry, from the same place for the same reason: every
+  // branch below is a create from this folder on this machine.
+  reportCheckoutInBackground(projectRoot);
 
   const providerDefault = resolveDefaultCheckpoint(cfg, providerName);
   const checkpointRef =

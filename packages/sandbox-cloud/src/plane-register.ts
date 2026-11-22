@@ -10,6 +10,7 @@
  * `apps/cli/src/control-plane/ensure-repo-installed.ts`.
  */
 import { execa } from 'execa';
+import { registrationOrigin } from '@agentbox/sandbox-core';
 
 export interface RegisterBoxWithPlaneArgs {
   controlPlaneUrl: string;
@@ -60,6 +61,14 @@ export interface RegisterBoxWithPlaneArgs {
   agent?: string;
   /** Custody `projects/<slug>` key linking the box to its seed material. */
   projectSlug?: string;
+  /**
+   * Host folder the box was seeded from. When it is a real checkout on this
+   * machine (not a control box's per-job clone), this machine is stamped as the
+   * box's origin machine.
+   */
+  workspacePath?: string;
+  /** Repo key computed by the requesting machine (CreateBoxRequest.repoKey). */
+  repoKey?: string;
 }
 
 /** Read the host workspace's `origin` remote URL (the box's push target). */
@@ -74,6 +83,11 @@ export async function readGitOriginUrl(workspacePath: string): Promise<string | 
 /** POST /admin/register-box on the plane with the admin bearer. Throws on non-2xx. */
 export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Promise<void> {
   const url = `${args.controlPlaneUrl.replace(/\/$/, '')}/admin/register-box`;
+  const origin = await registrationOrigin({
+    originUrl: args.originUrl,
+    folder: args.workspacePath,
+    repoKey: args.repoKey ?? null,
+  });
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -81,6 +95,7 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       Authorization: `Bearer ${args.adminToken}`,
     },
     body: JSON.stringify({
+      ...origin,
       boxId: args.boxId,
       token: args.token,
       name: args.name,
