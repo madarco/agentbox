@@ -12,9 +12,9 @@
  */
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { readdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { parseProviderSpec } from '@agentbox/config';
 import {
@@ -42,13 +42,22 @@ import {
   readCredentialBackup,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
+  STATE_DIR,
 } from '@agentbox/sandbox-core';
 import {
   applyProjectSeedForRepo,
   startDetachedCloudAgent,
   type MaterializedCarryEntry,
 } from '@agentbox/sandbox-cloud';
-import { resolveAgentLauncher, toQueueKind, type ResolvedCarryEntry } from '@agentbox/core';
+import {
+  ACCOUNTS_CUSTODY_SEGMENT,
+  accountIdProblem,
+  accountSecretPath,
+  isDefaultAccount,
+  resolveAgentLauncher,
+  toQueueKind,
+  type ResolvedCarryEntry,
+} from '@agentbox/core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
 import { createStartsSession, resolveCreateAgentSpec } from './boxes/create-agent.js';
@@ -76,9 +85,12 @@ async function runGit(
  * path, no second credential list.
  */
 export async function seedHostBackupsFromCustody(
-  custody: Pick<FsCustodyStore, 'get'>,
+  custody: Pick<FsCustodyStore, 'get' | 'list'>,
   log: (l: string) => void,
+  /** Override the account secrets' root (tests); default `~/.agentbox`. */
+  stateDir: string = STATE_DIR,
 ): Promise<void> {
+  await seedAccountSecretsFromCustody(custody, log, stateDir);
   for (const spec of AGENT_SYNC_SPECS) {
     // Nothing was ever uploaded for an agent that declares no credential.
     if (!spec.credential) continue;
@@ -105,6 +117,56 @@ export async function seedHostBackupsFromCustody(
       log(
         `seed ${spec.id} from custody failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+  }
+}
+
+/**
+ * The NAMED accounts' secrets, from custody `agents/<agent>/accounts/<id>/<file>`
+ * into the account store's `credentials/<agent>/<id>.json` (llm-accounts
+ * Phase 4) — newest-wins, exactly like the default login above, so a box's
+ * refreshed account login is never replaced by an older pushed copy. Rows
+ * (`accounts.json`) do not travel yet; until Phase 5 this seeds the secret a
+ * box on that account (created with the row present) reads.
+ */
+async function seedAccountSecretsFromCustody(
+  custody: Pick<FsCustodyStore, 'get' | 'list'>,
+  log: (l: string) => void,
+  stateDir: string,
+): Promise<void> {
+  for (const spec of AGENT_SYNC_SPECS) {
+    const cred = spec.credential;
+    if (!cred) continue;
+    let entries: { path: string }[];
+    try {
+      entries = await custody.list(`agents/${spec.id}/${ACCOUNTS_CUSTODY_SEGMENT}`);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const parts = entry.path.split('/');
+      // agents / <agent> / accounts / <id> / <file>
+      const id = parts[3];
+      if (parts.length !== 5 || parts[4] !== cred.boxRelPath || !id) continue;
+      if (accountIdProblem(id) !== null || isDefaultAccount(id)) continue;
+      const label = `${spec.id} account '${id}'`;
+      try {
+        const found = await custody.get(entry.path);
+        if (!found) continue;
+        const incoming = found.data.toString('utf8');
+        const backupPath = accountSecretPath(spec, id, stateDir)!;
+        const existing = await readCredentialBackup(spec.id, { backupPath });
+        const verdict = shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        if (!verdict.accept) {
+          log(`kept the local ${label} credentials (custody copy ${verdict.reason})`);
+          continue;
+        }
+        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+        await writeCredentialBackup(spec.id, incoming, { backupPath });
+        log(`seeded ${label} credentials from custody (${verdict.reason})`);
+      } catch (err) {
+        log(`seed ${label} from custody failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 }

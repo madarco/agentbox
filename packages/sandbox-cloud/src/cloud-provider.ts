@@ -78,6 +78,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   cloudVolumesUsable,
+  accountReconcilePlan,
   clearPastedAccountCredentials,
   ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
@@ -709,12 +710,15 @@ export function createCloudProvider(
       if (credentialSync) {
         // An agent on a named account is left out: reconcile is newest-wins
         // against the DEFAULT login's backup, both directions.
-        const named = namedAccountAgents(box.accounts);
-        const agents = (box.agents ?? agentIds()).filter((a) => !named.includes(a));
+        // Per account: a named login reconciles against its own secret; a
+        // pasted-kind account (a token, no login file) is left out.
+        const plan = await accountReconcilePlan(box.accounts);
+        const agents = (box.agents ?? agentIds()).filter((a) => !plan.skip.includes(a));
         await reconcileAgentCredentials(backend, h, {
           onLog: () => {},
+          backups: plan.backups,
           // Absent on pre-selection boxes, which correctly means "all".
-          ...(box.agents || named.length > 0 ? { agents } : {}),
+          ...(box.agents || plan.skip.length > 0 ? { agents } : {}),
         });
       }
     } catch {

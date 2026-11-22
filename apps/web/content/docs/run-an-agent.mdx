@@ -183,9 +183,13 @@ A box on a named account gets exactly that account's auth:
   `OPENAI_API_KEY` are **not** forwarded into it, so they cannot take over.
 
 A borrowed `--model-auth codex` login uses `codex.account` the same way (it has
-to be a login account). Until account-aware credential sharing lands, a named
-account's renewed login is not copied to other boxes: give an account that
-several cloud boxes share a setup token.
+to be a login account).
+
+When a box renews an account's login, AgentBox copies the new token to that
+account's other boxes (and to your control box, if you have one), never to
+boxes on another account. Each renewal still signs the other copies out until
+they receive it, so give an account that several cloud boxes use at once a
+setup token: it never renews.
 
 ## Share a login you already have
 

@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BoxRecord, SyncTransport } from '@agentbox/core';
 import type { AgentId } from '@agentbox/core';
-import { agentConfigVolume, namedAccounts } from '@agentbox/core';
+import { agentConfigVolume, DEFAULT_ACCOUNT_ID, namedAccounts } from '@agentbox/core';
 import { resolveAgentSpec } from './registry.js';
 import { mergeInstalledPlugins, mergeKnownMarketplaces } from './claude-pull.js';
 import { agentBoxDir } from './agent-pull.js';
@@ -285,6 +285,13 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
     scope: 'project' | 'all';
     projectRoot?: string;
     excludeVolume?: string;
+    /**
+     * The LLM account whose login is being fanned out (llm-accounts Phase 4).
+     * When set, only boxes on that account for `agent` are targets — `default`
+     * means boxes whose record names no account. Absent = every box: the same
+     * planner drives SETTINGS propagation, which is not per account.
+     */
+    account?: string;
   },
 ): PropagatePlan<B> {
   const sharedVolume = resolveAgentSpec(opts.agent).dockerVolume;
@@ -297,11 +304,15 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
   const cloudBoxes: B[] = [];
   const borrowingBoxes: B[] = [];
   for (const box of inScope) {
-    // This fan-out carries the DEFAULT account's login. A box on a named
+    // A credential fan-out carries ONE account's login: a box on another
     // account for this agent (running it, or borrowing it as model auth) must
-    // never receive it: it would replace that account's login with the
-    // owner's. Per-account fan-out is Phase 4 of docs/llm-accounts-plan.md.
-    if (namedAccounts(box.accounts)?.[opts.agent] !== undefined) continue;
+    // never receive it, or its login would be replaced by someone else's.
+    if (
+      opts.account !== undefined &&
+      (namedAccounts(box.accounts)?.[opts.agent] ?? DEFAULT_ACCOUNT_ID) !== opts.account
+    ) {
+      continue;
+    }
     // A box created for a specific agent set must not be handed another agent's
     // credential. This is the fan-out's own gate: it pushes STRAIGHT INTO a
     // cloud box, so without it a resume re-seeds every agent's token and

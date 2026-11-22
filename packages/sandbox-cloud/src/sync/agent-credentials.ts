@@ -802,3 +802,26 @@ async function withAccountStager(
         : Promise.resolve({ tarballPath: null, cleanup: () => Promise.resolve(), warnings: [] }),
   };
 }
+
+/**
+ * How a box's named accounts change the newest-wins reconcile (llm-accounts
+ * Phase 4): a named LOGIN reconciles against its account's own secret (both
+ * directions, like the default), and a pasted kind is left out entirely — its
+ * secret is a token, never a login file to place or read back.
+ */
+export async function accountReconcilePlan(
+  accounts: Readonly<Record<string, string>> | undefined,
+): Promise<{ backups: Record<string, string>; skip: string[] }> {
+  const backups: Record<string, string> = {};
+  const skip: string[] = [];
+  const named = namedAccounts(accounts) ?? {};
+  if (Object.keys(named).length === 0) return { backups, skip };
+  const file = await readAccounts();
+  for (const [agent, account] of Object.entries(named)) {
+    const spec = resolveAgentSpec(agent);
+    const path = accountSecretPath(spec, account, STATE_DIR);
+    if (findAccount(file, spec.id, account)?.kind === 'login' && path) backups[agent] = path;
+    else skip.push(agent);
+  }
+  return { backups, skip };
+}

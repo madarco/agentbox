@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CredentialsFanout } from '../src/credentials-fanout.js';
+import { CredentialsFanout, UNVERIFIABLE_ACCOUNT } from '../src/credentials-fanout.js';
 
 const claudeBlob = (expiresAt: number, refresh = 'r') =>
   JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: refresh, expiresAt } });
@@ -54,22 +54,71 @@ describe('CredentialsFanout', () => {
     expect(runs).toEqual(['claude:box-b']);
   });
 
-  it('drops an update from a box on a named account: the default backup never sees it (llm-accounts Phase 3)', async () => {
+  it('routes a named box to its own account: its copy, its custody path, its fan-out (llm-accounts Phase 4)', async () => {
+    const runs: string[] = [];
+    const put = vi.fn().mockResolvedValue(undefined);
+    const fanout = new CredentialsFanout({
+      log: () => {},
+      debounceMs: 100,
+      runPropagate: async (agent, box, account) => {
+        runs.push(`${agent}:${box}:${account}`);
+      },
+      backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
+      accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      custody: { put },
+      boxAccountFor: (boxId, agent) =>
+        Promise.resolve(boxId === 'box-work' && agent === 'claude' ? 'work' : undefined),
+    });
+    expect((await fanout.handle('box-work', payload('claude', claudeBlob(999)))).accepted).toBe(
+      true,
+    );
+    // The default login is untouched by the named update…
+    await expect(readFile(join(dir, 'claude-credentials.json'), 'utf8')).rejects.toThrow();
+    // …which lands in the account's own copy and custody path.
+    expect(
+      JSON.parse(await readFile(join(dir, 'credentials', 'claude', 'work.json'), 'utf8'))
+        .claudeAiOauth.expiresAt,
+    ).toBe(999);
+    expect(put).toHaveBeenCalledWith(
+      'agents/claude/accounts/work/.credentials.json',
+      expect.anything(),
+    );
+    // A default box updates the default, on its own chain.
+    expect((await fanout.handle('box-a', payload('claude', claudeBlob(100)))).accepted).toBe(true);
+    expect(put).toHaveBeenCalledWith('agents/claude/.credentials.json', expect.anything());
+    await vi.advanceTimersByTimeAsync(150);
+    await fanout.flush();
+    expect(runs.sort()).toEqual(['claude:box-a:default', 'claude:box-work:work']);
+  });
+
+  it('a named account has its own newest-wins gate', async () => {
+    const fanout = new CredentialsFanout({
+      log: () => {},
+      debounceMs: 100,
+      runPropagate: async () => {},
+      backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
+      accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      boxAccountFor: () => Promise.resolve('work'),
+    });
+    expect((await fanout.handle('b', payload('claude', claudeBlob(500)))).accepted).toBe(true);
+    expect((await fanout.handle('b', payload('claude', claudeBlob(400, 'r2')))).accepted).toBe(
+      false,
+    );
+  });
+
+  it('drops an update whose box account cannot be verified', async () => {
     const run = vi.fn();
     const fanout = new CredentialsFanout({
       log: () => {},
       debounceMs: 100,
       runPropagate: run,
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
-      boxAccountFor: (boxId, agent) =>
-        Promise.resolve(boxId === 'box-work' && agent === 'claude' ? 'work' : undefined),
+      boxAccountFor: () => Promise.resolve(UNVERIFIABLE_ACCOUNT),
     });
-    const r = await fanout.handle('box-work', payload('claude', claudeBlob(999)));
-    expect(r).toEqual({ accepted: false, reason: "named account 'work'" });
+    const r = await fanout.handle('b', payload('claude', claudeBlob(999)));
+    expect(r).toEqual({ accepted: false, reason: 'account unverifiable' });
     await vi.advanceTimersByTimeAsync(500);
     expect(run).not.toHaveBeenCalled();
-    // A default box still fans out.
-    expect((await fanout.handle('box-a', payload('claude', claudeBlob(100)))).accepted).toBe(true);
   });
 
   it('rejects malformed payloads without touching the backup', async () => {

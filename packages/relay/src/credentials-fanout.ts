@@ -18,16 +18,32 @@
  */
 
 import { execa } from 'execa';
-import { namedAccounts } from '@agentbox/core';
+import { chmod, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import {
+  accountCustodyPath,
+  accountSecretPath,
+  DEFAULT_ACCOUNT_ID,
+  isDefaultAccount,
+  namedAccounts,
+} from '@agentbox/core';
 import {
   parseCredentialsUpdate,
   readCredentialBackup,
   resolveAgentSpec,
   shouldAcceptCredentialUpdate,
+  STATE_DIR,
   writeCredentialBackup,
   type CredentialAgentKind,
   readState,
 } from '@agentbox/sandbox-core';
+
+/**
+ * `boxAccountFor`'s answer when the source box's account cannot be determined
+ * (the registry is unreadable). Such an update cannot be routed, so it is
+ * dropped — never written to the default login.
+ */
+export const UNVERIFIABLE_ACCOUNT = '(unverifiable: box registry unreadable)';
 
 /** Mirrors `CREDENTIALS_UPDATED_EVENT` in @agentbox/ctl (like `box-status`). */
 export const CREDENTIALS_UPDATED_EVENT = 'credentials-updated';
@@ -37,9 +53,18 @@ export interface CredentialsFanoutDeps {
   /** Debounce before spawning the propagate CLI. Default 3000ms. */
   debounceMs?: number;
   /** Override the fan-out spawn (tests). Default: spawn the host CLI. */
-  runPropagate?: (agent: CredentialAgentKind, sourceBoxId: string) => Promise<void>;
-  /** Override the per-agent backup path (tests; default: the registry's). */
+  runPropagate?: (
+    agent: CredentialAgentKind,
+    sourceBoxId: string,
+    account: string,
+  ) => Promise<void>;
+  /** Override the DEFAULT account's backup path (tests; default: the registry's). */
   backupPathFor?: (agent: CredentialAgentKind) => string;
+  /**
+   * Override a NAMED account's backup path (tests; default: the account store's
+   * `credentials/<agent>/<id>.json`).
+   */
+  accountBackupPathFor?: (agent: CredentialAgentKind, account: string) => string;
   /**
    * The control box's custody store, when this relay owns one. Present ⇒ an
    * accepted credential is mirrored into `agents/<id>/…` so the next hub create
@@ -64,7 +89,7 @@ export async function stateBoxAccount(boxId: string, agent: string): Promise<str
   try {
     state = await readState();
   } catch {
-    return '(unverifiable: box registry unreadable)';
+    return UNVERIFIABLE_ACCOUNT;
   }
   const box = state.boxes.find((b) => b.id === boxId);
   return namedAccounts(box?.accounts)?.[agent];
@@ -83,21 +108,33 @@ export interface CredentialsHandleResult {
 export class CredentialsFanout {
   private readonly log: (msg: string) => void;
   private readonly debounceMs: number;
-  private readonly runPropagate: (agent: CredentialAgentKind, sourceBoxId: string) => Promise<void>;
+  private readonly runPropagate: (
+    agent: CredentialAgentKind,
+    sourceBoxId: string,
+    account: string,
+  ) => Promise<void>;
   private readonly backupPathFor?: (agent: CredentialAgentKind) => string;
+  private readonly accountBackupPathFor: (agent: CredentialAgentKind, account: string) => string;
   private readonly custody: CredentialCustodyWriter | null;
   private readonly boxAccountFor: (
     boxId: string,
     agent: CredentialAgentKind,
   ) => Promise<string | undefined>;
-  private readonly pending = new Map<CredentialAgentKind, NodeJS.Timeout>();
-  private readonly chains = new Map<CredentialAgentKind, Promise<void>>();
+  private readonly pending = new Map<string, NodeJS.Timeout>();
+  private readonly chains = new Map<string, Promise<void>>();
 
   constructor(deps: CredentialsFanoutDeps) {
     this.log = deps.log;
     this.debounceMs = deps.debounceMs ?? 3_000;
     this.runPropagate = deps.runPropagate ?? defaultRunPropagate;
     this.backupPathFor = deps.backupPathFor;
+    this.accountBackupPathFor =
+      deps.accountBackupPathFor ??
+      ((agent, account) => {
+        const path = accountSecretPath(resolveAgentSpec(agent), account, STATE_DIR);
+        if (!path) throw new Error(`agent '${agent}' declares no credential`);
+        return path;
+      });
     this.custody = deps.custody ?? null;
     this.boxAccountFor = deps.boxAccountFor ?? stateBoxAccount;
   }
@@ -109,29 +146,39 @@ export class CredentialsFanout {
   async handle(sourceBoxId: string, payload: unknown): Promise<CredentialsHandleResult> {
     const update = parseCredentialsUpdate(payload);
     if (!update) return { accepted: false, reason: 'invalid payload' };
-    // A box on a NAMED account holds that account's login, not the default's.
-    // Accepting it here would write it over the default backup and custody and
-    // fan it out to every default box. Dropped until Phase 4 routes updates
-    // per (agent, account); the account's volume keeps the refreshed copy.
-    const account = await this.boxAccountFor(sourceBoxId, update.agent);
-    if (account !== undefined) {
+    // Route by the SOURCE box's account (llm-accounts Phase 4): a box on a
+    // named account holds that account's login, so it updates that account's
+    // copy and fans out to that account's boxes only. ctl never names the
+    // account — this lookup is why old images route correctly.
+    const named = await this.boxAccountFor(sourceBoxId, update.agent);
+    if (named === UNVERIFIABLE_ACCOUNT) {
       this.log(
-        `credentials: ignored ${update.agent} update from box ${sourceBoxId} (named account '${account}')`,
+        `credentials: ignored ${update.agent} update from box ${sourceBoxId} (its account cannot be verified)`,
       );
-      return { accepted: false, reason: `named account '${account}'` };
+      return { accepted: false, reason: 'account unverifiable' };
     }
-    const backupPath = this.backupPathFor?.(update.agent);
+    const account = named ?? DEFAULT_ACCOUNT_ID;
+    const isDefault = isDefaultAccount(account);
+    const backupPath = isDefault
+      ? this.backupPathFor?.(update.agent)
+      : this.accountBackupPathFor(update.agent, account);
     const existing = await readCredentialBackup(update.agent, { backupPath });
     const verdict = shouldAcceptCredentialUpdate(update.agent, update.content, existing);
     if (!verdict.accept) {
       return { accepted: false, reason: verdict.reason };
     }
+    if (!isDefault && backupPath) {
+      // The account store's dir is owner-only, like `writeAccountSecret`'s.
+      await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+      await chmod(dirname(backupPath), 0o700).catch(() => {});
+    }
     await writeCredentialBackup(update.agent, update.content, { backupPath });
-    await this.recordInCustody(update.agent, update.content);
+    await this.recordInCustody(update.agent, account, update.content);
+    const label = isDefault ? update.agent : `${update.agent} account '${account}'`;
     this.log(
-      `credentials: accepted ${update.agent} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
+      `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
     );
-    this.schedule(update.agent, sourceBoxId);
+    this.schedule(update.agent, account, sourceBoxId);
     return { accepted: true, reason: verdict.reason };
   }
 
@@ -148,7 +195,11 @@ export class CredentialsFanout {
    * Best-effort by design — a custody failure must not cost us the fan-out,
    * which is the part that fixes the boxes that are already running.
    */
-  private async recordInCustody(agent: CredentialAgentKind, content: string): Promise<void> {
+  private async recordInCustody(
+    agent: CredentialAgentKind,
+    account: string,
+    content: string,
+  ): Promise<void> {
     if (!this.custody) return;
     try {
       const spec = resolveAgentSpec(agent);
@@ -158,7 +209,7 @@ export class CredentialsFanout {
       // it checks rather than trusting its caller.
       if (!spec.credential) return;
       await this.custody.put(
-        `agents/${agent}/${spec.credential.boxRelPath}`,
+        accountCustodyPath(agent, account, spec.credential.boxRelPath),
         Buffer.from(content, 'utf8'),
       );
     } catch (err) {
@@ -168,23 +219,25 @@ export class CredentialsFanout {
     }
   }
 
-  private schedule(agent: CredentialAgentKind, sourceBoxId: string): void {
-    const existing = this.pending.get(agent);
+  /** Debounce + serialize per (agent, account): two accounts never share a chain. */
+  private schedule(agent: CredentialAgentKind, account: string, sourceBoxId: string): void {
+    const key = `${agent}\u0000${account}`;
+    const existing = this.pending.get(key);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
-      this.pending.delete(agent);
-      const prev = this.chains.get(agent) ?? Promise.resolve();
+      this.pending.delete(key);
+      const prev = this.chains.get(key) ?? Promise.resolve();
       const next = prev
-        .then(() => this.runPropagate(agent, sourceBoxId))
+        .then(() => this.runPropagate(agent, sourceBoxId, account))
         .catch((err: unknown) => {
           this.log(
-            `credentials: ${agent} fan-out failed: ${err instanceof Error ? err.message : String(err)}`,
+            `credentials: ${agent} (${account}) fan-out failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
-      this.chains.set(agent, next);
+      this.chains.set(key, next);
     }, this.debounceMs);
     timer.unref();
-    this.pending.set(agent, timer);
+    this.pending.set(key, timer);
   }
 
   /** Pending debounce timers + in-flight chain, for tests/shutdown. */
@@ -203,14 +256,29 @@ export class CredentialsFanout {
  * started with — the CLI owns provider resolution and per-box transports
  * (same pattern as the checkpoint/cp host actions).
  */
-async function defaultRunPropagate(agent: CredentialAgentKind, sourceBoxId: string): Promise<void> {
+async function defaultRunPropagate(
+  agent: CredentialAgentKind,
+  sourceBoxId: string,
+  account: string,
+): Promise<void> {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) {
     throw new Error('AGENTBOX_CLI_ENTRY not set; cannot run credential propagate host-side');
   }
   const result = await execa(
     process.execPath,
-    [entry, 'credentials', 'propagate', '--agent', agent, '--source-box', sourceBoxId],
+    [
+      entry,
+      'credentials',
+      'propagate',
+      '--agent',
+      agent,
+      '--source-box',
+      sourceBoxId,
+      // Only for a named account: an older CLI then still parses a default
+      // fan-out, which is the only kind it can route.
+      ...(isDefaultAccount(account) ? [] : ['--account', account]),
+    ],
     { reject: false, timeout: 300_000 },
   );
   if (result.exitCode !== 0) {

@@ -42,39 +42,67 @@ describe('planPropagateTargets', () => {
     expect(plan.cloudBoxes.map((b) => b.name)).toEqual(['cloud-d', 'cloud-e']);
   });
 
-  it('never pushes the default login into a box on a named account (llm-accounts Phase 3)', () => {
-    const plan = planPropagateTargets(
-      [
-        ...boxes,
-        { id: 'w', name: 'cloud-work', provider: 'daytona', accounts: { claude: 'work' } },
-        {
-          id: 'v',
-          name: 'docker-work',
-          agentConfigVolumes: { claude: 'agentbox-claude-config-acct-work' },
-          accounts: { claude: 'work' },
-        },
-        {
-          id: 'p',
-          name: 'pi-borrow',
-          provider: 'daytona',
-          agents: ['pi'],
-          borrowedCredentials: ['claude'],
-          accounts: { claude: 'work' },
-        },
-      ],
-      { agent: 'claude', sourceBoxId: 's', scope: 'all' },
-    );
-    const names = [
+  describe('per account (llm-accounts Phase 4)', () => {
+    const extra = [
+      { id: 'w', name: 'cloud-work', provider: 'daytona', accounts: { claude: 'work' } },
+      {
+        id: 'v',
+        name: 'docker-work',
+        agentConfigVolumes: { claude: 'agentbox-claude-config-acct-work' },
+        accounts: { claude: 'work' },
+      },
+      {
+        id: 'p',
+        name: 'pi-borrow',
+        provider: 'daytona',
+        agents: ['pi'],
+        borrowedCredentials: ['claude'],
+        accounts: { claude: 'work' },
+      },
+    ];
+    const names = (plan: ReturnType<typeof planPropagateTargets>) => [
       ...plan.dockerVolumes.flatMap((v) => v.boxNames),
       ...plan.cloudBoxes.map((b) => b.name),
       ...plan.borrowingBoxes.map((b) => b.name),
     ];
-    expect(names).not.toContain('cloud-work');
-    expect(names).not.toContain('docker-work');
-    expect(names).not.toContain('pi-borrow');
-    expect(plan.dockerVolumes.map((v) => v.volume)).not.toContain(
-      'agentbox-claude-config-acct-work',
-    );
+
+    it('the default login never reaches a box on a named account', () => {
+      const n = names(
+        planPropagateTargets([...boxes, ...extra], {
+          agent: 'claude',
+          sourceBoxId: 's',
+          scope: 'all',
+          account: 'default',
+        }),
+      );
+      expect(n).not.toContain('cloud-work');
+      expect(n).not.toContain('docker-work');
+      expect(n).not.toContain('pi-borrow');
+      expect(n).toContain('cloud-d');
+    });
+
+    it("a named account's login reaches only that account's boxes", () => {
+      const plan = planPropagateTargets([...boxes, ...extra], {
+        agent: 'claude',
+        sourceBoxId: 's',
+        scope: 'all',
+        account: 'work',
+      });
+      expect(names(plan).sort()).toEqual(['cloud-work', 'docker-work', 'pi-borrow']);
+      expect(plan.dockerVolumes.map((v) => v.volume)).toEqual(['agentbox-claude-config-acct-work']);
+    });
+
+    it('no account (settings propagate) reaches every box, named ones included', () => {
+      const n = names(
+        planPropagateTargets([...boxes, ...extra], {
+          agent: 'claude',
+          sourceBoxId: 's',
+          scope: 'all',
+        }),
+      );
+      expect(n).toContain('cloud-work');
+      expect(n).toContain('cloud-d');
+    });
   });
 
   it('scope=project filters by the source projectRoot', () => {

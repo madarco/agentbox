@@ -27,9 +27,13 @@
  */
 
 import { createHash } from 'node:crypto';
+import { accountCustodyPath, isDefaultAccount } from '@agentbox/core';
 import {
   AGENT_SYNC_SPECS,
+  decodePastedSecret,
   isRealAgentCredential,
+  readAccounts,
+  readAccountSecret,
   readCredentialBackup,
   type AgentId,
 } from '@agentbox/sandbox-core';
@@ -297,6 +301,25 @@ export async function collectAgentCredentialUploads(only?: AgentId): Promise<Upl
     if (text === null || !isRealAgentCredential(spec.id, text)) continue;
     items.push({
       path: `agents/${spec.id}/${spec.credential.boxRelPath}`,
+      data: Buffer.from(text, 'utf8'),
+    });
+  }
+  // Every NAMED account's secret too, under its own account path
+  // (llm-accounts Phase 4), so a control box can seed and fan it out per
+  // account. A login must be a real blob; a pasted kind its encoded token.
+  for (const account of (await readAccounts()).accounts) {
+    if (isDefaultAccount(account.id) || (only && account.agent !== only)) continue;
+    const spec = AGENT_SYNC_SPECS.find((s) => s.id === account.agent);
+    if (!spec?.credential) continue;
+    const text = await readAccountSecret(account.agent, account.id);
+    if (text === null) continue;
+    const usable =
+      account.kind === 'login'
+        ? isRealAgentCredential(spec.id, text)
+        : decodePastedSecret(text)?.kind === account.kind;
+    if (!usable) continue;
+    items.push({
+      path: accountCustodyPath(spec.id, account.id, spec.credential.boxRelPath),
       data: Buffer.from(text, 'utf8'),
     });
   }
