@@ -126,8 +126,13 @@ export function custodySlugForRepoKey(key: string | undefined | null): string | 
   if (!key || key.startsWith('local:')) return null;
   const segs = key.split('/').filter((s) => s.length > 0);
   if (segs.length < 2) return null;
-  const slug = segs.map((s) => s.replace(/[^A-Za-z0-9._-]/g, '-')).join('__');
-  if (slug.length <= MAX_SLUG) return slug;
+  const clean = segs.map((s) => s.replace(/[^A-Za-z0-9._-]/g, '-'));
+  const slug = clean.join('__');
+  // Verbatim only when it decodes back unambiguously: a segment that lost a
+  // character to sanitising, or holds `__` / an edge `_`, could otherwise
+  // collide with another repo (`a/b/c` vs `a/b__c`), so it gets a hash suffix.
+  const lossy = clean.some((c, i) => c !== segs[i] || c.includes('__') || /^_|_$/.test(c));
+  if (!lossy && slug.length <= MAX_SLUG) return slug;
   const digest = createHash('sha256').update(key).digest('hex').slice(0, 16);
   return `${slug.slice(0, MAX_SLUG - 17)}-${digest}`;
 }

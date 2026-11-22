@@ -7,6 +7,7 @@ import {
   legacyProjectSlugFromOriginUrl,
   ownerRepoFromOriginUrl,
   projectSlugFromOriginUrl,
+  repoKeyAtEdge,
 } from '../src/project-slug.js';
 
 /**
@@ -72,8 +73,8 @@ describe('projectSlugFromOriginUrl', () => {
   it('sanitizes characters that are illegal in a custody path segment', () => {
     // A custody segment is [A-Za-z0-9._-]; anything else must be replaced, not
     // passed through to be rejected (or to escape the scope) at the store.
-    expect(projectSlugFromOriginUrl('https://example.com/some~owner/re po.git')).toBe(
-      'example.com__some-owner__re-po',
+    expect(projectSlugFromOriginUrl('https://example.com/some~owner/re po.git')).toMatch(
+      /^example\.com__some-owner__re-po-[0-9a-f]{16}$/,
     );
   });
 
@@ -98,6 +99,13 @@ describe('projectSlugFromOriginUrl', () => {
   it('returns null when the origin carries no repo path', () => {
     expect(projectSlugFromOriginUrl('https://github.com')).toBeNull();
     expect(projectSlugFromOriginUrl('/srv/repos/app.git')).toBeNull();
+  });
+});
+
+describe('repoKeyAtEdge', () => {
+  it('leaves a real hostname alone (no ssh -G), so ssh and https spellings agree', async () => {
+    expect(await repoKeyAtEdge('git@github.com:Acme/Web.git')).toBe('github.com/acme/web');
+    expect(await repoKeyAtEdge('https://github.com/acme/web')).toBe('github.com/acme/web');
   });
 });
 

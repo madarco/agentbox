@@ -89,8 +89,19 @@ describe('custodySlugForRepoKey', () => {
     );
   });
 
-  it('sanitises to the custody charset', () => {
-    expect(custodySlugForRepoKey('host/o w/r+x')).toBe('host__o-w__r-x');
+  it('sanitises to the custody charset, hash-suffixed so it cannot collide', () => {
+    expect(custodySlugForRepoKey('host/o w/r+x')).toMatch(/^host__o-w__r-x-[0-9a-f]{16}$/);
+    expect(custodySlugForRepoKey('host/o w/r+x')).not.toBe(custodySlugForRepoKey('host/o-w/r-x'));
+    expect(custodySlugForRepoKey('host/o-w/r-x')).toBe('host__o-w__r-x');
+  });
+
+  it('keeps a subgroup path apart from a segment holding __', () => {
+    expect(custodySlugForRepoKey('gitlab.com/a/b/c')).toBe('gitlab.com__a__b__c');
+    expect(custodySlugForRepoKey('gitlab.com/a/b__c')).not.toBe('gitlab.com__a__b__c');
+    expect(custodySlugForRepoKey('gitlab.com/a_/b')).not.toBe(
+      custodySlugForRepoKey('gitlab.com/a/_b'),
+    );
+    expect(custodySlugForRepoKey('github.com/my_org/my_repo')).toBe('github.com__my_org__my_repo');
   });
 
   it('caps a long slug with a hash suffix, still unique and stable', () => {

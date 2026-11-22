@@ -78,7 +78,8 @@ const sshHostCache = new Map<string, string | null>();
 
 /**
  * The repo key of `originUrl` as THIS machine sees it: `~/.ssh/config` host
- * aliases expanded through `ssh -G` (non-http(s) remotes only), and a
+ * aliases (dotless hosts such as `github-work`) expanded through `ssh -G`
+ * (non-http(s) remotes only), and a
  * local-path remote keyed by this machine's id. Run on the PC, never on the
  * hub, which has a different (or no) ssh config; the hub accepts the result as
  * sent.
@@ -92,7 +93,11 @@ export async function repoKeyAtEdge(
   // First pass only learns which host (if any) is aliasable.
   repoKey(originUrl, {
     expandHost: (h) => {
-      aliasHost = h;
+      // Only an alias-shaped (dotless) host. A real hostname is left alone even
+      // when ssh config rewrites it: `Host github.com / HostName ssh.github.com`
+      // is common, and expanding it would key the ssh spelling apart from the
+      // https one the hub derives.
+      if (!h.includes('.')) aliasHost = h;
       return null;
     },
   });

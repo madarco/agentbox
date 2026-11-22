@@ -488,13 +488,21 @@ design above:
   `expandHost`; `repoKeyAtEdge()` in `@agentbox/sandbox-core` supplies `ssh -G` and the machine id.
   `normalizeRepoUrl` and `normalizeOriginUrl` are deleted; the hub's inlined slug mirror
   (`seed-slug.ts`) is gone.
+- **Only alias-shaped hosts are expanded.** `ssh -G` runs for a dotless host (`github-work`), never
+  for a real hostname: `Host github.com / HostName ssh.github.com` is a common config, and expanding
+  it would key the ssh spelling apart from the https one the hub derives.
 - **Workspace project ids did not move.** `repoProjectKey` hashes the *unexpanded* key (identical to
   the old output for every remote URL) and keeps the old lowercased-path id for a local-path remote,
-  so existing workspace records and the tasks filed under their project ids are untouched. The
+  so existing workspace records and the tasks filed under their project ids are untouched
+  (`repoMatchKey`, which also keeps local-path remotes joining boxes to workspaces). Known
+  exception: an origin whose old key differs only in spelling the old normaliser kept (a
+  percent-encoded path, an uppercase `.GIT`, `git@host:/abs/path`) gets a new project id on its next
+  scan. The
   scan's alias-expanded `repoKey` feeds the checkouts registry only. Re-keying workspace projects by
   the expanded key goes with B1.
-- **Custody slug** is `custodySlugForRepoKey` (`github.com__owner__repo`, capped at 80 chars with a
-  hash suffix). Writers on the PC use `projectSlugAtEdge` (alias-expanded); every reader tries
+- **Custody slug** is `custodySlugForRepoKey` (`github.com__owner__repo`). It gets a sha256 suffix
+  when it would exceed 80 chars or would not decode unambiguously (a segment sanitised, or holding
+  `__` or an edge `_`, so `a/b/c` and `a/b__c` never share a scope). Writers on the PC use `projectSlugAtEdge` (alias-expanded); every reader tries
   `custodySlugCandidates` (registered key, URL-derived key, the registration's `projectSlug`, the
   legacy `owner__repo`): hub-worker seed overlay, seed status, the CLI's seed pull, the cp-cache
   lookup. A legacy entry is not copied forward on read; the next seed push or cp capture simply

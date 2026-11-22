@@ -1350,7 +1350,7 @@ async function runGitRpc(
     nested && lookup.workspacePath.length > 0
       ? join(lookup.workspacePath, nested)
       : lookup.workspacePath;
-  if (nested && !existsSync(join(hostRepoDir, '.git'))) {
+  if (nested && (hostRepoDir.length === 0 || !existsSync(join(hostRepoDir, '.git')))) {
     // The checkout-less fallback pushes to the box's ONE registered origin,
     // which is the root repo's: it would publish this repo's branch there.
     return {

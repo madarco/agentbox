@@ -4,7 +4,7 @@
  * registry and its own idea of who is online, and does the routing.
  */
 import { posix } from 'node:path';
-import { custodySlugForRepoKey } from '@agentbox/config';
+import { custodySlugForRepoKey, repoKey as repoKeyOf } from '@agentbox/config';
 import { cpCacheKey, cpCachePrefix } from '../cp-cache.js';
 import type { BoxRegistration } from '../types.js';
 import type { CheckoutRecord } from './types.js';
@@ -124,8 +124,11 @@ export function hostCandidatesFor(
 
   // Keyed as today's capture keys it: a repo-relative request is `rel:<path>`
   // under the repo's slug, so every machine with the repo reads and writes one
-  // entry. A host-absolute path keeps its `abs:` key under the same prefix.
-  const slug = repo ? custodySlugForRepoKey(repo.repoKey) : null;
+  // entry. A host-absolute path keeps its `abs:` key under the root repo's prefix.
+  // A request outside every repo is still filed under the box's ROOT repo
+  // slug, which is where a live capture writes it (`cpCachePrefixes(reg)[0]`).
+  const scopeRepo = repo ?? box.repos.find((r) => r.path === BOX_WORKSPACE);
+  const slug = scopeRepo ? custodySlugForRepoKey(scopeRepo.repoKey) : null;
   const prefix = cpCachePrefix({ ...(slug ? { projectSlug: slug } : {}), boxId: box.boxId });
   const key = cpCacheKey(repo ? relPath : raw);
   return { ok: true, ...(repo ? { repo } : {}), relPath, candidates, cacheKey: { prefix, key } };
@@ -136,16 +139,19 @@ export function hostCandidatesFor(
  * keyed by the registered repo key. Phase 2 derives it from `sources`.
  */
 export function candidateBoxFromRegistration(
-  reg: Pick<BoxRegistration, 'boxId' | 'repoKey' | 'originMachineId' | 'worktrees'>,
+  reg: Pick<BoxRegistration, 'boxId' | 'repoKey' | 'originUrl' | 'originMachineId' | 'worktrees'>,
 ): CandidateBox {
   const root = reg.worktrees?.find((w) => w.containerPath === BOX_WORKSPACE);
+  // A registration from before the repo key existed: derive it (unexpanded)
+  // from the origin, as the cp-cache prefix does.
+  const key = reg.repoKey ?? repoKeyOf(reg.originUrl);
   return {
     boxId: reg.boxId,
     ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
     repos: [
       {
         path: BOX_WORKSPACE,
-        ...(reg.repoKey ? { repoKey: reg.repoKey } : {}),
+        ...(key ? { repoKey: key } : {}),
         ...(root?.hostMainRepo ? { originFolder: root.hostMainRepo } : {}),
       },
     ],

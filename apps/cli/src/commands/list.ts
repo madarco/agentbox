@@ -1,7 +1,8 @@
 import { log } from '@clack/prompts';
 import { LEGACY_AGENT_STATUS_KEYS, type AgentStatusEntry } from '@agentbox/core';
 import { execa } from 'execa';
-import { findProjectRoot, loadEffectiveConfig, repoKey } from '@agentbox/config';
+import { findProjectRoot, loadEffectiveConfig } from '@agentbox/config';
+import { repoMatchKey } from '@agentbox/relay';
 import { deriveRepoLabel, isHubWorkerClone, serviceAgentForBox } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
@@ -538,8 +539,8 @@ export function boxInProject(
   const originMatches =
     ctx.origin !== undefined &&
     b.originUrl != null &&
-    repoKey(b.originUrl) !== undefined &&
-    repoKey(b.originUrl) === repoKey(ctx.origin);
+    repoMatchKey(b.originUrl) !== undefined &&
+    repoMatchKey(b.originUrl) === repoMatchKey(ctx.origin);
   return originMatches && (b.projectRoot == null || ctx.projectRootForeign);
 }
 

@@ -162,13 +162,21 @@ export async function scanWorkspaceProjects(root: string): Promise<string[]> {
  * workspace's `projectIds`, so every join through that id missed.
  */
 export function repoProjectKey(originUrl: string): string | undefined {
+  const key = repoMatchKey(originUrl);
+  return key === undefined ? undefined : hashProjectPath(key);
+}
+
+/**
+ * What two origins are compared by when joining a box or a scan to a workspace:
+ * the repo key, or for a local-path remote (which has no machine-independent
+ * key) its lowercased path, as before `repoKey`. Kept so workspace records, the
+ * tasks filed under their project ids, and boxes joined by such a remote all
+ * survive the move to `repoKey`.
+ */
+export function repoMatchKey(originUrl: string | undefined | null): string | undefined {
   const key = repoKey(originUrl);
-  if (key !== undefined) return hashProjectPath(key);
-  // A local-path remote has no repo key, but workspace records already name
-  // such projects by the hash of the lowercased path. Kept so their ids (and the
-  // tasks filed under them) survive the move to `repoKey`.
-  const local = localRepoPath(originUrl);
-  return local === undefined ? undefined : hashProjectPath(local.toLowerCase());
+  if (key !== undefined) return key;
+  return localRepoPath(originUrl)?.toLowerCase();
 }
 
 /**
@@ -567,14 +575,14 @@ function matchWorkspace(
     if (adopted) return adopted;
   }
   const repos = new Set(
-    projects.map((p) => repoKey(p.repoUrl)).filter((r): r is string => Boolean(r)),
+    projects.map((p) => repoMatchKey(p.repoUrl)).filter((r): r is string => Boolean(r)),
   );
   if (repos.size === 0) return undefined;
   return records.find(
     (r) =>
       hostEntryOf(r.hosts, input.machine) === undefined &&
       r.projects.some((p) => {
-        const repo = repoKey(p.repoUrl);
+        const repo = repoMatchKey(p.repoUrl);
         return repo !== undefined && repos.has(repo);
       }),
   );
@@ -862,9 +870,9 @@ export function workspaceForBox<
     const here = findWorkspaceContaining(records, key.projectRoot, key.host ?? localHost);
     if (here) return here;
   }
-  const repo = repoKey(key.originUrl);
+  const repo = repoMatchKey(key.originUrl);
   if (repo) {
-    return records.find((r) => r.projects.some((p) => repoKey(p.repoUrl) === repo)) ?? null;
+    return records.find((r) => r.projects.some((p) => repoMatchKey(p.repoUrl) === repo)) ?? null;
   }
   return null;
 }

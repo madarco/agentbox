@@ -119,6 +119,14 @@ describe('repoKey (through the workspace layer)', () => {
     // hash of the lowercased path; the id must not move.
     expect(repoProjectKey('/srv/Repos/app.git')).toBe(hashProjectPath('/srv/repos/app'));
   });
+
+  it('still joins a box to a workspace by a local-path remote', () => {
+    const ws = {
+      projects: [{ repoUrl: '/srv/git/App.git' }],
+      hosts: {},
+    };
+    expect(workspaceForBox([ws], { originUrl: '/srv/git/app' })).toBe(ws);
+  });
 });
 
 describe('addWorkspace', () => {

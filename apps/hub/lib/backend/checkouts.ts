@@ -2,7 +2,6 @@
 // folder F", keyed by machine id and repo key. PCs report their own folders
 // (`PUT /api/v1/checkouts`); the hub never infers one, since it cannot stat a PC.
 // The only folders it reports itself are the ones on its own disk.
-import { realpath } from 'node:fs/promises';
 import { repoKey as repoKeyFromUrl } from '@agentbox/config';
 import {
   applyCheckoutReport,
@@ -12,8 +11,7 @@ import {
   type CheckoutRecord,
   type CheckoutReport,
 } from '@agentbox/relay';
-import { repoKeyAtEdge } from '@agentbox/sandbox-core';
-import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
+import { checkoutEntriesFor } from '@agentbox/sandbox-core';
 import { hubMachine, type BackendDeps } from './deps';
 import type { CheckoutBackend } from '../boxes/backend-types';
 
@@ -55,13 +53,7 @@ export function createCheckoutBackend(
     async recordLocalCheckouts(folders: readonly string[]): Promise<void> {
       const me = hubMachine(deps);
       if (!me.id) return;
-      const entries: CheckoutReport['entries'] = [];
-      for (const raw of folders) {
-        const folder = await realpath(raw).catch(() => raw);
-        const origin = await readGitOriginUrl(folder).catch(() => undefined);
-        const key = await repoKeyAtEdge(origin);
-        if (key) entries.push({ repoKey: key, folder });
-      }
+      const entries = await checkoutEntriesFor(folders);
       if (entries.length === 0) return;
       await applyCheckoutReport(
         { machineId: me.id, label: me.label, entries },

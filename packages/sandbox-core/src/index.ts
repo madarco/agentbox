@@ -286,6 +286,7 @@ export {
 } from './runtime-root.js';
 
 export { BOX_IMAGE_REGISTRY, registryRefForSha } from './box-registry.js';
+export { checkoutEntriesFor } from './checkout-entries.js';
 export {
   boxNameBasisFromOriginUrl,
   deriveRepoLabel,

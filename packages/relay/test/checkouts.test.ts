@@ -69,6 +69,8 @@ describe('hostCandidatesFor', () => {
     expect(abs.ok && abs.repo).toBeUndefined();
     expect(abs.ok && abs.candidates).toEqual([{ machineId: 'pc-a', reason: 'origin' }]);
     expect(abs.ok && abs.cacheKey.key).toBe(cpCacheKey('/Users/a/Downloads/q3.csv'));
+    // Filed where a live capture writes it: the root repo's prefix.
+    expect(abs.ok && abs.cacheKey.prefix).toBe('projects/github.com__acme__app/cp');
     // Climbing out of the project is the same thing.
     const up = hostCandidatesFor(box, '../sibling/x', checkouts, all);
     expect(up.ok && up.candidates.map((c) => c.machineId)).toEqual(['pc-a']);
@@ -126,6 +128,18 @@ describe('hostCandidatesFor', () => {
     });
     const r = hostCandidatesFor(hubBuilt, 'data.csv', checkouts, all);
     expect(r.ok && r.candidates.every((c) => c.reason === 'has-repo')).toBe(true);
+  });
+
+  it('derives the key of a registration made before repoKey existed', () => {
+    const b = candidateBoxFromRegistration({
+      boxId: 'old',
+      originUrl: 'git@github.com:Acme/App.git',
+    });
+    expect(b.repos[0]!.repoKey).toBe(KEY);
+    const prefix = hostCandidatesFor(b, '/abs/x', [], all);
+    expect(prefix.ok && prefix.cacheKey.prefix).toBe(
+      cpCachePrefixes({ boxId: 'old', originUrl: 'git@github.com:Acme/App.git' })[0],
+    );
   });
 
   it('uses the origin folder from the registration when the origin never reported', () => {
