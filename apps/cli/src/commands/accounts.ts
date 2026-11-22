@@ -16,8 +16,10 @@ import {
   type LlmAccount,
 } from '@agentbox/core';
 import {
+  boxesOnAccount,
   readAccounts,
   readAccountSecret,
+  readState,
   removeAccount,
   resolveAgentSpec,
   upsertAccount,
@@ -80,6 +82,15 @@ async function removeAccountCommand(ref: string, opts: { yes?: boolean }): Promi
   const spec = resolveAgentSpec(name);
   if (!findAccount(await readAccounts(), spec.id, id)) {
     throw new Error(`no account '${id}' for ${spec.id} (see \`agentbox accounts\`)`);
+  }
+  // Never while a box still runs on (or borrows) it: re-adding the name for
+  // another subscription would let that box's refresh overwrite the new login
+  // and fan out to every new box on it.
+  const inUse = boxesOnAccount((await readState()).boxes, spec.id, id);
+  if (inUse.length > 0) {
+    throw new Error(
+      `${spec.id} account '${id}' is still used by ${inUse.map((b) => b.name).join(', ')}; destroy ${inUse.length === 1 ? 'that box' : 'those boxes'} first`,
+    );
   }
   if (!opts.yes) {
     if (!process.stdin.isTTY) throw new Error('refusing to remove without a terminal; pass --yes');

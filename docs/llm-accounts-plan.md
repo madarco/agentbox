@@ -1,6 +1,6 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done, Phases 1-3 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-4 done (2026-11-22)** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -701,6 +701,39 @@ Implementation notes:
    used the isolate branch for any non-shared volume, which would have seeded
    the default login into a named volume whenever the default's token was
    newer; `start`'s host re-sync passes `account` too.
+
+## Phase 4 as built (fan-out per account)
+
+Replace the Phase 3 guards ("drop / skip anything on a named account") with
+real routing, keyed by `(agent, account)`. ctl is unchanged — it posts
+`{agent, content}` as before; the RELAY decides the account from the source
+box, so old images route correctly.
+
+1. **Relay ingest** (`CredentialsFanout.handle`): account = the box's
+   registration (then `state.json`). `default` → the legacy backup + custody
+   `agents/<agent>/<file>`, as today. A named account → its own secret
+   (`accountSecretPath`) + custody `agents/<agent>/accounts/<id>/<file>`, same
+   newest-wins gate. An unverifiable source (registry unreadable) is still
+   dropped — it cannot be routed. Debounce and propagate are keyed per
+   `(agent, account)`; the spawned `credentials propagate` gets `--account`.
+2. **Propagate** (`credentials propagate --account`): reads that account's
+   secret and targets only boxes whose record names the same account for that
+   agent (`default` ↔ no record), running it or borrowing it. The account filter
+   applies only when the caller names an account, so SETTINGS propagate (same
+   planner) reaches named boxes again (#437 review, finding 8). Docker boxes on
+   one account share its volume, so the source's volume is the only docker
+   target and is excluded; cloud and borrowing boxes are pushed.
+3. **Cloud resume reconcile** runs per account: a named agent reconciles
+   against its account's secret instead of being skipped. (The checkpoint
+   `--set-default` extract stays refused for named boxes.)
+4. **Custody, both directions**: `hub credentials push` also uploads every named
+   account's secret under its account path, and the relay mirrors accepted
+   named updates there; `seedHostBackupsFromCustody` materializes them per
+   account, newest-wins. Rows (`accounts.json`) do not travel yet — a remote
+   hub still refuses a named create until Phase 5 gives it the account list.
+5. **Settings propagate** (`agentbox download <agent>`'s push to other boxes)
+   stays within the source box's account: a pulled item set can carry the
+   agent's login (codex's `auth.json`), which must never cross accounts.
 
 ## Backlog (not in these phases)
 
