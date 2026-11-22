@@ -13,6 +13,7 @@
  * options that cannot travel are named out loud instead of vanishing.
  */
 import { resolveBoxImage, resolveDefaultCheckpoint, type EffectiveConfig } from '@agentbox/config';
+import type { SkillSelection } from '@agentbox/core';
 import type { CreateJobRequestOpts } from '@agentbox/relay';
 import { cloudSizingProviderOptions } from './cloud-sizing.js';
 
@@ -56,6 +57,8 @@ export interface HubCreateOptsInput {
     /** Named LLM account per agent (`--account`), already resolved locally. */
     accounts?: Readonly<Record<string, string>>;
     sessionName?: string;
+    /** Library skill selection from `--skills` / `--skip-skills` / `--no-skills`. */
+    skills?: SkillSelection;
   };
 }
 
@@ -182,6 +185,7 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
       : {}),
     ...(flags.useBranch ? { useBranch: flags.useBranch } : {}),
     ...(resolved.sessionName ? { sessionName: resolved.sessionName } : {}),
+    ...(resolved.skills ? { skills: resolved.skills } : {}),
     ...(size ? { size } : {}),
     ...(location ? { location } : {}),
     ...(inbound ? { inbound } : {}),

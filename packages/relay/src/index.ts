@@ -10,6 +10,7 @@ export type {
   BoxKind,
   BoxNoticeEvent,
   BoxRegistration,
+  SkillSelection,
   BoxWorktree,
   BridgeActionResultBody,
   BridgePollResponse,
@@ -364,3 +365,11 @@ export {
 export { dockerHistorySource, untarSingleFile } from './history/docker-source.js';
 export { collectHostSecrets } from './history/host-secrets.js';
 export { runHistoryRpc } from './history/rpc.js';
+export {
+  SKILL_BLOB_CHUNK_BYTES,
+  parseSkillSelection,
+  resolveBoxSkills,
+  runSkillsRpc,
+  selectSkills,
+} from './skills-rpc.js';
+export type { BoxSkill, SkillsGetResult } from './skills-rpc.js';

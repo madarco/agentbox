@@ -227,6 +227,14 @@ export const claudeSpec: AgentSyncSpec = {
       label: 'the /agentbox-setup skill',
     },
   ],
+  // The hub's skills library: claude reads `<managed>/.claude/skills` from its
+  // managed-settings dir with no flag and no name prefix (measured, Phase 0), and
+  // `/etc/claude-code` is in the container layer / VM disk, never the shared
+  // config volume, so each box gets only its own selection.
+  skills: {
+    dirs: ['.claude/skills'],
+    inject: { kind: 'dir', path: '/etc/claude-code/.claude/skills' },
+  },
   caps: { resume: true, teleport: 'full', activitySource: ['hooks', 'scraper'] },
   // Box->host. Claude's unit is a CHILD of a category dir, plus a 2-level
   // plugin cache, plus two registry JSONs merged additively with a

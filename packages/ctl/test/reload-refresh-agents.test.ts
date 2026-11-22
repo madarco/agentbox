@@ -72,7 +72,14 @@ describe('reload --agents', () => {
  * `agents.list` answers "unknown box" (sign-off of #429, B2). ctl retries.
  */
 describe('fetchWatchListWithRetry', () => {
-  const host = { files: [], sessions: [], units: [], renders: [], source: 'host' as const };
+  const host = {
+    files: [],
+    sessions: [],
+    units: [],
+    renders: [],
+    skillDirs: [],
+    source: 'host' as const,
+  };
   const baked = { ...host, source: 'baked' as const };
 
   it('retries until the host answers', async () => {

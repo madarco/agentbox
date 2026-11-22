@@ -13,15 +13,18 @@ import type { HubApiClient, HubApiSkill } from '../../control-plane/hub-api-clie
 import {
   discoverLocalSkills,
   readSkillTree,
+  readTar,
   treeHash,
+  writeTar,
   type LocalSkill,
 } from '@agentbox/sandbox-core';
-import { readTar, writeTar } from './tar.js';
 
 export interface SkillsContext {
   home: string;
   /** `skills.maxSkillBytes`. */
   maxBytes: number;
+  /** The control box's admin token, when this PC holds it (skill downloads are elevated). */
+  adminToken?: string;
 }
 
 export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only';
@@ -233,7 +236,9 @@ export async function downloadHubSkill(
   ctx: SkillsContext,
   opts: { overwrite?: boolean; version?: string } = {},
 ): Promise<DownloadOutcome> {
-  const got = await client.downloadSkill(name, opts.version);
+  const got = await client.downloadSkill(name, opts.version, {
+    ...(ctx.adminToken ? { adminToken: ctx.adminToken } : {}),
+  });
   const files = readTar(got.data, { maxBytes: ctx.maxBytes });
   const sha = treeHash(files);
   if (!/^[0-9a-f]{64}$/.test(got.version)) {

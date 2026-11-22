@@ -10,6 +10,7 @@
  * `apps/cli/src/control-plane/ensure-repo-installed.ts`.
  */
 import { execa } from 'execa';
+import type { SkillSelection } from '@agentbox/core';
 import { registrationOrigin } from '@agentbox/sandbox-core';
 
 export interface RegisterBoxWithPlaneArgs {
@@ -46,6 +47,8 @@ export interface RegisterBoxWithPlaneArgs {
   projectIndex?: number;
   autoApproveHostActions?: boolean;
   autoApproveSafeHostActions?: boolean;
+  /** Library skill selection from the create flags (`BoxRecord.skills`). */
+  skills?: SkillSelection;
   /**
    * Public VM IP/host for direct-SSH backends. A PC adopting this box
    * (`agentbox hub adopt`) rebuilds its SSH target from this — the registration
@@ -59,6 +62,11 @@ export interface RegisterBoxWithPlaneArgs {
   webPort?: number;
   /** Agent the box was created for, so an adopting PC can relaunch the right one. */
   agent?: string;
+  /**
+   * Named LLM account per agent (`BoxRecord.accounts`). A registration REPLACES
+   * the stored one, so a re-register without it would drop the box's accounts.
+   */
+  accounts?: Record<string, string>;
   /** Custody `projects/<slug>` key linking the box to its seed material. */
   projectSlug?: string;
   /**
@@ -114,10 +122,14 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       projectIndex: args.projectIndex,
       autoApproveHostActions: args.autoApproveHostActions,
       autoApproveSafeHostActions: args.autoApproveSafeHostActions,
+      ...(args.skills ? { skills: args.skills } : {}),
       publicHost: args.publicHost,
       image: args.image,
       webPort: args.webPort,
       agent: args.agent,
+      ...(args.accounts && Object.keys(args.accounts).length > 0
+        ? { accounts: args.accounts }
+        : {}),
       projectSlug: args.projectSlug,
     }),
   });

@@ -1,3 +1,4 @@
+import type { SkillSelection } from '@agentbox/core';
 import { recordCreateJobTimeline } from './timeline-hooks.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -234,6 +235,8 @@ export interface QueueJobCreateOpts {
   persistent?: boolean;
   /** Other agents' host logins to seed as model auth (`--model-auth`; service agents). */
   borrowCredentials?: string[];
+  /** Library skill selection (`--skills`, `--skip-skills`, `--no-skills`). */
+  skills?: SkillSelection;
   /** Named LLM account per agent (`--account`), resolved before enqueue. */
   accounts?: Record<string, string>;
   /** `--no-resync` → false; resync the box with the host on (checkpoint) create. */

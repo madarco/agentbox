@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { HistoryLoop } from '../history-shipper.js';
+import { describeSkillsSync, syncBoxSkills } from '../skills-sync.js';
 import { DEFAULT_BOX_RELAY_PORT, startRelayServer, type RelayServerHandle } from '@agentbox/relay';
 import { loadConfig, type CtlConfig } from '../config.js';
 import { mergeAgentUnits, type AgentUnits } from '../agent-units.js';
@@ -327,6 +328,22 @@ export const daemonCommand = new Command('daemon')
         // agent its unit rather than costing the box its supervisor.
         agentUnits = watch.units;
         agentRenders = watch.renders;
+        // Fourth: the hub's skills library, linked into each agent that declares
+        // a `dir` injection. Its own pass, never awaited here, and it never
+        // throws: a host with no library leaves the box exactly as it was.
+        void syncBoxSkills({
+          linkDirs: watch.skillDirs,
+          log: (m) => void process.stderr.write(`agentbox-ctl: ${m}\n`),
+        })
+          .then((r) => {
+            if (r.library) process.stdout.write(`agentbox-ctl: ${describeSkillsSync(r)}\n`);
+          })
+          .catch((err: unknown) => {
+            // An unhandled rejection would take the whole daemon down.
+            process.stderr.write(
+              `agentbox-ctl: skills sync failed: ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+          });
         if (watch.units.length === 0 && watch.renders.length === 0) return;
         try {
           const diff = await sup.reload(await buildConfig());

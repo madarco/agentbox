@@ -1,7 +1,14 @@
 // DownloadKind's canonical decision home is `@agentbox/core`'s sync/files.ts;
 // imported here so DownloadRpcParams below can reference it, re-exported below
 // so existing `./types.js` importers stay unchanged.
-import type { DownloadKind, PromptDetail, PromptKind as CorePromptKind } from '@agentbox/core';
+import type {
+  DownloadKind,
+  PromptDetail,
+  PromptKind as CorePromptKind,
+  SkillSelection,
+} from '@agentbox/core';
+
+export type { SkillSelection };
 
 export const DEFAULT_RELAY_PORT = 8787;
 /**
@@ -98,6 +105,12 @@ export interface BoxRegistration {
    * `host-action-auto-approved` event. Absent → enabled.
    */
   autoApproveSafeHostActions?: boolean;
+  /**
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
+   * `--no-skills` at create). Absent = every library skill. Resolved against the
+   * library's current versions on each `skills.get`.
+   */
+  skills?: SkillSelection;
   /**
    * The box repo's origin remote URL (any git URL shape). The hosted control
    * plane resolves owner/repo from THIS registered value when leasing a
@@ -233,6 +246,8 @@ export interface RegisterBoxBody {
   autoApproveHostActions?: boolean;
   /** Mirrors `box.autoApproveSafeHostActions` (default true; absent → enabled). */
   autoApproveSafeHostActions?: boolean;
+  /** Library skill selection (see `BoxRegistration.skills`). */
+  skills?: SkillSelection;
   /** The box repo's origin remote URL (for GitHub-App lease repo resolution). */
   originUrl?: string;
   /** Public VM IP/host for direct-SSH providers (PC adoption). */

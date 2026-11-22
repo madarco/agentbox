@@ -1,3 +1,4 @@
+import type { SkillSelection } from '@agentbox/core';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, PromptAskEvent, RelayEvent } from '../types.js';
 
@@ -104,6 +105,7 @@ export const PORTABLE_CREATE_OPT_KEYS = [
   'build',
   'credentialSync',
   'borrowCredentials',
+  'skills',
   'accounts',
   'size',
   'location',
@@ -140,6 +142,8 @@ export interface CreateJobRequestOpts {
    * rather than whatever the VPS happens to hold.
    */
   borrowCredentials?: string[];
+  /** Library skill selection (`--skills`, `--skip-skills`, `--no-skills`). Portable. */
+  skills?: SkillSelection;
   /**
    * Named LLM account per agent, resolved by the hub at enqueue against its own
    * account store (llm-accounts Phase 3). Becomes `CreateBoxRequest.accounts`.

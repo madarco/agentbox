@@ -413,6 +413,7 @@ export function createCloudProvider(
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
       agent: primaryAgent(box),
+      ...(box.skills ? { skills: box.skills } : {}),
       ...(box.accounts ? { accounts: box.accounts } : {}),
     });
   }
@@ -659,6 +660,7 @@ export function createCloudProvider(
             projectIndex: box.projectIndex,
             autoApproveHostActions: box.autoApproveHostActions,
             autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+            ...(box.skills ? { skills: box.skills } : {}),
             // Keep the adoption material fresh across resumes. The VM's public
             // IP can change on a stop/start, so prefer the live handle's value
             // over the persisted one.
@@ -666,6 +668,7 @@ export function createCloudProvider(
             image: box.cloud.image,
             webPort: box.cloud.webPort,
             agent: primaryAgent(box),
+            ...(box.accounts ? { accounts: box.accounts } : {}),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
           });
         } catch {
@@ -687,6 +690,7 @@ export function createCloudProvider(
           projectIndex: box.projectIndex,
           autoApproveHostActions: box.autoApproveHostActions,
           autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+          ...(box.skills ? { skills: box.skills } : {}),
           // Repo identity so a thin client can map this box to a local project
           // by origin (Step 4 adoption); best-effort.
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
@@ -1340,6 +1344,7 @@ export function createCloudProvider(
                 projectIndex,
                 autoApproveHostActions,
                 autoApproveSafeHostActions,
+                ...(req.skills ? { skills: req.skills } : {}),
                 // Adoption material: everything a PC needs to rebuild this
                 // box's BoxRecord from the registration alone (`hub adopt`).
                 publicHost: handle.publicHost,
@@ -1349,6 +1354,7 @@ export function createCloudProvider(
                 // queued create passes `agents` and no `agent`, and without it
                 // the box's first boot got no service units (no gateway).
                 agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
+                ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
                 projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
@@ -1431,6 +1437,7 @@ export function createCloudProvider(
               createdAt: new Date().toISOString(),
               autoApproveHostActions,
               autoApproveSafeHostActions,
+              ...(req.skills ? { skills: req.skills } : {}),
               // Repo identity so a thin client can map this box to a local
               // project by origin (Step 4 adoption); best-effort.
               originUrl: req.inBoxClone
@@ -1484,6 +1491,7 @@ export function createCloudProvider(
           withEnv: req.withEnv,
           autoApproveHostActions: autoApproveHostActions ? true : undefined,
           autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
+          ...(req.skills ? { skills: req.skills } : {}),
           persistent: persistent ? true : undefined,
           carry: carrySummary,
           portlessAlias: portlessAliasName,

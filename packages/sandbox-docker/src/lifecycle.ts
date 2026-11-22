@@ -558,6 +558,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
         agent: primaryAgent(box),
+        ...(box.skills ? { skills: box.skills } : {}),
         ...(box.accounts ? { accounts: box.accounts } : {}),
       });
     } catch {

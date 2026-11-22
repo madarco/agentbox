@@ -4559,7 +4559,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Download a version of a skill',
           description:
-            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. Normal API gate (skills are not credentials). Backs `agentbox skills --download`.',
+            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. ELEVATED like custody byte reads: the admin token or an enrolled device token in `X-Agentbox-Admin-Token` (a local hub: loopback); the API key alone gets `401`. Backs `agentbox skills --download`.',
           responses: {
             '200': {
               description: 'The tarball',

@@ -1669,6 +1669,10 @@ async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
         agent: primaryAgent(box),
+        // A register REPLACES the registration: without this a branch switch
+        // would widen a `--no-skills` / `--skip-skills` box to the whole library.
+        ...(box.skills ? { skills: box.skills } : {}),
+        ...(box.accounts ? { accounts: box.accounts } : {}),
       });
     } catch (err) {
       // Persisted to state.json, but the running relay still holds the old
@@ -2776,6 +2780,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             envFiles: o.envFiles,
             vnc: o.vnc,
             persistent,
+            ...(o.skills ? { skills: o.skills } : {}),
             resync: o.resync,
             sharedDockerCache: o.sharedDockerCache,
             portless: o.portless,

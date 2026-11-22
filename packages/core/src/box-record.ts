@@ -294,6 +294,16 @@ export interface GitWorktreeRecord {
   relPathFromWorkspace: string;
 }
 
+/** A box's choice of the hub's library skills, from its create flags. */
+export interface SkillSelection {
+  /** `--no-skills`: none at all. */
+  none?: boolean;
+  /** `--skills`: only these (names). */
+  include?: string[];
+  /** `--skip-skills`: all but these (names). */
+  exclude?: string[];
+}
+
 export interface BoxRecord {
   id: string;
   name: string;
@@ -377,6 +387,12 @@ export interface BoxRecord {
    * `relay` rehydrate re-registers with the same policy.
    */
   autoApproveSafeHostActions?: boolean;
+  /**
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
+   * `--no-skills` at create). Absent = every library skill. Forwarded to the
+   * relay's registration, which resolves it on each `skills.get`.
+   */
+  skills?: SkillSelection;
   /**
    * Resolved `box.persistent` at create time (`--persistent`). A persistent box
    * is always-on: autopause never pauses it, the cloud keepalive never lets it

@@ -400,6 +400,8 @@ export type { SkillFrontmatter } from './skills/frontmatter.js';
 export { isSecretFileName, scanSkillFiles, shannonEntropy } from './skills/scan.js';
 export type { SecretFinding } from './skills/scan.js';
 export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
+export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.js';
+export type { TarFile } from './skills/tar.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {
   authoredTreeHash,

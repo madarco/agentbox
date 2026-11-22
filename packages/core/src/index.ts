@@ -19,6 +19,7 @@ export type {
   ProviderName,
   SshTargetRecord,
   StateFile,
+  SkillSelection,
 } from './box-record.js';
 export { dockerField, agentConfigVolume, primaryAgent } from './box-record.js';
 export {

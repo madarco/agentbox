@@ -7,6 +7,7 @@
  * `test/_fixtures/agent-cli-surface.json` is what asserts that description of
  * reality is exact, flag for flag.
  */
+import { collectSkillNames, SKILL_FLAG_HELP } from '../../lib/skills/selection.js';
 import { Command } from 'commander';
 import { agentAccountKinds, type LlmAccountKind } from '@agentbox/core';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
@@ -40,6 +41,9 @@ export interface AgentCreateOptions {
   /** `--model-auth <source...>`: which host model-provider logins to seed.
    *  Only present for an agent whose row declares sources. */
   modelAuth?: string[];
+  /** `--skills <names>` (or false for `--no-skills`) and `--skip-skills <names>`. */
+  skills?: string[] | false;
+  skipSkills?: string[];
   /** `--account <name>` (or `<agent>=<name>` for a borrowed lender): the named
    *  LLM account the box runs on. Only for an agent whose row declares
    *  `accountKinds`. */
@@ -178,6 +182,9 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
       'always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.',
     )
     .option('--no-persistent', 'create an expendable box even when box.persistent is set')
+    .option('--skills <names>', SKILL_FLAG_HELP.skills, collectSkillNames)
+    .option('--no-skills', SKILL_FLAG_HELP.noSkills)
+    .option('--skip-skills <names>', SKILL_FLAG_HELP.skipSkills, collectSkillNames)
     .option(
       '--no-resync',
       "do not sync the box with the host on start (default: merge the host's current branch + overlay its uncommitted/untracked changes, keeping the box's version on conflict)",

@@ -1,3 +1,4 @@
+import { parseSkillSelection } from '../skills-rpc.js';
 import { timingSafeEqual } from 'node:crypto';
 import type { GitHubAppLeaser } from '../github-app.js';
 import { leaseTokenResult } from '../lease.js';
@@ -209,6 +210,7 @@ export async function handleRelayRequest(
       return err(400, 'expected {boxId, token, name}');
     }
     const existingReg = await store.getBox(body.boxId).catch(() => undefined);
+    const skillSelection = parseSkillSelection(body.skills);
     const reg: BoxRegistration = {
       boxId: body.boxId,
       token: body.token,
@@ -229,6 +231,7 @@ export async function handleRelayRequest(
       bridgeToken: body.bridgeToken || undefined,
       autoApproveHostActions: body.autoApproveHostActions === true,
       autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
+      ...(skillSelection ? { skills: skillSelection } : {}),
       originUrl: body.originUrl || undefined,
       // Kept when a re-register omits it, as in the relay server.
       ...(body.agent || existingReg?.agent ? { agent: body.agent || existingReg?.agent } : {}),

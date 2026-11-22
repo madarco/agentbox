@@ -84,6 +84,51 @@ library.
 6. **Docs.** Public skills page (web UI + stale bases), deployed-hub web UI
    list; plan status.
 
+## Phase 2 — implementation plan (2026-11-22)
+
+Scope: deliver the library to boxes, claude first, every provider; plus the two
+review items marked must-fix before a remote hub serves skills.
+
+1. **Must-fix: symlinks stay in the skill.** `readSkillTree` resolves a link only
+   when its target lies under the skill's own root (realpath), else the skill
+   gets a problem and is not uploaded. A top-level skill dir that is itself a
+   link (the usual `~/.claude/skills/x -> ~/.agents/skills/x`) is the root, so it
+   keeps working.
+2. **Must-fix: the tarball route uses custody's elevated byte read** (admin token,
+   an enrolled device's token, or loopback on a local hub), not the plain API key.
+   `agentbox skills --download` sends the admin token when this PC holds it.
+3. **Safe tar on both ends.** `tar.ts` moves into `@agentbox/sandbox-core` so ctl
+   (which inlines sandbox-core) reuses the same reader that refuses symlinks and
+   `..` paths.
+4. **Relay RPCs.** `skills.get` returns the box's resolved set
+   (`{library, skills: [{name, version, bytes}]}`); `skills.blob`
+   (`{name, version, offset}`) returns one base64 chunk (512 KiB raw) so a
+   cloud box's answer fits the bridge's 1 MiB body cap. Served from custody on
+   the `/rpc` path and in `executeCloudAction` (both call sites), like
+   `history.*`. No custody here, or an unseeded library: `{library: false}`.
+   A `readRange` on the custody store avoids re-reading a tarball per chunk.
+5. **Selection** rides the box registration, like `autoApproveSafeHostActions`:
+   `--skill <names>`, `--no-skill <names>`, `--no-skills` on `create` and
+   `agentbox <agent>` → create opts → `BoxRecord.skills` → registration. The relay
+   resolves it against the library's CURRENT versions on every `skills.get`
+   (pinning and "behind" are Phase 5).
+6. **Agent declaration.** `AgentSyncSpec.skills = {dirs, inject}`; claude's is
+   `{kind:'dir', path:'/etc/claude-code/.claude/skills'}`. It rides the
+   `agents.list` descriptor, so ctl links per agent from data and names no agent.
+7. **ctl.** At daemon start (off the critical path, like the history loop) and
+   on `agentbox-ctl skills sync`: `skills.get`, download what the manifest lacks,
+   verify each tree hash, write the canonical tree under
+   `~/.local/share/agentbox/skills/<name>` (vscode-owned, never a shared volume;
+   ctl runs as vscode, so not `/opt`), then symlink each skill into every `dir`
+   injection point (`sudo -n` creates a root-owned dir once). Removal is
+   manifest-based: only what ctl wrote is ever deleted.
+8. **Fallback.** Library off or unreachable: nothing changes; the host carry
+   still delivers skills as before.
+9. **Docs.** Public skills page (delivery, selection flags), CLI reference.
+
+Deferred, with reason (in Open items): excluding `skills/` from config-volume
+syncs and static bakes once the library is on.
+
 ## Open items
 
 - **`--link` (a PC folder watched and re-uploaded on change)** is not in
@@ -107,13 +152,37 @@ library.
   recreated at the same `http://127.0.0.1:8787` reads as already seeded here;
   `agentbox skills --upload-all` covers it.
 
+- **Phase 2: carried copies still reach boxes.** The plan says to stop seeding
+  `~/.agents` and exclude `skills/` from config-volume syncs and static bakes once
+  the library is on. Deferred: the shared docker volumes already hold every
+  carried skill (the sync is additive, so excluding them from future syncs
+  removes nothing), and dropping them for real needs a migration plus a decision
+  on boxes that can't reach the library. Until then a library skill and a carried
+  copy of the same name can both exist in a box; for claude, the library copy is
+  in the managed dir and the carried one in `~/.claude/skills`. Content is
+  normally identical (the library was seeded from the same PC).
+- **Phase 2: no pinning.** A box's selection is resolved against the library's
+  CURRENT versions on every `skills.get` (boot, `agentbox-ctl skills sync`), so a
+  restart picks up new versions. Recording the resolved versions on the box and
+  showing "behind" is Phase 5.
+- **Phase 2: a PC's local relay has no library on a remote-hub setup.** A docker
+  box created on a PC registers with that PC's relay, which serves `skills.*`
+  from its own custody; with the library on a remote control box, the PC's relay
+  answers `library: false` and the box keeps carried skills. Forward `skills.*`
+  to the configured hub (the host-reach channel already crosses that boundary).
+- **Phase 2: the selection isn't on the hub `Box` payload** (CLI list, web, tray
+  can't show it yet; Phase 6 surfaces).
+- **Phase 2: only claude is linked** (`AgentSyncSpec.skills` declared for claude
+  only). Codex, opencode, pi and openclaw are Phase 3, with their measured
+  injection shapes (`/etc/codex/skills`, env, flag, config key).
+
 ## From the independent review of PR #434 (2026-11-22)
 
 `/workspace/REVIEW-434.md`. Finding 1 (BLOCKING: the scan missed `.env`-style
 secrets) is fixed in the PR. The rest are below.
 
-- **MUST-FIX before skills reach a remote control box: symlinks are followed
-  out of the skill tree.** `readSkillTree` (`apps/cli/src/lib/skills/tree.ts`)
+- **DONE in Phase 2 — was MUST-FIX before skills reach a remote control box:
+  symlinks are followed out of the skill tree.** `readSkillTree` (`apps/cli/src/lib/skills/tree.ts`)
   dereferences every link wherever it points, so a skill holding
   `refs -> ~/Projects/app` uploads that checkout (its `.env` included) up to the
   50 MB cap. The plan's Security list says out-of-tree links are rejected; its
@@ -121,8 +190,9 @@ secrets) is fixed in the PR. The rest are below.
   behaves the same, so not a regression. Fix: resolve a link only when its
   realpath stays under the skill root (or under `~/.agents/skills` /
   `~/.claude/skills` for the usual cross-link); otherwise record a problem.
-- **MUST-FIX before skills reach a remote control box: the tarball route uses
-  the normal `/api/v1` gate, not custody's elevated byte read.**
+- **DONE in Phase 2 — was MUST-FIX before skills reach a remote control box:
+  the tarball route uses the normal `/api/v1` gate, not custody's elevated byte
+  read.**
   `api/v1/skills/[name]/tarball/route.ts`: any holder of the distributed API key
   (tray, thin clients) or a device token can read every skill's bytes. Safe only
   while the PC-side scan is trustworthy and `--allow-findings` is rare. Options:
@@ -248,3 +318,69 @@ fixed in the PR. Still open:
   plus `~/.agents`). Costs time on an explicit prepare only. Same item as the
   per-agent note above: digest only the dirs the variant stages.
 - **L5. Provider SDK not republished** — additive change; see the SDK note above.
+
+## From the Phase 2 `/code-review medium` (2026-11-22)
+
+Fixed in the PR: the control-box worker (`hub-worker.ts`) and the docker
+provider adapter (`DockerProvider.create`) dropped the skill selection; the
+daemon's sync had no `.catch` and the pass could throw (an unhandled rejection
+kills ctl) — the pass now never throws and the call is caught; the CLI surface
+fixture; skill names are validated at the flag (an invalid one used to vanish
+in the relay and leave a box with zero skills); a duplicated parse; a misplaced
+doc comment; stale flag names in comments. Still open:
+
+- **Each `skills.blob` chunk re-resolves the box's set** (lists the scope and
+  reads every selected skill's `meta.json`) to authorize one 512 KiB slice.
+  Fine for typical skills; a 50 MB skill is ~100 chunks. Authorize once per
+  download (e.g. a short-lived per-box resolved-set cache in the relay).
+- **No lock between the boot-time sync and `agentbox-ctl skills sync`.** Staging
+  dirs are now unique per pass, so neither clobbers the other's half-written
+  tree, but both rewrite `.manifest.json` and the last writer wins. Take a lock
+  file in the library dir.
+
+## From the independent review of PR #441 (2026-11-22)
+
+`/workspace/REVIEW-441.md`. Fixed in the PR: B1 (the ctl
+`agent-registry-fetch` expectations lacked the new `skillDirs`, CI red) and B2
+(`sanctionBranch` re-registered a docker box without its skill selection, so a
+host branch switch widened a `--no-skills` / `--skip-skills` box to the whole
+library; the hosted plane's own register handler now carries it too). R1 is
+accepted as intended: `GET /api/v1/skills/{name}/tarball` takes custody's
+elevated read, so a PC holding only the hub API key can list but not download
+(documented on the public skills page). Still open:
+
+- **L1. Every `skills.get` and `skills.blob` chunk reads and hashes the whole
+  `skills/` scope.** `resolveBoxSkills` → `custody.list('skills')` →
+  `FsCustodyStore.list` `readFile`s and sha256s every stored tarball of every
+  version, per chunk, on the hub's event loop: ~(chunks + 1) × library bytes per
+  box boot. Harmless for KB-sized skills. Fix: check `.seeded` with a `get`,
+  enumerate names without hashing, cache the resolved set per box for a pass
+  (supersedes the per-chunk note above).
+- **L2. `sudo -n install -d -o <vscode>` chowns an existing root-owned dir.** The
+  path comes from `agents.list`, which includes `agentbox agent add` agents. No
+  new boundary (vscode has passwordless sudo; plugin recipes run as root), and
+  for claude the dir never exists beforehand. Harden: sudo-create only when
+  missing, never chown an existing dir, optionally allowlist the prefix.
+- **L3. The manifest is written only at the end of a pass.** If a `symlink()` or
+  `rm` throws halfway, skills installed in that pass go unrecorded and become
+  orphan trees/links later removal never deletes. Write it in a `finally`, or
+  after each step.
+- **L4. Manifest keys aren't re-checked against the name rule** before
+  `rm(join(root, name), {recursive})`. Only a same-user (vscode) tamper reaches
+  it; cheap belt-and-braces.
+- **L5. On a cloud box with the host off, `skills.get` parks on
+  `HostActionQueue`.** ctl gives up after 60 s, but the queue slot and socket
+  stay open (the same leak as `agents.list`).
+- **L6. `readSkillTree` now skips out-of-tree link targets**, so the cloud-bake
+  skills digest misses edits to a linked file, and such skills are blocked from
+  upload and the auto-seed (the host carry still delivers them).
+- **L7. Find the elevated token per target URL.** `agentbox skills` takes the
+  admin token from `resolveCustodyTarget`, which returns nothing for a hub
+  exposed on this Mac after `hub unset-url`, so that download 401s. Use
+  `hubBearerFor(<target url>, 'admin', …)`, which also ties the token to the hub
+  that issued it.
+- **L8. A new ctl against an old hub appends an `rpc-unknown` event on every
+  boot** and logs "skills.get failed". Cosmetic.
+- **L9. Claude's inject dir is in every box's descriptor whatever the box's
+  agent** (not `runsHere`-gated), so a codex-only box still sudo-creates
+  `/etc/claude-code/.claude/skills` and installs the set. Harmless.
