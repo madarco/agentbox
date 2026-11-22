@@ -4,6 +4,9 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type {
+  HistorySearchHit,
+  HistorySessionFilter,
+  HistoryTurnRow,
   HistoryChunkRow,
   HistoryFileRow,
   HistoryRepo,
@@ -482,6 +485,139 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         )
         .run() as { changes?: number | bigint };
       return Number(r.changes ?? 0);
+    },
+
+    async querySessions(f: HistorySessionFilter) {
+      const where: string[] = [];
+      const args: unknown[] = [];
+      if (f.agent) {
+        where.push('agent = ?');
+        args.push(f.agent);
+      }
+      if (f.box) {
+        where.push('(box_id = ? OR box_name = ?)');
+        args.push(f.box, f.box);
+      }
+      if (f.project) {
+        where.push("project_repo_url LIKE ? ESCAPE '\\'");
+        args.push(`%${f.project.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      }
+      if (f.host) {
+        where.push('host_id = ?');
+        args.push(f.host);
+      }
+      if (f.sinceMs !== undefined) {
+        where.push('updated_at >= ?');
+        args.push(f.sinceMs);
+      }
+      if (f.q) {
+        if (fts) {
+          where.push(
+            `key IN (SELECT DISTINCT t.session_key FROM history_turns t
+               JOIN history_turns_fts x ON x.rowid = t.id WHERE history_turns_fts MATCH ?)`,
+          );
+          args.push(f.q);
+        } else {
+          where.push(`key IN (SELECT DISTINCT session_key FROM history_turns WHERE text LIKE ?)`);
+          args.push(`%${f.q.replace(/"/g, '')}%`);
+        }
+      }
+      const sql = `SELECT * FROM history_sessions ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        ORDER BY updated_at DESC LIMIT ?`;
+      return (db.prepare(sql).all(...args, f.limit ?? 50) as Row[]).map(toSession);
+    },
+
+    async matchSessionKeys(ref) {
+      if (!ref) return [];
+      const exact = db
+        .prepare('SELECT key FROM history_sessions WHERE key = ? OR session_id = ?')
+        .all(ref, ref) as Row[];
+      if (exact.length > 0) return exact.map((r) => String(r.key));
+      if (ref.length < 8 || /[%_\\]/.test(ref)) return [];
+      return (
+        db
+          .prepare(
+            'SELECT key FROM history_sessions WHERE session_id LIKE ? ORDER BY updated_at DESC LIMIT 11',
+          )
+          .all(`${ref}%`) as Row[]
+      ).map((r) => String(r.key));
+    },
+
+    async filesOfSession(key) {
+      return (
+        db
+          .prepare('SELECT * FROM history_files WHERE session_key = ? ORDER BY child, id')
+          .all(key) as Row[]
+      ).map(toFile);
+    },
+
+    async countTurns(key) {
+      const r = db
+        .prepare('SELECT COUNT(*) AS n FROM history_turns WHERE session_key = ?')
+        .get(key) as Row;
+      return n(r.n);
+    },
+
+    async turns(key, from, limit) {
+      // Session order: by timestamp where the agent wrote one, then by file and
+      // position, so a subagent's turns interleave with the parent's.
+      const rows = db
+        .prepare(
+          `SELECT t.kind, t.role, t.name, t.text, t.ts, t.at, f.path FROM history_turns t
+             JOIN history_files f ON f.id = t.file_id
+           WHERE t.session_key = ?
+           ORDER BY COALESCE(t.ts, ''), t.file_id, t.at, t.seq LIMIT ? OFFSET ?`,
+        )
+        .all(key, limit, from) as Row[];
+      return rows.map(
+        (r, i): HistoryTurnRow => ({
+          index: from + i,
+          kind: r.kind === 'tool' ? 'tool' : 'turn',
+          role: r.role === 'user' || r.role === 'assistant' ? r.role : null,
+          name: s(r.name),
+          text: s(r.text),
+          ts: s(r.ts),
+          path: String(r.path),
+          at: n(r.at),
+        }),
+      );
+    },
+
+    async toolCounts(key) {
+      return (
+        db
+          .prepare(
+            `SELECT name, COUNT(*) AS c FROM history_turns WHERE session_key = ? AND kind = 'tool'
+             GROUP BY name ORDER BY c DESC, name`,
+          )
+          .all(key) as Row[]
+      ).map((r) => ({ name: String(r.name), count: n(r.c) }));
+    },
+
+    async search(q, limit) {
+      const rows = fts
+        ? (db
+            .prepare(
+              `SELECT t.session_key, t.role, t.ts,
+                 snippet(history_turns_fts, 0, '[', ']', '…', 16) AS snip
+               FROM history_turns_fts x JOIN history_turns t ON t.id = x.rowid
+               WHERE history_turns_fts MATCH ? ORDER BY rank LIMIT ?`,
+            )
+            .all(q, limit) as Row[])
+        : (db
+            .prepare(
+              `SELECT session_key, role, ts, substr(text, 1, 200) AS snip FROM history_turns
+               WHERE text LIKE ? LIMIT ?`,
+            )
+            .all(`%${q.replace(/"/g, '')}%`, limit) as Row[]);
+      return rows.map(
+        (r): HistorySearchHit => ({
+          sessionKey: String(r.session_key),
+          role: r.role === 'user' || r.role === 'assistant' ? r.role : null,
+          ts: s(r.ts),
+          snippet: String(r.snip ?? ''),
+        }),
+      );
     },
   };
 }

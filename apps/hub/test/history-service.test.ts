@@ -101,6 +101,12 @@ const testModule: AgentHistoryModule = {
       if ((l.type === 'user' || l.type === 'assistant') && text) {
         records.push({ kind: 'turn', role: l.type, text, at, ...ts });
       }
+      if (Array.isArray(content)) {
+        for (const b of content as Array<{ type?: string; name?: string }>) {
+          if (b.type === 'tool_use' && b.name)
+            records.push({ kind: 'tool', name: b.name, at, ...ts });
+        }
+      }
       if (l.message?.usage && l.message.id) {
         records.push({
           kind: 'usage',
@@ -278,5 +284,151 @@ describe('history service', () => {
     expect(r).toMatchObject({ expired: 1, blobs: 1 });
     expect(await repo.listSessions()).toHaveLength(0);
     expect(archive.keys()).toHaveLength(0);
+  });
+});
+
+describe('history reads (Phase 2)', () => {
+  const T = 'bbbbbbbb-1111-2222-3333-444444444444';
+  async function seeded() {
+    const now = { t: 1_000_000 };
+    const ctx = await service(now);
+    const a = new Edge(ctx.svc, 'box1');
+    await a.append(
+      line({
+        type: 'user',
+        timestamp: '2026-11-22T10:00:00Z',
+        message: { content: 'fix the flaky retry test' },
+      }),
+    );
+    await a.append(
+      line({
+        type: 'assistant',
+        timestamp: '2026-11-22T10:00:02Z',
+        message: {
+          id: 'm1',
+          content: [
+            { type: 'text', text: 'done' },
+            { type: 'tool_use', name: 'Bash' },
+          ],
+        },
+      }),
+    );
+    await new Edge(ctx.svc, 'box1', `projects/-workspace/${S}/subagents/agent-1.jsonl`).append(
+      line({
+        type: 'user',
+        timestamp: '2026-11-22T10:00:01Z',
+        message: { content: 'subagent task' },
+      }),
+    );
+    const b = new Edge(ctx.svc, 'box2', `projects/-workspace/${T}.jsonl`);
+    now.t += 1000;
+    await b.append(
+      line({
+        type: 'user',
+        timestamp: '2026-11-22T11:00:00Z',
+        message: { content: 'write the docs' },
+      }),
+    );
+    return { ...ctx, a, b };
+  }
+
+  it('lists newest first and filters by box, agent, since and words', async () => {
+    const { svc } = await seeded();
+    expect((await svc.listSessions({})).map((s) => s.sessionId)).toEqual([T, S]);
+    expect((await svc.listSessions({ box: 'box1' })).map((s) => s.sessionId)).toEqual([S]);
+    expect((await svc.listSessions({ box: 'smoke' })).length).toBe(2); // the box name
+    expect(await svc.listSessions({ agent: 'codex' })).toEqual([]);
+    expect((await svc.listSessions({ sinceMs: 1_000_500 })).map((s) => s.sessionId)).toEqual([T]);
+    expect((await svc.listSessions({ q: 'flaky retry' })).map((s) => s.sessionId)).toEqual([S]);
+    // FTS syntax in user input is quoted away, never an error.
+    expect(await svc.listSessions({ q: 'flaky"' })).toHaveLength(1);
+    // Operators become plain words that must also match: no error, no hits.
+    expect(await svc.listSessions({ q: '"flaky OR NEAR(' })).toEqual([]);
+    expect(await svc.listSessions({ q: '***' })).toHaveLength(2); // no words: no filter
+  });
+
+  it('resolves a session by key, id or a unique 8+ char prefix', async () => {
+    const { svc } = await seeded();
+    expect(await svc.resolveSession(S)).toEqual({ ok: true, key: `claude:${S}` });
+    expect(await svc.resolveSession(`claude:${T}`)).toEqual({ ok: true, key: `claude:${T}` });
+    expect(await svc.resolveSession('aaaaaaaa')).toEqual({ ok: true, key: `claude:${S}` });
+    expect(await svc.resolveSession('aaaa')).toMatchObject({ ok: false, code: 'not_found' });
+    expect(await svc.resolveSession('aaaaaaa%')).toMatchObject({ ok: false, code: 'not_found' });
+  });
+
+  it('reports an ambiguous prefix with its candidates', async () => {
+    const { svc } = await seeded();
+    await new Edge(
+      svc,
+      'box3',
+      'projects/-workspace/aaaaaaaa-9999-2222-3333-444444444444.jsonl',
+    ).append(line({ type: 'user', message: { content: 'x' } }));
+    const r = await svc.resolveSession('aaaaaaaa');
+    expect(r).toMatchObject({ ok: false, code: 'ambiguous' });
+    expect(r.ok ? [] : r.candidates).toHaveLength(2);
+  });
+
+  it('condenses a session: files, tools, first prompt, last reply', async () => {
+    const { svc } = await seeded();
+    const d = (await svc.sessionDetail(`claude:${S}`))!;
+    expect(d.files.map((f) => [f.path, f.child])).toEqual([
+      [`projects/-workspace/${S}.jsonl`, false],
+      [`projects/-workspace/${S}/subagents/agent-1.jsonl`, true],
+    ]);
+    expect(d.tools).toEqual([{ name: 'Bash', count: 1 }]);
+    expect(d.firstPrompt).toBe('fix the flaky retry test');
+    expect(d.lastReply).toBe('reply');
+    expect(d.turns).toBe(4);
+  });
+
+  it('pages turns in time order with subagent rows interleaved', async () => {
+    const { svc } = await seeded();
+    const rows = await svc.sessionTurns(`claude:${S}`, 0, 10);
+    expect(rows.map((r) => [r.index, r.kind, r.text ?? r.name])).toEqual([
+      [0, 'turn', 'fix the flaky retry test'],
+      [1, 'turn', 'subagent task'],
+      [2, 'turn', 'reply'],
+      [3, 'tool', 'Bash'],
+    ]);
+    expect((await svc.sessionTurns(`claude:${S}`, 2, 1)).map((r) => r.index)).toEqual([2]);
+  });
+
+  it('picks the main file by default and a listed path on request', async () => {
+    const { svc } = await seeded();
+    expect((await svc.sessionFile(`claude:${S}`))!.path).toBe(`projects/-workspace/${S}.jsonl`);
+    const sub = `projects/-workspace/${S}/subagents/agent-1.jsonl`;
+    expect((await svc.sessionFile(`claude:${S}`, sub))!.path).toBe(sub);
+    expect(await svc.sessionFile(`claude:${S}`, `projects/-workspace/${T}.jsonl`)).toBeNull();
+  });
+
+  it('streams raw bytes exactly, even when a seal replaces chunks mid-download', async () => {
+    const now = { t: 1_000_000 };
+    const { svc, repo } = await service(now);
+    const edge = new Edge(svc);
+    const big = 'Z'.repeat(6000);
+    for (let i = 0; i < 4; i++) await edge.append(line({ i, big }));
+    const fileId = (await repo.getFile('box:box1', 'claude', PATH))!.id;
+    const it = svc.rawStream(fileId);
+    const parts: Buffer[] = [];
+    const first = await it.next();
+    parts.push(first.value as Buffer);
+    now.t += SEAL_IDLE_MS + 1;
+    expect((await svc.sweep()).sealed).toBe(1); // the remaining small chunks are gone now
+    for (;;) {
+      const n = await it.next();
+      if (n.done) break;
+      parts.push(n.value);
+    }
+    expect(Buffer.concat(parts).equals(edge.bytes)).toBe(true);
+  });
+
+  it('searches turns with snippets, quoting user input', async () => {
+    const { svc } = await seeded();
+    const hits = await svc.search('flaky', 10);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ sessionKey: `claude:${S}`, role: 'user' });
+    expect(hits[0]!.snippet).toContain('[flaky]');
+    expect(await svc.search('"unbalanced', 10)).toEqual([]);
+    expect(await svc.search('   ', 10)).toEqual([]);
   });
 });

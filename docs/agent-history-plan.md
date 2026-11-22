@@ -298,6 +298,37 @@ per-project opt-out (`history.capture`), retention 90 days (`history.retentionDa
 
 **Done:** download a destroyed box's session and diff it against the original.
 
+#### Phase 2 implementation plan (2026-11-22)
+
+- **Service and repo** (`apps/hub/lib/backend/history.ts` + `HistoryRepo`): add
+  read methods behind the same seam: filtered session listing, resolving a
+  session reference (`<agent>:<id>`, the bare id, or an id prefix of at least 8
+  characters), the files of a session, paged turns, FTS search, and a raw
+  stream per file. Raw reassembly is streamed chunk by chunk, with large strings
+  restored from `history_blobs`, so a 387 MB transcript never sits in memory.
+- **Routes** (all `GET`, behind the `/api/v1` Bearer gate):
+  - `/history/sessions?agent&box&project&host&since&q&limit`: newest activity
+    first. `box` matches a box id or name, `project` a repo URL substring, and
+    `q` is full-text over turns.
+  - `/history/sessions/{ref}`: condensed. The session row, its files (path,
+    child flag, bytes), tool-name counts, and the first user prompt and last
+    assistant reply.
+  - `/history/sessions/{ref}/turns?from&to`: paged turn and tool rows.
+  - `/history/sessions/{ref}/raw?path=`: one file, byte for byte (default: the
+    session's main file).
+  - `/history/search?q&limit`: matching turns with a snippet and their session.
+  - FTS input is quoted token by token, so user text never reaches FTS5 syntax.
+- **CLI** `agentbox sessions ls|show|search|download` over the hub client
+  (`withHubClient`; `--local` prefers this machine's hub, see the backlog for
+  split stores). `download` writes every file of the session under
+  `<dir>/<sessionId>/` at its agent-relative path, so a diff against the box's
+  `~/.claude/projects/-workspace/` is a plain `diff -r`. `--json` everywhere.
+- **Docs and contract**: an OpenAPI entry per route, the CLI reference page, and
+  the `/api/v1` additions listed for the tray.
+- **Done**: download a destroyed docker box's session and compare it with the
+  original on the shared volume. Byte-identical except at redactions, which keep
+  the length.
+
 ### Phase 3 — other agents
 
 `history` blocks + parsers for codex, pi, opencode (openclaw per Phase 0).
