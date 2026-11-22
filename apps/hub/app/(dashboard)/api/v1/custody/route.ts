@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic';
 // Same anti-traversal shape the store enforces (mirrors normalizeCustodyPrefix):
 // a bare scope or `scope/subject`, plain segments only. We reject a malformed
 // prefix here with a 400 rather than forwarding it.
-const PREFIX_RE = /^(agents|projects|prepared|boxes)(\/[A-Za-z0-9._-]+)*$/;
+const PREFIX_RE = /^(agents|projects|prepared|boxes|skills)(\/[A-Za-z0-9._-]+)*$/;
 
 export async function GET(req: Request): Promise<Response> {
   const custody = globalThis.__AGENTBOX_HUB_CUSTODY;

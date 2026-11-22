@@ -4,7 +4,9 @@
 [Phase 0 results](#phase-0-results): **go** on box-local delivery for all five
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
-from the PC) and adds the `agentbox skills` TUI. Phases 1+ not started.
+from the PC) and adds the `agentbox skills` TUI. Phase 1 implemented (see
+[`hub-skills-backlog.md`](./hub-skills-backlog.md) for what it left open);
+Phases 1b+ not started.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -611,6 +613,16 @@ false-positive suppressions, the automatic first seed in
 PC's skills with one summary line and skips a planted fake-key skill; a second
 run seeds nothing; on a scratch-HOME "second PC", `agentbox skills --download-all`
 reproduces the same tree hashes; `--discard` removes a skill from custody.
+
+**Status: implemented 2026-11-22**, live-checked on a `hub expose` hub plus a
+scratch-HOME second PC: the seed uploaded 14 skills and skipped the planted
+fake-key one by name, a second seed uploaded nothing, `--download-all` on the
+second PC reproduced all 14 tree hashes, and `--discard` removed a skill while
+the library stayed marked seeded. Deviations from the text above: AgentBox's
+`/agentbox` fork skill (bare name `agentbox`) is reserved alongside `agentbox-*`;
+each PC also remembers the hubs it has seen seeded, so later creates skip the
+check without a network call; a different, separate `~/.claude/skills/<name>`
+copy is never deleted by a download, only reported.
 
 ### Phase 1b — web list + discard, stale-bake fingerprint
 

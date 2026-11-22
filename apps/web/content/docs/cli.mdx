@@ -622,6 +622,13 @@ agentbox queue show <id>
 agentbox queue cancel <id>
 agentbox queue clear --all
 
+# Skills library on the hub (see Skills)
+agentbox skills                        # local vs hub, then upload / download / discard
+agentbox skills --list [--json]
+agentbox skills --upload <names> | --upload-all [--allow-findings]
+agentbox skills --download <names> | --download-all [--yes]
+agentbox skills --discard <names> --yes
+
 # Host relay process
 agentbox relay status
 agentbox relay restart
