@@ -129,6 +129,40 @@ review items marked must-fix before a remote hub serves skills.
 Deferred, with reason (in Open items): excluding `skills/` from config-volume
 syncs and static bakes once the library is on.
 
+## Phase 3 — implementation plan (2026-11-22)
+
+Scope: every built-in agent reads the box's library skills, each through the
+injection Phase 0 measured, declared as data on `AgentSyncSpec.skills`.
+
+Measured before planning (throwaway container, codex 0.171.0, opencode 1.19.6,
+pi 0.73.1, openclaw 2026.11.6): all three non-`dir` injections tolerate a
+missing directory (a box with no library, or an older ctl), so the injection
+can be unconditional. Same-name collisions between the carried `~/.agents`
+copy and the library copy: codex lists both (user + admin scope), opencode
+keeps the library copy, pi and openclaw keep the carried one.
+
+1. **`AgentSkillsSpec.inject` grows three shapes**: `env` (`name`, `value` with a
+   `{dir}` placeholder), `flag` (`argv` with `{dir}`), `config` (`jsonPath`, for an
+   agent whose own boot task merges it). `{dir}` is the canonical box path
+   `BOX_SKILLS_LIBRARY_DIR` (`/home/vscode/.local/share/agentbox/skills`), now a
+   core constant ctl also uses.
+2. **codex**: `dir` → `/etc/codex/skills` (ctl links, like claude).
+3. **opencode**: `env` → `OPENCODE_CONFIG_CONTENT={"skills":{"paths":["{dir}"]}}`,
+   merged into the agent's run env by one helper (`agentRunEnv`) at the sites that
+   read `boxRunEnv` (docker container/tmux/exec env, cloud `buildCloudBoxRunEnv`).
+4. **pi**: `flag` → `--skill {dir}`, appended to the declared `launchFlags` by one
+   helper (`agentLaunchFlags`) at the docker and cloud launch sites.
+5. **openclaw**: `config` → `skills.load.extraDirs`; its existing
+   `openclaw-agentbox-env` boot task merges the library dir next to
+   `/opt/agentbox/skills`. openclaw watches its skill dirs, so skills that arrive
+   after the task ran still load.
+6. **The docker `~/.agents` volume stays** (plan decision 6's condition does not
+   hold yet): a box served by a relay with no library (a PC's local relay on a
+   remote-hub setup) or built on an image without the Phase 2 ctl gets codex,
+   opencode, pi and openclaw skills ONLY from that volume. Retiring it now would
+   drop them. Revisit with the carry-exclusion item.
+7. **Docs**: public skills page (every agent), plan status.
+
 ## Open items
 
 - **`--link` (a PC folder watched and re-uploaded on change)** is not in

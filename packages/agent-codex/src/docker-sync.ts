@@ -20,6 +20,7 @@ import {
   DOCKER_HOST_ALIAS,
   requireAgentCredential,
   type LoopbackEndpoint,
+  agentLaunchFlags,
 } from '@agentbox/core';
 import {
   mergeCodexConfigForBox,
@@ -632,7 +633,7 @@ export interface StartCodexSessionOptions {
 
 export async function startCodexSession(opts: StartCodexSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CODEX_SESSION;
-  const flags = resolveAgentSpec('codex').launchFlags ?? [];
+  const flags = agentLaunchFlags(resolveAgentSpec('codex'));
   const cmd = ['codex', ...flags, ...opts.codexArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];

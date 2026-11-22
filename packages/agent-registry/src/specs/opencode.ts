@@ -93,6 +93,17 @@ export const opencodeSpec: AgentSyncSpec = {
       label: 'the agentbox-state plugin',
     },
   ],
+  // The hub's skills library: OPENCODE_CONFIG_CONTENT is merged as a final
+  // config layer, and its `skills.paths` adds the box-local library (measured,
+  // Phase 0). A missing dir is ignored, so it is set unconditionally.
+  skills: {
+    dirs: ['.config/opencode/skills', '.claude/skills', '.agents/skills'],
+    inject: {
+      kind: 'env',
+      name: 'OPENCODE_CONFIG_CONTENT',
+      value: '{"skills":{"paths":["{dir}"]}}',
+    },
+  },
   caps: {
     resume: false,
     teleport: 'stub',

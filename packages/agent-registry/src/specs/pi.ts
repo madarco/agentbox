@@ -157,6 +157,12 @@ export const piSpec: AgentSyncSpec = {
   // interactive launch into a repo carrying a `.pi/` dir blocks on a
   // "trust project-local files?" dialog that nothing on the host can answer.
   launchFlags: ['-a'],
+  // The hub's skills library: `--skill <dir>` adds a dir of skills to pi's own
+  // discovery (measured, Phase 0); a missing dir loads nothing and is no error.
+  skills: {
+    dirs: ['.pi/agent/skills', '.agents/skills'],
+    inject: { kind: 'flag', argv: ['--skill', '{dir}'] },
+  },
   caps: {
     resume: true,
     teleport: 'full',

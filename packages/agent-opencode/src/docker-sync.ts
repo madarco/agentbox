@@ -1,4 +1,4 @@
-import { agentPushExcludes, type LoopbackEndpoint } from '@agentbox/core';
+import { agentPushExcludes, type LoopbackEndpoint, agentRunEnv } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -66,7 +66,9 @@ const CONTAINER_OPENCODE_DIR = '/home/vscode/.local/share/opencode';
  * persists; it is generic, but the only state read back is the `opencode/`
  * subdir, so another tool's state landing there is harmless.
  */
-const OPENCODE_BOX_RUN_ENV = resolveAgentSpec('opencode').boxRunEnv;
+// `agentRunEnv`: `boxRunEnv` plus the `env` skills injection
+// (OPENCODE_CONFIG_CONTENT naming the box-local library).
+const OPENCODE_BOX_RUN_ENV = agentRunEnv(resolveAgentSpec('opencode'));
 /** Image-baked AgentBox OpenCode plugin (copied in from packages/sandbox-docker/scripts/). */
 
 export interface OpencodeConfigSpec {

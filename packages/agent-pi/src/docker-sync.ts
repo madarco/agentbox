@@ -8,6 +8,7 @@
  * restated; that is what keeps this in step with the cloud stager.
  */
 
+import { agentLaunchFlags, agentRunEnv } from '@agentbox/core';
 import type { LoopbackEndpoint } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
@@ -40,7 +41,7 @@ function hostPiDir(hostHome: string = homedir()): string {
   return join(hostHome, ...PI_SPEC.staticPaths[0]!.hostHomeRel);
 }
 /** `PI_SKIP_VERSION_CHECK` and friends, as declared. */
-const PI_BOX_RUN_ENV = PI_SPEC.boxRunEnv;
+const PI_BOX_RUN_ENV = agentRunEnv(PI_SPEC);
 
 /**
  * Provider API keys forwarded from the host's `process.env` into the box.
@@ -275,7 +276,8 @@ export interface StartPiSessionOptions {
  */
 export async function startPiSession(opts: StartPiSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_PI_SESSION;
-  const flags = PI_SPEC.launchFlags ?? [];
+  // Declared flags plus the `flag` skills injection (`--skill <library>`).
+  const flags = agentLaunchFlags(PI_SPEC);
   const cmd = [PI_SPEC.binary, ...flags, ...opts.piArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];

@@ -108,7 +108,17 @@ A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and c
 
 ### Library skills in boxes
 
-A box created against a hub that holds a library pulls its skills when it starts: its in-box supervisor asks the hub for the box's set over the same channel it uses for everything else, downloads each skill, checks it against its version hash, and keeps it in the box (`~/.local/share/agentbox/skills`). This works the same on every provider, Docker and cloud, including a box created on a control box whose own machine has no skills. **Claude Code** sees them through its managed skills folder (`/etc/claude-code/.claude/skills`); Codex, OpenCode, Pi and OpenClaw follow.
+A box created against a hub that holds a library pulls its skills when it starts: its in-box supervisor asks the hub for the box's set over the same channel it uses for everything else, downloads each skill, checks it against its version hash, and keeps it in the box (`~/.local/share/agentbox/skills`). This works the same on every provider, Docker and cloud, including a box created on a control box whose own machine has no skills. Every agent sees them in its own way, without any setup:
+
+| Agent       | How the library reaches it                                               |
+| ----------- | ------------------------------------------------------------------------ |
+| Claude Code | linked into its managed skills folder, `/etc/claude-code/.claude/skills` |
+| Codex       | linked into `/etc/codex/skills` (Codex's admin scope)                    |
+| OpenCode    | `OPENCODE_CONFIG_CONTENT` adds the folder to its `skills.paths`          |
+| Pi          | launched with `--skill <folder>`                                         |
+| OpenClaw    | the folder is added to `skills.load.extraDirs` at boot (picked up live)  |
+
+Skill names are unchanged in every agent (`/unslop`, and `skill:unslop` in Pi as for any Pi skill). If a skill with the same name also arrives from your machine's `~/.agents/skills` (see below), OpenCode uses the library copy, Codex lists both, and Pi and OpenClaw use the copy from your machine.
 
 Pick a box's skills when you create it:
 

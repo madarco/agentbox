@@ -774,11 +774,60 @@ export interface AgentSkillsSpec {
   /** User skill dirs on a PC, relative to the home dir (discovery). */
   dirs: readonly string[];
   /**
-   * `dir`: ctl symlinks each library skill into this absolute box-local
-   * directory (created with `sudo -n` when root-owned). Phase 3 adds the other
-   * shapes measured in Phase 0 (a launch flag, an env var, a config key).
+   * How the box's library ({@link BOX_SKILLS_LIBRARY_DIR}) reaches the agent,
+   * measured per agent in docs/hub-skills-plan.md (Phase 0). `{dir}` in a value
+   * or argv is replaced with that path. Every shape tolerates the dir not
+   * existing yet (no library, an older ctl), so the injection is unconditional.
+   *
+   * - `dir`: ctl symlinks each library skill into this absolute box-local
+   *   directory (created with `sudo -n` when root-owned). claude, codex.
+   * - `env`: an env var on the agent's processes, merged into its run env by
+   *   {@link agentRunEnv}. opencode (`OPENCODE_CONFIG_CONTENT`).
+   * - `flag`: argv appended to the agent's `launchFlags` by
+   *   {@link agentLaunchFlags}. pi (`--skill {dir}`).
+   * - `config`: a config array the agent's OWN boot task merges `{dir}` into
+   *   (nothing generic writes another agent's config format). openclaw
+   *   (`skills.load.extraDirs`).
    */
-  inject: { kind: 'dir'; path: string };
+  inject:
+    | { kind: 'dir'; path: string }
+    | { kind: 'env'; name: string; value: string }
+    | { kind: 'flag'; argv: readonly string[] }
+    | { kind: 'config'; jsonPath: readonly string[] };
+}
+
+/**
+ * Where ctl keeps the box's library skills (one directory per skill): box-local,
+ * owned by the box user, never on a shared docker volume.
+ */
+export const BOX_SKILLS_LIBRARY_DIR = '/home/vscode/.local/share/agentbox/skills';
+
+const fillDir = (v: string): string => v.split('{dir}').join(BOX_SKILLS_LIBRARY_DIR);
+
+/**
+ * The agent's run env: its declared `boxRunEnv` plus the library injection when
+ * it is an `env` one. Every site that applies `boxRunEnv` to an agent's
+ * processes reads this instead, so the two can't drift.
+ */
+export function agentRunEnv(
+  spec: Pick<AgentSyncSpec, 'boxRunEnv' | 'skills'>,
+): Record<string, string> {
+  const inject = spec.skills?.inject;
+  return inject?.kind === 'env'
+    ? { ...spec.boxRunEnv, [inject.name]: fillDir(inject.value) }
+    : { ...spec.boxRunEnv };
+}
+
+/**
+ * The argv prepended to every launch: the declared `launchFlags` plus the
+ * library injection when it is a `flag` one.
+ */
+export function agentLaunchFlags(spec: Pick<AgentSyncSpec, 'launchFlags' | 'skills'>): string[] {
+  const inject = spec.skills?.inject;
+  return [
+    ...(spec.launchFlags ?? []),
+    ...(inject?.kind === 'flag' ? inject.argv.map(fillDir) : []),
+  ];
 }
 
 export interface AgentSyncSpec {

@@ -12,6 +12,7 @@
  * that resolves the provider from the box + handles the resume-fallback.
  */
 import { spawn } from 'node:child_process';
+import { agentLaunchFlags } from '@agentbox/core';
 import type { AgentSettings, BoxRecord, Provider } from '@agentbox/core';
 import { agentSettingsFor } from '@agentbox/config';
 import {
@@ -27,9 +28,10 @@ import { seedDeclaredFilesForLaunch } from './sync/agent-seed.js';
  * `isRuntimeAgent`: the binary here is an open string and an unknown one must
  * launch bare, not throw.
  */
-function agentLaunchFlags(binary: string): readonly string[] {
+function launchFlagsFor(binary: string): readonly string[] {
   if (!isRuntimeAgent(binary)) return [];
-  return resolveAgentSpec(binary).launchFlags ?? [];
+  // Declared flags plus a `flag` skills injection (pi's `--skill <library>`).
+  return agentLaunchFlags(resolveAgentSpec(binary));
 }
 
 /** Printed in the pane the instant the session command starts, so a freshly
@@ -77,7 +79,7 @@ export function buildCloudAttachInnerCommand(
   const exports = Object.entries(env ?? {})
     .map(([k, v]) => `export ${k}=${shQuote(v)}; `)
     .join('');
-  const launchFlags = agentLaunchFlags(binary);
+  const launchFlags = launchFlagsFor(binary);
   const args = [...launchFlags, ...(extraArgs ?? [])];
   if (args.length === 0) {
     return `bash -lc '${agentStartBanner(binary)}${exports}exec ${binary}'`;

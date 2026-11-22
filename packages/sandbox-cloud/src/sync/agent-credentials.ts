@@ -55,6 +55,7 @@ import {
   type CloudHandle,
   type CloudVolumeMount,
   type SyncTransport,
+  agentRunEnv,
 } from '@agentbox/core';
 import { existsSync } from 'node:fs';
 import { agentCloudModule } from './agent-cloud-module.js';
@@ -277,7 +278,9 @@ export async function ensureAgentVolumesForCloud(
  */
 export function buildCloudBoxRunEnv(agents: readonly CloudAgentKind[]): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const agent of agents) Object.assign(env, resolveAgentSpec(agent).boxRunEnv);
+  // `agentRunEnv`: `boxRunEnv` plus an `env` skills injection (opencode's
+  // OPENCODE_CONFIG_CONTENT naming the box-local library).
+  for (const agent of agents) Object.assign(env, agentRunEnv(resolveAgentSpec(agent)));
   return env;
 }
 

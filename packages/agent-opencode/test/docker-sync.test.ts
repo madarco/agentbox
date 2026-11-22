@@ -48,6 +48,8 @@ describe('buildOpencodeMounts', () => {
     expect(result.env).toEqual({
       OPENCODE_CONFIG_DIR: '/home/vscode/.local/share/opencode/config',
       XDG_STATE_HOME: '/home/vscode/.local/share/opencode/.state',
+      // The hub's skills library, as a final config layer (`skills.paths`).
+      OPENCODE_CONFIG_CONTENT: '{"skills":{"paths":["/home/vscode/.local/share/agentbox/skills"]}}',
     });
   });
 });

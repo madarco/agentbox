@@ -23,7 +23,8 @@
  * parser warns on unknown keys instead of failing.
  */
 
-import type { AgentConfigRenderSpec, AgentServiceSpec } from '@agentbox/core';
+import { agentRunEnv } from '@agentbox/core';
+import type { AgentConfigRenderSpec, AgentServiceSpec, AgentSkillsSpec } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from './registry.js';
 
 /** One file ctl watches in the box, and what the host should do when it changes. */
@@ -52,10 +53,12 @@ export interface AgentWatchDescriptor {
 export interface AgentDescriptor {
   id: string;
   /**
-   * Where ctl links the box's library skills for this agent (`AgentSyncSpec.skills`).
-   * Absent = this agent gets none.
+   * How the box's library skills reach this agent (`AgentSyncSpec.skills`).
+   * ctl acts only on a `dir` injection (it links); the other shapes are applied
+   * host-side at launch (`env`, `flag`) or by the agent's own boot task
+   * (`config`), and an older ctl ignores any kind it doesn't know. Absent = none.
    */
-  skills?: { inject: { kind: 'dir'; path: string } };
+  skills?: { inject: AgentSkillsSpec['inject'] };
   /** Files to watch in-box, with their intent. */
   watch: readonly AgentWatchDescriptor[];
   /**
@@ -193,7 +196,7 @@ export function buildAgentDescriptors(
       activitySource: spec.caps.activitySource,
       surface: spec.caps.surface ?? ('tui' as const),
       ...(spec.service && runsHere(spec.id)
-        ? { service: serviceWithRunEnv(spec.service, spec.boxRunEnv) }
+        ? { service: serviceWithRunEnv(spec.service, agentRunEnv(spec)) }
         : {}),
       ...(spec.configRender && runsHere(spec.id) ? { configRender: spec.configRender } : {}),
       ...(spec.skills ? { skills: { inject: spec.skills.inject } } : {}),
