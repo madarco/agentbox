@@ -225,6 +225,40 @@ export function accountKindsProblem(raw: unknown, hasCredential: boolean): strin
   return null;
 }
 
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * `accountEnv` names the env var each PASTED kind authenticates through. Every
+ * pasted kind in `accountKinds` needs one (otherwise a box on that account
+ * would have no way to receive its token), and no other kind may appear.
+ */
+export function accountEnvProblem(rawEnv: unknown, rawKinds: unknown): string | null {
+  const kinds = Array.isArray(rawKinds) ? (rawKinds as unknown[]) : [];
+  const pasted = kinds.filter((k) => k === 'api-key' || k === 'setup-token') as string[];
+  if (rawEnv === undefined) {
+    return pasted.length > 0
+      ? `\`accountEnv\` must name an env var for ${pasted.map((k) => `'${k}'`).join(', ')}`
+      : null;
+  }
+  if (rawEnv === null || typeof rawEnv !== 'object' || Array.isArray(rawEnv)) {
+    return '`accountEnv` must be an object of `{ kind: ENV_VAR }`';
+  }
+  const env = rawEnv as Record<string, unknown>;
+  for (const [kind, name] of Object.entries(env)) {
+    if (!pasted.includes(kind)) {
+      return `\`accountEnv\` names '${kind}', which is not a pasted kind in \`accountKinds\``;
+    }
+    if (typeof name !== 'string' || !ENV_NAME_RE.test(name)) {
+      return `\`accountEnv.${kind}\` must be an env var name (UPPER_SNAKE)`;
+    }
+  }
+  const missing = pasted.filter((k) => env[k] === undefined);
+  if (missing.length > 0) {
+    return `\`accountEnv\` must name an env var for ${missing.map((k) => `'${k}'`).join(', ')}`;
+  }
+  return null;
+}
+
 function cloneProblem(raw: unknown): string | null {
   if (raw === null || typeof raw !== 'object') return '`clone` must be an object';
   const clone = raw as Record<string, unknown>;
@@ -322,6 +356,7 @@ export function agentSpecProblem(raw: unknown): string | null {
     (spec.accountKinds === undefined
       ? null
       : accountKindsProblem(spec.accountKinds, spec.credential !== undefined)) ??
+    accountEnvProblem(spec.accountEnv, spec.accountKinds) ??
     staticPathsProblem(spec.staticPaths);
   if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to

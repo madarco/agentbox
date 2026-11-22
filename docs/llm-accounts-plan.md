@@ -654,6 +654,45 @@ Implementation notes:
 - The headless `--code` call reports an error when the store refuses the new
   login, so an orchestrating agent is not told it was saved.
 
+## Phase 3 plan (selection + seeding)
+
+1. **Selection.** `<agent>.account` (generated for every agent with
+   `accountKinds`) resolves `--account` > project config > global config >
+   `default`. The repo's `agentbox.yaml` `defaults:` layer is **ignored** for
+   this key (a repo must not pick which subscription it bills); a value there
+   is warned about. `agentbox <agent> --account <name>`, `agentbox create
+   --account <agent>=<name>` (repeatable), hub create `opts.accounts`. The
+   resolved choice is validated against the store (a named account must exist)
+   and recorded as `BoxRecord.accounts` (named accounts only; absent = all
+   `default`). Every later seam reads the record, never current config. An
+   existing box keeps its account; a different `--account` on it is refused
+   (switching is backlog).
+2. **Env per kind is registry data**: `AgentSyncSpec.accountEnv` (`api-key` →
+   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, `setup-token` →
+   `CLAUDE_CODE_OAUTH_TOKEN`). A box on a named account gets exactly that
+   account's auth: every `accountEnv` key is suppressed from the host-env spray
+   for that agent, and a pasted kind injects its own key.
+3. **Docker.** A named account mounts `accountConfigVolume(...)` instead of the
+   shared volume (it wins over `isolate`), re-seeded from the host with
+   `account` set, so the host's login, account state and now **`settings.json`
+   auth env** (`env.ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+   `ANTHROPIC_AUTH_TOKEN`, `apiKeyHelper`) stay out. The credential sync runs
+   against the account's secret, never the legacy backup. An `api-key` volume
+   is pre-seeded with `customApiKeyResponses.approved` (Phase 0 (a′)). The
+   exec seam re-applies the policy from the box record. `prune --all` keeps
+   every `-acct-` volume.
+4. **Cloud.** A named account mounts its sibling subpath
+   (`accountCloudSubpath`) and stages the account's secret instead of the
+   legacy backup; a pasted kind stages no file. The env policy applies to the
+   provision env.
+5. **Fan-out guard until Phase 4.** A named box's credential must never reach
+   the legacy backup or other boxes, and the default login must never be pushed
+   into a named box: the relay drops a credential update from a box whose
+   record names an account for that agent, propagate skips such boxes, and the
+   cloud resume reconcile / checkpoint extract skip those agents.
+6. **Model-auth lender account.** A borrowed login uses the lender's resolved
+   account (`codex.account`), from the account store.
+
 ## Backlog (not in these phases)
 
 - Switching a running box to another account (reseed + agent restart).

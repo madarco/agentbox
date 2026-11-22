@@ -835,6 +835,15 @@ export interface AgentSyncSpec {
    * login account's secret IS that file.
    */
   accountKinds?: readonly LlmAccountKind[];
+  /**
+   * The env var each pasted account kind authenticates through (`api-key` →
+   * `ANTHROPIC_API_KEY`). A box on a named account gets that account's value
+   * injected, and EVERY key listed here is suppressed from the host-env spray
+   * for this agent — so a named subscription is never shadowed by the host's
+   * API key (Claude prefers a key over its OAuth login). Required for each
+   * pasted kind in `accountKinds`.
+   */
+  accountEnv?: Readonly<Partial<Record<Exclude<LlmAccountKind, 'login'>, string>>>;
   /** Host env keys forwarded into the box so an env-authed agent finds its creds. */
   forwardedEnvKeys: readonly string[];
   /**

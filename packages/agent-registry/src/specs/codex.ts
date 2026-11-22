@@ -109,6 +109,7 @@ export const codexSpec: AgentSyncSpec = {
   },
   // Named LLM accounts (docs/llm-accounts-plan.md). Codex has no setup-token.
   accountKinds: ['login', 'api-key'],
+  accountEnv: { 'api-key': 'OPENAI_API_KEY' },
   forwardedEnvKeys: ['OPENAI_API_KEY'],
   boxRunEnv: {},
   // Codex auto-discovers `~/.codex/hooks.json` and accumulates its hooks with
@@ -133,6 +134,15 @@ export const codexSpec: AgentSyncSpec = {
   // tied to both the file content and the codex version, and a mismatch turns
   // the cosmetic warning into a *blocking* "Hooks need review" dialog.
   launchFlags: ['--enable', 'hooks', '--dangerously-bypass-hook-trust'],
+  settings: [
+    {
+      key: 'account',
+      type: 'string',
+      default: 'default',
+      description:
+        "Named LLM account new boxes of this agent run on (`agentbox accounts` lists them; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
+    },
+  ],
   caps: { resume: true, teleport: 'full', activitySource: ['hooks', 'scraper'] },
   // Box->host: a flat list under the single config root.
   pull: { items: [{ group: 'data', names: ['config.toml', 'auth.json', 'prompts'] }] },

@@ -390,3 +390,13 @@ export type {
   PastedAccountSecret,
   WriteAccountSecretResult,
 } from './llm-accounts.js';
+export {
+  accountEnvPolicy,
+  applyAccountEnv,
+  boxAccount,
+  NO_ACCOUNT_ENV,
+  parseAccountFlags,
+  resolveBoxAccounts,
+  type AccountEnvPolicy,
+  type ResolvedBoxAccounts,
+} from './account-selection.js';
