@@ -180,6 +180,11 @@ export interface CreateBoxOpts {
   persistent?: boolean;
   /** Other agents' host logins to seed as model auth (`--model-auth`; service agents). */
   borrowCredentials?: string[];
+  /**
+   * Named LLM account per agent (`--account`). Resolved and validated against
+   * THIS machine's account store; agents left out fall back to `<agent>.account`.
+   */
+  accounts?: Record<string, string>;
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;
@@ -985,6 +990,8 @@ export type PrepareCloneResult =
       persistent?: boolean;
       /** The source box's borrowed model logins, so the clone borrows the same. */
       borrowedCredentials?: string[];
+      /** The source box's named LLM accounts, so the clone runs on the same. */
+      accounts?: Record<string, string>;
     }
   | { ok: false; error: string };
 

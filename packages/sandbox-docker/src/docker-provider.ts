@@ -79,6 +79,7 @@ export const dockerProvider: Provider = {
       // so without this those boxes silently keep the all-agents behaviour.
       ...(req.agents ? { agents: req.agents } : {}),
       ...(req.borrowCredentials ? { borrowCredentials: req.borrowCredentials } : {}),
+      ...(req.accounts ? { accounts: req.accounts } : {}),
       claudeConfig: po.claudeConfig,
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,

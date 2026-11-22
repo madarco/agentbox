@@ -41,9 +41,10 @@ describe('parseAgentSettingFlags', () => {
   });
 
   it('names an agent that declares nothing rather than listing an empty set', () => {
-    // codex is the agent that declares none; opencode gained `modelAuth`.
-    expect(parseAgentSettingFlags(['codex.anything=1'])).toBe(
-      '--agent-setting: codex declares no settings',
+    // `example` is the agent that declares none (opencode gained `modelAuth`,
+    // codex gained `account`).
+    expect(parseAgentSettingFlags(['example.anything=1'])).toBe(
+      '--agent-setting: example declares no settings',
     );
   });
 });

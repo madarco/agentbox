@@ -41,6 +41,9 @@ export function cloneCreateInput(prepared: StagedClone): CreateBoxInput {
       ...(prepared.borrowedCredentials?.length
         ? { borrowCredentials: [...prepared.borrowedCredentials] }
         : {}),
+      ...(prepared.accounts && Object.keys(prepared.accounts).length > 0
+        ? { accounts: { ...prepared.accounts } }
+        : {}),
       // A clone has no human to ask, and `carry:` is a `required` prompt — so
       // without this every clone of a project that declares one is refused. The
       // grant is inherited rather than invented: the source box was approved for

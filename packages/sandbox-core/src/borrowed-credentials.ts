@@ -14,8 +14,10 @@
  * the daemon has since refreshed in its own store never flows back.
  */
 
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import {
+  accountSecretPath,
+  isDefaultAccount,
   modelAuthEnvKey,
   modelAuthSourceId,
   type AgentModelAuthIngest,
@@ -24,6 +26,7 @@ import {
 } from '@agentbox/core';
 import { findAgentSpec, resolveAgentSpec } from './sync/registry.js';
 import { resolveHostCredentialFile } from './sync/concerns/credentials.js';
+import { STATE_DIR } from './state.js';
 
 /**
  * Validate a create's requested model-auth sources against the agent's row.
@@ -86,13 +89,22 @@ export async function borrowedCredentialCarry(
   resolveFile: (
     agent: string,
   ) => Promise<{ path: string; text: string } | null> = resolveHostCredentialFile,
+  /**
+   * The LENDER's named LLM account (llm-accounts Phase 3): a box borrowing
+   * `codex` on account `work` gets that account's login, never the default's.
+   */
+  accounts?: Readonly<Record<string, string>>,
 ): Promise<ResolvedCarryEntry[]> {
   const out: ResolvedCarryEntry[] = [];
   for (const agent of agentSourceIds(agents)) {
     const spec = resolveAgentSpec(agent);
     const credential = spec.credential;
     if (!credential) continue;
-    const source = await resolveFile(spec.id);
+    const account = accounts?.[spec.id];
+    const source =
+      account && !isDefaultAccount(account)
+        ? await accountSecretFile(spec, account)
+        : await resolveFile(spec.id);
     if (!source) {
       onLog?.(`model auth: no ${spec.id} login on this host — the box starts without it`);
       continue;
@@ -118,4 +130,18 @@ export function resolveModelAuthIngest(
   spec: Pick<AgentSyncSpec, 'modelAuth'>,
 ): AgentModelAuthIngest | undefined {
   return spec.modelAuth?.ingest;
+}
+
+/** A named account's stored login file, or null when it has none. */
+async function accountSecretFile(
+  spec: AgentSyncSpec,
+  account: string,
+): Promise<{ path: string; text: string } | null> {
+  const path = accountSecretPath(spec, account, STATE_DIR);
+  if (!path) return null;
+  try {
+    return { path, text: await readFile(path, 'utf8') };
+  } catch {
+    return null;
+  }
 }

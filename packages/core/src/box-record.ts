@@ -493,6 +493,13 @@ export interface BoxRecord {
    * clone can borrow the same set. One-way: never a source for extraction.
    */
   borrowedCredentials?: string[];
+  /**
+   * The NAMED LLM account each agent runs on, chosen at create
+   * (docs/llm-accounts-plan.md, Phase 3). An agent absent here runs on its
+   * `default` account. Every later seam — mounts, the launch env, the
+   * credential fan-out — reads this, never current config.
+   */
+  accounts?: Record<string, string>;
   createdAt: string; // ISO-8601
 }
 

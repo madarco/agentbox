@@ -144,6 +144,11 @@ export function registrationToBoxRecord(
     // box's live tokens (already injected in the running box).
     relayToken: existing?.relayToken ?? reg.token ?? freshToken(),
     lastAgent: normalizeRegistrationAgent(reg.agent) ?? existing?.lastAgent,
+    // The box's named accounts travel with it, so an adopting PC never
+    // reconciles it against its own DEFAULT login (llm-accounts Phase 3).
+    ...((reg.accounts ?? existing?.accounts)
+      ? { accounts: reg.accounts ?? existing?.accounts }
+      : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
     ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,

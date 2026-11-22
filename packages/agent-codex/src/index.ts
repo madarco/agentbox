@@ -34,7 +34,10 @@ export const codexSyncModule: AgentSyncModule = {
   resolveVolume: (opts) => resolveCodexVolume(opts),
   buildMounts: (spec, env) => buildCodexMounts(spec, env),
   ensureVolume: async (spec, opts) => {
-    const r = await ensureCodexVolume(spec, opts);
+    const r = await ensureCodexVolume(spec, {
+      ...opts,
+      ...(spec.account === undefined ? {} : { account: spec.account }),
+    });
     return {
       created: r.created,
       synced: r.synced,

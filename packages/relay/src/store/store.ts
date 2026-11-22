@@ -104,6 +104,7 @@ export const PORTABLE_CREATE_OPT_KEYS = [
   'build',
   'credentialSync',
   'borrowCredentials',
+  'accounts',
   'size',
   'location',
   'inbound',
@@ -139,6 +140,11 @@ export interface CreateJobRequestOpts {
    * rather than whatever the VPS happens to hold.
    */
   borrowCredentials?: string[];
+  /**
+   * Named LLM account per agent, resolved by the hub at enqueue against its own
+   * account store (llm-accounts Phase 3). Becomes `CreateBoxRequest.accounts`.
+   */
+  accounts?: Record<string, string>;
   /**
    * VM size and location for a cloud box (`--size`/`--location`, or the
    * project's `box.size<Provider>` / `box.<provider>Location`).

@@ -98,3 +98,75 @@ Newest phase last.
 - **A re-login whose warm-up turn fails loses the email/org label**: the reset
   removed `oauthAccount`, so the identity is plan-only and replaces the stored
   one. Keep the stored email/org when the new identity lacks them. Display only.
+
+## From Phase 3 (selection + seeding)
+
+The two Phase 3 must-fix items above are done: `prune --all` keeps every
+`-acct-` volume, and the named claude seed strips `settings.json` auth env
+(`env.ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`,
+`apiKeyHelper`).
+
+- **No shared `projects/` volume yet.** A named account's volume keeps its own
+  `~/.claude/projects`, so `--resume` works within an account but not across
+  accounts (or between `default` and a named account). Mounting one shared
+  `agentbox-claude-projects` over every volume would hide the transcripts that
+  already live inside `agentbox-claude-config`; it needs a one-time migration.
+- **A named account's refresh does not travel until Phase 4.** Docker: the
+  account volume IS the live copy (every box on the account shares it), and the
+  create/start mirror carries it back into the account's secret. Cloud: the box
+  refreshes its own copy; the relay drops its update (it names an account), so
+  another cloud box on the same account still holds the pre-refresh token —
+  the Phase 0 outage window, per account. Use a setup token for an account
+  shared by several cloud boxes.
+- ~~The relay guard reads `~/.agentbox/state.json`~~ — it reads the box's
+  REGISTRATION first now (#437-4), which also closes the cloud-create race
+  (#437-5: the first credential post could beat `recordBox`), then state.json,
+  failing closed when that is unreadable.
+- **A pasted account's token sits in the container env (docker) / sandbox env
+  (cloud)**, visible to `docker inspect` and the provider console — the same
+  exposure as today's host-key spray. A 0600 file read on demand would be
+  tighter (see the "box secrets" preference); not done here.
+- **Daytona: an account subpath is seeded once** (marker), like the default's.
+  A later re-login in the store reaches existing boxes only via Phase 4.
+- **Codex named volume → store** is not mirrored back at start (claude's is);
+  codex only refreshes after ~8 days, Phase 4 covers it.
+- ~~`agentbox create --account` on an agentless box~~ — now refused for any
+  agent the box does not carry (only a borrowed lender can be named there);
+  `agentbox <agent> --account` is the way.
+- **A remote control box refuses `--account`** (it has no account store until
+  Phase 5): the hub re-resolves `opts.accounts` against its own store and
+  answers "no claude account 'work' on this machine". Deliberate — the CLI
+  cannot hand a remote hub a secret it never received — but the message could
+  say "this control box" instead of "this machine".
+- **Each cloud create reads `accounts.json` once per agent** (stager, env
+  policy). Correct, small; pass one read down if it ever shows up in a profile.
+
+## From the #437 review
+
+Fixed in the PR: `destroy` keeps `-acct-` volumes; `ensureAgentInstalled`
+seeds the box's account (never the owner's default) and a pasted kind gets no
+login file, with any stale one removed on cloud create; cloud named boxes get
+the `_claude.json` + `settings.json` strip and API-key pre-approval; `accounts`
+rides the relay registration and the hub `Box` payload; `checkpoint
+--set-default` is refused from a box on a named account.
+
+- **Pasted secrets on the docker argv** (#437-6): `docker run -e KEY=VALUE` and
+  `docker exec -e` carry a pasted account's token, visible to `ps` while docker
+  runs — like today's host-key spray, but the login flow kept it off argv on
+  purpose. Pass `-e KEY` and the value through execa's `env`.
+- **Settings propagate skips named boxes too** (#437-8): the Phase 3 guard sits
+  in `planPropagateTargets`, which also drives skills/plugins propagation. Gate
+  it on a flag only the credentials caller passes.
+- **`agentbox download codex <named-box>`** copies the box's `auth.json`
+  (account B) into the host's `~/.codex` when the host has none, where it
+  becomes the default login. Skip `auth.json` for a named box.
+- **Provider SDK republish**: community providers on the published SDK (an old
+  inlined `createCloudProvider`) ignore `req.accounts` — the box comes up on the
+  default login. Additive: `CreateBoxRequest.accounts`, `BoxRecord.accounts`,
+  `AgentSyncSpec.accountEnv`.
+- **`sessionAccountPolicy` fails open** to no policy when `state.json` cannot be
+  read at session start (the host key is forwarded). Rare (atomic writes);
+  consider failing closed for the suppress half.
+- **The named docker mirror writes the account secret from a root container**
+  (`SYNC_SCRIPT` `cp -a`), outside `writeAccountSecret`'s lock. Newest-wins like
+  the default path; cosmetic.

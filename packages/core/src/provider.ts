@@ -163,6 +163,12 @@ export interface CreateBoxRequest {
    * `resolveBorrowedCredentials`; an id the agent does not declare is refused.
    */
   borrowCredentials?: string[];
+  /**
+   * Named LLM account per agent (`{ claude: 'work' }`), resolved and validated
+   * by the caller against the host account store. Absent / an agent left out =
+   * that agent's `default` account. Recorded as `BoxRecord.accounts`.
+   */
+  accounts?: Record<string, string>;
   /** Override the base image / snapshot. */
   image?: string;
   /**

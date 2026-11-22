@@ -119,6 +119,8 @@ export interface CloudAgentViaHubArgs {
    * USER's login rather than whatever the control box itself holds.
    */
   borrowCredentials?: string[];
+  /** Named LLM account per agent (`--account`), resolved by the caller. */
+  accounts?: Record<string, string>;
   /**
    * Approved `carry:` entries, from the gate the caller already ran. Pushed to
    * custody with the rest of the seed so the hub worker can apply them.
@@ -159,11 +161,13 @@ function hubOpts(
   opts: CreateJobRequestOpts | undefined,
   persistent: boolean | undefined,
   borrowCredentials: readonly string[] | undefined,
+  accounts?: Readonly<Record<string, string>>,
 ): { opts?: CreateJobRequestOpts } {
   const merged: CreateJobRequestOpts = {
     ...(opts ?? {}),
     ...(persistent !== undefined ? { persistent } : {}),
     ...(borrowCredentials?.length ? { borrowCredentials: [...borrowCredentials] } : {}),
+    ...(accounts && Object.keys(accounts).length > 0 ? { accounts: { ...accounts } } : {}),
   };
   return Object.keys(merged).length > 0 ? { opts: merged } : {};
 }
@@ -201,6 +205,7 @@ export async function createCloudBoxViaHubAndAdopt(
     fromBranch,
     persistent,
     borrowCredentials,
+    accounts,
     urlFlag,
     carry,
     opts: boxOpts,
@@ -245,7 +250,7 @@ export async function createCloudBoxViaHubAndAdopt(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...hubOpts(boxOpts, persistent, borrowCredentials),
+    ...hubOpts(boxOpts, persistent, borrowCredentials, accounts),
     // COLD create: the worker builds the box without starting the agent — this PC
     // adopts it and the agent launches on attach.
     startAgent: false,
@@ -353,6 +358,7 @@ export async function enqueueAgentJobViaHub(
     fromBranch,
     persistent,
     borrowCredentials,
+    accounts,
     prompt,
     agentArgs,
     urlFlag,
@@ -394,7 +400,7 @@ export async function enqueueAgentJobViaHub(
     // no checkout: without it the box (and its timeline row) takes the repo's
     // default branch rather than the branch this machine is on.
     fromBranch: fromBranch?.trim() || (await readCurrentBranch(projectRoot)),
-    ...hubOpts(boxOpts, persistent, borrowCredentials),
+    ...hubOpts(boxOpts, persistent, borrowCredentials, accounts),
     // The seed prompt tells the worker to start the agent detached in-box; the
     // processed argv (skip-permissions etc.) rides `agentArgs` end-to-end.
     prompt,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_AGENT_SPECS } from '../src/index.js';
-import { accountKindsProblem, agentSpecProblem } from '../src/plugin-agents.js';
+import { accountEnvProblem, accountKindsProblem, agentSpecProblem } from '../src/plugin-agents.js';
 import { exampleSpec } from '../src/specs/example.js';
 
 describe('accountKinds on the built-in rows', () => {
@@ -36,7 +36,13 @@ describe('accountKindsProblem', () => {
   });
 
   it('agentSpecProblem applies it to plugin specs', () => {
-    expect(agentSpecProblem({ ...exampleSpec, accountKinds: ['login', 'api-key'] })).toBeNull();
+    expect(
+      agentSpecProblem({
+        ...exampleSpec,
+        accountKinds: ['login', 'api-key'],
+        accountEnv: { 'api-key': 'EXAMPLE_API_KEY' },
+      }),
+    ).toBeNull();
     expect(agentSpecProblem({ ...exampleSpec, accountKinds: ['oauth'] })).toMatch(/accountKinds/);
     const { credential: _c, ...noCredential } = exampleSpec;
     expect(agentSpecProblem({ ...noCredential, accountKinds: ['login'] })).toMatch(
@@ -67,5 +73,21 @@ describe('accountKindsProblem', () => {
     );
     const credential = { ...exampleSpec.credential!, cloudSubpath: 'claude-acct-work/' };
     expect(agentSpecProblem({ ...exampleSpec, credential })).toMatch(/cloudSubpath/);
+  });
+});
+
+describe('accountEnvProblem (Phase 3)', () => {
+  it('every built-in row passes', () => {
+    for (const spec of BUILTIN_AGENT_SPECS) {
+      expect(accountEnvProblem(spec.accountEnv, spec.accountKinds), spec.id).toBeNull();
+    }
+  });
+  it('requires an env var for each pasted kind, and only for those', () => {
+    expect(accountEnvProblem(undefined, ['login'])).toBeNull();
+    expect(accountEnvProblem(undefined, ['login', 'api-key'])).toMatch(/'api-key'/);
+    expect(accountEnvProblem({ 'api-key': 'MY_KEY' }, ['api-key'])).toBeNull();
+    expect(accountEnvProblem({ login: 'X' }, ['login'])).toMatch(/not a pasted kind/);
+    expect(accountEnvProblem({ 'api-key': 'my-key' }, ['api-key'])).toMatch(/UPPER_SNAKE/);
+    expect(accountEnvProblem({}, ['setup-token'])).toMatch(/'setup-token'/);
   });
 });

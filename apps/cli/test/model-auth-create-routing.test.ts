@@ -55,7 +55,10 @@ describe('--model-auth reaches every hub-routed create', () => {
     const s = src('commands', '_cloud-agent-via-hub.ts');
     // Foreground (cold create + adopt) and background `-i`. Both now forward
     // one bag built upstream, so the assertion is that neither ending skips it.
-    expect(s.match(/\.\.\.hubOpts\(boxOpts, persistent, borrowCredentials\)/g)).toHaveLength(2);
+    // `accounts` rides the same bag (llm-accounts Phase 3).
+    expect(
+      s.match(/\.\.\.hubOpts\(boxOpts, persistent, borrowCredentials, accounts\)/g),
+    ).toHaveLength(2);
     expect(s).toContain('borrowCredentials?: string[];');
   });
 

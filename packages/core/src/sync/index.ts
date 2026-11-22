@@ -102,6 +102,7 @@ export {
   findAccount,
   isDefaultAccount,
   migrateAccountsFile,
+  namedAccounts,
 } from './llm-accounts.js';
 export type { ConflictVerdict, ConflictPolicy, Reconciler } from './reconciler.js';
 export type {

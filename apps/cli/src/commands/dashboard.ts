@@ -23,7 +23,6 @@ import {
   startBox,
   startShellSession,
   stopBox,
-  syncClaudeCredentials,
   unpauseBox,
   type ListedBox,
 } from '@agentbox/sandbox-docker';
@@ -78,7 +77,7 @@ import {
 } from '../dashboard/sidebar.js';
 import { buildCloudAttachInnerCommand } from './_cloud-attach.js';
 import { handleLifecycleError } from './_errors.js';
-import { claudeRuntime } from '@agentbox/agent-claude/cli';
+import { claudeRuntime, syncBoxClaudeCredentials } from '@agentbox/agent-claude/cli';
 import { codexRuntime } from '@agentbox/agent-codex/cli';
 
 interface DashboardOptions {
@@ -422,11 +421,8 @@ export const dashboardCommand = new Command('dashboard')
           volume: box.claudeConfigVolume,
         });
         // Mirror the in-box OAuth credentials with the host backup.
-        const claudeVolume = box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME;
-        await syncClaudeCredentials(
-          { volume: claudeVolume },
-          { image: box.image, isolate: claudeVolume !== SHARED_CLAUDE_VOLUME },
-        );
+        // Per account: a named box never gets the default login (Phase 3).
+        await syncBoxClaudeCredentials(box, box.claudeConfigVolume ?? SHARED_CLAUDE_VOLUME);
         const claudeCfg = await loadEffectiveConfig(box.workspacePath);
         await ingestModelAuth(box, 'claude');
         await startClaudeSession({

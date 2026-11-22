@@ -281,3 +281,39 @@ export function stripAccountState<T = unknown>(data: T): { data: T; stripped: bo
   for (const [k, v] of Object.entries(rec)) if (!ACCOUNT_STATE_KEYS.includes(k)) out[k] = v;
   return { data: out as T, stripped: true };
 }
+
+/**
+ * `settings.json` `env` keys that carry a credential. A named account's volume
+ * must not inherit the owner's: Claude prefers an API key over its OAuth login
+ * (Phase 0 (a′)), so the account would run and bill on the owner.
+ */
+export const AUTH_SETTINGS_ENV_KEYS: readonly string[] = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+];
+
+/** Drop {@link AUTH_SETTINGS_ENV_KEYS} from `env` and `apiKeyHelper`. Pure. */
+export function stripAuthSettings<T = unknown>(data: T): { data: T; stripped: boolean } {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return { data, stripped: false };
+  }
+  const rec = { ...(data as Record<string, unknown>) };
+  let stripped = false;
+  if ('apiKeyHelper' in rec) {
+    delete rec.apiKeyHelper;
+    stripped = true;
+  }
+  const env = rec.env;
+  if (env && typeof env === 'object' && !Array.isArray(env)) {
+    const next = { ...(env as Record<string, unknown>) };
+    for (const k of AUTH_SETTINGS_ENV_KEYS) {
+      if (k in next) {
+        delete next[k];
+        stripped = true;
+      }
+    }
+    rec.env = next;
+  }
+  return stripped ? { data: rec as T, stripped: true } : { data, stripped: false };
+}

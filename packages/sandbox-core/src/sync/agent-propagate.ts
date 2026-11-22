@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BoxRecord, SyncTransport } from '@agentbox/core';
 import type { AgentId } from '@agentbox/core';
-import { agentConfigVolume } from '@agentbox/core';
+import { agentConfigVolume, namedAccounts } from '@agentbox/core';
 import { resolveAgentSpec } from './registry.js';
 import { mergeInstalledPlugins, mergeKnownMarketplaces } from './claude-pull.js';
 import { agentBoxDir } from './agent-pull.js';
@@ -235,6 +235,8 @@ export interface PropagateBoxLike {
   agents?: string[];
   /** Other agents' logins the box consumes as model auth (`borrowCredentials`). */
   borrowedCredentials?: string[];
+  /** Named LLM account per agent (`BoxRecord.accounts`); absent = `default`. */
+  accounts?: Record<string, string>;
 }
 
 export interface PropagatePlan<B extends PropagateBoxLike> {
@@ -295,6 +297,11 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
   const cloudBoxes: B[] = [];
   const borrowingBoxes: B[] = [];
   for (const box of inScope) {
+    // This fan-out carries the DEFAULT account's login. A box on a named
+    // account for this agent (running it, or borrowing it as model auth) must
+    // never receive it: it would replace that account's login with the
+    // owner's. Per-account fan-out is Phase 4 of docs/llm-accounts-plan.md.
+    if (namedAccounts(box.accounts)?.[opts.agent] !== undefined) continue;
     // A box created for a specific agent set must not be handed another agent's
     // credential. This is the fan-out's own gate: it pushes STRAIGHT INTO a
     // cloud box, so without it a resume re-seeds every agent's token and

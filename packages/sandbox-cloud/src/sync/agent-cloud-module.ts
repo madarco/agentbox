@@ -54,7 +54,12 @@ export interface AgentCloudModule {
   afterDeclaredSeeds?(
     backend: CloudBackend,
     handle: CloudHandle,
-    opts: { hostWorkspace?: string; onLog?: (line: string) => void },
+    opts: {
+      hostWorkspace?: string;
+      onLog?: (line: string) => void;
+      /** Named LLM account per agent (`BoxRecord.accounts`). */
+      accounts?: Readonly<Record<string, string>>;
+    },
   ): Promise<void>;
   /**
    * Run after the box's agent config has been seeded, before it is used.

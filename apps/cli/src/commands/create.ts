@@ -19,6 +19,8 @@ import { spawnSync } from 'node:child_process';
 import { runCarryGate, runQueuedCarryGate } from '../lib/carry-gate.js';
 import { runToolsGate } from '../lib/tools-gate.js';
 import { boxModelAuthHelp, resolveBoxModelAuth } from '../lib/model-auth-gate.js';
+import { agentSourceIds, parseAccountFlags, resolveBoxAccounts } from '@agentbox/sandbox-core';
+import { collectRepeatable } from '../agents/command/options.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../lib/git-creds-gate.js';
 import { FromBranchError, UseBranchError, resolveBranchSelection } from '../lib/from-branch.js';
 import { buildHubCreateOpts } from '../lib/hub-create-opts.js';
@@ -135,6 +137,8 @@ interface CreateOptions {
   dangerouslyWithCredentials?: boolean;
   /** --model-auth <source...>: host model-provider logins to seed into the box. */
   modelAuth?: string[];
+  /** --account <agent=name...>: the named LLM account per agent. */
+  account?: string[];
   /** --via-hub: force enqueue the create on the control box instead of building locally. */
   viaHub?: boolean;
   /** --local: force a local build even when a control box would take a cloud create by default. */
@@ -230,6 +234,8 @@ async function runCreateViaHubApi(
   borrowCredentials: string[],
   cmdLog: ReturnType<typeof openCommandLog>,
   cfg: EffectiveConfig,
+  /** `--account`, already resolved and validated on this machine. */
+  accounts: Record<string, string> = {},
 ): Promise<void> {
   // A stale login on the control box means the box comes up signed out — refresh
   // custody from the host backup first (hash-compared, silent + best-effort).
@@ -290,6 +296,7 @@ async function runCreateViaHubApi(
     resolved: {
       ...(opts.persistent !== undefined ? { persistent: opts.persistent } : {}),
       ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+      ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
     },
   });
   for (const w of warnings) log.warn(w);
@@ -514,6 +521,11 @@ export const createCommand = new Command('create')
   .option('--url <url>', 'control-plane URL for --via-hub (default: relay.controlPlaneUrl)')
   .option('--model-auth <source...>', boxModelAuthHelp())
   .option(
+    '--account <agent=name>',
+    "named LLM account per agent, e.g. --account claude=work (repeatable; default: each agent's <agent>.account, else its default login). Fixed at create; see `agentbox accounts`.",
+    collectRepeatable,
+  )
+  .option(
     '--restore <bot>',
     "recreate a bot from its backup under <project>/.agentbox/bots/<bot>/. The box runs on a copy of the backed-up workspace; the agent's state dir is NOT restored here (see `agentbox <agent> --restore` for that)",
   )
@@ -671,8 +683,24 @@ export const createCommand = new Command('create')
     // still meaningful — it lands at the lender's own path and is recorded on the
     // box, so an agent added later imports it at its first start seam.
     let borrowCredentials: string[] = [];
+    let accounts: Record<string, string> = {};
     try {
       borrowCredentials = resolveBoxModelAuth(opts.modelAuth);
+      // Named LLM accounts. An agentless box carries no agent but its borrowed
+      // lenders, so only a lender can be given one: docker cannot mount an
+      // account's volume for an agent added later, and an install there would
+      // seed the wrong login. `--account claude=…` here is refused with the
+      // reason; use `agentbox claude --account …` instead.
+      const flags = parseAccountFlags(opts.account);
+      const lenders = agentSourceIds(borrowCredentials);
+      const r = await resolveBoxAccounts({
+        agents: lenders,
+        flags,
+        config: cfg,
+        loginOnly: lenders,
+      });
+      for (const w of r.warnings) log.warn(w);
+      accounts = r.accounts;
     } catch (err) {
       log.error(err instanceof Error ? err.message : String(err));
       cmdLog.close();
@@ -714,6 +742,7 @@ export const createCommand = new Command('create')
         borrowCredentials,
         cmdLog,
         cfg.effective,
+        accounts,
       );
       return;
     }
@@ -1005,6 +1034,7 @@ export const createCommand = new Command('create')
           gitPushMode: cfg.effective.git.pushMode,
           remoteHost,
           ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+          ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
           // The resolved list, for a worker on THIS machine to read the approved
           // host files with. NOTE: the hub re-resolves `agentbox.yaml`'s block
           // server-side and its answer wins over this echo, so entries that only

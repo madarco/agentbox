@@ -3,6 +3,7 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState, ResyncResult } from '@agentbox/core';
 import {
+  ACCOUNT_NAME_INFIX,
   agentConfigVolume,
   AmbiguousBoxError,
   BoxNotFoundError,
@@ -189,11 +190,19 @@ async function agentSession(id: string, container: string): Promise<AgentSession
  * outside the built-in three has its per-box volume cleaned up instead of
  * leaking (and, before the volume map, being invisible here entirely).
  */
-function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?: string }[] {
+export function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?: string }[] {
   return AGENT_SYNC_SPECS.map((spec) => ({
     agent: spec.id,
     volume: agentConfigVolume(box, spec.id),
-  })).filter((e) => e.volume !== undefined && e.volume !== agentSpecById(e.agent)?.dockerVolume);
+  })).filter(
+    (e) =>
+      e.volume !== undefined &&
+      e.volume !== agentSpecById(e.agent)?.dockerVolume &&
+      // A named LLM account's volume is the ACCOUNT's live login and history,
+      // shared by every box on it — not this box's. Only `agentbox accounts rm`
+      // removes it (same rule as `prune`).
+      !e.volume.includes(ACCOUNT_NAME_INFIX),
+  );
 }
 
 function agentSpecById(id: string): { dockerVolume: string } | undefined {
@@ -548,6 +557,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
         agent: box.agents?.[0] ?? box.lastAgent,
+        ...(box.accounts ? { accounts: box.accounts } : {}),
       });
     } catch {
       // best-effort
@@ -947,7 +957,13 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       ...manifestPinnedImages,
     ]);
     orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
-    orphanVolumes = liveVolumes.filter((v) => !expectedVolumes.has(v));
+    // A named LLM account's config volume is not an orphan when no box uses
+    // it: it is the account's live login (llm-accounts Phase 3), removed only
+    // by `agentbox accounts rm`. `agent add` refuses the infix in a base volume
+    // name, so it identifies these exactly.
+    orphanVolumes = liveVolumes.filter(
+      (v) => !expectedVolumes.has(v) && !v.includes(ACCOUNT_NAME_INFIX),
+    );
     orphanSnapshots = liveSnapshotDirs.filter((d) => !expectedSnapshots.has(d));
     orphanBoxDirs = liveBoxDirs.filter((d) => !expectedBoxDirs.has(d));
     orphanCheckpointImages = liveCheckpointImages.filter((t) => !expectedCheckpointImages.has(t));
