@@ -246,3 +246,35 @@ with no recorded volume instead of falling back to the shared default volume.
 - **`GET /api/v1/accounts` reads each secret sequentially** to set
   `hasSecret`, and the list and single-account views build the shape twice.
   Small; `Promise.all` over one `view()` when it matters.
+
+## From the #444 review
+
+Fixed in #444: the `POST` / `PATCH` / `DELETE /api/v1/accounts…` routes now
+answer a store failure (a corrupt `accounts.json`) with the error envelope
+naming the file, like `GET`, instead of a bare 500.
+
+- **(a) The in-use list shows a docker box twice**: `hub-backend.ts` (~2162)
+  feeds the accounts slice `state.json` boxes AND relay registrations, so a
+  docker box present in both is named twice in `boxes`. Dedupe by box id.
+- **(b) MUST FIX before "accounts resolve against the requester's machine":**
+  `credentials-fanout.ts` (~251) files a hub-side box's refreshed account login
+  under the box's ORIGIN machine id, although the account itself came from the
+  hub's own store — so it lands in PC B's custody slot. Key it by the hub's own
+  machine id (or drop the update) until per-machine account lists exist. Same
+  root cause: the hub accepts a remote PC's `--account` against its OWN store
+  (the Phase 3 resolution), which only works because a remote hub has no rows.
+- **(c) API labels have no length or control-character limit**, and the CLI
+  prints them raw (`agentbox accounts`, `status`). Cap the length and strip
+  control characters at the API boundary.
+- **(d) All of `/api/v1`**: a page on another `localhost` port can send a
+  `text/plain`, cookie-authenticated `POST` (a "simple" request: no CORS
+  preflight), because the gate checks neither `Content-Type` nor `Origin`.
+  Require `application/json` or a same-origin `Origin` on writes.
+- **(e) Stale text**: comments in `hub-worker.ts` (~127-133, the account seed),
+  `apps/hub/lib/backend/accounts.ts` (lines 1-5, still "a remote control box
+  has no account store yet (Phase 5)"), the `apps/cli/src/commands/accounts.ts`
+  header; and the plan says `GET /accounts` returns `agents [{id, name,
+  kinds}]` while the code returns `{id, kinds}`.
+- **(f) `custody-client.ts` (~311) reads the machine id before the account
+  loop**, so a failure reading it also skips the DEFAULT-login push. Read it
+  lazily inside the loop (or catch it), so the default push never depends on it.

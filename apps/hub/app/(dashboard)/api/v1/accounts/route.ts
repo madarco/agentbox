@@ -28,7 +28,13 @@ export async function POST(req: Request): Promise<Response> {
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
   const body = await readJson(req);
   if (!body.ok) return fail('invalid_request', body.message);
-  const res = await backend.addPastedAccount(body.value);
-  if (!res.ok) return fail(res.code, res.error);
-  return ok({ account: res.value });
+  try {
+    const res = await backend.addPastedAccount(body.value);
+    if (!res.ok) return fail(res.code, res.error);
+    return ok({ account: res.value });
+  } catch (e) {
+    // An unreadable store (a corrupt accounts.json names itself) or a failed
+    // write: an error envelope, never a bare 500.
+    return fail('internal', e instanceof Error ? e.message : String(e));
+  }
 }

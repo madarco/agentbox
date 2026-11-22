@@ -23,16 +23,25 @@ export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
   if (!value || !('label' in value)) {
     return fail('invalid_request', 'body must be { label: string | null }');
   }
-  const res = await backend.labelAccount(agent, id, value.label);
-  if (!res.ok) return fail(res.code, res.error);
-  return ok({ account: res.value });
+  try {
+    const res = await backend.labelAccount(agent, id, value.label);
+    if (!res.ok) return fail(res.code, res.error);
+    return ok({ account: res.value });
+  } catch (e) {
+    // An unreadable store (a corrupt accounts.json names itself): say so.
+    return fail('internal', e instanceof Error ? e.message : String(e));
+  }
 }
 
 export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {
   const backend = backendOrNull();
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
   const { agent, id } = await ctx.params;
-  const res = await backend.removeAccount(agent, id);
-  if (!res.ok) return fail(res.code, res.error);
-  return ok({ ok: true, ...res.value });
+  try {
+    const res = await backend.removeAccount(agent, id);
+    if (!res.ok) return fail(res.code, res.error);
+    return ok({ ok: true, ...res.value });
+  } catch (e) {
+    return fail('internal', e instanceof Error ? e.message : String(e));
+  }
 }
