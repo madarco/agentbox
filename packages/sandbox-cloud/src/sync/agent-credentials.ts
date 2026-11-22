@@ -24,8 +24,14 @@
  */
 
 import {
+  accountEnvPolicy,
   AGENT_SYNC_SPECS,
+  applyAccountEnv,
+  clearAccountCredential,
   ensureAgentInstalled,
+  readAccounts,
+  stageSingleFileTarball,
+  STATE_DIR,
   extractCredentials,
   isRealAgentCredential,
   pushCredentialToBox,
@@ -37,13 +43,20 @@ import {
   SEED_MARKER,
   type StageResult,
 } from '@agentbox/sandbox-core';
-import type {
-  AgentId,
-  CloudBackend,
-  CloudHandle,
-  CloudVolumeMount,
-  SyncTransport,
+import {
+  accountCloudSubpath,
+  accountSecretPath,
+  namedAccounts,
+  DEFAULT_ACCOUNT_ID,
+  findAccount,
+  isDefaultAccount,
+  type AgentId,
+  type CloudBackend,
+  type CloudHandle,
+  type CloudVolumeMount,
+  type SyncTransport,
 } from '@agentbox/core';
+import { existsSync } from 'node:fs';
 import { agentCloudModule } from './agent-cloud-module.js';
 import { createCloudSyncTransport } from './sync-transport.js';
 
@@ -182,10 +195,17 @@ export async function ensureAgentVolumesForCloud(
      * already filter on it.
      */
     agents?: readonly string[];
+    /**
+     * Named LLM account per agent (llm-accounts Phase 3). Such an agent mounts
+     * its account's SIBLING subpath (`accountCloudSubpath`) and its forwarded
+     * env follows the account.
+     */
+    accounts?: Readonly<Record<string, string>>;
   } = {},
 ): Promise<EnsureAgentVolumesResult> {
   const log = opts.onLog ?? (() => {});
   const wanted = opts.agents ? new Set<string>(opts.agents) : undefined;
+  const accounts = opts.accounts ?? {};
   const all = agentSpecs();
   const specs = wanted ? all.filter((s) => wanted.has(s.kind)) : all;
   const allAgents = specs.map((s) => s.kind);
@@ -199,7 +219,7 @@ export async function ensureAgentVolumesForCloud(
     log(
       `cloud backend '${backend.name}' cannot mount volumes for this sandbox class — agent credentials seeded per-create only`,
     );
-    return { mounts: [], env: buildForwardedEnv(allAgents), agents: allAgents };
+    return { mounts: [], env: await buildForwardedEnv(allAgents, accounts), agents: allAgents };
   }
   if (typeof backend.ensureVolume !== 'function') {
     // Non-volume backends (e2b, vercel, hetzner) still get credentials seeded
@@ -210,7 +230,7 @@ export async function ensureAgentVolumesForCloud(
     log(
       `cloud backend '${backend.name}' has no volume primitive — agent credentials seeded per-create only`,
     );
-    return { mounts: [], env: buildForwardedEnv(allAgents), agents: allAgents };
+    return { mounts: [], env: await buildForwardedEnv(allAgents, accounts), agents: allAgents };
   }
 
   let volumeId: string;
@@ -220,17 +240,28 @@ export async function ensureAgentVolumesForCloud(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`ensureVolume(${CREDENTIALS_VOLUME}) failed (skipping credentials seed): ${msg}`);
-    return { mounts: [], env: buildForwardedEnv([]), agents: [] };
+    return { mounts: [], env: await buildForwardedEnv([], accounts), agents: [] };
   }
 
   // `flatMap`, not `map`: an agent with no declared credential gets no mount at
   // all rather than a mount at `undefined`.
   const mounts: CloudVolumeMount[] = specs.flatMap((spec) =>
     spec.credentialsMountPath !== undefined && spec.credentialsSubpath !== undefined
-      ? [{ volumeId, mountPath: spec.credentialsMountPath, subpath: spec.credentialsSubpath }]
+      ? [
+          {
+            volumeId,
+            mountPath: spec.credentialsMountPath,
+            // A named account's own sibling subpath: never the default's, and
+            // never nested inside it (a default box mounts all of `claude/`).
+            subpath: accountCloudSubpath(
+              spec.credentialsSubpath,
+              accounts[spec.kind] ?? DEFAULT_ACCOUNT_ID,
+            ),
+          },
+        ]
       : [],
   );
-  return { mounts, env: buildForwardedEnv(allAgents), agents: allAgents };
+  return { mounts, env: await buildForwardedEnv(allAgents, accounts), agents: allAgents };
 }
 
 /**
@@ -250,7 +281,10 @@ export function buildCloudBoxRunEnv(agents: readonly CloudAgentKind[]): Record<s
   return env;
 }
 
-function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
+async function buildForwardedEnv(
+  agents: CloudAgentKind[],
+  accounts: Readonly<Record<string, string>>,
+): Promise<Record<string, string>> {
   const env: Record<string, string> = buildCloudBoxRunEnv(agents);
   // Forward provider API keys from the host process env into the sandbox.
   // For agents authenticated via env-var (ANTHROPIC_API_KEY etc.) rather
@@ -268,7 +302,15 @@ function buildForwardedEnv(agents: CloudAgentKind[]): Record<string, string> {
     const v = process.env[k];
     if (typeof v === 'string' && v.length > 0) env[k] = v;
   }
-  return env;
+  // A named account gets exactly its own auth: the host's keys for that agent
+  // are dropped and a pasted account's token is added (llm-accounts Phase 3).
+  let out = env;
+  for (const agent of agents) {
+    const account = accounts[agent];
+    if (!account || isDefaultAccount(account)) continue;
+    out = applyAccountEnv(out, await accountEnvPolicy(resolveAgentSpec(agent), account));
+  }
+  return out;
 }
 
 export interface SeedAgentVolumesOptions {
@@ -288,6 +330,8 @@ export interface SeedAgentVolumesOptions {
    */
   force?: boolean;
   onLog?: (line: string) => void;
+  /** Named LLM account per agent: its secret is staged instead of the legacy backup. */
+  accounts?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -310,7 +354,9 @@ export async function seedAgentVolumesIfFresh(
   const log = opts.onLog ?? (() => {});
   const all = agentSpecs();
   const wanted = new Set<CloudAgentKind>(opts.agents ?? all.map((s) => s.kind));
-  const specs = all.filter((s) => wanted.has(s.kind));
+  const specs = await Promise.all(
+    all.filter((s) => wanted.has(s.kind)).map((s) => withAccountStager(s, opts.accounts, log)),
+  );
   // Best-effort per agent: one agent's seed failure (transient SDK error,
   // missing host creds for that agent) must never sink `agentbox create`.
   // Matches the prior vercel/hetzner custom pushers, which caught + warned.
@@ -559,16 +605,47 @@ export function agentSpecsForCloud(): Array<{
 export async function ensureAgentsInstalledForCloud(
   backend: CloudBackend,
   handle: CloudHandle,
-  opts: { agents?: readonly string[]; onLog?: (line: string) => void } = {},
+  opts: {
+    agents?: readonly string[];
+    onLog?: (line: string) => void;
+    /** Named LLM account per agent: an install seeds that account's login, never the default's. */
+    accounts?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<void> {
   const agents = opts.agents ?? [];
   if (agents.length === 0) return;
   const transport = createCloudSyncTransport({ backend, handle });
   for (const agent of agents) {
+    const account = opts.accounts?.[agent];
     await ensureAgentInstalled(transport, agent, {
       ...(opts.onLog ? { onProgress: opts.onLog } : {}),
+      ...(account && !isDefaultAccount(account) ? { account } : {}),
     });
   }
+}
+
+/**
+ * A pasted-kind account's box must hold no login file at all — a checkpoint or
+ * an earlier install can have carried the owner's — or the agent would use it
+ * instead of the account's token. Idempotent; runs after the credential seed.
+ */
+export async function clearPastedAccountCredentials(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  accounts: Readonly<Record<string, string>> | undefined,
+): Promise<string[]> {
+  const cleared: string[] = [];
+  const named = namedAccounts(accounts) ?? {};
+  if (Object.keys(named).length === 0) return cleared;
+  const file = await readAccounts();
+  const transport = createCloudSyncTransport({ backend, handle });
+  for (const [agent, account] of Object.entries(named)) {
+    const spec = resolveAgentSpec(agent);
+    if (findAccount(file, spec.id, account)?.kind === 'login') continue;
+    await clearAccountCredential(transport, spec);
+    cleared.push(agent);
+  }
+  return cleared;
 }
 
 /**
@@ -594,10 +671,16 @@ export async function extractCloudAgentCredentials(
     onLog?: (line: string) => void;
     /** Override host backup paths per agent (tests). Defaults to the ~/.agentbox constants. */
     backups?: Partial<Record<CloudAgentKind, string>>;
+    /** Agents on a named account: their login is never extracted over the default's. */
+    skip?: readonly string[];
   } = {},
 ): Promise<CloudAgentKind[]> {
   const transport = createCloudSyncTransport({ backend, handle });
-  return extractCredentials(transport, { onLog: opts.onLog, backups: opts.backups });
+  return extractCredentials(transport, {
+    onLog: opts.onLog,
+    backups: opts.backups,
+    ...(opts.skip ? { skip: opts.skip } : {}),
+  });
 }
 
 /**
@@ -686,4 +769,36 @@ export async function reconcileAgentCredentialsViaTransport(
       );
     }
   }
+}
+
+/**
+ * The spec to seed for an agent on a NAMED account: stage the account's own
+ * secret (a `login`), or nothing at all (a pasted kind authenticates by env, so
+ * its credential slot must stay empty). The default account keeps the agent's
+ * own stager — today's legacy backup.
+ */
+async function withAccountStager(
+  spec: AgentSpec,
+  accounts: Readonly<Record<string, string>> | undefined,
+  log: (line: string) => void,
+): Promise<AgentSpec> {
+  const account = accounts?.[spec.kind];
+  if (!account || isDefaultAccount(account)) return spec;
+  const registry = resolveAgentSpec(spec.kind);
+  const cred = registry.credential;
+  const row = findAccount(await readAccounts(), registry.id, account);
+  if (!cred || row?.kind !== 'login') {
+    log(`${spec.kind}: account '${account}' authenticates by env; no credential file to seed`);
+    const rest: AgentSpec = { ...spec };
+    delete rest.stageCredentials;
+    return rest;
+  }
+  const secret = accountSecretPath(registry, account, STATE_DIR);
+  return {
+    ...spec,
+    stageCredentials: () =>
+      secret && existsSync(secret)
+        ? stageSingleFileTarball(`${spec.kind}-acct-creds`, secret, cred.boxRelPath)
+        : Promise.resolve({ tarballPath: null, cleanup: () => Promise.resolve(), warnings: [] }),
+  };
 }

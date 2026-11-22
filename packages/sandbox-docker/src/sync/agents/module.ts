@@ -31,6 +31,12 @@ export interface AgentSessionInfo {
 export interface AgentVolumeChoice {
   /** Resolved docker volume name mounted at the agent's box config dir. */
   volume: string;
+  /**
+   * The NAMED LLM account this volume belongs to (llm-accounts Phase 3), or
+   * absent for the default account. A module's `ensureVolume` must then seed
+   * the host's config but never the host's identity.
+   */
+  account?: string;
 }
 
 /**

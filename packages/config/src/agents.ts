@@ -99,6 +99,13 @@ export const AGENT_KINDS = [
         description:
           "Terminal renderer Claude Code uses inside a box. Claude's `fullscreen` renderer repaints differentially and leaves stale characters in the blank areas of the screen over a network transport - visible while scrolling, cleared only by resizing the terminal. Boxes pin the classic renderer; set `fullscreen` to opt back in, or `auto` to let Claude decide. Rides the launch, so it takes effect on the agent's next start.",
       },
+      {
+        key: 'account',
+        type: 'string',
+        default: 'default',
+        description:
+          "Named LLM account new boxes of this agent run on (`agentbox accounts` lists them; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
+      },
     ],
   },
   {
@@ -107,6 +114,15 @@ export const AGENT_KINDS = [
     hasSkipPermissions: true,
     skipPermissionsDesc:
       'Launch codex in new boxes with --dangerously-bypass-approvals-and-sandbox (auto-accept tool use). On by default for the same reason as claude; set false to be asked.',
+    settings: [
+      {
+        key: 'account',
+        type: 'string',
+        default: 'default',
+        description:
+          "Named LLM account new boxes of this agent run on (`agentbox accounts` lists them; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
+      },
+    ],
   },
   {
     id: 'opencode',

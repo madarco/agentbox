@@ -60,7 +60,12 @@ import {
   remoteHubConfigured,
 } from '../../control-plane/remote-hub.js';
 import { runCarryGate, runQueuedCarryGate } from '../../lib/carry-gate.js';
-import { runModelAuthIngest } from '@agentbox/sandbox-core';
+import {
+  agentSourceIds,
+  parseAccountFlags,
+  resolveBoxAccounts,
+  runModelAuthIngest,
+} from '@agentbox/sandbox-core';
 import { resolveModelAuth } from '../../lib/model-auth-gate.js';
 import { runToolsGate } from '../../lib/tools-gate.js';
 import { directGitModeRefusal, resolveGitCredsCarry } from '../../lib/git-creds-gate.js';
@@ -436,6 +441,32 @@ export async function runAgentCreate(
       }
     })());
 
+  /**
+   * The named LLM account per agent (llm-accounts Phase 3): this agent's, plus
+   * each borrowed lender's. Memoised for the same reason as `modelAuth` — both
+   * the `-i` and the foreground branch need it, decided before any box exists.
+   */
+  let accountsPromise: Promise<Record<string, string>> | undefined;
+  const boxAccounts = (): Promise<Record<string, string>> =>
+    (accountsPromise ??= (async () => {
+      try {
+        const lenders = agentSourceIds(await modelAuth());
+        const r = await resolveBoxAccounts({
+          agents: [a.spec.id, ...lenders],
+          flags: parseAccountFlags(opts.account, a.spec.id),
+          config: cfgLoaded,
+          loginOnly: lenders,
+        });
+        for (const w of r.warnings) log.warn(w);
+        for (const [agent, id] of Object.entries(r.accounts)) {
+          cmdLog.write(`account: ${agent} runs on '${id}'`);
+        }
+        return r.accounts;
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err), 1);
+      }
+    })());
+
   if (opts.initialPrompt && opts.initialPrompt.length > 0) {
     // Captured as a const so the narrowing survives into the status-line
     // callback below (TS drops property narrowing inside a closure).
@@ -451,6 +482,7 @@ export async function runAgentCreate(
     // Before the routing round trip, so the question is answered at a bare
     // terminal on either branch — and so a refused source costs no box.
     const borrowCredentials = await modelAuth();
+    const accounts = await boxAccounts();
     // Route the background run to the control box when configured — the worker
     // creates the box AND starts the agent with the prompt (laptop off). Local
     // creds aren't needed for the hub path (custody seeds them).
@@ -482,6 +514,7 @@ export async function runAgentCreate(
         resolved: {
           ...(persistent !== undefined ? { persistent } : {}),
           ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+          ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
         },
       });
       for (const w of hubOpts.warnings) log.warn(w);
@@ -508,6 +541,7 @@ export async function runAgentCreate(
             fromBranch: opts.fromBranch,
             persistent,
             ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+            ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
             // Resolved here, because the control box has no per-project config:
             // anything not sent is the provider's default, not the project's.
             opts: hubOpts.opts,
@@ -581,6 +615,7 @@ export async function runAgentCreate(
         ...(remoteHost ? { remoteHost } : {}),
         persistent,
         ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+        ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
         carry: carryForQueue,
         ...(queueRepoUrl ? { repoUrl: queueRepoUrl } : {}),
       },
@@ -686,6 +721,7 @@ export async function runAgentCreate(
   }
 
   const modelAuthSources = await modelAuth();
+  const accounts = await boxAccounts();
 
   // Host-tool gate (agentbox.yaml's `tools:` block): a committed yaml can
   // only REQUEST host CLIs; the grant is the host's decision. Never blocks.
@@ -776,6 +812,7 @@ export async function runAgentCreate(
         resolved: {
           ...(persistent !== undefined ? { persistent } : {}),
           ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+          ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
           ...(sessionName ? { sessionName } : {}),
         },
       });
@@ -795,6 +832,7 @@ export async function runAgentCreate(
             fromBranch,
             persistent,
             ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+            ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
             opts: hubOpts.opts,
             urlFlag: opts.url,
             onStatus,
@@ -848,6 +886,7 @@ export async function runAgentCreate(
         ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
         carry: carryEntries,
         ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+        ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
         vnc: { enabled: cfg.box.vnc },
         ...(persistent !== undefined ? { persistent } : {}),
         limits: resolveLimits(cfg.box, opts),
@@ -933,6 +972,7 @@ export async function runAgentCreate(
       ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
       carry: carryEntries,
       ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+      ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
       vnc: { enabled: cfg.box.vnc },
       ...(persistent !== undefined ? { persistent } : {}),
       docker: { sharedCache: cfg.box.dockerCacheShared },

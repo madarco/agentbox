@@ -53,6 +53,8 @@ export interface HubCreateOptsInput {
   resolved?: {
     persistent?: boolean;
     borrowCredentials?: readonly string[];
+    /** Named LLM account per agent (`--account`), already resolved locally. */
+    accounts?: Readonly<Record<string, string>>;
     sessionName?: string;
   };
 }
@@ -174,6 +176,9 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
     ...(flags.credentialSync === false ? { credentialSync: false } : {}),
     ...(resolved.borrowCredentials?.length
       ? { borrowCredentials: [...resolved.borrowCredentials] }
+      : {}),
+    ...(resolved.accounts && Object.keys(resolved.accounts).length > 0
+      ? { accounts: { ...resolved.accounts } }
       : {}),
     ...(flags.useBranch ? { useBranch: flags.useBranch } : {}),
     ...(resolved.sessionName ? { sessionName: resolved.sessionName } : {}),

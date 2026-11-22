@@ -106,6 +106,7 @@ export {
 export { makeSyncContext, type SyncContext, type SyncContextInit } from './context.js';
 export {
   ensureAgentInstalled,
+  clearAccountCredential,
   AgentInstallError,
   renderInstallRecipe,
   renderPackageInstall,

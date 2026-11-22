@@ -18,6 +18,7 @@
  */
 
 import { execa } from 'execa';
+import { namedAccounts } from '@agentbox/core';
 import {
   parseCredentialsUpdate,
   readCredentialBackup,
@@ -25,6 +26,7 @@ import {
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
   type CredentialAgentKind,
+  readState,
 } from '@agentbox/sandbox-core';
 
 /** Mirrors `CREDENTIALS_UPDATED_EVENT` in @agentbox/ctl (like `box-status`). */
@@ -44,6 +46,28 @@ export interface CredentialsFanoutDeps {
    * seeds from a current copy rather than the last one a PC pushed.
    */
   custody?: CredentialCustodyWriter | null;
+  /**
+   * The account `agent` runs on in box `boxId` (from its record), or undefined
+   * for `default`. Override for tests; default: `~/.agentbox/state.json`.
+   */
+  boxAccountFor?: (boxId: string, agent: CredentialAgentKind) => Promise<string | undefined>;
+}
+
+/**
+ * Fails CLOSED: when the box registry cannot be read, the update is treated as
+ * coming from a named account and dropped. A box that cannot be checked must
+ * not be able to overwrite the default login everywhere; a default box simply
+ * re-posts on its next refresh.
+ */
+export async function stateBoxAccount(boxId: string, agent: string): Promise<string | undefined> {
+  let state;
+  try {
+    state = await readState();
+  } catch {
+    return '(unverifiable: box registry unreadable)';
+  }
+  const box = state.boxes.find((b) => b.id === boxId);
+  return namedAccounts(box?.accounts)?.[agent];
 }
 
 /** The single write this needs from a custody store (structural: no import cycle). */
@@ -62,6 +86,10 @@ export class CredentialsFanout {
   private readonly runPropagate: (agent: CredentialAgentKind, sourceBoxId: string) => Promise<void>;
   private readonly backupPathFor?: (agent: CredentialAgentKind) => string;
   private readonly custody: CredentialCustodyWriter | null;
+  private readonly boxAccountFor: (
+    boxId: string,
+    agent: CredentialAgentKind,
+  ) => Promise<string | undefined>;
   private readonly pending = new Map<CredentialAgentKind, NodeJS.Timeout>();
   private readonly chains = new Map<CredentialAgentKind, Promise<void>>();
 
@@ -71,6 +99,7 @@ export class CredentialsFanout {
     this.runPropagate = deps.runPropagate ?? defaultRunPropagate;
     this.backupPathFor = deps.backupPathFor;
     this.custody = deps.custody ?? null;
+    this.boxAccountFor = deps.boxAccountFor ?? stateBoxAccount;
   }
 
   /**
@@ -80,6 +109,17 @@ export class CredentialsFanout {
   async handle(sourceBoxId: string, payload: unknown): Promise<CredentialsHandleResult> {
     const update = parseCredentialsUpdate(payload);
     if (!update) return { accepted: false, reason: 'invalid payload' };
+    // A box on a NAMED account holds that account's login, not the default's.
+    // Accepting it here would write it over the default backup and custody and
+    // fan it out to every default box. Dropped until Phase 4 routes updates
+    // per (agent, account); the account's volume keeps the refreshed copy.
+    const account = await this.boxAccountFor(sourceBoxId, update.agent);
+    if (account !== undefined) {
+      this.log(
+        `credentials: ignored ${update.agent} update from box ${sourceBoxId} (named account '${account}')`,
+      );
+      return { accepted: false, reason: `named account '${account}'` };
+    }
     const backupPath = this.backupPathFor?.(update.agent);
     const existing = await readCredentialBackup(update.agent, { backupPath });
     const verdict = shouldAcceptCredentialUpdate(update.agent, update.content, existing);

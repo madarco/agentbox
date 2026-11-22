@@ -15,7 +15,9 @@
 
 import type { SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from '../registry.js';
-import { resolveAgentInstall } from '@agentbox/core';
+import { findAccount, isDefaultAccount, resolveAgentInstall } from '@agentbox/core';
+import type { AgentSyncSpec } from '@agentbox/core';
+import { readAccounts, readAccountSecret } from '../../llm-accounts.js';
 import { pushCredentialToBox, resolveHostCredential } from './credentials.js';
 import type { AgentInstallRecipe, AgentSettings } from '@agentbox/core';
 
@@ -191,7 +193,16 @@ async function installPackages(
 export async function ensureAgentInstalled(
   transport: SyncTransport,
   agent: string,
-  opts: { onProgress?: (line: string) => void; settings?: AgentSettings } = {},
+  opts: {
+    onProgress?: (line: string) => void;
+    settings?: AgentSettings;
+    /**
+     * The NAMED LLM account this agent runs on in the box (`BoxRecord.accounts`).
+     * A named login gets its own secret, a pasted kind gets no login file, and
+     * neither ever gets the host's DEFAULT login (llm-accounts Phase 3).
+     */
+    account?: string;
+  } = {},
 ): Promise<EnsureAgentInstalledResult> {
   const spec = resolveAgentSpec(agent);
   const probe = await transport.exec(['sh', '-c', `command -v ${spec.binary}`]);
@@ -282,8 +293,10 @@ export async function ensureAgentInstalled(
   // Best-effort: a box whose agent simply isn't logged in on the host is a
   // normal state, and the agent's own login flow handles it.
   try {
-    const credential = await resolveHostCredential(spec.id);
-    if (credential !== null) {
+    const credential = await installCredentialFor(spec, opts.account);
+    if (credential === 'none') {
+      await clearAccountCredential(transport, spec);
+    } else if (credential !== null) {
       await pushCredentialToBox(transport, spec.id, credential);
       opts.onProgress?.(`seeded ${spec.id} credentials into the box`);
     }
@@ -294,4 +307,31 @@ export async function ensureAgentInstalled(
   }
 
   return { installed: true };
+}
+
+/**
+ * The login to seed for `spec` on `account`: the host's default login for the
+ * default account, the account's own secret for a named login, or `'none'` for
+ * a pasted kind (it authenticates by env, and a login file there would be the
+ * one the agent uses instead).
+ */
+async function installCredentialFor(
+  spec: AgentSyncSpec,
+  account: string | undefined,
+): Promise<string | null | 'none'> {
+  if (account === undefined || isDefaultAccount(account)) return resolveHostCredential(spec.id);
+  const row = findAccount(await readAccounts(), spec.id, account);
+  if (row?.kind !== 'login') return 'none';
+  return readAccountSecret(spec.id, account);
+}
+
+/** Remove a login file a checkpoint or image may have carried into a pasted-kind box. */
+export async function clearAccountCredential(
+  transport: SyncTransport,
+  spec: AgentSyncSpec,
+): Promise<void> {
+  const cred = spec.credential;
+  if (!cred) return;
+  const paths = [cred.boxAbsPath, `${cred.cloudMountPath}/${cred.boxRelPath}`];
+  await transport.exec(['sh', '-c', `rm -f ${paths.map((p) => `'${p}'`).join(' ')}`]);
 }

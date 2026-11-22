@@ -154,8 +154,38 @@ agentbox accounts rm claude/work      # its stored login and its config volume
 ```
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
-secret 0600 under `~/.agentbox/credentials/`. Choosing which account a box runs
-on is coming next. Until then, every box uses the default account.
+secret 0600 under `~/.agentbox/credentials/`.
+
+### Choosing the account a box runs on
+
+```bash
+agentbox claude --account work                 # this box only
+agentbox create --account claude=work          # repeatable: --account codex=work
+agentbox config set claude.account work        # default for this project
+agentbox config set claude.account work --global
+```
+
+`--account` wins over the project setting, which wins over the global one; with
+none, the box uses the default account. A repo's `agentbox.yaml` cannot choose
+an account: it is your choice which subscription a project bills, so a value
+there is ignored with a warning. The account is fixed when the box is created
+and recorded on it, so changing the setting later does not move existing boxes.
+
+A box on a named account gets exactly that account's auth:
+
+- A **login** account runs on its own config volume (docker) or its own slice of
+  the credentials volume (Daytona), seeded with your host's settings, skills and
+  plugins but never your host's login, profile or `settings.json` API key.
+- A **setup token** or **API key** account reaches the agent as
+  `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` (codex: `OPENAI_API_KEY`), and
+  an API-key account is pre-approved so Claude never asks whether to use it.
+- The host's own `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and
+  `OPENAI_API_KEY` are **not** forwarded into it, so they cannot take over.
+
+A borrowed `--model-auth codex` login uses `codex.account` the same way (it has
+to be a login account). Until account-aware credential sharing lands, a named
+account's renewed login is not copied to other boxes: give an account that
+several cloud boxes share a setup token.
 
 ## Share a login you already have
 

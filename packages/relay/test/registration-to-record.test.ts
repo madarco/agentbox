@@ -167,3 +167,21 @@ describe('agents.list for a box adopted on another PC', () => {
     expect(registrationAgents({ agent: 'none' })).toBeUndefined();
   });
 });
+
+describe('accounts travel with an adopted box (llm-accounts #437-4)', () => {
+  const freshToken = () => 'tok';
+  it('copies the registration accounts onto the record', () => {
+    const rec = registrationToBoxRecord(reg({ accounts: { claude: 'work' } }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    expect(rec.accounts).toEqual({ claude: 'work' });
+  });
+  it('a box with no named account records none', () => {
+    const rec = registrationToBoxRecord(reg(), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    expect(rec.accounts).toBeUndefined();
+  });
+});

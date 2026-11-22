@@ -80,6 +80,7 @@ export async function rehydrateFromState(): Promise<void> {
       autoApproveSafeHostActions: b.autoApproveSafeHostActions,
       agents: b.agents,
       lastAgent: b.lastAgent,
+      ...(b.accounts ? { accounts: b.accounts } : {}),
     })),
   );
 }

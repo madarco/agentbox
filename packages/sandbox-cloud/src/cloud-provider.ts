@@ -15,6 +15,7 @@ import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import {
   generateBoxId,
+  namedAccounts,
   persistentRefusal,
   primaryAgent,
   resolveSyncTopology,
@@ -59,8 +60,9 @@ import {
   CarryCopyError,
   withPerBoxCarry,
   borrowedCredentialCarry,
+  agentIds,
 } from '@agentbox/sandbox-core';
-import { makeCloudSync } from './sync/cloud-sync.js';
+import { makeCloudSync, namedAccountAgents } from './sync/cloud-sync.js';
 import { createCloudSyncTransport } from './sync/sync-transport.js';
 import {
   buildTmuxConfigShellSnippet,
@@ -77,6 +79,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   cloudVolumesUsable,
+  clearPastedAccountCredentials,
   ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
   reconcileAgentCredentials,
@@ -410,6 +413,7 @@ export function createCloudProvider(
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
       agent: primaryAgent(box),
+      ...(box.accounts ? { accounts: box.accounts } : {}),
     });
   }
 
@@ -687,6 +691,7 @@ export function createCloudProvider(
           // by origin (Step 4 adoption); best-effort.
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
           agent: primaryAgent(box),
+          ...(box.accounts ? { accounts: box.accounts } : {}),
         });
       } catch {
         // best-effort
@@ -703,10 +708,14 @@ export function createCloudProvider(
       const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
         .credentialSync;
       if (credentialSync) {
+        // An agent on a named account is left out: reconcile is newest-wins
+        // against the DEFAULT login's backup, both directions.
+        const named = namedAccountAgents(box.accounts);
+        const agents = (box.agents ?? agentIds()).filter((a) => !named.includes(a));
         await reconcileAgentCredentials(backend, h, {
           onLog: () => {},
           // Absent on pre-selection boxes, which correctly means "all".
-          ...(box.agents ? { agents: box.agents } : {}),
+          ...(box.agents || named.length > 0 ? { agents } : {}),
         });
       }
     } catch {
@@ -858,6 +867,7 @@ export function createCloudProvider(
         // Daytona's linux-vm class accepts volume mounts and never honors them
         // (see ensureAgentVolumesForCloud) — take the per-create upload path.
         volumesUsable: cloudVolumesUsable(sandboxClass),
+        ...(req.accounts ? { accounts: req.accounts } : {}),
       });
 
       // Read the `expose:` service ports up front so port-capped backends
@@ -1038,6 +1048,7 @@ export function createCloudProvider(
         await ensureAgentsInstalledForCloud(backend, handle, {
           agents: agentVolumes.agents,
           onLog: log,
+          ...(req.accounts ? { accounts: req.accounts } : {}),
         });
 
         // A backend whose `prepare` did not bake the host's static agent config
@@ -1050,8 +1061,16 @@ export function createCloudProvider(
           onLog: log,
         });
 
-        const sync = makeCloudSync(backend, handle, { agents: agentVolumes.agents });
+        const sync = makeCloudSync(backend, handle, {
+          agents: agentVolumes.agents,
+          ...(req.accounts ? { accounts: req.accounts } : {}),
+        });
         await sync.seedCredentials(syncCtx);
+        // A pasted-kind account authenticates by env only: drop any login file
+        // a checkpoint or install carried in (llm-accounts Phase 3).
+        for (const agent of await clearPastedAccountCredentials(backend, handle, req.accounts)) {
+          log(`${agent}: cleared login file (account authenticates by token)`);
+        }
         await sync.seedAgentConfig(syncCtx);
         await sync.seedGitIdentity(syncCtx);
 
@@ -1077,7 +1096,14 @@ export function createCloudProvider(
         );
         // A borrowed model login lands the same way, 0600 at the lending
         // agent's own path, before the in-box bootstrap starts the supervisor.
-        carryEntries.push(...(await borrowedCredentialCarry(req.borrowCredentials ?? [], log)));
+        carryEntries.push(
+          ...(await borrowedCredentialCarry(
+            req.borrowCredentials ?? [],
+            log,
+            undefined,
+            req.accounts,
+          )),
+        );
         if (carryEntries.length > 0) {
           log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
           const result = await sync.applyCarry(syncCtx, carryEntries);
@@ -1415,6 +1441,7 @@ export function createCloudProvider(
               ...(req.repoKey ? { repoKey: req.repoKey } : {}),
               ...(req.requester ? { requester: req.requester } : {}),
               agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
+              ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
             });
           } catch (err) {
             log(
@@ -1444,6 +1471,13 @@ export function createCloudProvider(
           ...(req.agents ? { agents: req.agents } : {}),
           ...(req.borrowCredentials && req.borrowCredentials.length > 0
             ? { borrowedCredentials: [...req.borrowCredentials] }
+            : {}),
+          ...(namedAccountAgents(req.accounts).length > 0
+            ? {
+                accounts: Object.fromEntries(
+                  namedAccountAgents(req.accounts).map((a) => [a, req.accounts![a]!]),
+                ),
+              }
             : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
@@ -1948,7 +1982,10 @@ export function createCloudProvider(
         provider: 'cloud',
         hostWorkspace: box.workspacePath,
       });
-      return makeCloudSync(backend, handleFor(box)).extractCredentials(ctx);
+      // A box's named-account agents are skipped: their login is not the default's.
+      return makeCloudSync(backend, handleFor(box), {
+        ...(box.accounts ? { accounts: box.accounts } : {}),
+      }).extractCredentials(ctx);
     },
 
     // stats is provider-optional; cloud backends without a metrics API just

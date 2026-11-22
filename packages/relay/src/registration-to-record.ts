@@ -155,6 +155,11 @@ export function registrationToBoxRecord(
       : reg.agent && reg.agent !== 'none'
         ? { agents: [reg.agent] }
         : {}),
+    // The box's named accounts travel with it, so an adopting PC never
+    // reconciles it against its own DEFAULT login (llm-accounts Phase 3).
+    ...((reg.accounts ?? existing?.accounts)
+      ? { accounts: reg.accounts ?? existing?.accounts }
+      : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
     ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,

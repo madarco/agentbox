@@ -5028,6 +5028,12 @@ export function buildOpenApi(): Record<string, unknown> {
               enum: ['claude', 'codex', 'opencode', 'pi'],
               description: 'The agent the box was created for.',
             },
+            accounts: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description:
+                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Fixed at create. Absent = every agent on its default login. Raw ids only; labels and kinds come with a later accounts endpoint.',
+            },
             persistent: {
               type: 'boolean',
               description:
@@ -5970,6 +5976,12 @@ export function buildOpenApi(): Record<string, unknown> {
                   items: { type: 'string' },
                   description:
                     "Other agents' host logins to seed as this box's model auth (`--model-auth`; service agents). Normally decided by the `model-auth` prompt instead.",
+                },
+                accounts: {
+                  type: 'object',
+                  additionalProperties: { type: 'string' },
+                  description:
+                    'Named LLM account per agent (`{ "claude": "work" }`), the API twin of `--account`. Resolved against THIS hub machine\'s account store; an agent left out uses its `<agent>.account` config, else its default login. A borrowed model-auth lender\'s account must be a login.',
                 },
               },
             },

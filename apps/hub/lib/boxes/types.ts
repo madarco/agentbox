@@ -175,6 +175,12 @@ export interface Box {
   agents?: string[];
   /** Other agents' logins this box borrows as model auth (`--model-auth`). Read-only. */
   borrowedCredentials?: string[];
+  /**
+   * Named LLM account per agent (`{ claude: 'work' }`), raw from the record or
+   * registration; absent = every agent on its default login. Read-only.
+   * (llm-accounts Phase 3; labels/kinds arrive with Phase 5's `accounts` list.)
+   */
+  accounts?: Record<string, string>;
   // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is
   // 'control-plane'. Absent for docker.
   topology?: string;

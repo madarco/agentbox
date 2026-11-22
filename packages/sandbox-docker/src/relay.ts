@@ -702,6 +702,8 @@ export interface RegisterBoxArgs {
    * `primaryAgent(record)`, or it loses its service agent.
    */
   agent?: string;
+  /** Named LLM account per agent (`BoxRecord.accounts`). */
+  accounts?: Record<string, string>;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -739,6 +741,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     autoApproveSafeHostActions: args.autoApproveSafeHostActions,
     originUrl: args.originUrl,
     agent: args.agent,
+    ...(args.accounts && Object.keys(args.accounts).length > 0 ? { accounts: args.accounts } : {}),
   });
 }
 
@@ -932,6 +935,8 @@ async function adminPostForJson(path: string, body: unknown): Promise<unknown> {
 export interface BoxWithToken {
   id: string;
   name: string;
+  /** Named LLM account per agent — kept across a relay restart's re-registration. */
+  accounts?: Record<string, string>;
   /** Sandbox backend the box runs on. Defaults to 'docker' when absent. */
   provider?: 'docker' | 'cloud' | string;
   container?: string;
@@ -984,6 +989,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         // every registration with an agentless one, and an openclaw box lost
         // its gateway on the next ctl start.
         agent: primaryAgent(b),
+        ...(b.accounts ? { accounts: b.accounts } : {}),
       });
     } catch {
       // best-effort
