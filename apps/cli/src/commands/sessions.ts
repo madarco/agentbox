@@ -3,16 +3,13 @@
  * (docs/agent-history-plan.md, Phase 2). Every call goes through `/api/v1`; the
  * CLI reads no store of its own.
  */
-import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { withHubClient, type WithHubOptions } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
+import { saveStreamAtomically } from '../lib/sessions-download.js';
 import {
   SESSION_HEADERS,
   clip,
@@ -187,11 +184,9 @@ sessionsCommand
         }
         await mkdir(dirname(target), { recursive: true });
         const body = await client.historyRaw(d.session.key, f.path);
-        await pipeline(
-          Readable.fromWeb(body as WebReadableStream<Uint8Array>),
-          createWriteStream(target),
-        );
-        written.push({ path: f.path, file: target, bytes: f.bytes });
+        // What arrived, not the size the detail call saw: a live session grows.
+        const bytes = await saveStreamAtomically(body, target);
+        written.push({ path: f.path, file: target, bytes });
       }
       if (opts.json) {
         process.stdout.write(

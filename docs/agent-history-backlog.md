@@ -119,3 +119,34 @@ teardown, and the private-key rule kept inside one line. Still open:
   `getSession` round trip and returns a subset of the session shape (no
   `key`). Batch-load, or JOIN in `repo.search`, and reuse `sessionJson`;
   this matters once the postgres repo lands.
+
+## From the review of #439 (2026-11-22)
+
+Fixed in the follow-up: `sessions download` writes `<file>.part` and renames on
+success, reporting the bytes actually written (LATER-2), and `sessions` is in
+`agentbox help`'s Advanced group plus the drift test's mirror (LATER-5). Still open:
+
+- **`/raw` across a generation change (LATER-1).** The route takes the file's
+  offset, then `rawStream` re-reads the row; a `reset` frame in between moves
+  the row to generation g+1, and the stream serves the new generation's bytes
+  short of the announced length (reproduced: 441 B announced, 42 B sent). Pass
+  the `HistoryFileRow` (generation and offset) into `rawStream` and list that
+  generation's chunks; old generations stay readable until retention.
+- **`show --all` cost (LATER-3).** Every `/turns` page runs the window function
+  and `ORDER BY … LIMIT/OFFSET` over the whole session (about rows²/1000), and
+  the CLI buffers every row before printing. Print per page, and page by key.
+- **Same path from two origins (LATER-4).** A session resumed in a second docker
+  box is shipped by both, so the detail lists its path twice, `download` writes
+  it twice, and `?path=` serves the first (older, shorter) row. Dedupe `files`
+  by path, keeping the largest offset, or add an origin selector. The real fix
+  is single ownership per path (see "Same session from two boxes" above).
+- **Header from an edge path (LATER-6).** `x-agentbox-history-path` is set
+  verbatim; a CR/LF or a character above U+00FF in a path makes the response
+  throw (500). Use `encodeURIComponent(file.path)`.
+- **Phase 3 id shapes (LATER-7).**
+  - The prefix lookup refuses refs containing `_`; escape with `LIKE … ESCAPE`
+    instead.
+  - `downloadTarget` skips session ids outside
+    `^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$` with a misleading "outside the folder"
+    message.
+  - Revisit both when codex, pi and opencode ids arrive.
