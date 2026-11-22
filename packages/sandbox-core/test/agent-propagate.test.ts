@@ -92,6 +92,15 @@ describe('planPropagateTargets', () => {
       expect(plan.dockerVolumes.map((v) => v.volume)).toEqual(['agentbox-claude-config-acct-work']);
     });
 
+    it('a named docker box with no recorded volume is skipped, never the shared volume (#442 review)', () => {
+      const plan = planPropagateTargets(
+        [...boxes, { id: 'n', name: 'docker-work-norecord', accounts: { claude: 'work' } }],
+        { agent: 'claude', sourceBoxId: 's', scope: 'all', account: 'work' },
+      );
+      expect(plan.dockerVolumes.map((v) => v.volume)).not.toContain('agentbox-claude-config');
+      expect(names(plan)).not.toContain('docker-work-norecord');
+    });
+
     it('no account (settings propagate) reaches every box, named ones included', () => {
       const n = names(
         planPropagateTargets([...boxes, ...extra], {

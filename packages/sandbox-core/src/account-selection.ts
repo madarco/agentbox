@@ -186,3 +186,17 @@ export function applyAccountEnv(
   for (const [k, v] of Object.entries(env)) if (!policy.suppress.includes(k)) out[k] = v;
   return { ...out, ...policy.inject };
 }
+
+/**
+ * The boxes whose record names `account` for `agent` — running it, or
+ * borrowing it as model auth. While any exist, the account must not be removed:
+ * re-adding the same name for another subscription would let a stale box's
+ * refresh overwrite it and fan out to every new box on it (#442 review).
+ */
+export function boxesOnAccount<B extends Pick<BoxRecord, 'name' | 'accounts'>>(
+  boxes: readonly B[],
+  agent: string,
+  account: string,
+): B[] {
+  return boxes.filter((b) => boxAccount(b, agent) === account && !isDefaultAccount(account));
+}

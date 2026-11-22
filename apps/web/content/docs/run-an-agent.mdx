@@ -150,7 +150,7 @@ of that login until AgentBox hands them the new one. A setup token never renews.
 ```bash
 agentbox accounts                     # agent, account, kind, label, email/plan, whether a secret is stored
 agentbox accounts label claude/work "Work laptop"
-agentbox accounts rm claude/work      # its stored login and its config volume
+agentbox accounts rm claude/work      # its stored login and config volume (not while a box uses it)
 ```
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each

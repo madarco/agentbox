@@ -195,3 +195,29 @@ rides the relay registration and the hub `Box` payload; `checkpoint
   `writeAccountSecret`, the relay, the custody seed); only the first takes the
   accounts lock. The relay now checks the row and kind first, so the window is
   an `accounts rm` landing between its check and its write.
+
+## From the #442 review
+
+Done in #442: `agentbox accounts rm` refuses while a box records the account
+(running or borrowing it), and the propagate planner skips a named docker box
+with no recorded volume instead of falling back to the shared default volume.
+
+- **PHASE 5 MUST DESIGN: named custody objects are keyed by account name only.**
+  Account ids are local to each PC: PC A's `claude/work` and PC B's
+  `claude/work` (a different subscription) both push to
+  `agents/claude/accounts/work/.credentials.json`, and the push is hash-only,
+  so the last pusher wins. The automatic credential sync also uploads every
+  pasted API key / setup token, which nothing on the hub reads yet. Before
+  Phase 5 consumes these objects: key them by owner/device (or carry the
+  account identity), decide whether pasted secrets travel at all, and delete
+  them on `accounts rm`.
+- **A registration-store error reads as the default account** (already on
+  nightly): `server.ts` maps a `store.getBox` rejection to undefined and falls
+  through to `state.json`. Map it to `UNVERIFIABLE_ACCOUNT`, so a box missing
+  from `state.json` too fails closed instead of routing a named login to the
+  default.
+- **The hub System page counts named-account custody objects as the agent's
+  login** (`custody-view.ts` `summarizeAgentCredentials` groups by
+  `agents/<agent>/`): a PC with only a named claude account shows Claude as
+  logged in, but a hub create gets no default login. Count only
+  `agents/<a>/<boxRelPath>`, and list accounts separately.

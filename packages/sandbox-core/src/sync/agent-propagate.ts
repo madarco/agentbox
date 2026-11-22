@@ -330,7 +330,14 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
       cloudBoxes.push(box);
       continue;
     }
-    const volume = isolatedVolumeOf(box, opts.agent) ?? sharedVolume;
+    const recorded = isolatedVolumeOf(box, opts.agent);
+    // A box on a NAMED account mounts its account's volume, always recorded at
+    // create. Without that record there is no safe target: the shared volume is
+    // the DEFAULT login's, so falling back to it would hand it this account.
+    if (recorded === undefined && namedAccounts(box.accounts)?.[opts.agent] !== undefined) {
+      continue;
+    }
+    const volume = recorded ?? sharedVolume;
     if (volume === opts.excludeVolume) continue;
     const entry = volumes.get(volume) ?? { boxNames: [], shared: volume === sharedVolume };
     entry.boxNames.push(box.name);
