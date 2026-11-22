@@ -73,9 +73,14 @@ describe('per-account names', () => {
     expect(accountSecretPath(s, 'work', '/home/u/.agentbox')).toBe(
       '/home/u/.agentbox/credentials/claude/work.json',
     );
-    expect(accountCustodyPath('codex', 'work', 'auth.json')).toBe(
-      'agents/codex/accounts/work/auth.json',
+    expect(accountCustodyPath('codex', 'work', 'auth.json', 'm1')).toBe(
+      'agents/codex/accounts/m1/work/auth.json',
     );
+    // Keyed by machine: two PCs' `work` never collide, and a named path needs one.
+    expect(accountCustodyPath('codex', 'work', 'auth.json', 'm2')).not.toBe(
+      accountCustodyPath('codex', 'work', 'auth.json', 'm1'),
+    );
+    expect(() => accountCustodyPath('codex', 'work', 'auth.json')).toThrow(/machine/);
     expect(accountCloudSubpath('claude/', 'work')).toBe('claude-acct-work/');
     expect(accountCloudSubpath('claude', 'work')).toBe('claude-acct-work/');
   });
@@ -87,7 +92,7 @@ describe('per-account names', () => {
   it('a named custody path never nests under a dotless default file', () => {
     // A plugin credential `token` with an account also named `token`.
     const def = accountCustodyPath('foo', 'default', 'token');
-    const named = accountCustodyPath('foo', 'token', 'token');
+    const named = accountCustodyPath('foo', 'token', 'token', 'm1');
     expect(named.startsWith(`${def}/`)).toBe(false);
   });
 
