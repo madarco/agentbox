@@ -31,7 +31,7 @@ export interface LoginPhaseUpdate {
 
 export interface RunClaudeLoginOptions {
   image: string;
-  /** Shared claude credential volume the login writes into. */
+  /** Volume the login writes into: the shared one, or a named account's. */
   volume?: string;
   /** Login-method args forwarded to `claude auth login` (default `['--claudeai']`). */
   extraArgs?: string[];
@@ -93,7 +93,11 @@ export async function runClaudeLogin(opts: RunClaudeLoginOptions): Promise<RunCl
       const warm = await warmUpClaudeCredentials(volume, image, {
         onProgress: (l) => opts.writeLog?.(l),
       });
-      await syncClaudeCredentials({ volume }, { image, isolate: false });
+      // Only the shared volume mirrors to the legacy backup, which IS the
+      // default account; a named account's volume is captured by the caller.
+      if (volume === SHARED_CLAUDE_VOLUME) {
+        await syncClaudeCredentials({ volume }, { image, isolate: false });
+      }
       return { warmed: warm.warmed };
     },
     signal: opts.signal,

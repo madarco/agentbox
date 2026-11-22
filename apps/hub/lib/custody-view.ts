@@ -17,15 +17,16 @@ export interface CustodyEntry {
   updatedAt: string;
 }
 
-// The four top-level scopes the store enforces (mirrors CUSTODY_SCOPES in the
-// relay). Ordered agents → projects → prepared → boxes for display.
-export const CUSTODY_SCOPES = ['agents', 'projects', 'prepared', 'boxes'] as const;
+// The top-level scopes the store enforces (mirrors CUSTODY_SCOPES in the
+// relay). Ordered agents → projects → prepared → skills → boxes for display.
+export const CUSTODY_SCOPES = ['agents', 'projects', 'prepared', 'skills', 'boxes'] as const;
 export type CustodyScope = (typeof CUSTODY_SCOPES)[number];
 
 export const SCOPE_META: Record<CustodyScope, { label: string; blurb: string }> = {
   agents: {
     label: 'Agent credentials',
-    blurb: 'Claude / Codex / OpenCode logins pushed here so a hub-created box is never launched signed-out.',
+    blurb:
+      'Claude / Codex / OpenCode logins pushed here so a hub-created box is never launched signed-out.',
   },
   projects: {
     label: 'Project seeds',
@@ -33,7 +34,13 @@ export const SCOPE_META: Record<CustodyScope, { label: string; blurb: string }> 
   },
   prepared: {
     label: 'Prepared bakes',
-    blurb: 'Each provider’s base-image bake record, so a base baked on one machine is visible to both.',
+    blurb:
+      'Each provider’s base-image bake record, so a base baked on one machine is visible to both.',
+  },
+  skills: {
+    label: 'Skills library',
+    blurb:
+      'Skills seeded from a PC or uploaded with `agentbox skills`: one tarball per version plus its metadata.',
   },
   boxes: {
     label: 'Box SSH keys',
@@ -98,7 +105,14 @@ export function groupCustody(entries: CustodyEntry[]): CustodyScopeGroup[] {
       .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     const count = subgroups.reduce((n, g) => n + g.entries.length, 0);
     const size = subgroups.reduce((n, g) => n + g.size, 0);
-    return { scope, label: SCOPE_META[scope].label, blurb: SCOPE_META[scope].blurb, count, size, subgroups };
+    return {
+      scope,
+      label: SCOPE_META[scope].label,
+      blurb: SCOPE_META[scope].blurb,
+      count,
+      size,
+      subgroups,
+    };
   });
 }
 

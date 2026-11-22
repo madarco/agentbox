@@ -25,7 +25,7 @@ describe('custodySubject', () => {
 });
 
 describe('groupCustody', () => {
-  it('returns all four scopes in fixed order, even when empty', () => {
+  it('returns every scope in fixed order, even when empty', () => {
     const groups = groupCustody([]);
     expect(groups.map((g) => g.scope)).toEqual([...CUSTODY_SCOPES]);
     expect(groups.every((g) => g.count === 0 && g.subgroups.length === 0)).toBe(true);

@@ -32,7 +32,11 @@ export function claudeLoginBinding(o: {
       const warm = await warmUpClaudeCredentials(volume, image, {
         onProgress: (l) => o.writeLog?.(l),
       });
-      await syncClaudeCredentials({ volume }, { image, isolate: false });
+      // Only the shared volume mirrors to the legacy backup, which IS the
+      // default account; a named account's volume is captured by the caller.
+      if (volume === SHARED_CLAUDE_VOLUME) {
+        await syncClaudeCredentials({ volume }, { image, isolate: false });
+      }
       return { warmed: warm.warmed };
     },
   };

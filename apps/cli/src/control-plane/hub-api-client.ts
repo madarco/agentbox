@@ -713,6 +713,35 @@ export interface HubApiTaskFilter {
   managerId?: string;
 }
 
+/** One row of `GET /api/v1/skills` (mirrors the hub's `SkillSummary`). */
+export interface HubApiSkill {
+  name: string;
+  description: string;
+  /** Tree hash of the current version. */
+  current: string;
+  size: number;
+  files: number;
+  tarballBytes: number;
+  updatedAt: string;
+  source: { host?: string; machineId?: string; path?: string };
+  versions: number;
+}
+
+export interface HubApiSkillsListing {
+  /** True once any skill was ever imported, even if all were since discarded. */
+  seeded: boolean;
+  skills: HubApiSkill[];
+}
+
+/** What `PUT /api/v1/skills/{name}` is told about the tarball it receives. */
+export interface HubApiSkillUploadMeta {
+  sha256: string;
+  description: string;
+  size: number;
+  files: number;
+  source?: { host?: string; machineId?: string; path?: string };
+}
+
 export const SUPPORTED_HUB_API_VERSIONS = ['v1'] as const;
 
 export interface HubApiTarget {
@@ -1160,6 +1189,69 @@ export class HubApiClient {
     await this.request<{ ok: true }>('POST', `/boxes/${encodeURIComponent(id)}/rename`, {
       displayName,
     });
+  }
+
+  // ── skills library (custody `skills` scope) ──
+
+  listSkills(): Promise<HubApiSkillsListing> {
+    return this.request<HubApiSkillsListing>('GET', '/skills');
+  }
+
+  /** Store one version of a skill: a gzip tarball body, metadata in a header. */
+  async uploadSkill(
+    name: string,
+    tarball: Buffer,
+    meta: HubApiSkillUploadMeta,
+  ): Promise<{ name: string; version: string; changed: boolean; skill: HubApiSkill }> {
+    const res = await this.fetchImpl(`${this.base}/api/v1/skills/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        'Content-Type': 'application/gzip',
+        'X-AgentBox-Skill-Meta': Buffer.from(JSON.stringify(meta), 'utf8').toString('base64'),
+      },
+      body: new Uint8Array(tarball),
+    });
+    return this.parseRaw(res);
+  }
+
+  /** Fetch a version's tarball (default: current) and the tree hash the hub says it is. */
+  async downloadSkill(name: string, version?: string): Promise<{ version: string; data: Buffer }> {
+    const q = version ? `?version=${encodeURIComponent(version)}` : '';
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/skills/${encodeURIComponent(name)}/tarball${q}`,
+      { headers: { Authorization: `Bearer ${this.token}` } },
+    );
+    if (!res.ok) await this.parseRaw(res);
+    return {
+      version: res.headers.get('x-agentbox-skill-version') ?? '',
+      data: Buffer.from(await res.arrayBuffer()),
+    };
+  }
+
+  discardSkill(name: string): Promise<{ name: string; removed: number }> {
+    return this.request('DELETE', `/skills/${encodeURIComponent(name)}`);
+  }
+
+  /** Envelope handling for the raw (non-JSON-body) calls above. */
+  private async parseRaw<T>(res: Response): Promise<T> {
+    const text = await res.text();
+    let parsed: unknown;
+    try {
+      parsed = text.length > 0 ? JSON.parse(text) : {};
+    } catch {
+      throw new HubApiError(`unexpected non-JSON response (${res.status})`, 'internal', res.status);
+    }
+    if (!res.ok) {
+      const err = (parsed as ApiErrorBody).error;
+      throw new HubApiError(
+        err?.message ?? `request failed: ${res.status}`,
+        err?.code ?? 'internal',
+        res.status,
+        err?.details,
+      );
+    }
+    return parsed as T;
   }
 
   // ── workspace upload / clone (host <-> live box) ──

@@ -553,6 +553,12 @@ name; the render lints for a secret-shaped literal and warns.
    everything else about it is unchanged. Absent is not a placeholder for "not
    wired up yet" — if the agent has a host-side login, declare it.
 
+   **`accountKinds` opts the agent into named LLM accounts** (`login`,
+   `setup-token`, `api-key`) — several logins or keys per agent, picked per box.
+   Absent means the agent keeps its single `default` slot. `login` requires
+   `credential`, since a login account's secret is that file; `agent add`
+   refuses the combination. See [`llm-accounts-plan.md`](./llm-accounts-plan.md).
+
    **`modelAuth` is the other direction: a login the agent CONSUMES.** A service
    agent that speaks to a model provider with the user's Codex login declares
    `modelAuth: { sources, ingest }` — which host model-provider credentials a
