@@ -24,6 +24,7 @@ import {
   accountCustodyPath,
   accountSecretPath,
   DEFAULT_ACCOUNT_ID,
+  findAccount,
   isDefaultAccount,
   namedAccounts,
 } from '@agentbox/core';
@@ -35,6 +36,7 @@ import {
   STATE_DIR,
   writeCredentialBackup,
   type CredentialAgentKind,
+  readAccounts,
   readState,
 } from '@agentbox/sandbox-core';
 
@@ -65,6 +67,12 @@ export interface CredentialsFanoutDeps {
    * `credentials/<agent>/<id>.json`).
    */
   accountBackupPathFor?: (agent: CredentialAgentKind, account: string) => string;
+  /**
+   * The kind of a named account in the store, or undefined when it has none
+   * (tests; default: `~/.agentbox/accounts.json`). Only a `login` account takes
+   * a login update.
+   */
+  accountKindFor?: (agent: CredentialAgentKind, account: string) => Promise<string | undefined>;
   /**
    * The control box's custody store, when this relay owns one. Present ⇒ an
    * accepted credential is mirrored into `agents/<id>/…` so the next hub create
@@ -115,6 +123,10 @@ export class CredentialsFanout {
   ) => Promise<void>;
   private readonly backupPathFor?: (agent: CredentialAgentKind) => string;
   private readonly accountBackupPathFor: (agent: CredentialAgentKind, account: string) => string;
+  private readonly accountKindFor: (
+    agent: CredentialAgentKind,
+    account: string,
+  ) => Promise<string | undefined>;
   private readonly custody: CredentialCustodyWriter | null;
   private readonly boxAccountFor: (
     boxId: string,
@@ -128,6 +140,9 @@ export class CredentialsFanout {
     this.debounceMs = deps.debounceMs ?? 3_000;
     this.runPropagate = deps.runPropagate ?? defaultRunPropagate;
     this.backupPathFor = deps.backupPathFor;
+    this.accountKindFor =
+      deps.accountKindFor ??
+      (async (agent, account) => findAccount(await readAccounts(), agent, account)?.kind);
     this.accountBackupPathFor =
       deps.accountBackupPathFor ??
       ((agent, account) => {
@@ -159,6 +174,19 @@ export class CredentialsFanout {
     }
     const account = named ?? DEFAULT_ACCOUNT_ID;
     const isDefault = isDefaultAccount(account);
+    // Only a LOGIN account takes a login. A pasted-kind account's secret is
+    // its token (a login there would replace it and break every box on it),
+    // and an account the store no longer has must not be re-created by a
+    // late update (`accounts rm` already removed it).
+    if (!isDefault) {
+      const kind = await this.accountKindFor(update.agent, account).catch(() => undefined);
+      if (kind !== 'login') {
+        this.log(
+          `credentials: ignored ${update.agent} update from box ${sourceBoxId} (account '${account}' is ${kind ?? 'not in the store'})`,
+        );
+        return { accepted: false, reason: `account '${account}' is ${kind ?? 'unknown'}` };
+      }
+    }
     const backupPath = isDefault
       ? this.backupPathFor?.(update.agent)
       : this.accountBackupPathFor(update.agent, account);

@@ -708,8 +708,6 @@ export function createCloudProvider(
       const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
         .credentialSync;
       if (credentialSync) {
-        // An agent on a named account is left out: reconcile is newest-wins
-        // against the DEFAULT login's backup, both directions.
         // Per account: a named login reconciles against its own secret; a
         // pasted-kind account (a token, no login file) is left out.
         const plan = await accountReconcilePlan(box.accounts);

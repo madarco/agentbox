@@ -288,8 +288,10 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
     /**
      * The LLM account whose login is being fanned out (llm-accounts Phase 4).
      * When set, only boxes on that account for `agent` are targets — `default`
-     * means boxes whose record names no account. Absent = every box: the same
-     * planner drives SETTINGS propagation, which is not per account.
+     * means boxes whose record names no account. Both callers pass one —
+     * settings propagation too, because a pulled item set can carry the
+     * agent's login (codex's `auth.json`). Absent = every box, which is only
+     * safe for a set known to carry no credential.
      */
     account?: string;
   },

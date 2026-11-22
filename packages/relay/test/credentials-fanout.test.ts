@@ -65,6 +65,7 @@ describe('CredentialsFanout', () => {
       },
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
       accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      accountKindFor: () => Promise.resolve('login'),
       custody: { put },
       boxAccountFor: (boxId, agent) =>
         Promise.resolve(boxId === 'box-work' && agent === 'claude' ? 'work' : undefined),
@@ -98,12 +99,34 @@ describe('CredentialsFanout', () => {
       runPropagate: async () => {},
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
       accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      accountKindFor: () => Promise.resolve('login'),
       boxAccountFor: () => Promise.resolve('work'),
     });
     expect((await fanout.handle('b', payload('claude', claudeBlob(500)))).accepted).toBe(true);
     expect((await fanout.handle('b', payload('claude', claudeBlob(400, 'r2')))).accepted).toBe(
       false,
     );
+  });
+
+  it.each([
+    ['a pasted-kind account', 'setup-token'],
+    ['an account the store no longer has', undefined],
+  ])('never writes a login into %s', async (_name, kind) => {
+    const run = vi.fn();
+    const fanout = new CredentialsFanout({
+      log: () => {},
+      debounceMs: 100,
+      runPropagate: run,
+      backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
+      accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      accountKindFor: () => Promise.resolve(kind),
+      boxAccountFor: () => Promise.resolve('ci'),
+    });
+    const r = await fanout.handle('b', payload('claude', claudeBlob(999)));
+    expect(r.accepted).toBe(false);
+    await expect(readFile(join(dir, 'credentials', 'claude', 'ci.json'), 'utf8')).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('drops an update whose box account cannot be verified', async () => {

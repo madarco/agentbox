@@ -181,3 +181,17 @@ rides the relay registration and the hub `Box` payload; `checkpoint
 - **`agentbox accounts rm` leaves the account's custody objects** on a control
   box (`agents/<agent>/accounts/<id>/…`). Add the delete when Phase 5 wires the
   hub's account list.
+- **The custody push is hash-only, not newest-wins** (Phase 4 review): a PC
+  holding an older copy of a named login re-uploads it over a newer one the
+  hub's relay recorded from a refreshing box. The default login's push has the
+  same shape today; fix both by gating the upload on the freshness field.
+- **`agentbox hub credentials pull` only pulls the default objects**: a named
+  account refreshed on the control box is not brought back to the PC. Mirror
+  `seedAccountSecretsFromCustody` on the pull side.
+- **A plugin credential whose `boxRelPath` contains `/`** is never seeded per
+  account (the custody seed expects exactly `agents/<a>/accounts/<id>/<file>`).
+  No built-in has one; compare `parts.slice(4).join('/')`.
+- **Three writers of `credentials/<agent>/<id>.json`** (the store's
+  `writeAccountSecret`, the relay, the custody seed); only the first takes the
+  accounts lock. The relay now checks the row and kind first, so the window is
+  an `accounts rm` landing between its check and its write.

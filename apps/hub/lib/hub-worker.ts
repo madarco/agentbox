@@ -39,6 +39,7 @@ import {
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
+  decodePastedSecret,
   readCredentialBackup,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
@@ -156,7 +157,13 @@ async function seedAccountSecretsFromCustody(
         const incoming = found.data.toString('utf8');
         const backupPath = accountSecretPath(spec, id, stateDir)!;
         const existing = await readCredentialBackup(spec.id, { backupPath });
-        const verdict = shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        // A pasted token has no expiry to order by: the latest push wins. A
+        // login gets the same newest-wins gate as the default above.
+        const verdict = decodePastedSecret(incoming)
+          ? existing === incoming
+            ? { accept: false, reason: 'unchanged' }
+            : { accept: true, reason: 'pasted secret changed' }
+          : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
         if (!verdict.accept) {
           log(`kept the local ${label} credentials (custody copy ${verdict.reason})`);
           continue;

@@ -57,6 +57,8 @@ import {
   type SyncTransport,
 } from '@agentbox/core';
 import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { agentCloudModule } from './agent-cloud-module.js';
 import { createCloudSyncTransport } from './sync-transport.js';
 
@@ -816,12 +818,23 @@ export async function accountReconcilePlan(
   const skip: string[] = [];
   const named = namedAccounts(accounts) ?? {};
   if (Object.keys(named).length === 0) return { backups, skip };
-  const file = await readAccounts();
+  const file = await readAccounts().catch(() => null);
   for (const [agent, account] of Object.entries(named)) {
-    const spec = resolveAgentSpec(agent);
-    const path = accountSecretPath(spec, account, STATE_DIR);
-    if (findAccount(file, spec.id, account)?.kind === 'login' && path) backups[agent] = path;
-    else skip.push(agent);
+    // Per agent and never throwing: one odd record (an agent since removed, a
+    // store that cannot be read) must not stop the DEFAULT agents' reconcile.
+    try {
+      const spec = resolveAgentSpec(agent);
+      const path = accountSecretPath(spec, account, STATE_DIR);
+      if (file && path && findAccount(file, spec.id, account)?.kind === 'login') {
+        // A first capture may create the account dir: owner-only, like the store's.
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        backups[agent] = path;
+      } else {
+        skip.push(agent);
+      }
+    } catch {
+      skip.push(agent);
+    }
   }
   return { backups, skip };
 }

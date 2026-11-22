@@ -67,4 +67,18 @@ describe('seedHostBackupsFromCustody per account (llm-accounts Phase 4)', () => 
     );
     expect(() => readFileSync(join(dir, 'credentials', 'claude', 'work.json'))).toThrow();
   });
+
+  it('a rotated pasted token replaces the old one (no expiry to order by)', async () => {
+    mkdirSync(join(dir, 'credentials', 'claude'), { recursive: true });
+    const tok = (t: string) => JSON.stringify({ kind: 'setup-token', token: t }) + '\n';
+    writeFileSync(join(dir, 'credentials', 'claude', 'ci.json'), tok('old-token-aaaaaaaaaaaaaaaa'));
+    await seedHostBackupsFromCustody(
+      custody({ 'agents/claude/accounts/ci/.credentials.json': tok('new-token-bbbbbbbbbbbbbbbb') }),
+      () => {},
+      dir,
+    );
+    expect(readFileSync(join(dir, 'credentials', 'claude', 'ci.json'), 'utf8')).toBe(
+      tok('new-token-bbbbbbbbbbbbbbbb'),
+    );
+  });
 });

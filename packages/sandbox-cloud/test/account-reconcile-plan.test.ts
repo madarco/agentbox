@@ -31,4 +31,9 @@ describe('accountReconcilePlan (llm-accounts Phase 4)', () => {
   it('a pasted-kind account is left out (a token, no login file)', async () => {
     expect(await accountReconcilePlan({ claude: 'ci' })).toEqual({ backups: {}, skip: ['claude'] });
   });
+  it('an odd record never throws: the agent is skipped, the rest still reconcile', async () => {
+    const plan = await accountReconcilePlan({ claude: 'work', 'gone-agent': 'x' });
+    expect(plan.backups['claude']).toBeDefined();
+    expect(plan.skip).toEqual(['gone-agent']);
+  });
 });
