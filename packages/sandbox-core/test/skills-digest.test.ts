@@ -66,6 +66,31 @@ describe('skills digest', () => {
     rmSync(h, { recursive: true, force: true });
   });
 
+  it('ignores what a skill writes into its own folder at run time', async () => {
+    const h = mkdtempSync(join(tmpdir(), 'skdg-'));
+    const dir = join(h, '.agents', 'skills', 'py');
+    mkdirSync(join(dir, 'scripts'), { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '---\nname: py\ndescription: d\n---\nx\n');
+    writeFileSync(join(dir, 'scripts', 'run.py'), 'print(1)\n');
+    const before = await localSkillsDigest({ home: h });
+    for (const rel of [
+      'scripts/__pycache__/run.cpython-312.pyc',
+      'node_modules/x/index.js',
+      '.cache/blob',
+      'stray.pyc',
+    ]) {
+      mkdirSync(join(dir, rel, '..'), { recursive: true });
+      writeFileSync(join(dir, rel), 'generated');
+    }
+    resetSkillsDigestMemo();
+    expect(await localSkillsDigest({ home: h })).toBe(before);
+    // An authored change still counts.
+    writeFileSync(join(dir, 'scripts', 'run.py'), 'print(2)\n');
+    resetSkillsDigestMemo();
+    expect(await localSkillsDigest({ home: h })).not.toBe(before);
+    rmSync(h, { recursive: true, force: true });
+  });
+
   it('is never folded into the build-context fingerprint (bake sharing compares that)', () => {
     const base = 'a'.repeat(64);
     expect(variantFingerprint(base, {})).toBe(base);

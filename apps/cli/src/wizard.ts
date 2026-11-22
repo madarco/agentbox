@@ -228,10 +228,14 @@ export async function maybeRunSetupWizard(args: WizardArgs): Promise<WizardOutco
     const provider = args.provider ?? 'docker';
     const mins = rebuildMinutesFor(provider);
     const yamlSuffix = proj.hasAgentboxYaml ? '' : ' and run Setup Wizard';
+    // Name the cause: a stale base used to mean a CLI upgrade, but host skills
+    // changing is now a cause too, and Yes also starts without the default
+    // checkpoint (which may hold the box's logins), so the user must see why.
+    const why = args.baseStatus?.state === 'stale' ? ` (${args.baseStatus.reason})` : '';
     const rebuild = await confirm({
       message:
-        `The ${provider} base image is out of date. ` +
-        `Recreate the base${yamlSuffix}? (rebuilds the base — ~${mins} min — then starts fresh)`,
+        `The ${provider} base image is out of date${why}. ` +
+        `Recreate the base${yamlSuffix}? (rebuilds the base — ~${mins} min — then starts fresh, without the default checkpoint)`,
       initialValue: true,
     });
     if (!rebuild) {

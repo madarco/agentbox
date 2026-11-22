@@ -636,7 +636,7 @@ a cloud `prepare` reports stale after adding a host skill.
 
 **Status: implemented 2026-11-22**, live-checked on an isolated hub: a skill
 discarded in the web Skills page is gone from `agentbox skills --list`, and a
-cloud base stamped on that machine reads `stale` ("your skills changed since
+cloud base stamped on that machine reads `stale` ("host skills changed since
 this base was baked") after a skill is added, and `fresh` again once it is
 removed. Deviations, both from the two code reviews: the skills digest is
 **recorded** on each bake (`base.skillsDigest` + `skillsHost`) rather than folded

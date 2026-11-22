@@ -128,10 +128,10 @@ describe('evaluateBaseFreshness', () => {
     vi.mocked(currentCloudBaseFingerprintLive).mockResolvedValue(fp);
     vi.mocked(withSkillsFreshness).mockResolvedValueOnce({
       state: 'stale',
-      reason: 'your skills changed since this base was baked',
+      reason: 'host skills changed since this base was baked',
     });
     const r = await evaluateBaseFreshness('e2b');
-    expect(r).toEqual({ state: 'stale', reason: 'your skills changed since this base was baked' });
+    expect(r).toEqual({ state: 'stale', reason: 'host skills changed since this base was baked' });
     expect(vi.mocked(withSkillsFreshness)).toHaveBeenLastCalledWith('e2b', { state: 'fresh' });
   });
 });

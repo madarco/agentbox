@@ -227,3 +227,24 @@ staged (8); the digest test leaked temp dirs (10). Still open:
   re-bakes, and skills deleted on the host survive in it (the tar overlay never
   removes files). Check variant records too, and re-bake the variant a create
   actually boots.
+
+## From the independent review of PR #438 (2026-11-22)
+
+`/workspace/REVIEW-438.md`: no blocking findings, no regressions. L2 (the stale-
+base prompt now names the reason, e.g. "host skills changed since this base was
+baked", and says Yes starts without the default checkpoint) and L3 (the bake
+digest ignores `__pycache__`, `node_modules`, `.venv`/`venv`, caches and `*.pyc`
+a skill writes into its own folder; the library tree hash is unchanged) are
+fixed in the PR. Still open:
+
+- **L1. The System page mis-explains a skills-only stale base.** The bake diff
+  finds no changed build-context file and says the difference is "in how the
+  fingerprint was folded (e.g. a different bake-affecting agent setting)",
+  hiding the real reason. Fix: in `StaleDiff`
+  (`apps/hub/app/(dashboard)/system/page.tsx`), show `baseStaleReason` when the
+  diff is empty, or skip `providerBakeDiff` for the skills reason.
+- **L4. A variant `prepare` re-bakes for skills in other agents' folders** (the
+  digest covers all six skill dirs; a claude variant stages only claude's config
+  plus `~/.agents`). Costs time on an explicit prepare only. Same item as the
+  per-agent note above: digest only the dirs the variant stages.
+- **L5. Provider SDK not republished** — additive change; see the SDK note above.

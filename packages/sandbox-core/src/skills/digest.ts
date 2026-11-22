@@ -4,8 +4,8 @@
  * A cloud bake stages the baking machine's skills into its snapshot, so the base
  * is out of date when those skills change. The bake records a digest of them
  * (`base.skillsDigest`) plus the machine it was taken on (`base.skillsHost`):
- * a hash over sorted `<name>:<treeSha>` lines of the skills the hub's library
- * would hold — the ones the first seed uploads (discoverable, valid, no
+ * a hash over sorted `<name>:<authored tree hash>` lines of the skills the hub's
+ * library would hold — the ones the first seed uploads (discoverable, valid, no
  * secret-scan finding) — so a PC's digest equals the library's when the two hold
  * the same skills.
  *
@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { tryGetMachineId } from '@agentbox/config';
 import { discoverLocalSkills, type LocalSkill } from './discover.js';
+import { treeHash, type SkillFile } from './tree.js';
 
 /**
  * The per-skill cap the digest assumes (`skills.maxSkillBytes` default). A skill
@@ -29,6 +30,32 @@ import { discoverLocalSkills, type LocalSkill } from './discover.js';
  * key sees a bigger skill counted by the seed but not here; harmless.
  */
 const DIGEST_MAX_SKILL_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Directories a skill writes into its own folder at run time (a Python import
+ * leaves `__pycache__`, a script may install `node_modules` or keep a cache).
+ * Using a skill must not read as editing it, so the BAKE digest skips them; the
+ * library's tree hash (the version id) does not, since that is what was uploaded.
+ */
+const RUNTIME_DIRS = new Set([
+  '__pycache__',
+  'node_modules',
+  '.venv',
+  'venv',
+  '.cache',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+]);
+
+/** Tree hash of a skill's authored files: {@link RUNTIME_DIRS} and `*.pyc` left out. */
+export function authoredTreeHash(files: readonly SkillFile[]): string {
+  return treeHash(
+    files.filter(
+      (f) => !f.path.endsWith('.pyc') && !f.path.split('/').some((seg) => RUNTIME_DIRS.has(seg)),
+    ),
+  );
+}
 
 /** Whether the first seed would upload this skill as is. */
 export function isLibraryEligible(s: LocalSkill): boolean {
@@ -59,7 +86,11 @@ export async function localSkillsDigest(opts: { home?: string } = {}): Promise<s
   const now = Date.now();
   if (memo && memo.home === home && now - memo.at < MEMO_MS) return memo.digest;
   const skills = await discoverLocalSkills({ home, maxBytes: DIGEST_MAX_SKILL_BYTES });
-  const digest = skillsDigest(skills.filter(isLibraryEligible));
+  const digest = skillsDigest(
+    skills
+      .filter(isLibraryEligible)
+      .map((s) => ({ name: s.name, treeSha: authoredTreeHash(s.files) })),
+  );
   memo = { home, at: now, digest };
   return digest;
 }
@@ -129,7 +160,7 @@ export async function skillsStaleness(
   if (!stampedHere(entry)) return null;
   try {
     const current = await localSkillsDigest();
-    return current === entry.skillsDigest ? null : 'your skills changed since this base was baked';
+    return current === entry.skillsDigest ? null : 'host skills changed since this base was baked';
   } catch {
     return null;
   }

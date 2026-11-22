@@ -401,6 +401,7 @@ export type { SecretFinding } from './skills/scan.js';
 export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {
+  authoredTreeHash,
   bakeSkillsStamp,
   isLibraryEligible,
   localSkillsDigest,

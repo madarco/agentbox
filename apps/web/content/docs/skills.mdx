@@ -108,7 +108,7 @@ A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and c
 
 ### Cloud bases go stale when your skills change
 
-A cloud base (Hetzner, DigitalOcean, Daytona, Vercel, E2B) is baked with the skills on the machine that baked it, and the bake now records a digest of those skills (the ones the library would hold: valid, no secret-scan finding). When your skills change, that machine reports the base **stale** ("your skills changed since this base was baked"): `agentbox prepare --provider <id>` re-bakes instead of skipping, and the hub's **System** page shows the base as stale. If you have no skills, or the base was baked before this existed or on another machine, nothing changes. Docker and remote-docker boxes are unaffected; they receive skills when each box is created.
+A cloud base (Hetzner, DigitalOcean, Daytona, Vercel, E2B) is baked with the skills on the machine that baked it, and the bake now records a digest of those skills (the ones the library would hold: valid, no secret-scan finding). When your skills change, that machine reports the base **stale** ("host skills changed since this base was baked"): `agentbox prepare --provider <id>` re-bakes instead of skipping, and the hub's **System** page shows the base as stale. If you have no skills, or the base was baked before this existed or on another machine, nothing changes. Docker and remote-docker boxes are unaffected; they receive skills when each box is created.
 
 ## Next steps
 
