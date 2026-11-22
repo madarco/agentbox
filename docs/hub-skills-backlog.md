@@ -451,6 +451,12 @@ Later:
 - **The openclaw merge passes the skill dirs as one `:`-joined argv.** Both are
   constants without `:` today; pass them as separate args or JSON if either
   becomes configurable.
+- **ctl's startup skills sync doesn't retry.** It runs once, after the
+  `agents.list` fetch; when the same command cold-starts the hub, that fetch hits
+  ECONNREFUSED and the box gets no library skills until `agentbox-ctl skills sync`
+  (seen in the Phase 3 live check; a box created with the hub already up synced at
+  start). Fix: retry the fetch with backoff, or sync on the first successful
+  relay call.
 - **Duplicate names in pi and openclaw**: the carried `~/.agents` copy wins over
   the library's, so a skill edited in the library isn't seen there while the
   PC's old copy is carried. Same fix as the carry-exclusion item.
