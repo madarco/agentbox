@@ -44,6 +44,10 @@ export interface AgentCreateOptions {
   /** `--skills <names>` (or false for `--no-skills`) and `--skip-skills <names>`. */
   skills?: string[] | false;
   skipSkills?: string[];
+  /** `--account <name>` (or `<agent>=<name>` for a borrowed lender): the named
+   *  LLM account the box runs on. Only for an agent whose row declares
+   *  `accountKinds`. */
+  account?: string[];
   /** `--dangerously-with-credentials`: copy a git credential into the box
    *  (git.pushMode=direct); cloud only. Token-vs-SSH is chosen ONLY at the
    *  interactive prompt (TTY required). */
@@ -250,6 +254,16 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
   if (a.spec.modelAuth?.sources.length) {
     cmd.option('--model-auth <source...>', modelAuthHelp(a.spec));
   }
+  if (agentAccountKinds(a.spec).length > 0 || a.spec.modelAuth?.sources.length) {
+    // Repeatable, NOT variadic: a variadic flag would swallow the agent args
+    // after it. `login` reads it through `optsWithGlobals`, because commander
+    // hands a flag the parent also declares to the parent.
+    cmd.option(
+      '--account <name>',
+      `named LLM account the box runs on (see \`agentbox accounts\`; default: ${a.spec.id}.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.`,
+      collectRepeatable,
+    );
+  }
   cmd.description(`Create a sandboxed box and launch ${productName} in a detachable tmux session`);
   return cmd;
 }
@@ -327,4 +341,9 @@ export function addAccountLoginOptions(cmd: Command, kinds: readonly LlmAccountK
       'store a long-lived setup token as the named account (read from a hidden prompt, or stdin); the right kind for an account many boxes share',
     );
   }
+}
+
+/** A commander collector for a repeatable string flag. */
+export function collectRepeatable(value: string, previous: string[] | undefined): string[] {
+  return [...(previous ?? []), value];
 }

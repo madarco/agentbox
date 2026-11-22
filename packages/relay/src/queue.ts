@@ -237,6 +237,8 @@ export interface QueueJobCreateOpts {
   borrowCredentials?: string[];
   /** Library skill selection (`--skills`, `--skip-skills`, `--no-skills`). */
   skills?: SkillSelection;
+  /** Named LLM account per agent (`--account`), resolved before enqueue. */
+  accounts?: Record<string, string>;
   /** `--no-resync` → false; resync the box with the host on (checkpoint) create. */
   resync?: boolean;
   sharedDockerCache?: boolean;

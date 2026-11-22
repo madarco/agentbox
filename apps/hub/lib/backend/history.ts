@@ -71,6 +71,55 @@ export interface HistoryChunkRow {
 
 export type NewChunk = Omit<HistoryChunkRow, 'id'>;
 
+/** Listing filter for `GET /history/sessions`. All optional, ANDed. */
+export interface HistorySessionFilter {
+  agent?: string;
+  /** A box id or a box name, exact. */
+  box?: string;
+  /** Substring of the project's repo URL. */
+  project?: string;
+  /** The PC (machine id) that shipped it. */
+  host?: string;
+  /** Last activity (the transcript's own last timestamp) at or after this epoch-ms. */
+  sinceMs?: number;
+  /**
+   * Full-text over the session's turns. Plain words at the service; the
+   * service quotes them (`ftsQuery`) before the repo sees them.
+   */
+  q?: string;
+  limit?: number;
+}
+
+export interface HistoryTurnRow {
+  /** Position in the session's turn order (0-based), the `from`/`to` unit. */
+  index: number;
+  kind: 'turn' | 'tool';
+  role: 'user' | 'assistant' | null;
+  name: string | null;
+  text: string | null;
+  ts: string | null;
+  /** The file (main or a subagent's) and byte offset the row came from. */
+  path: string;
+  at: number;
+}
+
+export interface HistorySearchHit {
+  sessionKey: string;
+  role: 'user' | 'assistant' | null;
+  ts: string | null;
+  snippet: string;
+}
+
+/** Turn plain words into an FTS5 query that matches them all, with no operators. */
+export function ftsQuery(q: string): string | null {
+  const words = q.match(/[\p{L}\p{N}_][\p{L}\p{N}_.-]*/gu) ?? [];
+  if (words.length === 0) return null;
+  return words
+    .slice(0, 16)
+    .map((w) => `"${w.replace(/"/g, '""')}"`)
+    .join(' ');
+}
+
 /** Rows. Async so a postgres implementation fits the same seam. */
 export interface HistoryRepo {
   getFile(originKey: string, agent: string, path: string): Promise<HistoryFileRow | null>;
@@ -104,6 +153,18 @@ export interface HistoryRepo {
   deleteSession(key: string): Promise<string[]>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
+
+  // ---- reads (Phase 2) ----
+  querySessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
+  /** Keys matching a reference: the exact key, an exact session id, or an id prefix. */
+  matchSessionKeys(ref: string): Promise<string[]>;
+  filesOfSession(key: string): Promise<HistoryFileRow[]>;
+  countTurns(key: string): Promise<number>;
+  /** Turn/tool rows in session order, `limit` from `from`. */
+  turns(key: string, from: number, limit: number): Promise<HistoryTurnRow[]>;
+  toolCounts(key: string): Promise<Array<{ name: string; count: number }>>;
+  /** FTS hits for an already-quoted query (see `ftsQuery`). */
+  search(fts: string, limit: number): Promise<HistorySearchHit[]>;
 }
 
 /** Chunk bytes. */
@@ -141,9 +202,32 @@ export interface HistoryServiceDeps {
   log?: (line: string) => void;
 }
 
+export interface HistorySessionDetail {
+  session: HistorySessionRow;
+  files: Array<{ path: string; child: boolean; bytes: number }>;
+  turns: number;
+  tools: Array<{ name: string; count: number }>;
+  firstPrompt: string | null;
+  lastReply: string | null;
+}
+
+export type ResolvedSession =
+  | { ok: true; key: string }
+  | { ok: false; code: 'not_found' | 'ambiguous'; candidates: string[] };
+
 export interface HistoryService extends HistoryIngestSink {
-  /** Reassemble a file's current generation byte for byte (Phase 2's `/raw`). */
+  /** Reassemble a file's current generation byte for byte. */
   readRaw(fileId: number): Promise<Buffer>;
+  /** The same bytes, chunk by chunk, for a streamed download. */
+  /** The same bytes, chunk by chunk, up to `endOffset` (default: what is ingested now). */
+  rawStream(fileId: number, endOffset?: number): AsyncGenerator<Buffer>;
+  listSessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
+  resolveSession(ref: string): Promise<ResolvedSession>;
+  sessionDetail(key: string): Promise<HistorySessionDetail | null>;
+  sessionTurns(key: string, from: number, limit: number): Promise<HistoryTurnRow[]>;
+  /** The file to download: `path` when it belongs to the session, else its main file. */
+  sessionFile(key: string, path?: string): Promise<HistoryFileRow | null>;
+  search(q: string, limit: number): Promise<HistorySearchHit[]>;
   /** Seal idle files and apply retention. */
   sweep(opts?: {
     retention?: boolean;
@@ -174,6 +258,21 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
     offset: file?.offset ?? 0,
     sha256: file?.sha256 ?? '',
   });
+
+  /** One stored chunk back to the original bytes (large strings restored). */
+  async function restoreChunk(c: HistoryChunkRow): Promise<Buffer> {
+    const bytes = decompress(c.codec, await archive.get(c.key));
+    if (!c.deduped) return bytes;
+    const blobs = new Map<string, Buffer>();
+    for (const m of bytes.toString('latin1').matchAll(/@@agentbox-blob:([0-9a-f]{64})@@/g)) {
+      const sha = m[1]!;
+      if (!blobs.has(sha)) {
+        const b = await repo.getBlob(sha);
+        if (b) blobs.set(sha, b);
+      }
+    }
+    return restoreLargeStrings(bytes, (sha) => blobs.get(sha));
+  }
 
   async function seal(file: HistoryFileRow): Promise<boolean> {
     const chunks = (await repo.listChunks(file.id, file.generation)).filter((c) => !c.sealed);
@@ -343,27 +442,100 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       ),
 
     async readRaw(fileId) {
+      const parts: Buffer[] = [];
+      for await (const b of service.rawStream(fileId)) parts.push(b);
+      return Buffer.concat(parts);
+    },
+
+    async *rawStream(fileId, endOffset) {
       const file = await repo.getFileById(fileId);
       if (!file) throw new Error(`history file ${String(fileId)} not found`);
-      const chunks = await repo.listChunks(fileId, file.generation);
-      const parts: Buffer[] = [];
-      for (const c of chunks) {
-        const bytes = decompress(c.codec, await archive.get(c.key));
-        if (!c.deduped) {
-          parts.push(bytes);
+      // A fixed end: a file still being appended to would otherwise stream
+      // past the length the caller announced (content-length).
+      const end = Math.min(endOffset ?? file.offset, file.offset);
+      let chunks = await repo.listChunks(fileId, file.generation);
+      let pos = 0;
+      let retries = 0;
+      while (pos < end) {
+        const c = chunks.find((x) => x.start <= pos && pos < x.end);
+        let bytes: Buffer | null = null;
+        if (c) {
+          try {
+            bytes = await restoreChunk(c);
+          } catch (e) {
+            // A seal replaced it meanwhile (small chunks merged, objects
+            // deleted): re-list and find this position again.
+            if (++retries > 3) throw e;
+          }
+        } else if (++retries > 3) {
+          throw new Error(`history file ${String(fileId)} has no chunk at byte ${String(pos)}`);
+        }
+        if (!c || !bytes) {
+          chunks = await repo.listChunks(fileId, file.generation);
           continue;
         }
-        const blobs = new Map<string, Buffer>();
-        for (const m of bytes.toString('latin1').matchAll(/@@agentbox-blob:([0-9a-f]{64})@@/g)) {
-          const sha = m[1]!;
-          if (!blobs.has(sha)) {
-            const b = await repo.getBlob(sha);
-            if (b) blobs.set(sha, b);
-          }
-        }
-        parts.push(restoreLargeStrings(bytes, (sha) => blobs.get(sha)));
+        retries = 0;
+        const stop = Math.min(c.end, end);
+        yield bytes.subarray(pos - c.start, stop - c.start);
+        pos = stop;
       }
-      return Buffer.concat(parts);
+    },
+
+    listSessions(filter) {
+      const { q, ...rest } = filter;
+      const fts = q ? ftsQuery(q) : null;
+      // A query with no words matches nothing (as `search` does), not everything.
+      if (q && !fts) return Promise.resolve([]);
+      return repo.querySessions({
+        ...rest,
+        ...(fts ? { q: fts } : {}),
+        limit: Math.min(Math.max(filter.limit ?? 50, 1), 500),
+      });
+    },
+
+    async resolveSession(ref) {
+      const keys = await repo.matchSessionKeys(ref.trim());
+      if (keys.length === 1) return { ok: true, key: keys[0]! };
+      return {
+        ok: false,
+        code: keys.length === 0 ? 'not_found' : 'ambiguous',
+        candidates: keys.slice(0, 10),
+      };
+    },
+
+    async sessionDetail(key) {
+      const session = await repo.getSession(key);
+      if (!session) return null;
+      const files = await repo.filesOfSession(key);
+      const total = await repo.countTurns(key);
+      const head = await repo.turns(key, 0, 50);
+      const tail = total > 50 ? await repo.turns(key, Math.max(0, total - 50), 50) : head;
+      const firstPrompt = head.find((t) => t.kind === 'turn' && t.role === 'user')?.text ?? null;
+      const lastReply =
+        [...tail].reverse().find((t) => t.kind === 'turn' && t.role === 'assistant')?.text ?? null;
+      return {
+        session,
+        files: files.map((f) => ({ path: f.path, child: f.child, bytes: f.offset })),
+        turns: total,
+        tools: await repo.toolCounts(key),
+        firstPrompt,
+        lastReply,
+      };
+    },
+
+    sessionTurns: (key, from, limit) =>
+      repo.turns(key, Math.max(0, from), Math.min(Math.max(limit, 1), 1000)),
+
+    async sessionFile(key, path) {
+      const files = await repo.filesOfSession(key);
+      if (path) return files.find((f) => f.path === path) ?? null;
+      return files.find((f) => !f.child) ?? files[0] ?? null;
+    },
+
+    async search(q, limit) {
+      const fts = ftsQuery(q);
+      if (!fts) return [];
+      return repo.search(fts, Math.min(Math.max(limit, 1), 200));
     },
 
     sweep: (opts = {}) =>

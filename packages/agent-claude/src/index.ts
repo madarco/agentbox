@@ -22,7 +22,10 @@ import { hostClaudeAccessTokenExpired } from './cli/host-cred-guards.js';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { stageClaudeCredentialsForUpload, stageClaudeStaticForUpload } from './host-stage.js';
 import { seedClaudeJsonAtCreate } from './cloud-json-overlay.js';
+import { scrubCloudClaudeForAccount } from './cloud-account-scrub.js';
+import { isDefaultAccount } from '@agentbox/core';
 import {
+  approveAccountApiKey,
   buildClaudeMounts,
   claudeSessionInfo,
   ensureClaudeVolume,
@@ -64,11 +67,21 @@ export const claudeSyncModule: AgentSyncModule = {
       syncFromHost: opts.syncFromHost,
       image: opts.image,
       hostWorkspace: opts.hostWorkspace,
+      ...(spec.account === undefined ? {} : { account: spec.account }),
     });
+    // An API-key account's volume answers the TUI's "use this API key?" with
+    // yes up front (Phase 0 (a′)): otherwise the default answer is No and the
+    // box silently runs without the key.
+    const approved = spec.account
+      ? await approveAccountApiKey(spec.volume, spec.account, opts.image)
+      : false;
     return {
       created: r.created,
       synced: r.synced,
       notes: [
+        ...(approved
+          ? [`pre-approved account '${spec.account ?? ''}' API key in ${spec.volume}`]
+          : []),
         ...ensureNotes(r, opts.hostWorkspace),
         ...(await loopbackEndpointNotes('claude', r.loopbackEndpoints ?? [])),
       ],
@@ -120,7 +133,15 @@ export const claudeCloudModule: AgentCloudModule = {
   // always run: after the declared seeds land, before dynamic config. It used
   // to be called by name from `cloud-sync.ts`; `afterDeclaredSeeds` exists so
   // moving it here did not move it in the sequence.
-  afterDeclaredSeeds: (backend, handle, opts) => seedClaudeJsonAtCreate(backend, handle, opts),
+  afterDeclaredSeeds: async (backend, handle, opts) => {
+    await seedClaudeJsonAtCreate(backend, handle, opts);
+    // A named account: strip the owner's identity the snapshot and overlay
+    // carried in (docker strips at volume seed; cloud has no volume to strip).
+    const account = opts.accounts?.['claude'];
+    if (account && !isDefaultAccount(account)) {
+      await scrubCloudClaudeForAccount(backend, handle, account, opts.onLog ?? (() => {}));
+    }
+  },
   // Claude's staging filters host-path hooks, coerces the install method,
   // aliases the project key and pre-trusts the workspace — more than a copy of
   // its declared paths, so it supplies its own.

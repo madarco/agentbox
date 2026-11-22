@@ -82,6 +82,7 @@ export const dockerProvider: Provider = {
       // The library skill selection: same lesson as `agents` above — a hub or
       // control-plane create arrives only as a CreateBoxRequest.
       ...(req.skills ? { skills: req.skills } : {}),
+      ...(req.accounts ? { accounts: req.accounts } : {}),
       claudeConfig: po.claudeConfig,
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,

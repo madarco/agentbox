@@ -54,6 +54,7 @@ export {
   type LoginAccount,
 } from './login-command.js';
 export { claudeAccountIdentity, parseClaudeAccountIdentity } from './account-identity.js';
+export { syncBoxClaudeCredentials } from './box-credentials.js';
 export { resolveClaudeTeleport } from './teleport.js';
 export {
   encodeClaudeProjectsDir,

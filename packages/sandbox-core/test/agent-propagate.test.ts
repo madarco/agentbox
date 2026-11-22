@@ -42,6 +42,41 @@ describe('planPropagateTargets', () => {
     expect(plan.cloudBoxes.map((b) => b.name)).toEqual(['cloud-d', 'cloud-e']);
   });
 
+  it('never pushes the default login into a box on a named account (llm-accounts Phase 3)', () => {
+    const plan = planPropagateTargets(
+      [
+        ...boxes,
+        { id: 'w', name: 'cloud-work', provider: 'daytona', accounts: { claude: 'work' } },
+        {
+          id: 'v',
+          name: 'docker-work',
+          agentConfigVolumes: { claude: 'agentbox-claude-config-acct-work' },
+          accounts: { claude: 'work' },
+        },
+        {
+          id: 'p',
+          name: 'pi-borrow',
+          provider: 'daytona',
+          agents: ['pi'],
+          borrowedCredentials: ['claude'],
+          accounts: { claude: 'work' },
+        },
+      ],
+      { agent: 'claude', sourceBoxId: 's', scope: 'all' },
+    );
+    const names = [
+      ...plan.dockerVolumes.flatMap((v) => v.boxNames),
+      ...plan.cloudBoxes.map((b) => b.name),
+      ...plan.borrowingBoxes.map((b) => b.name),
+    ];
+    expect(names).not.toContain('cloud-work');
+    expect(names).not.toContain('docker-work');
+    expect(names).not.toContain('pi-borrow');
+    expect(plan.dockerVolumes.map((v) => v.volume)).not.toContain(
+      'agentbox-claude-config-acct-work',
+    );
+  });
+
   it('scope=project filters by the source projectRoot', () => {
     const plan = planPropagateTargets(boxes, {
       agent: 'claude',

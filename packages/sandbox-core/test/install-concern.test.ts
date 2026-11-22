@@ -252,7 +252,8 @@ describe('agent settings reach the install shell as env', () => {
 
   it('emits nothing for an agent with no settings', async () => {
     const t = makeRecordingTransport({ execResult: missingThenOk() });
-    await ensureAgentInstalled(t, 'codex');
+    // `example` declares no settings (codex gained `account` in llm-accounts Phase 3).
+    await ensureAgentInstalled(t, 'example');
     expect(
       execs(t)
         .map((c) => c.join(' '))

@@ -336,6 +336,13 @@
         "negate": false
       },
       {
+        "flags": "--account <name>",
+        "description": "named LLM account the box runs on (see `agentbox accounts`; default: claude.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--plan <path>",
         "description": "copy a Claude Code plan file (e.g. ~/.claude/plans/<slug>.md) into the box, launch claude with --permission-mode plan, and seed a \"resume the plan\" prompt",
         "defaultValue": null,
@@ -855,6 +862,13 @@
       {
         "flags": "--resume <id>",
         "description": "teleport the specified host Codex session uuid into the box and resume from it",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--account <name>",
+        "description": "named LLM account the box runs on (see `agentbox accounts`; default: codex.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -1610,6 +1624,13 @@
         "defaultValue": null,
         "mandatory": false,
         "negate": false
+      },
+      {
+        "flags": "--account <name>",
+        "description": "named LLM account the box runs on (see `agentbox accounts`; default: opencode.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
       }
     ],
     "subcommands": [
@@ -2075,6 +2096,13 @@
       {
         "flags": "--model-auth <source...>",
         "description": "which host model-provider logins to seed (none|codex; repeatable or comma-separated; default: pi.modelAuth, else ask). codex: Your Codex login (ChatGPT subscription OAuth)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--account <name>",
+        "description": "named LLM account the box runs on (see `agentbox accounts`; default: pi.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false

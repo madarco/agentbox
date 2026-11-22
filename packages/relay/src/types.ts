@@ -132,6 +132,12 @@ export interface BoxRegistration {
   /** Agent the box was created for — an `AgentId` → `BoxRecord.lastAgent`. */
   agent?: string;
   /**
+   * Named LLM account per agent (`BoxRecord.accounts`; llm-accounts Phase 3).
+   * Carried so a PC that adopts the box — and the credential fan-out guard —
+   * know it does not run on the default login.
+   */
+  accounts?: Record<string, string>;
+  /**
    * Custody `projects/<slug>` key of the box's project (owner__repo). Links a
    * registration to its seed material and secrets without re-deriving the slug
    * from `originUrl` on every consumer.
@@ -252,6 +258,8 @@ export interface RegisterBoxBody {
   webPort?: number;
   /** Agent the box was created for. */
   agent?: string;
+  /** Named LLM account per agent (see `BoxRegistration.accounts`). */
+  accounts?: Record<string, string>;
   /** Custody `projects/<slug>` key of the box's project. */
   projectSlug?: string;
   /** Alias-expanded repo key, computed by the registering machine. */

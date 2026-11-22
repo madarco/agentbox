@@ -157,6 +157,7 @@ export const claudeSpec: AgentSyncSpec = {
   // `claude setup-token` kind: it never refreshes, so it never revokes the other
   // holders of the account the way a login refresh does.
   accountKinds: ['login', 'setup-token', 'api-key'],
+  accountEnv: { 'api-key': 'ANTHROPIC_API_KEY', 'setup-token': 'CLAUDE_CODE_OAUTH_TOKEN' },
   forwardedEnvKeys: [
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',
@@ -202,6 +203,16 @@ export const claudeSpec: AgentSyncSpec = {
         "Terminal renderer Claude Code uses inside a box. Claude's `fullscreen` renderer repaints differentially and leaves stale characters in the blank areas of the screen over a network transport - visible while scrolling, cleared only by resizing the terminal. Boxes pin the classic renderer; set `fullscreen` to opt back in, or `auto` to let Claude decide. Rides the launch, so it takes effect on the agent's next start.",
       // Deliberately NOT affectsBake: it is launch env, and folding it would
       // re-bake a whole base image for a renderer flip.
+    },
+
+    {
+      key: 'account',
+      type: 'string',
+      default: 'default',
+      description:
+        "Named LLM account new boxes of this agent run on (`agentbox accounts` lists them; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
+      // Not affectsBake and not launch env: the account is resolved at create
+      // (resolveAgentAccount), recorded on the box, and never read again.
     },
   ],
   // The box-ONLY wizard skill: deliberately never written to the host's

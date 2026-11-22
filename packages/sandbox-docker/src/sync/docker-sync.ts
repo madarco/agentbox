@@ -25,8 +25,22 @@ import type {
   ResyncResult,
   SyncContext,
 } from '@agentbox/core';
-import { dryRunProviderSync, SYNC_DRYRUN_ENV } from '@agentbox/core';
-import { AGENT_SYNC_SPECS, renderCarryEntries } from '@agentbox/sandbox-core';
+import { existsSync } from 'node:fs';
+import { relative } from 'node:path';
+import { execa } from 'execa';
+import {
+  accountSecretPath,
+  dryRunProviderSync,
+  findAccount,
+  SYNC_DRYRUN_ENV,
+} from '@agentbox/core';
+import {
+  AGENT_SYNC_SPECS,
+  readAccounts,
+  renderCarryEntries,
+  resolveAgentSpec,
+  STATE_DIR,
+} from '@agentbox/sandbox-core';
 import type { AgentSyncSpec } from '@agentbox/sandbox-core';
 import { seedAgentDeclaredFiles, seedLabels } from './agents/seed.js';
 import { requireAgentSyncModule, type AgentVolumeChoice } from './agents/module.js';
@@ -133,6 +147,8 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
         // `hostWorkspace` is passed to every agent, not just claude: it is a
         // fact about the box, and an agent that doesn't rewrite host-scoped
         // state simply ignores it.
+        // `choice.account` rides the choice itself: a module seeds a named
+        // account's volume without the host's identity (llm-accounts Phase 3).
         const ensured = await mod.ensureVolume(choice, {
           syncFromHost: true,
           image,
@@ -176,8 +192,33 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       // boxes are read-seed only. Best-effort (never throws).
       const { image } = requireCreateHandle(handle, 'seedCredentials');
       // Nothing to mirror when this box wasn't created for claude.
+      // Named accounts first, for every agent: a named volume syncs against
+      // its account's secret, never the legacy backup (the default login).
+      for (const [agent, choice] of Object.entries(handle.agentSpecs ?? {})) {
+        if (!choice.account || agent === 'claude') continue;
+        const r = await seedNamedAccountCredential(agent, choice, image);
+        if (r) ctx.onLog(r);
+      }
       const claudeSpec = handle.agentSpecs?.claude;
       if (!claudeSpec) return;
+      if (claudeSpec.account) {
+        const row = findAccount(await readAccounts(), 'claude', claudeSpec.account);
+        // A pasted account authenticates by env; its volume must hold no login.
+        if (row?.kind !== 'login') return;
+        const r = await syncClaudeCredentials(claudeSpec, {
+          image,
+          isolate: false,
+          hostBackupRel: relative(STATE_DIR, accountSecretPathFor('claude', claudeSpec.account)),
+        });
+        if (r.direction === 'extracted') {
+          ctx.onLog(`extracted box claude credentials to account '${claudeSpec.account}'`);
+        } else if (r.direction === 'seeded') {
+          ctx.onLog(
+            `seeded claude account '${claudeSpec.account}' credentials into ${claudeSpec.volume}`,
+          );
+        }
+        return;
+      }
       const credSync = await syncClaudeCredentials(claudeSpec, {
         image,
         isolate: handle.claudeIsolate ?? false,
@@ -234,4 +275,56 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       });
     },
   };
+}
+
+/** A named account's secret file under the host state dir. */
+function accountSecretPathFor(agent: string, account: string): string {
+  const path = accountSecretPath(resolveAgentSpec(agent), account, STATE_DIR);
+  if (!path) throw new Error(`agent '${agent}' declares no credential`);
+  return path;
+}
+
+/**
+ * Seed a named `login` account's volume from the account store when the volume
+ * has no credential yet (a fresh host, a pruned volume). One-way and never
+ * over an existing file: the volume is the live copy the box refreshes, and
+ * carrying a refresh back is the Phase 4 fan-out's job. Returns a log line, or
+ * null when there was nothing to do.
+ */
+async function seedNamedAccountCredential(
+  agent: string,
+  choice: AgentVolumeChoice,
+  image: string,
+): Promise<string | null> {
+  const account = choice.account;
+  const cred = resolveAgentSpec(agent).credential;
+  if (!account || !cred) return null;
+  const row = findAccount(await readAccounts(), agent, account);
+  if (row?.kind !== 'login') return null;
+  const secret = accountSecretPathFor(agent, account);
+  // Never bind-mount a missing file: docker would create a root-owned
+  // DIRECTORY at that host path, breaking every later login of the account.
+  if (!existsSync(secret)) return null;
+  const rel = cred.boxRelPath;
+  const res = await execa(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${choice.volume}:/dst`,
+      '-v',
+      `${secret}:/src-secret:ro`,
+      image,
+      'sh',
+      '-c',
+      `if [ -s "/dst/${rel}" ]; then echo SEEDED=no; else cp /src-secret "/dst/${rel}" && chown 1000:1000 "/dst/${rel}" && chmod 600 "/dst/${rel}" && echo SEEDED=yes; fi`,
+    ],
+    { reject: false },
+  );
+  return /SEEDED=yes/.test(res.stdout ?? '')
+    ? `seeded ${agent} account '${account}' credentials into ${choice.volume}`
+    : null;
 }

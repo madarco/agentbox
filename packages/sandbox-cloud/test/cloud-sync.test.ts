@@ -188,7 +188,8 @@ describe('makeCloudSync — remaining ops', () => {
   it('extractCredentials delegates to extractCloudAgentCredentials', async () => {
     const sync = makeCloudSync(backend, handle);
     const res = await sync.extractCredentials(ctx());
-    expect(m.extractCloudAgentCredentials).toHaveBeenCalledWith(backend, handle);
+    // No named accounts on this box, so nothing is skipped.
+    expect(m.extractCloudAgentCredentials).toHaveBeenCalledWith(backend, handle, { skip: [] });
     expect(res).toEqual(['claude']);
   });
 

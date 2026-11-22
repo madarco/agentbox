@@ -759,6 +759,71 @@ export interface HubApiTarget {
   sessionTurn?: string | null;
 }
 
+// ── session history (/api/v1/history) ──
+
+export interface HubApiHistorySession {
+  id: string;
+  key: string;
+  agent: string;
+  boxId: string | null;
+  boxName: string | null;
+  provider: string | null;
+  hostId: string | null;
+  projectRepoUrl: string | null;
+  parentSessionId: string | null;
+  title: string | null;
+  firstTs: string | null;
+  lastTs: string | null;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HubApiHistoryDetail {
+  session: HubApiHistorySession;
+  files: Array<{ path: string; child: boolean; bytes: number }>;
+  turns: number;
+  tools: Array<{ name: string; count: number }>;
+  firstPrompt: string | null;
+  lastReply: string | null;
+}
+
+export interface HubApiHistoryTurn {
+  index: number;
+  kind: 'turn' | 'tool';
+  role: 'user' | 'assistant' | null;
+  name: string | null;
+  text: string | null;
+  ts: string | null;
+  path: string;
+  at: number;
+}
+
+export interface HubApiHistoryHit {
+  session: {
+    id?: string;
+    key?: string;
+    agent?: string;
+    boxName?: string | null;
+    title?: string | null;
+  };
+  role: 'user' | 'assistant' | null;
+  ts: string | null;
+  snippet: string;
+}
+
+export interface HubApiHistoryFilter {
+  agent?: string;
+  box?: string;
+  project?: string;
+  host?: string;
+  since?: string;
+  q?: string;
+  limit?: number;
+}
+
 /** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
 export class HubApiError extends Error {
   constructor(
@@ -1243,6 +1308,50 @@ export class HubApiClient {
 
   discardSkill(name: string): Promise<{ name: string; removed: number }> {
     return this.request('DELETE', `/skills/${encodeURIComponent(name)}`);
+  }
+
+  // ── session history ──
+
+  async listHistorySessions(f: HubApiHistoryFilter = {}): Promise<HubApiHistorySession[]> {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== '') q.set(k, String(v));
+    const qs = q.toString();
+    return (
+      await this.request<{ sessions: HubApiHistorySession[] }>(
+        'GET',
+        `/history/sessions${qs ? `?${qs}` : ''}`,
+      )
+    ).sessions;
+  }
+
+  historySession(ref: string): Promise<HubApiHistoryDetail> {
+    return this.request<HubApiHistoryDetail>('GET', `/history/sessions/${encodeURIComponent(ref)}`);
+  }
+
+  async historyTurns(ref: string, from: number, to: number): Promise<HubApiHistoryTurn[]> {
+    return (
+      await this.request<{ turns: HubApiHistoryTurn[] }>(
+        'GET',
+        `/history/sessions/${encodeURIComponent(ref)}/turns?from=${String(from)}&to=${String(to)}`,
+      )
+    ).turns;
+  }
+
+  async searchHistory(q: string, limit: number): Promise<HubApiHistoryHit[]> {
+    const qs = new URLSearchParams({ q, limit: String(limit) }).toString();
+    return (await this.request<{ hits: HubApiHistoryHit[] }>('GET', `/history/search?${qs}`)).hits;
+  }
+
+  /** One transcript file of a session, as a byte stream (the caller writes it). */
+  async historyRaw(ref: string, path?: string): Promise<ReadableStream<Uint8Array>> {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : '';
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/history/sessions/${encodeURIComponent(ref)}/raw${qs}`,
+      { headers: { Authorization: `Bearer ${this.token}` } },
+    );
+    if (!res.ok) await this.parseRaw(res);
+    if (!res.body) throw new HubApiError('the hub sent an empty body', 'internal', res.status);
+    return res.body;
   }
 
   /** Envelope handling for the raw (non-JSON-body) calls above. */

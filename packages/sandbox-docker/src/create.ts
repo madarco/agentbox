@@ -14,6 +14,9 @@ import {
   CarryCopyError,
   withPerBoxCarry,
   type AgentSyncSpec,
+  accountEnvPolicy,
+  applyAccountEnv,
+  resolveAgentSpec,
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
 import { loadEffectiveConfig } from '@agentbox/config';
@@ -74,7 +77,10 @@ import {
   type GitWorktreeRecord,
 } from './state.js';
 import {
+  accountConfigVolume,
   generateBoxId,
+  isDefaultAccount,
+  namedAccounts,
   type ResolvedCarryEntry,
   type ResyncResult,
   type SkillSelection,
@@ -187,6 +193,12 @@ export interface CreateBoxOptions {
    * validated against the agent's declaration by the caller.
    */
   borrowCredentials?: string[];
+  /**
+   * Named LLM account per agent, validated by the caller (llm-accounts
+   * Phase 3). Such an agent mounts its account's config volume instead of the
+   * shared (or isolated) one, and its launch env follows the account.
+   */
+  accounts?: Record<string, string>;
   /**
    * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
    * every box mounts the shared `agentbox-claude-config` volume at
@@ -719,6 +731,17 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       spec.id === 'claude' ? Promise.resolve(true) : hostHasAnyStaticPath(spec),
     );
     if (!wanted) continue;
+    const account = opts.accounts?.[spec.id];
+    if (account && !isDefaultAccount(account)) {
+      // The account's own volume, shared by every box on that account (Phase 0:
+      // a refresh lands in the one copy all its holders read). It wins over
+      // isolation, which would give each box a private copy to revoke.
+      if (resolveAgentIsolation(spec, opts, () => {})) {
+        log(`${spec.id}: account '${account}' uses its own volume; ignoring per-box isolation`);
+      }
+      agentSpecs[spec.id] = { volume: accountConfigVolume(spec.dockerVolume, account), account };
+      continue;
+    }
     agentSpecs[spec.id] = requireAgentSyncModule(spec.id).resolveVolume({
       isolate: resolveAgentIsolation(spec, opts, log),
       boxId: id,
@@ -765,7 +788,16 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   const agentMounts: AgentMountResult[] = [];
   const configVolumes: Record<string, string> = {};
   for (const [agent, choice] of Object.entries(agentSpecs)) {
-    agentMounts.push(requireAgentSyncModule(agent).buildMounts(choice, process.env));
+    const mounts = requireAgentSyncModule(agent).buildMounts(choice, process.env);
+    // A named account gets exactly its own auth: the host's spray of this
+    // agent's auth keys is dropped, and a pasted account's token is added.
+    if (choice.account) {
+      mounts.env = applyAccountEnv(
+        mounts.env,
+        await accountEnvPolicy(resolveAgentSpec(agent), choice.account),
+      );
+    }
+    agentMounts.push(mounts);
     configVolumes[agent] = choice.volume;
   }
   // The three named fields are a DERIVED mirror of the map for older readers;
@@ -877,6 +909,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         originUrl,
         workspacePath: originRepo,
         agent: opts.agents?.[0],
+        ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
       });
       log(`registered box token with relay`);
     } catch (err) {
@@ -989,6 +1022,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     ...(opts.borrowCredentials && opts.borrowCredentials.length > 0
       ? { borrowedCredentials: [...opts.borrowCredentials] }
       : {}),
+    ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,
@@ -1189,7 +1223,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   // A borrowed model login (`borrowCredentials`) is the same kind of thing as
   // a per-box channel token — a host file the agent asked for, landing 0600 at
   // a path it named — so it rides the same step. Validated by the caller.
-  carryEntries.push(...(await borrowedCredentialCarry(opts.borrowCredentials ?? [], log)));
+  carryEntries.push(
+    ...(await borrowedCredentialCarry(opts.borrowCredentials ?? [], log, undefined, opts.accounts)),
+  );
   if (carryEntries.length > 0) {
     log(`carry: copying ${String(carryEntries.length)} host path(s) into the box`);
     const result = await sync.applyCarry(syncCtx, carryEntries);

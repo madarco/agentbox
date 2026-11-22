@@ -20,14 +20,19 @@ function reg(overrides: Partial<BoxRegistration> = {}): BoxRegistration {
     image: 'tmpl-xyz',
     webPort: 8080,
     originUrl: 'git@github.com:o/r.git',
-    worktrees: [{ containerPath: '/workspace', hostMainRepo: '/tmp/clone', branch: 'agentbox/brave-otter' }],
+    worktrees: [
+      { containerPath: '/workspace', hostMainRepo: '/tmp/clone', branch: 'agentbox/brave-otter' },
+    ],
     ...overrides,
   };
 }
 
 describe('registrationToBoxRecord', () => {
   it('rebuilds a drivable cloud record from an SDK-provider registration', () => {
-    const rec = registrationToBoxRecord(reg(), { controlPlaneUrl: 'https://hub.example', freshToken });
+    const rec = registrationToBoxRecord(reg(), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
     expect(rec.id).toBe('box-1');
     expect(rec.name).toBe('brave-otter');
     expect(rec.provider).toBe('e2b');
@@ -103,5 +108,23 @@ describe('registrationToBoxRecord', () => {
     // No registration bridgeToken → freshToken fallback.
     expect(rec.cloud?.bridgeToken).toBe(TOKEN);
     expect(rec.lastAgent).toBeUndefined();
+  });
+});
+
+describe('accounts travel with an adopted box (llm-accounts #437-4)', () => {
+  const freshToken = () => 'tok';
+  it('copies the registration accounts onto the record', () => {
+    const rec = registrationToBoxRecord(reg({ accounts: { claude: 'work' } }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    expect(rec.accounts).toEqual({ claude: 'work' });
+  });
+  it('a box with no named account records none', () => {
+    const rec = registrationToBoxRecord(reg(), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    expect(rec.accounts).toBeUndefined();
   });
 });

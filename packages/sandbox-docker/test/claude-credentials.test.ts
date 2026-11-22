@@ -201,17 +201,32 @@ describe('SYNC_SCRIPT direction (newest expiresAt wins)', () => {
   const hostPath = () => join(dir, 'host-state', 'claude-credentials.json');
 
   /** Run the real script with /dst and /host-state rebound to temp dirs. */
-  const run = async (isolate = false): Promise<string> => {
+  const run = async (isolate = false, hostRel?: string): Promise<string> => {
     const script = SYNC_SCRIPT.replaceAll('/dst/', `${join(dir, 'dst')}/`).replaceAll(
       '/host-state/',
       `${join(dir, 'host-state')}/`,
     );
     const { stdout } = await execa('sh', ['-c', script], {
-      env: { ISOLATE: isolate ? 'yes' : 'no', PATH: `${binDir}:${process.env['PATH'] ?? ''}` },
+      env: {
+        ISOLATE: isolate ? 'yes' : 'no',
+        PATH: `${binDir}:${process.env['PATH'] ?? ''}`,
+        ...(hostRel ? { HOST_REL: hostRel } : {}),
+      },
       extendEnv: false,
     });
     return stdout;
   };
+
+  it('a named account syncs with its own file and never touches the default backup (Phase 3)', async () => {
+    await writeFile(volPath(), blob(3000));
+    await writeFile(hostPath(), blob(1000));
+    if (!hasJq) return;
+    const rel = 'credentials/claude/work.json';
+    expect(parseSyncResult(await run(false, rel)).direction).toBe('extracted');
+    const named = JSON.parse(await readFile(join(dir, 'host-state', rel), 'utf8'));
+    expect(named.claudeAiOauth.expiresAt).toBe(3000);
+    expect(JSON.parse(await readFile(hostPath(), 'utf8')).claudeAiOauth.expiresAt).toBe(1000);
+  });
 
   it('extracts when the volume blob is newer than the backup', async () => {
     await writeFile(volPath(), blob(2000));

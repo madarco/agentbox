@@ -703,6 +703,8 @@ export interface RegisterBoxArgs {
    * registration without this gets every agent's (the pre-field answer).
    */
   agent?: string;
+  /** Named LLM account per agent (`BoxRecord.accounts`). */
+  accounts?: Record<string, string>;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -741,6 +743,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     ...(args.skills ? { skills: args.skills } : {}),
     originUrl: args.originUrl,
     agent: args.agent,
+    ...(args.accounts && Object.keys(args.accounts).length > 0 ? { accounts: args.accounts } : {}),
   });
 }
 
@@ -934,6 +937,8 @@ async function adminPostForJson(path: string, body: unknown): Promise<unknown> {
 export interface BoxWithToken {
   id: string;
   name: string;
+  /** Named LLM account per agent — kept across a relay restart's re-registration. */
+  accounts?: Record<string, string>;
   /** Sandbox backend the box runs on. Defaults to 'docker' when absent. */
   provider?: 'docker' | 'cloud' | string;
   container?: string;
@@ -982,6 +987,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         autoApproveHostActions: b.autoApproveHostActions,
         autoApproveSafeHostActions: b.autoApproveSafeHostActions,
         ...(b.skills ? { skills: b.skills } : {}),
+        ...(b.accounts ? { accounts: b.accounts } : {}),
       });
     } catch {
       // best-effort

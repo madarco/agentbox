@@ -198,7 +198,7 @@ export function buildOpenApi(): Record<string, unknown> {
       {
         name: 'History',
         description:
-          'Agent session history: raw transcript ingest from the edges. Read endpoints arrive in Phase 2.',
+          'Agent session history: transcript ingest from the edges, and the sessions, transcripts and search read from it.',
       },
       {
         name: 'Workspaces',
@@ -1102,6 +1102,333 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             '400': errorResponse,
             '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions': {
+        get: {
+          tags: ['History'],
+          summary: 'List recorded sessions',
+          description:
+            'Agent sessions the hub recorded, newest activity first. Filters are ANDed. `q` is plain words that must all appear in one turn (never query syntax).',
+          parameters: [
+            {
+              name: 'agent',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this agent (e.g. `claude`).',
+            },
+            {
+              name: 'box',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this box: its id or name.',
+            },
+            {
+              name: 'project',
+              in: 'query',
+              schema: { type: 'string' },
+              description: "Substring of the project's repo URL.",
+            },
+            {
+              name: 'host',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only sessions shipped by this machine id.',
+            },
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Last activity at or after this ISO-8601 time.',
+            },
+            {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Words that must all appear in one of the session turns.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Default 50, max 500.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Sessions',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      sessions: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            key: { type: 'string' },
+                            agent: { type: 'string' },
+                            boxId: { type: 'string', nullable: true },
+                            boxName: { type: 'string', nullable: true },
+                            provider: { type: 'string', nullable: true },
+                            hostId: { type: 'string', nullable: true },
+                            projectRepoUrl: { type: 'string', nullable: true },
+                            parentSessionId: { type: 'string', nullable: true },
+                            title: { type: 'string', nullable: true },
+                            firstTs: { type: 'string', nullable: true },
+                            lastTs: { type: 'string', nullable: true },
+                            turns: { type: 'integer' },
+                            inputTokens: { type: 'integer' },
+                            outputTokens: { type: 'integer' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                            updatedAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                    },
+                    required: ['sessions'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}': {
+        get: {
+          tags: ['History'],
+          summary: 'One session, condensed',
+          description:
+            'The session row, its files (the main transcript plus one per subagent, with byte sizes), the turn count, tool-name counts, and the first user prompt and last assistant reply. 409 with `details.candidates` when a prefix is ambiguous.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The session',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      session: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          key: { type: 'string' },
+                          agent: { type: 'string' },
+                          boxId: { type: 'string', nullable: true },
+                          boxName: { type: 'string', nullable: true },
+                          provider: { type: 'string', nullable: true },
+                          hostId: { type: 'string', nullable: true },
+                          projectRepoUrl: { type: 'string', nullable: true },
+                          parentSessionId: { type: 'string', nullable: true },
+                          title: { type: 'string', nullable: true },
+                          firstTs: { type: 'string', nullable: true },
+                          lastTs: { type: 'string', nullable: true },
+                          turns: { type: 'integer' },
+                          inputTokens: { type: 'integer' },
+                          outputTokens: { type: 'integer' },
+                          createdAt: { type: 'string', format: 'date-time' },
+                          updatedAt: { type: 'string', format: 'date-time' },
+                        },
+                      },
+                      files: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            child: { type: 'boolean' },
+                            bytes: { type: 'integer' },
+                          },
+                        },
+                      },
+                      turns: { type: 'integer' },
+                      tools: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: { name: { type: 'string' }, count: { type: 'integer' } },
+                        },
+                      },
+                      firstPrompt: { type: 'string', nullable: true },
+                      lastReply: { type: 'string', nullable: true },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}/turns': {
+        get: {
+          tags: ['History'],
+          summary: "A session's transcript rows",
+          description:
+            'Turn and tool rows in session order (subagent rows interleaved by time), `from` to `to` inclusive, at most 1000 per call.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+            {
+              name: 'from',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'First row index (default 0).',
+            },
+            {
+              name: 'to',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Last row index, inclusive (default from+199).',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Rows',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      turns: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            index: { type: 'integer' },
+                            kind: { type: 'string', enum: ['turn', 'tool'] },
+                            role: { type: 'string', nullable: true },
+                            name: { type: 'string', nullable: true },
+                            text: { type: 'string', nullable: true },
+                            ts: { type: 'string', nullable: true },
+                            path: { type: 'string' },
+                            at: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}/raw': {
+        get: {
+          tags: ['History'],
+          summary: 'Download one transcript file',
+          description:
+            'One file of the session, streamed and byte-identical to what the edge shipped (secrets masked at the edge, length kept). Default: the main transcript; `path` picks one of the detail route `files`. The `x-agentbox-history-path` header names the file.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+            {
+              name: 'path',
+              in: 'query',
+              schema: { type: 'string' },
+              description: "A file path from the session's `files` list.",
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The file bytes',
+              content: { 'application/x-ndjson': { schema: { type: 'string', format: 'binary' } } },
+            },
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/search': {
+        get: {
+          tags: ['History'],
+          summary: 'Full-text search over turns',
+          description:
+            'Turns containing all the words in `q`, best first, each with a snippet (matches in [brackets]) and its session.',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Plain words; no query syntax.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Default 20, max 200.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Hits',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      hits: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            session: { type: 'object' },
+                            role: { type: 'string', nullable: true },
+                            ts: { type: 'string', nullable: true },
+                            snippet: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
             '503': errorResponse,
           },
         },
@@ -4662,6 +4989,12 @@ export function buildOpenApi(): Record<string, unknown> {
               enum: ['claude', 'codex', 'opencode', 'pi'],
               description: 'The agent the box was created for.',
             },
+            accounts: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description:
+                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Fixed at create. Absent = every agent on its default login. Raw ids only; labels and kinds come with a later accounts endpoint.',
+            },
             persistent: {
               type: 'boolean',
               description:
@@ -5604,6 +5937,12 @@ export function buildOpenApi(): Record<string, unknown> {
                   items: { type: 'string' },
                   description:
                     "Other agents' host logins to seed as this box's model auth (`--model-auth`; service agents). Normally decided by the `model-auth` prompt instead.",
+                },
+                accounts: {
+                  type: 'object',
+                  additionalProperties: { type: 'string' },
+                  description:
+                    'Named LLM account per agent (`{ "claude": "work" }`), the API twin of `--account`. Resolved against THIS hub machine\'s account store; an agent left out uses its `<agent>.account` config, else its default login. A borrowed model-auth lender\'s account must be a login.',
                 },
               },
             },

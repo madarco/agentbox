@@ -7,7 +7,7 @@
  * short-circuit to the SDK attach path before any of that.
  */
 import { loadEffectiveConfig, type EffectiveConfig, type UserConfig } from '@agentbox/config';
-import { parseProviderWarning, type LoopbackEndpoint } from '@agentbox/core';
+import { isDefaultAccount, parseProviderWarning, type LoopbackEndpoint } from '@agentbox/core';
 import {
   agentSyncModule,
   inspectBox,
@@ -20,7 +20,7 @@ import {
   unpauseBox,
   type BoxRecord,
 } from '@agentbox/sandbox-docker';
-import { runModelAuthIngest } from '@agentbox/sandbox-core';
+import { boxAccount, runModelAuthIngest } from '@agentbox/sandbox-core';
 import type { Command } from 'commander';
 import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { reattachRef, resolveBoxOrExit, resolveBoxOrShift } from '../../box-ref.js';
@@ -175,9 +175,17 @@ export async function startOrAttach(
       const volume = target.volume;
       if (syncConfig) {
         s.message(`syncing ${a.text.syncConfigLabel} into box volume`);
+        // A named account's volume gets the host's config but never the host's
+        // login (llm-accounts Phase 3) — the same seed create ran.
+        const account = boxAccount(box, a.id);
         const synced = await a.runtime.ensureVolume(
           { volume },
-          { syncFromHost: true, image: box.image, hostWorkspace: box.workspacePath },
+          {
+            syncFromHost: true,
+            image: box.image,
+            hostWorkspace: box.workspacePath,
+            ...(isDefaultAccount(account) ? {} : { account }),
+          },
         );
         // Shown after the spinner: a host-loopback endpoint was rewritten, or the
         // gateway behind it will refuse the box (#403).

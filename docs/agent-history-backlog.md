@@ -90,3 +90,63 @@ teardown, and the private-key rule kept inside one line. Still open:
     registration with no worktrees.
   - The REST route reads the whole body before checking its size.
   - A seal failure throws out of `sweep` and skips that hour's retention.
+
+## After Phase 1 merged (#435)
+
+- **Post-fix e2b live leg skipped.** #435 was merged with the docker live check
+  green after the review fixes. e2b is covered by unit tests plus the pre-fix
+  live run: the post-fix run was blocked by an expired Claude login on the test
+  machine. Next time a cloud box is at hand, check that a box-stamped binding
+  ships through the ctl loop (not only `history flush`), with ctl baked into
+  the snapshot.
+
+## Phase 2 (read API + CLI)
+
+- **Split stores.** With a control box configured, `agentbox sessions` reads the
+  configured hub, while this machine's docker boxes still ingest into the local
+  hub (see "Remote control box forwarding"). `--local` reads the local one.
+  There is no merged view until forwarding lands.
+- **`sessions resume <id>`** (plan, CLI section) is not in Phase 2's row; it
+  reuses fork's create + teleport path and is still open.
+- **Generations.** Reads serve a file's current generation only. Older
+  generations (a rewritten file) stay in the archive until retention, with no
+  route to them.
+- **Non-FTS fallback** (review of the Phase 2 diff). On a sqlite without FTS5,
+  `q` / `search` become one contiguous `LIKE '%w1 w2%'` (a phrase, not "all
+  words") with `%`/`_` unescaped. Node's `node:sqlite` ships FTS5, so this
+  path is untested in practice; make it a per-word `LIKE ... ESCAPE` AND.
+- **Search N+1.** `GET /history/search` loads each hit's session with its own
+  `getSession` round trip and returns a subset of the session shape (no
+  `key`). Batch-load, or JOIN in `repo.search`, and reuse `sessionJson`;
+  this matters once the postgres repo lands.
+
+## From the review of #439 (2026-11-22)
+
+Fixed in the follow-up: `sessions download` writes `<file>.part` and renames on
+success, reporting the bytes actually written (LATER-2), and `sessions` is in
+`agentbox help`'s Advanced group plus the drift test's mirror (LATER-5). Still open:
+
+- **`/raw` across a generation change (LATER-1).** The route takes the file's
+  offset, then `rawStream` re-reads the row; a `reset` frame in between moves
+  the row to generation g+1, and the stream serves the new generation's bytes
+  short of the announced length (reproduced: 441 B announced, 42 B sent). Pass
+  the `HistoryFileRow` (generation and offset) into `rawStream` and list that
+  generation's chunks; old generations stay readable until retention.
+- **`show --all` cost (LATER-3).** Every `/turns` page runs the window function
+  and `ORDER BY … LIMIT/OFFSET` over the whole session (about rows²/1000), and
+  the CLI buffers every row before printing. Print per page, and page by key.
+- **Same path from two origins (LATER-4).** A session resumed in a second docker
+  box is shipped by both, so the detail lists its path twice, `download` writes
+  it twice, and `?path=` serves the first (older, shorter) row. Dedupe `files`
+  by path, keeping the largest offset, or add an origin selector. The real fix
+  is single ownership per path (see "Same session from two boxes" above).
+- **Header from an edge path (LATER-6).** `x-agentbox-history-path` is set
+  verbatim; a CR/LF or a character above U+00FF in a path makes the response
+  throw (500). Use `encodeURIComponent(file.path)`.
+- **Phase 3 id shapes (LATER-7).**
+  - The prefix lookup refuses refs containing `_`; escape with `LIKE … ESCAPE`
+    instead.
+  - `downloadTarget` skips session ids outside
+    `^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$` with a misleading "outside the folder"
+    message.
+  - Revisit both when codex, pi and opencode ids arrive.

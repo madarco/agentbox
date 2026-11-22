@@ -253,7 +253,8 @@ export const SYNC_SCRIPT = `
 EXTRACTED=no
 SEEDED=no
 VOL=/dst/.credentials.json
-HOST=/host-state/claude-credentials.json
+HOST="/host-state/\${HOST_REL:-claude-credentials.json}"
+mkdir -p "$(dirname "$HOST")"
 num() { case "$1" in ''|*[!0-9]*) echo 0;; *) echo "$1";; esac; }
 if [ -f "$VOL" ] && jq -e '(.claudeAiOauth.refreshToken // "") | length > 0' "$VOL" >/dev/null 2>&1; then VOL_REAL=yes; else VOL_REAL=no; fi
 if [ -f "$HOST" ] && jq -e '(.claudeAiOauth.refreshToken // "") | length > 0' "$HOST" >/dev/null 2>&1; then HOST_REAL=yes; else HOST_REAL=no; fi
@@ -288,8 +289,24 @@ echo "EXTRACTED=$EXTRACTED SEEDED=$SEEDED VOLREAL=$VOL_REAL"
  */
 export async function syncClaudeCredentials(
   spec: AgentVolumeChoice,
-  opts: { image: string; isolate: boolean },
+  opts: {
+    image: string;
+    isolate: boolean;
+    /**
+     * The host-side file, relative to `~/.agentbox`. Absent = the legacy
+     * `claude-credentials.json` (the default account). A NAMED account's
+     * volume syncs against `credentials/claude/<id>.json` instead, so it can
+     * never land in, or be seeded from, the default login.
+     */
+    hostBackupRel?: string;
+  },
 ): Promise<SyncClaudeCredentialsResult> {
+  if (opts.hostBackupRel !== undefined && !/^[A-Za-z0-9._/-]+$/.test(opts.hostBackupRel)) {
+    return { direction: 'noop', volumeHasCredentials: false };
+  }
+  if (opts.hostBackupRel?.split('/').some((seg) => seg === '..' || seg === '')) {
+    return { direction: 'noop', volumeHasCredentials: false };
+  }
   try {
     await mkdir(STATE_DIR, { recursive: true });
     const { stdout } = await execa('docker', [
@@ -303,6 +320,7 @@ export async function syncClaudeCredentials(
       `${STATE_DIR}:/host-state`,
       '-e',
       `ISOLATE=${opts.isolate ? 'yes' : 'no'}`,
+      ...(opts.hostBackupRel ? ['-e', `HOST_REL=${opts.hostBackupRel}`] : []),
       opts.image,
       'sh',
       '-c',
@@ -312,7 +330,10 @@ export async function syncClaudeCredentials(
     // The helper runs as root; re-assert 0600 from the host side so the backup
     // is owner-only regardless of how the bind mount maps ownership.
     if (result.direction === 'extracted') {
-      await chmod(CREDENTIALS_BACKUP_FILE, 0o600).catch(() => {});
+      const written = opts.hostBackupRel
+        ? join(STATE_DIR, opts.hostBackupRel)
+        : CREDENTIALS_BACKUP_FILE;
+      await chmod(written, 0o600).catch(() => {});
     }
     return result;
   } catch {

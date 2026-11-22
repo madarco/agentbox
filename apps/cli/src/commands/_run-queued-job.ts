@@ -385,6 +385,9 @@ async function runDockerJob(
     agents: plan.agents,
     ...(opts.borrowCredentials?.length ? { borrowCredentials: [...opts.borrowCredentials] } : {}),
     ...(opts.skills ? { skills: opts.skills } : {}),
+    ...(opts.accounts && Object.keys(opts.accounts).length > 0
+      ? { accounts: { ...opts.accounts } }
+      : {}),
     // The agent's own `box.isolate<Agent>Config` accessor, through its CLI
     // module — the same one `create-action` uses — instead of a switch over
     // three named options. An agent this build has no module for (a service
@@ -660,6 +663,9 @@ async function runCloudJob(
     agents: plan.agents,
     ...(opts.borrowCredentials?.length ? { borrowCredentials: [...opts.borrowCredentials] } : {}),
     ...(opts.skills ? { skills: opts.skills } : {}),
+    ...(opts.accounts && Object.keys(opts.accounts).length > 0
+      ? { accounts: { ...opts.accounts } }
+      : {}),
     // `--build` (allowPull:false) + registry, credential-sync, bundle depth, and
     // the push mode: the foreground `create` conversion routes cloud creates
     // through this worker, so each must ride the job to match the old inline path.

@@ -379,6 +379,10 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.borrowCredentials?.length
           ? { borrowCredentials: createOpts.borrowCredentials }
           : {}),
+        // Resolved at enqueue against this machine's account store.
+        ...(createOpts?.accounts && Object.keys(createOpts.accounts).length > 0
+          ? { accounts: createOpts.accounts }
+          : {}),
         // Everything provider-shaped comes from the machine that HAS the project
         // config; this box has neither the checkout nor
         // `~/.agentbox/projects/<hash>`, so resolving any of it here would only

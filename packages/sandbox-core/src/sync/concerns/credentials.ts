@@ -113,6 +113,11 @@ export interface ExtractCredentialsOptions {
   onLog?: (line: string) => void;
   /** Override host backup paths per agent (tests). Defaults to the registry `hostBackup`. */
   backups?: Partial<Record<AgentId, string>>;
+  /**
+   * Agents to leave alone: those on a NAMED LLM account, whose in-box login is
+   * not the default's and must never be written over the legacy backup.
+   */
+  skip?: readonly string[];
 }
 
 /**
@@ -135,6 +140,7 @@ export async function extractCredentials(
   const log = opts.onLog ?? (() => {});
   const extracted: AgentId[] = [];
   for (const spec of AGENT_SYNC_SPECS) {
+    if (opts.skip?.includes(spec.id)) continue;
     // No credential declared → nothing on the box to read and nowhere on the
     // host to put it. Skipped before the `readText`, so a credential-less agent
     // costs no round-trip per box.

@@ -413,3 +413,13 @@ export {
   skillsStaleness,
 } from './skills/digest.js';
 export type { SkillsStamp } from './skills/digest.js';
+export {
+  accountEnvPolicy,
+  applyAccountEnv,
+  boxAccount,
+  NO_ACCOUNT_ENV,
+  parseAccountFlags,
+  resolveBoxAccounts,
+  type AccountEnvPolicy,
+  type ResolvedBoxAccounts,
+} from './account-selection.js';
