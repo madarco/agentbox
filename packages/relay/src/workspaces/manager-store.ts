@@ -47,7 +47,7 @@ import type {
 export interface ManagerWorkspace {
   id: string;
   name: string;
-  hosts: Record<string, { root: string }>;
+  hosts: Record<string, { root: string; label?: string }>;
 }
 
 /** What a manager's create produced: the box, or the job still building it. */

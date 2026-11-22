@@ -1125,7 +1125,7 @@ export type ManagerMessageResult =
       error: string;
       code?: 'manager_unreachable';
       /** The machine the manager runs on: where the client retries. */
-      details?: { host: string };
+      details?: { host: string; machineId?: string };
     };
 
 /**
@@ -1137,7 +1137,7 @@ export interface ManagerWrongHost {
   ok: false;
   error: string;
   code: 'wrong_host';
-  details: { host: string };
+  details: { host: string; machineId?: string; hosts?: string[]; machineIds?: (string | null)[] };
 }
 
 /** The timeline domain slice (`lib/backend/timeline.ts`). */
@@ -1250,7 +1250,10 @@ export interface DetectManagerInput {
   /** Absolute folder the session runs in, on the caller's machine. */
   cwd: string;
   pid?: number;
+  /** Hostname of the caller's machine: its label. */
   host?: string;
+  /** `getMachineId()` of the caller's machine; absent from a client that predates machine ids. */
+  machineId?: string;
   /** `$AGENTBOX_MANAGER`: set inside a hub-run manager's own session. */
   managerId?: string;
   /** `$TMUX_PANE` of the session's terminal, so a message can be typed into it. */

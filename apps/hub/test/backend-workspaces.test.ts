@@ -1,3 +1,4 @@
+import { getMachineId } from '@agentbox/config';
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,7 +45,7 @@ describe('addWorkspace', () => {
     if (!res.ok) return;
     expect(res.workspace.projects).toHaveLength(2);
     expect(res.workspace.root).toBe(root);
-    expect(res.workspace.hosts[hostname()]?.root).toBe(root);
+    expect(res.workspace.hosts[getMachineId()]).toMatchObject({ root, label: hostname() });
     // A local folder answers to its path hash too, so the project registry joins.
     expect(res.workspace.projectIds.length).toBeGreaterThanOrEqual(2);
     expect(res.workspace.taskCounts).toEqual({ open: 0, done: 0 });

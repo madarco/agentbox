@@ -218,7 +218,10 @@ describe('a hub whose store is elsewhere', () => {
       HubBackend['create']
     >[0]);
     await backgroundSettled();
-    expect(keys[0]).toMatchObject({ host: 'laptop', projectRoot: '/home/me/work/storefront' });
+    expect(keys[0]).toMatchObject({
+      host: { label: 'laptop' },
+      projectRoot: '/home/me/work/storefront',
+    });
   });
 
   /**

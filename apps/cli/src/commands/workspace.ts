@@ -7,7 +7,8 @@
  * box that has none of them. Every call goes to `workspaceHub()` — the
  * configured hub, which is where the store lives.
  */
-import { hostname } from 'node:os';
+import { machineKeyIn, thisMachine } from '@agentbox/config';
+import { workspaceRootOn } from '@agentbox/relay';
 import { resolve } from 'node:path';
 import { confirm, isCancel, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
@@ -35,13 +36,15 @@ async function mustResolve(client: HubApiClient, ref?: string): Promise<HubApiWo
 }
 
 function printWorkspace(ws: HubApiWorkspace): void {
-  const here = ws.hosts[hostname()]?.root;
+  const me = thisMachine();
+  const here = workspaceRootOn(ws, me);
   log.info(`${ws.name}  (${ws.id})`);
   process.stdout.write(`  root      ${here ?? '(no folder on this machine)'}\n`);
   process.stdout.write(`  projects  ${String(ws.projects.length)}\n`);
-  const elsewhere = Object.entries(ws.hosts).filter(([h]) => h !== hostname());
-  for (const [host, m] of elsewhere) {
-    process.stdout.write(`  on ${host}  ${m.root}\n`);
+  const mine = machineKeyIn(ws.hosts, me);
+  const elsewhere = Object.entries(ws.hosts).filter(([key]) => key !== mine);
+  for (const [key, m] of elsewhere) {
+    process.stdout.write(`  on ${m.label ?? key}  ${m.root}\n`);
   }
   if (ws.taskCounts) {
     process.stdout.write(
@@ -105,7 +108,7 @@ const listCommand = new Command('list')
             ? `${String(w.taskCounts.open)}/${String(w.taskCounts.open + w.taskCounts.done)}`
             : '-',
           w.managers ? `${String(w.managers.running)}/${String(w.managers.total)}` : '-',
-          w.hosts[hostname()]?.root ?? '-',
+          workspaceRootOn(w, thisMachine()) ?? '-',
         ]),
       );
     });
@@ -132,10 +135,11 @@ const rescanCommand = new Command('rescan')
   .action(async (ref: string | undefined) => {
     await withHubClient(workspaceHub(), async (client) => {
       const ws = await mustResolve(client, ref);
-      const root = ws.hosts[hostname()]?.root;
+      const me = thisMachine();
+      const root = workspaceRootOn(ws, me);
       if (!root) {
         log.error(
-          `${ws.name} has no folder on ${hostname()}; rescan it from the machine that has one.`,
+          `${ws.name} has no folder on ${me.label}; rescan it from the machine that has one.`,
         );
         process.exit(2);
       }

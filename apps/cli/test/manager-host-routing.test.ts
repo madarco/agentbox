@@ -3,14 +3,34 @@
  * hub": which hub a refusal should be retried against, and whether a manager's
  * tmux session is reachable from here at all.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { retryOnLocalHub, runsHere, sendManagerMessage } from '../src/commands/manager.js';
 import { HubApiError } from '../src/control-plane/hub-api-client.js';
+
+// No HOME isolation in apps/cli: a default-argument `thisMachine()` would mint
+// the developer's real ~/.agentbox/machine-id.
+process.env['HOME'] = mkdtempSync(join(tmpdir(), 'agentbox-mhr-home-'));
+
+const A = '11111111-2222-4333-8444-555555555555';
+const B = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+const C = '00000000-7777-4888-8999-aaaaaaaaaaaa';
 
 describe('runsHere', () => {
   it('is the manager host against this machine, not which hub answered', () => {
     expect(runsHere({ host: 'laptop' }, 'laptop')).toBe(true);
     expect(runsHere({ host: 'desktop' }, 'laptop')).toBe(false);
+  });
+
+  it('decides by machine id when the record has one, so a hostname flip keeps it here', () => {
+    const me = { id: A, label: 'laptop-2' };
+    expect(runsHere({ host: 'laptop', machineId: A }, me)).toBe(true);
+    // Same name, other machine.
+    expect(runsHere({ host: 'laptop-2', machineId: B }, me)).toBe(false);
+    // A record from before machine ids: only its hostname identifies it.
+    expect(runsHere({ host: 'laptop-2' }, me)).toBe(true);
   });
 });
 
@@ -37,6 +57,25 @@ describe('retryOnLocalHub', () => {
     expect(retryOnLocalHub(refusal('wrong_host', hosts), 'laptop')).toBe(true);
     expect(retryOnLocalHub(refusal('wrong_host', hosts), 'desktop')).toBe(true);
     expect(retryOnLocalHub(refusal('wrong_host', hosts), 'tower')).toBe(false);
+  });
+
+  it('matches a refusal by machine id first, then by hostname for an id-less one', () => {
+    const me = { id: A, label: 'laptop-2' };
+    expect(retryOnLocalHub(refusal('wrong_host', { host: 'laptop', machineId: A }), me)).toBe(true);
+    expect(retryOnLocalHub(refusal('wrong_host', { host: 'laptop-2', machineId: B }), me)).toBe(
+      false,
+    );
+    expect(retryOnLocalHub(refusal('wrong_host', { host: 'laptop-2' }), me)).toBe(true);
+    // A workspace refusal: this machine is listed by id, under a stale name.
+    const two = { host: 'desktop', hosts: ['desktop', 'laptop'], machineIds: [B, A] };
+    expect(retryOnLocalHub(refusal('wrong_host', two), me)).toBe(true);
+    // Every listed machine has an id and none is ours: a matching name is someone else's.
+    const named = { host: 'desktop', hosts: ['desktop', 'laptop-2'], machineIds: [B, C] };
+    expect(retryOnLocalHub(refusal('wrong_host', named), me)).toBe(false);
+    // Mixed: `machineIds` is index-aligned, null for an entry only its name identifies.
+    const mixed = { host: 'laptop-2', hosts: ['laptop-2', 'desk'], machineIds: [B, null] };
+    expect(retryOnLocalHub(refusal('wrong_host', mixed), me)).toBe(false);
+    expect(retryOnLocalHub(refusal('wrong_host', mixed), { id: C, label: 'desk' })).toBe(true);
   });
 
   it('does not retry a refusal about anything else', () => {

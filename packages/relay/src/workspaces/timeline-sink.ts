@@ -12,7 +12,7 @@
  * never at a call site. The remote implementation is best-effort by
  * construction: it never throws, and a failed forward costs one warning line.
  */
-import { hostname } from 'node:os';
+import { thisMachine } from '@agentbox/config';
 import { resolveControlBox, type ControlBoxTarget } from './control-box.js';
 import {
   readWorkspaceForBox,
@@ -20,7 +20,7 @@ import {
   workspaceForBoxIn,
   type TimelineEventInput,
 } from './timeline-store.js';
-import type { BoxWorkspaceKey } from './workspace-store.js';
+import type { BoxWorkspaceKey, HostArg } from './workspace-store.js';
 import type { TimelineEvent } from './types.js';
 
 /** All a timeline writer needs of a workspace: the id it records against. */
@@ -37,14 +37,14 @@ export interface TimelineSink {
    */
   record(wsId: string, input: TimelineEventInput): Promise<TimelineEvent | null>;
   /** The workspace a box belongs to, by repo and/or (host, folder). */
-  workspaceFor(key: BoxWorkspaceKey, localHost?: string): Promise<TimelineWorkspaceRef | null>;
+  workspaceFor(key: BoxWorkspaceKey, localHost?: HostArg): Promise<TimelineWorkspaceRef | null>;
 }
 
 export function fileTimelineSink(): TimelineSink {
   return {
     kind: 'file',
     record: (wsId, input) => recordTimelineEvent(wsId, input),
-    workspaceFor: (key, localHost) => readWorkspaceForBox(key, localHost ?? hostname()),
+    workspaceFor: (key, localHost) => readWorkspaceForBox(key, localHost ?? thisMachine()),
   };
 }
 
@@ -137,7 +137,7 @@ export function remoteTimelineSink(
     },
     async workspaceFor(key, localHost): Promise<TimelineWorkspaceRef | null> {
       try {
-        return await workspaceForBoxIn(await listWorkspaces(), key, localHost ?? hostname());
+        return await workspaceForBoxIn(await listWorkspaces(), key, localHost ?? thisMachine());
       } catch (err) {
         warnOnce(err);
         return null;

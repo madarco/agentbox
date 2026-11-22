@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { appendFile, open, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { hostname } from 'node:os';
+import { sameMachine, thisMachine, toMachineRef } from '@agentbox/config';
 import { withFileLock } from '@agentbox/config';
 import {
   canonicalWorkspaceRoot,
@@ -10,6 +10,7 @@ import {
   workspaceForBox,
   WORKSPACE_LOCK,
   type BoxWorkspaceKey,
+  type HostArg,
 } from './workspace-store.js';
 import type { TimelineEvent, TimelineStamp, WorkspaceRecord } from './types.js';
 
@@ -263,7 +264,7 @@ export async function hasTimelineKey(wsId: string, key: string): Promise<boolean
  */
 export async function readWorkspaceForBox(
   key: BoxWorkspaceKey,
-  localHost: string = hostname(),
+  localHost: HostArg = thisMachine(),
 ): Promise<WorkspaceRecord | null> {
   return workspaceForBoxIn(await listWorkspaces(), key, localHost);
 }
@@ -278,10 +279,15 @@ export async function workspaceForBoxIn<
     projects: readonly { repoUrl?: string }[];
     hosts: Record<string, { root: string }>;
   },
->(records: readonly T[], key: BoxWorkspaceKey, localHost: string = hostname()): Promise<T | null> {
+>(
+  records: readonly T[],
+  key: BoxWorkspaceKey,
+  localHost: HostArg = thisMachine(),
+): Promise<T | null> {
   if (records.length === 0) return null;
+  const on = toMachineRef(key.host ?? localHost);
   const projectRoot =
-    key.projectRoot && (key.host ?? localHost) === hostname()
+    key.projectRoot && sameMachine({ host: on.label, machineId: on.id }, thisMachine())
       ? await canonicalWorkspaceRoot(key.projectRoot)
       : key.projectRoot;
   return workspaceForBox(records, { ...key, ...(projectRoot ? { projectRoot } : {}) }, localHost);

@@ -10,12 +10,12 @@
  *      creates at its folder
  *
  * The listing comes from the hub, but the cwd is matched against THIS machine's
- * folder mapping (`hosts[hostname()]`), so a remote hub's workspaces resolve
+ * folder mapping (`hosts[<machine id>]`), so a remote hub's workspaces resolve
  * here exactly as a local one's: the record names the folder on every machine
  * that has one.
  */
-import { hostname } from 'node:os';
-import { findWorkspaceContaining } from '@agentbox/relay';
+import { thisMachine, type MachineRef } from '@agentbox/config';
+import { findWorkspaceContaining, workspaceRootOn } from '@agentbox/relay';
 import { detectHostSession, registerHostManager, type HostSessionHint } from './host-session.js';
 import type { WithHubOptions } from '../control-plane/with-hub.js';
 import type { HubApiClient, HubApiWorkspace } from '../control-plane/hub-api-client.js';
@@ -37,16 +37,16 @@ export function workspaceHub(): WithHubOptions {
 /** Pure: apply the resolution order to an already-fetched listing. */
 export function pickWorkspace(
   workspaces: HubApiWorkspace[],
-  opts: { ref?: string; env?: string; cwd: string; host?: string },
+  opts: { ref?: string; env?: string; cwd: string; host?: MachineRef | string },
 ): HubApiWorkspace | null {
-  const host = opts.host ?? hostname();
+  const host = opts.host ?? thisMachine();
   const explicit = opts.ref ?? opts.env;
   if (explicit) {
     const byId = workspaces.find((w) => w.id === explicit);
     if (byId) return byId;
     const normalized =
       explicit.length > 1 && explicit.endsWith('/') ? explicit.slice(0, -1) : explicit;
-    const byRoot = workspaces.find((w) => w.hosts[host]?.root === normalized);
+    const byRoot = workspaces.find((w) => workspaceRootOn(w, host) === normalized);
     if (byRoot) return byRoot;
     const byName = workspaces.filter((w) => w.name === explicit);
     // A name is a label, not a key: two workspaces can share one, and picking
@@ -69,7 +69,7 @@ export async function resolveWorkspace(
 export interface WorkspaceRefDeps {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
-  host?: string;
+  host?: MachineRef | string;
   detect?: () => HostSessionHint | undefined;
 }
 
@@ -92,7 +92,7 @@ export async function resolveWorkspaceAndManager(
   const env = (deps.env ?? process.env)['AGENTBOX_WORKSPACE'];
   const cwd = deps.cwd ?? process.cwd();
   const explicit = ref ?? env;
-  const host = deps.host ?? hostname();
+  const host = deps.host ?? thisMachine();
   const picked = pickWorkspace(workspaces, {
     ...(ref ? { ref } : {}),
     ...(env ? { env } : {}),

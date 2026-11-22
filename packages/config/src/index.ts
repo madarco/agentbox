@@ -143,3 +143,17 @@ export {
   type ToolGrant,
   type ToolGrantSource,
 } from './tools.js';
+export {
+  getMachineId,
+  getMachineLabel,
+  isMachineId,
+  machineIdFile,
+  machineKeyFor,
+  machineKeyIn,
+  sameMachine,
+  sameMachineRef,
+  thisMachine,
+  toMachineRef,
+  tryGetMachineId,
+  type MachineRef,
+} from './machine-id.js';

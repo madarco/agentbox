@@ -113,7 +113,7 @@ cat <<'EOF'
 package_update: true
 runcmd:
   - curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-  - apt-get install -y nodejs docker.io git tmux unzip rsync ca-certificates curl
+  - apt-get install -y nodejs docker.io git git-lfs tmux unzip rsync ca-certificates curl
   - install -d -m 755 /etc/apt/keyrings
   - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
   - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
@@ -123,6 +123,7 @@ runcmd:
   - systemctl enable --now docker
   - id dev >/dev/null 2>&1 || useradd -m -s /bin/bash dev
   - usermod -aG docker dev
+  - sudo -u dev -H git lfs install
   - echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-dev
   - install -d -m 700 -o dev -g dev /home/dev/.ssh
   - install -d -m 700 -o dev -g dev /home/dev/testkit
@@ -145,10 +146,18 @@ cmd_up() {
   [[ -f "$KEY" ]] || ssh-keygen -t ed25519 -N "" -C "$NAME" -f "$KEY" >/dev/null
   local pub; pub="$(cat "$KEY.pub")"
   local suffix; suffix="$(date +%s)"
-  echo ">> uploading ssh key"
-  local key_resp key_id
-  key_resp="$(api POST /ssh_keys "$(node -e 'console.log(JSON.stringify({name:process.argv[1],public_key:process.argv[2]}))' "$NAME-$suffix" "$pub")")"
-  key_id="$(printf '%s' "$key_resp" | jget ssh_key.id)"
+  local key_resp key_id fp
+  # Hetzner refuses a second upload of the same public key (409), and a VM
+  # destroyed outside `down` leaves its key behind: reuse it.
+  fp="$(ssh-keygen -E md5 -lf "$KEY.pub" | awk '{print $2}' | sed 's/^MD5://')"
+  key_id="$(api GET "/ssh_keys?fingerprint=$fp" | jget ssh_keys.0.id)"
+  if [[ -n "$key_id" ]]; then
+    echo ">> reusing ssh key $key_id"
+  else
+    echo ">> uploading ssh key"
+    key_resp="$(api POST /ssh_keys "$(node -e 'console.log(JSON.stringify({name:process.argv[1],public_key:process.argv[2]}))' "$NAME-$suffix" "$pub")")"
+    key_id="$(printf '%s' "$key_resp" | jget ssh_key.id)"
+  fi
 
   echo ">> creating $SERVER_TYPE/$LOCATION $IMAGE server '$NAME'"
   local body create ip server_id
