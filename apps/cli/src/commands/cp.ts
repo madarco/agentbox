@@ -12,6 +12,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
+import { ensureFirewallReach } from '../lib/firewall-repair.js';
 
 import { handleLifecycleError } from './_errors.js';
 
@@ -244,6 +245,11 @@ export const cpCommand = new Command('cp')
         if (!provider.uploadPath || !provider.downloadPath) {
           throw new Error(`provider '${provider.name}' does not support cp`);
         }
+        // Establish with the firewall self-heal (hetzner / digitalocean only).
+        await ensureFirewallReach(provider, box, {
+          enabled: true,
+          onLog: (line) => log.success(line),
+        });
         if (parsed.direction === 'upload') {
           const result = await provider.uploadPath(
             box,

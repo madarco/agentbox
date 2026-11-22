@@ -19,7 +19,7 @@ import { agentResumeArgs } from '../agent-sessions.js';
 // implementations now live in @agentbox/sandbox-cloud so the hub worker can share
 // them without importing apps/cli.
 export { buildCloudAttachInnerCommand, verifyDetachedSession };
-import { withFirewallRepair } from '../lib/firewall-repair.js';
+import { ensureFirewallReach } from '../lib/firewall-repair.js';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
 import { pasteHostClipboardImage, uploadImageFileToBox } from '../lib/paste-image.js';
@@ -136,14 +136,12 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
   // `true` over the already-open master is a cheap no-op. This is an ESTABLISH
   // path — distinct from the mid-session `reconnect` closure below, which must
   // NOT touch the firewall (a checkpoint/pause drop isn't an IP change).
-  if (box.provider === 'hetzner') {
-    await withFirewallRepair(
-      provider,
-      box,
-      { enabled: true, onLog: (line) => log.success(line) },
-      () => provider.exec(box, ['true']),
-    );
-  }
+  // Both firewall-bearing providers (it was hetzner-only, so a DigitalOcean
+  // attach never self-healed).
+  await ensureFirewallReach(provider, box, {
+    enabled: true,
+    onLog: (line) => log.success(line),
+  });
   // Attaching to a box that just came back up (a stop / cloud idle-timeout
   // resume): if the user passed no args of their own and the box has a resumable
   // session, launch resuming it (claude --resume <id> / codex resume --last) so

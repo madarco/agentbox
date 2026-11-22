@@ -319,3 +319,92 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   for (const x of sa) if (!sb.has(x)) return false;
   return true;
 }
+
+/** Providers whose boxes carry a per-box firewall pinned to host egress IPs. */
+export const FIREWALL_PROVIDERS: ReadonlySet<string> = new Set(['hetzner', 'digitalocean']);
+
+/**
+ * The explanation appended to an SSH connect failure when the box firewall is
+ * what blocks this machine, or null when this machine's egress is allowed (the
+ * failure is something else — leave the original error alone). Three cases,
+ * each with the fix that actually works for it:
+ *   - no entry for this machine: it was never added (the box came from another
+ *     PC) — `firewall sync` / `recover` adds it;
+ *   - an entry pinned to a hand-set source: `recover` would leave it alone, so
+ *     only `firewall sync` (no `--source`) re-detects and unpins it;
+ *   - an entry with a different address: this machine's IP changed.
+ */
+export function firewallBlockedHint(o: {
+  provider: string;
+  boxRef: string;
+  entries: readonly DeviceAllowEntry[];
+  staticSources: readonly string[];
+  key: string;
+  currentEgress: string;
+}): string | null {
+  const allowed = allowedSourcesOf(o.entries, o.staticSources);
+  if (allowed.some(isOpenCidr)) return null;
+  if (allowed.some((c) => cidrKey(c) === cidrKey(o.currentEgress))) return null;
+  const sync = `agentbox ${o.provider} firewall sync ${o.boxRef}`;
+  const list = allowed.join(', ') || '(nothing)';
+  const mine = o.entries.find((e) => e.key === o.key);
+  if (!mine) {
+    return (
+      `${o.provider}: SSH is blocked by the box firewall — this machine is not allowed on it yet ` +
+      `(it allows ${list}; this machine's egress is ${o.currentEgress}). ` +
+      `The box was likely created or last opened from another machine. Add this machine with:\n` +
+      `  ${sync}\n(or \`agentbox recover ${o.boxRef}\`, which adds it too).`
+    );
+  }
+  if (mine.pinned) {
+    return (
+      `${o.provider}: SSH is blocked by the box firewall — this machine's entry is pinned to ` +
+      `${mine.cidrs.join(', ')} (set by hand with --source), but its egress is now ${o.currentEgress}. ` +
+      `Automatic repairs leave a pinned entry alone; re-detect this machine's address and unpin it with:\n` +
+      `  ${sync}`
+    );
+  }
+  return (
+    `${o.provider}: SSH is blocked by the box firewall — this machine's entry allows ` +
+    `${mine.cidrs.join(', ')}, but its egress IP is now ${o.currentEgress}. Your IP changed; run:\n` +
+    `  ${sync}\n(or \`agentbox recover ${o.boxRef}\`, which auto-syncs).`
+  );
+}
+
+/**
+ * What a repair did, worded for the user (`recover`, attach, `shell` print it).
+ * `changed` is true only when this call wrote the firewall. An unchanged result
+ * still carries a `detail` saying why — already allowed (possibly by the relay's
+ * egress watcher a moment earlier), pinned, or world-open — so a caller can
+ * always report the outcome instead of staying silent.
+ */
+export function repairOutcome(o: {
+  entries: readonly DeviceAllowEntry[];
+  staticSources: readonly string[];
+  key: string;
+  cidrs: readonly string[];
+  wrote: boolean;
+}): { changed: boolean; detail: string } {
+  const n = o.entries.length;
+  const mine = o.entries.find((e) => e.key === o.key);
+  const who = `this machine (${mine?.label ? `${mine.label}, ` : ''}${o.key.slice(0, 8)})`;
+  if (o.wrote) {
+    return {
+      changed: true,
+      detail: `firewall updated: SSH allowed from ${who} at ${o.cidrs.join(', ')} (${String(n)} device entr${n === 1 ? 'y' : 'ies'})`,
+    };
+  }
+  if (o.staticSources.some(isOpenCidr)) {
+    return { changed: false, detail: 'firewall: open to the world (inbound open); nothing to add' };
+  }
+  if (mine?.pinned) {
+    return {
+      changed: false,
+      detail: `firewall: ${who} is pinned to ${mine.cidrs.join(', ')} (set with --source); left as is — \`firewall sync <box>\` re-detects and unpins it`,
+    };
+  }
+  return {
+    changed: false,
+    detail: `firewall: ${who} is already allowed at ${(mine?.cidrs ?? o.cidrs).join(', ')}`,
+  };
+}

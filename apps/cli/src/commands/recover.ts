@@ -36,6 +36,7 @@ import {
 import { ensureRelay, generateRelayToken, readState, recordBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { restoreAgentSessions } from '../agent-sessions.js';
+import { FIREWALL_PROVIDERS } from '@agentbox/sandbox-core';
 import { withFirewallRepair } from '../lib/firewall-repair.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
@@ -154,6 +155,25 @@ async function recoverKnownBox(
     return false;
   }
   const provider = await providerForBox(box);
+  // Make sure this machine is on the box firewall BEFORE reconnecting, and say
+  // what happened. Waiting for `reconnect` to fail is not enough to report it:
+  // on a second PC the relay's egress watcher (started with the relay) can add
+  // this machine first, `reconnect` then succeeds, and the user saw nothing.
+  // `detail` is set even when nothing changed (already allowed / pinned / open).
+  if (
+    opts.firewallSync &&
+    FIREWALL_PROVIDERS.has(box.provider ?? '') &&
+    provider.repairReachability
+  ) {
+    try {
+      const r = await provider.repairReachability(box);
+      if (r.detail) (r.changed ? log.success : log.info)(`${box.name}: ${r.detail}`);
+    } catch (err) {
+      log.warn(
+        `${box.name}: firewall check failed (${err instanceof Error ? err.message.split('\n')[0] : String(err)}); trying to reconnect anyway`,
+      );
+    }
+  }
   // Reconnect is an explicit connection-establishment, so a connect failure may
   // be a host IP change that locked the Hetzner firewall — self-heal it (only
   // when the egress actually changed) and retry once.

@@ -20,11 +20,16 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { BoxRecord, CloudBackend } from '@agentbox/core';
-import { STATE_DIR, detectDeviceCidrs, ipv4Cidrs, readState } from '@agentbox/sandbox-core';
+import {
+  FIREWALL_PROVIDERS,
+  STATE_DIR,
+  detectDeviceCidrs,
+  ipv4Cidrs,
+  readState,
+} from '@agentbox/sandbox-core';
 import { resolveCloudBackend } from './host-actions.js';
 
-/** Providers with a per-box firewall that pins SSH to host egress IPs. */
-export const FIREWALL_PROVIDERS: ReadonlySet<string> = new Set(['hetzner', 'digitalocean']);
+export { FIREWALL_PROVIDERS };
 
 export const EGRESS_CACHE_FILE = join(STATE_DIR, 'egress-ip.json');
 

@@ -101,6 +101,22 @@ build images from a Dockerfile). Three things differ from Hetzner:
   under an earlier key (the pre-release `~/.agentbox/device-key` id) are not
   migrated: the machine writes a fresh entry and the old one ages out through
   the cap.
+- **Establish sites self-heal on both providers.** `ensureFirewallReach`
+  (`apps/cli/src/lib/firewall-repair.ts`) runs a `true` over SSH wrapped in
+  `withFirewallRepair` before the real work in `shell` (one-shot and
+  interactive), the cloud attach, and `cp`. A machine that isn't allowed yet,
+  or whose IP changed, is added and the operation retried. It is a no-op for
+  providers without a per-box firewall (the attach used to check
+  `hetzner` only). `logs` goes through the hub, and cloud `status` reads
+  persisted status, so neither opens a connection. `recover` runs the repair
+  up front and always prints the outcome (`detail` is set even when nothing
+  changed: already allowed, pinned or open), so a second PC sees its entry
+  added even when the relay's watcher got there first. When SSH is still
+  blocked, the error (`firewallBlockedHint`, Hetzner and DigitalOcean) names
+  the case: *this machine is not allowed yet* (box from another PC; fix:
+  `firewall sync` or `recover`), *pinned to a hand-set source* (fix:
+  `firewall sync` without `--source`; `recover` won't touch it), or *your IP
+  changed*.
 - **The relay watches the egress IP** (`packages/relay/src/egress-watch.ts`,
   started by `startRelayDaemon`). On start and every 5 minutes it reads
   `state.json`; with no running, non-`open` hetzner/digitalocean box it stops

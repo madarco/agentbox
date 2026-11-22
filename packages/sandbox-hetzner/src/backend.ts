@@ -55,7 +55,6 @@ import {
   createPerBoxFirewall,
   decodeBoxFirewall,
   deletePerBoxFirewall,
-  firewallNeedsSync,
   normalizeSourceCidr,
   sshSourcesOf,
   writeBoxFirewall,
@@ -75,6 +74,8 @@ import {
   describeInbound,
   detectDeviceCidrs,
   deviceEntryNeedsUpdate,
+  firewallBlockedHint,
+  repairOutcome,
   isControlBoxProcess,
   localMachineKey,
   normalizeAgentSet,
@@ -362,12 +363,13 @@ async function ensureSelfOnFirewall(
     const fw = await readBoxFirewall(sandboxId, policy);
     if (!fw) return { changed: false };
     if (!deviceEntryNeedsUpdate(fw.ssh.entries, fw.ssh.staticSources, key, cidrs, hub)) {
-      return wrote
-        ? {
-            changed: true,
-            detail: `firewall updated: SSH allowed from this machine (${key}) at ${cidrs.join(', ')} (${String(fw.ssh.entries.length)} device entr${fw.ssh.entries.length === 1 ? 'y' : 'ies'})`,
-          }
-        : { changed: false };
+      return repairOutcome({
+        entries: fw.ssh.entries,
+        staticSources: fw.ssh.staticSources,
+        key,
+        cidrs,
+        wrote,
+      });
     }
     const next: BoxFirewallSsh = {
       staticSources: fw.ssh.staticSources,
@@ -402,15 +404,18 @@ async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string
     const currentEgress = s
       ? await detectEgressCidr({ overrideHint: REPAIR_EGRESS_HINT }).catch(() => null)
       : null;
-    if (s && currentEgress && firewallNeedsSync(s.allowedSources, currentEgress)) {
-      throw new Error(
-        `${(err as Error).message}\n\n` +
-          `hetzner: SSH is blocked by the box firewall — it allows ${s.allowedSources.join(', ') || '(no rule)'} ` +
-          `but your egress IP is now ${currentEgress}. Your IP changed; run:\n` +
-          `  agentbox hetzner firewall sync ${s.boxRef}\n` +
-          `(or \`agentbox recover ${s.boxRef}\`, which auto-syncs).`,
-      );
-    }
+    const hint =
+      s && currentEgress
+        ? firewallBlockedHint({
+            provider: 'hetzner',
+            boxRef: s.boxRef,
+            entries: s.ssh.entries,
+            staticSources: s.ssh.staticSources,
+            key: localMachineKey(),
+            currentEgress,
+          })
+        : null;
+    if (hint) throw new Error(`${(err as Error).message}\n\n${hint}`);
     throw err;
   }
 }
@@ -909,7 +914,12 @@ export const hetznerBackend: CloudBackend = {
     // on a mid-session drop. An `open` box is already reachable: no-op. API
     // errors propagate (the watcher must not record a failed read as healed).
     const policy: InboundPolicy = h.inbound ?? { mode: 'locked', sources: [] };
-    if (policy.mode === 'open') return { changed: false };
+    if (policy.mode === 'open') {
+      return {
+        changed: false,
+        detail: 'firewall: open to the world (inbound open); nothing to add',
+      };
+    }
     const cidrs = await detectDeviceCidrs({ overrideHint: REPAIR_EGRESS_HINT });
     return ensureSelfOnFirewall(h.sandboxId, policy, cidrs);
   },

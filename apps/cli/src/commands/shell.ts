@@ -21,6 +21,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import { formatDetachNotice } from '@agentbox/agent-claude';
 import { resolveBoxOrExit, resolveBoxOrShift } from '../box-ref.js';
+import { ensureFirewallReach } from '../lib/firewall-repair.js';
 import { providerForBox } from '../provider/registry.js';
 import {
   recordBoxSsh,
@@ -364,6 +365,16 @@ export const shellCommand = new Command('shell')
           box = await provider.start(box);
           s.stop('box running');
         }
+
+        // Establish first, with the firewall self-heal: a machine that isn't on
+        // the box's per-device allowlist yet (the box came from another PC) or
+        // whose IP changed is added here, before the one-shot exec or the
+        // interactive attach. A no-op for providers without a per-box firewall.
+        await ensureFirewallReach(provider, box, {
+          enabled: true,
+          // stderr for a one-shot: its stdout is the command's, and may be piped.
+          onLog: (line) => (oneShot ? process.stderr.write(`${line}\n`) : log.success(line)),
+        });
 
         // One-shot (`agentbox shell <box> -- cmd`) goes through the backend
         // `exec` primitive, not the interactive PTY attach. The PTY path

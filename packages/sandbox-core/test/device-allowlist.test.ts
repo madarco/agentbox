@@ -7,8 +7,10 @@ import {
   allowedSourcesOf,
   createTimeSelf,
   deviceEntryNeedsUpdate,
+  firewallBlockedHint,
   isOpenCidr,
   normalizeDecoded,
+  repairOutcome,
   withInboundPolicy,
   legacyEntryFor,
   localMachineKey,
@@ -272,5 +274,63 @@ describe('second review fixes', () => {
     expect(open).toEqual({ entries: [], extraStatic: ['0.0.0.0/0'] });
     const detected = await createTimeSelf(undefined, detect, { key: 'k' });
     expect(detected.entries[0]?.pinned).toBeUndefined();
+  });
+});
+
+describe('two-PC check follow-ups: blocked message + repair outcome', () => {
+  const base = {
+    provider: 'hetzner',
+    boxRef: 'fw2pc',
+    staticSources: [] as string[],
+    key: 'me',
+    currentEgress: '5.5.5.5/32',
+  };
+  const pcA: DeviceAllowEntry = { key: 'pc-a', cidrs: ['1.1.1.1/32'], seen: 1 };
+
+  it('a second PC not on the firewall yet is told so, not "your IP changed"', () => {
+    const msg = firewallBlockedHint({ ...base, entries: [pcA] }) ?? '';
+    expect(msg).toContain('this machine is not allowed on it yet');
+    expect(msg).not.toContain('Your IP changed');
+    expect(msg).toContain('agentbox hetzner firewall sync fw2pc');
+    expect(msg).toContain('agentbox recover fw2pc');
+  });
+
+  it('a pinned entry is told to unpin with firewall sync, and recover is not suggested', () => {
+    const pinned: DeviceAllowEntry = { key: 'me', cidrs: ['10.8.0.1/32'], seen: 1, pinned: true };
+    const msg = firewallBlockedHint({ ...base, entries: [pcA, pinned] }) ?? '';
+    expect(msg).toContain('pinned to 10.8.0.1/32');
+    expect(msg).toContain('agentbox hetzner firewall sync fw2pc');
+    expect(msg).not.toContain('recover');
+  });
+
+  it('a changed IP keeps the "your IP changed" wording', () => {
+    const mine: DeviceAllowEntry = { key: 'me', cidrs: ['4.4.4.4/32'], seen: 1 };
+    expect(firewallBlockedHint({ ...base, entries: [mine] })).toContain('Your IP changed');
+  });
+
+  it('no hint when this machine is allowed or the firewall is open (the failure is something else)', () => {
+    const mine: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32'], seen: 1 };
+    expect(firewallBlockedHint({ ...base, entries: [mine] })).toBeNull();
+    expect(
+      firewallBlockedHint({ ...base, entries: [pcA], staticSources: ['0.0.0.0/0'] }),
+    ).toBeNull();
+  });
+
+  it('repairOutcome always carries a detail, also when nothing changed', () => {
+    const mine: DeviceAllowEntry = { key: 'me', cidrs: ['5.5.5.5/32'], seen: 1, label: 'mac' };
+    const args = { staticSources: [] as string[], key: 'me', cidrs: ['5.5.5.5/32'] };
+    expect(repairOutcome({ ...args, entries: [mine], wrote: true })).toMatchObject({
+      changed: true,
+      detail: expect.stringContaining('firewall updated'),
+    });
+    expect(repairOutcome({ ...args, entries: [mine], wrote: false }).detail).toContain(
+      'already allowed',
+    );
+    expect(
+      repairOutcome({ ...args, entries: [{ ...mine, pinned: true }], wrote: false }).detail,
+    ).toContain('pinned');
+    expect(
+      repairOutcome({ ...args, entries: [], staticSources: ['0.0.0.0/0'], wrote: false }).detail,
+    ).toContain('open to the world');
   });
 });

@@ -99,6 +99,9 @@ export {
 export {
   ADMIN_DEVICE_KEY,
   DEVICE_ALLOWLIST_CAP,
+  FIREWALL_PROVIDERS,
+  firewallBlockedHint,
+  repairOutcome,
   LEGACY_DEVICE_KEY,
   ipv4Cidrs,
   localMachineLabel,

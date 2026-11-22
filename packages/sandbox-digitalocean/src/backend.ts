@@ -69,6 +69,9 @@ import {
   withInboundPolicy,
   type DeviceAllowEntry,
   deviceEntryNeedsUpdate,
+  detectEgressCidr,
+  firewallBlockedHint,
+  repairOutcome,
   isControlBoxProcess,
   localMachineKey,
   normalizeAgentSet,
@@ -329,12 +332,13 @@ async function ensureSelfOnFirewall(
     if (!fw) return { changed: false };
     const current = decodeBoxFirewall(fw, droplet.tags ?? [], staticInboundSources(policy));
     if (!deviceEntryNeedsUpdate(current.entries, current.staticSources, key, cidrs, hub)) {
-      return wrote
-        ? {
-            changed: true,
-            detail: `firewall updated: SSH allowed from this machine (${key}) at ${cidrs.join(', ')} (${String(current.entries.length)} device entr${current.entries.length === 1 ? 'y' : 'ies'})`,
-          }
-        : { changed: false };
+      return repairOutcome({
+        entries: current.entries,
+        staticSources: current.staticSources,
+        key,
+        cidrs,
+        wrote,
+      });
     }
     const next: BoxFirewallSsh = {
       staticSources: current.staticSources,
@@ -386,11 +390,45 @@ function buildSshTarget(state: PerBoxState, vpsIp: string, controlPath?: string)
 
 async function ensureTunnel(sandboxId: string, state: PerBoxState, vpsIp: string): Promise<void> {
   if (tunnels.has(sandboxId)) return;
-  await tunnels.open({
-    boxId: sandboxId,
-    vpsHost: vpsIp,
-    vpsUser: VPS_USER,
-    identity: state.identity,
+  try {
+    await tunnels.open({
+      boxId: sandboxId,
+      vpsHost: vpsIp,
+      vpsUser: VPS_USER,
+      identity: state.identity,
+    });
+  } catch (err) {
+    // A firewall that doesn't admit this machine surfaces as an opaque SSH
+    // connect timeout: say which case it is and the fix that works for it.
+    // Best-effort — never mask the original error.
+    const hint = await firewallBlockHintFor(sandboxId).catch(() => null);
+    if (hint) throw new Error(`${(err as Error).message}\n\n${hint}`);
+    throw err;
+  }
+}
+
+/** The CLI box ref for a droplet: its name minus the create-time `agentbox-` / `-<stamp>` wrapping. */
+function boxRefFromDropletName(name: string, sandboxId: string): string {
+  return /^agentbox-(.+)-[0-9a-z]+-[0-9a-z]{6}$/.exec(name)?.[1] ?? sandboxId;
+}
+
+async function firewallBlockHintFor(sandboxId: string): Promise<string | null> {
+  const c = client();
+  const id = Number.parseInt(sandboxId, 10);
+  const droplet = await c.getDroplet(id);
+  if (!droplet) return null;
+  const fw = await findFirewallForDroplet(c, id, droplet.tags ?? []);
+  if (!fw) return null;
+  const decoded = decodeBoxFirewall(fw, droplet.tags ?? [], []);
+  // A FRESH probe: a stale value could hide the very mismatch this explains.
+  const currentEgress = await detectEgressCidr({ overrideHint: REPAIR_EGRESS_HINT });
+  return firewallBlockedHint({
+    provider: 'digitalocean',
+    boxRef: boxRefFromDropletName(droplet.name, sandboxId),
+    entries: decoded.entries,
+    staticSources: decoded.staticSources,
+    key: localMachineKey(),
+    currentEgress,
   });
 }
 
@@ -794,7 +832,12 @@ export const digitaloceanBackend: CloudBackend = {
     // IP change. `open` firewalls are already reachable → no-op. API errors
     // propagate (the watcher must not record a failed read as healed).
     const policy: InboundPolicy = h.inbound ?? { mode: 'locked', sources: [] };
-    if (policy.mode === 'open') return { changed: false };
+    if (policy.mode === 'open') {
+      return {
+        changed: false,
+        detail: 'firewall: open to the world (inbound open); nothing to add',
+      };
+    }
     const cidrs = await detectDeviceCidrs({ overrideHint: REPAIR_EGRESS_HINT });
     return ensureSelfOnFirewall(h.sandboxId, policy, cidrs);
   },
