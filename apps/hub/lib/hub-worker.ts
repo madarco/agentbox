@@ -343,6 +343,11 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         projectRoot: workspacePath,
         // Registered on the plane so an adopting PC relaunches the right agent.
         agent: agentSpec?.id,
+        // `agents` too, as every other create path passes it: the record's
+        // `agents` is what the hub re-registers the box with (rehydrate,
+        // start) and what its Box payload hands `hub adopt`. Without it a
+        // hub-built openclaw box lost its gateway on the first hub restart.
+        agents: agentSpec ? [agentSpec.id] : [],
         // Register the box on THIS hub (control-plane topology) so the phone UI
         // sees it and approvals route back here.
         controlPlaneUrl: opts.publicUrl,

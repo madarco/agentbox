@@ -145,8 +145,8 @@ export function registrationToBoxRecord(
     // box's live tokens (already injected in the running box).
     relayToken: existing?.relayToken ?? reg.token ?? freshToken(),
     lastAgent: normalizeRegistrationAgent(reg.agent) ?? existing?.lastAgent,
-    // The agent the box was created for, ANY agent (a service agent such as
-    // openclaw is not a `lastAgent`). Without it an adopted openclaw box looks
+    // The agent the box was created for, ANY agent (the line above normalises
+    // a service agent such as openclaw away). Without it an adopted openclaw box looks
     // agentless to this PC, and `agents.list` hands it no gateway unit.
     // A record that already lists its agents keeps them (it may run several,
     // and `reg.agent` is only the first); otherwise the registration's.

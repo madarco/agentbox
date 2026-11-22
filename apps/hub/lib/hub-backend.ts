@@ -384,6 +384,16 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
+/**
+ * A box whose record never learned its agents (a hub-built box from before
+ * the hub worker passed them) still reports the registration's agent, so `hub
+ * adopt` on another PC keeps it and a service agent's gateway survives.
+ */
+function withRegisteredAgent(box: Box, reg: { agent?: string } | undefined): Box {
+  if ((box.agents && box.agents.length > 0) || !reg?.agent || reg.agent === 'none') return box;
+  return { ...box, agents: [reg.agent] };
+}
+
 /** The origin-machine fields of the Box payload, from a registration. */
 function originOfRegistration(
   reg: { originMachineId?: string; originMachineLabel?: string } | undefined,
@@ -615,7 +625,7 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     image: reg.image,
     webPort: reg.webPort,
     lastAgent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']),
-    // Every agent, service agents included (`lastAgent` holds only TUI ones),
+    // Every agent, service agents included (this normalised `lastAgent` keeps only TUI ones),
     // so a PC adopting the box keeps it: without it an adopted openclaw box
     // looked agentless and its gateway was never started.
     ...(reg.agent && reg.agent !== 'none' ? { agents: [reg.agent] } : {}),
@@ -2357,10 +2367,20 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       };
       const listedBoxes = await Promise.all(
         listed.map(async (b) =>
-          withTasks({
-            ...mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl, await hasGitOf(b)),
-            ...originOfRegistration(regByBoxId.get(b.id)),
-          }),
+          withTasks(
+            withRegisteredAgent(
+              {
+                ...mapBox(
+                  b,
+                  repoGrouped.get(b.id),
+                  regByBoxId.get(b.id)?.originUrl,
+                  await hasGitOf(b),
+                ),
+                ...originOfRegistration(regByBoxId.get(b.id)),
+              },
+              regByBoxId.get(b.id),
+            ),
+          ),
         ),
       );
       return {

@@ -1846,6 +1846,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           ? Math.trunc(body.projectIndex)
           : undefined;
       const kind = body.kind === 'cloud' ? 'cloud' : 'docker';
+      const existingReg = await store.getBox(body.boxId).catch(() => undefined);
       const reg: BoxRegistration = {
         boxId: body.boxId,
         token: body.token,
@@ -1897,12 +1898,19 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.webPort === 'number' && Number.isFinite(body.webPort) && body.webPort > 0
             ? Math.trunc(body.webPort)
             : undefined,
-        agent: typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
+        // Kept from the stored registration when a re-register omits it (a
+        // start, resume or rehydrate from a record that never learned the
+        // agent): a registration REPLACES the entry, and an agentless one would
+        // strip a service agent's gateway (`agents.list`).
+        agent:
+          typeof body.agent === 'string' && body.agent.length > 0
+            ? body.agent
+            : (existingReg?.agent ?? undefined),
         projectSlug:
           typeof body.projectSlug === 'string' && body.projectSlug.length > 0
             ? body.projectSlug
             : undefined,
-        ...mergeRegistrationOrigin(body, await store.getBox(body.boxId).catch(() => undefined)),
+        ...mergeRegistrationOrigin(body, existingReg),
       };
       await store.registerBox(reg);
       log(

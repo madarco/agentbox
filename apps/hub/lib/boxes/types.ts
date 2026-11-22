@@ -171,7 +171,7 @@ export interface Box {
   // The agent the box was created for → BoxRecord.lastAgent.
   lastAgent?: AgentId;
   // The agents the box was created for, service agents included (openclaw is
-  // never a `lastAgent`). What `hub adopt` re-registers the box with.
+  // dropped from a registration's normalised `lastAgent`). What `hub adopt` re-registers the box with.
   agents?: string[];
   /** Other agents' logins this box borrows as model auth (`--model-auth`). Read-only. */
   borrowedCredentials?: string[];

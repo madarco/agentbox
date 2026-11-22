@@ -4,7 +4,7 @@ import { primaryAgent } from '../src/box-record.js';
 describe('primaryAgent', () => {
   it('names the agent a box was created for, service agents included', () => {
     expect(primaryAgent({ agents: ['openclaw'] })).toBe('openclaw');
-    // `lastAgent` never holds a service agent; `agents` wins over it.
+    // `agents` (what the box was created for) wins over the last agent that ran.
     expect(primaryAgent({ agents: ['openclaw'], lastAgent: 'claude' })).toBe('openclaw');
     expect(primaryAgent({ lastAgent: 'codex' })).toBe('codex');
   });

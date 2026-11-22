@@ -1319,7 +1319,10 @@ export function createCloudProvider(
                 publicHost: handle.publicHost,
                 image,
                 webPort: wp,
-                agent: req.agent,
+                // The same agent the host-relay branch below registers: a
+                // queued create passes `agents` and no `agent`, and without it
+                // the box's first boot got no service units (no gateway).
+                agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
                 projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
@@ -1411,7 +1414,7 @@ export function createCloudProvider(
               ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
               ...(req.repoKey ? { repoKey: req.repoKey } : {}),
               ...(req.requester ? { requester: req.requester } : {}),
-              agent: req.agents?.[0] ?? req.agent,
+              agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
             });
           } catch (err) {
             log(
