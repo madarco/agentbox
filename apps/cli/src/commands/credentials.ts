@@ -8,16 +8,26 @@ import {
   readCredentialBackup,
   readState,
   resolveAgentSpec,
+  STATE_DIR,
   type AgentId,
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_IMAGE, volumeSettingsTarget } from '@agentbox/sandbox-docker';
-import { agentConfigVolume, requireAgentCredential } from '@agentbox/core';
+import {
+  accountCustodyPath,
+  accountIdProblem,
+  accountSecretPath,
+  agentConfigVolume,
+  DEFAULT_ACCOUNT_ID,
+  isDefaultAccount,
+  requireAgentCredential,
+} from '@agentbox/core';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
 
 interface PropagateOpts {
   agent: string;
   sourceBox?: string;
+  account?: string;
 }
 
 /**
@@ -37,6 +47,10 @@ const propagateCommand = new Command('propagate')
   .description('Push the host credential backup for an agent into all other boxes')
   .requiredOption('--agent <agent>', 'claude|codex|opencode')
   .option('--source-box <id>', 'box the update came from (skipped as a target)')
+  .option(
+    '--account <name>',
+    "the LLM account whose login to fan out (default: the agent's default login); only boxes on that account are targets",
+  )
   .action(async (opts: PropagateOpts) => {
     try {
       const spec = resolveAgentSpec(opts.agent);
@@ -47,11 +61,17 @@ const propagateCommand = new Command('propagate')
       if (!cred) {
         throw new Error(`${agent} has no host-side credential — there is nothing to propagate`);
       }
-      const content = await readCredentialBackup(agent);
+      // One account per run (llm-accounts Phase 4): its own copy is the source
+      // and only its boxes are targets, so two accounts never cross.
+      const account = opts.account ?? DEFAULT_ACCOUNT_ID;
+      const problem = accountIdProblem(account);
+      if (problem) throw new Error(`--account: ${problem}`);
+      const backupPath = isDefaultAccount(account)
+        ? cred.hostBackup
+        : accountSecretPath(spec, account, STATE_DIR)!;
+      const content = await readCredentialBackup(agent, { backupPath });
       if (content === null || !isRealAgentCredential(agent, content)) {
-        throw new Error(
-          `no usable ${agent} credential backup at ${cred.hostBackup}; nothing to propagate`,
-        );
+        throw new Error(`no usable ${agent} credential at ${backupPath}; nothing to propagate`);
       }
 
       const state = await readState();
@@ -68,6 +88,7 @@ const propagateCommand = new Command('propagate')
         sourceBoxId: opts.sourceBox ?? '',
         scope: 'all',
         excludeVolume,
+        account,
       });
 
       let pushed = 0;
@@ -172,7 +193,7 @@ const propagateCommand = new Command('propagate')
       // custody store, so a hub-created box (phase 3) logs in with the same
       // credential. Best-effort + hash-skipped: a no-op when no control plane
       // is configured or the blob is unchanged, and never fails propagate.
-      await pushCredentialToCustody(agent, content);
+      await pushCredentialToCustody(agent, account, content);
 
       if (failed > 0) process.exitCode = 1;
     } catch (err) {
@@ -185,7 +206,11 @@ const propagateCommand = new Command('propagate')
  * an admin token are both configured. Silent no-op otherwise; the CustodyClient
  * hash-skips an unchanged value. Failures are logged to stderr, never thrown.
  */
-async function pushCredentialToCustody(agent: AgentId, content: string): Promise<void> {
+async function pushCredentialToCustody(
+  agent: AgentId,
+  account: string,
+  content: string,
+): Promise<void> {
   try {
     // Only when a control box is configured (remoteOnly). Pushing an agent
     // credential is a write, so it needs the hub API key alone — no admin token.
@@ -194,7 +219,11 @@ async function pushCredentialToCustody(agent: AgentId, content: string): Promise
     if (!target) return;
     const { CustodyClient, planPush } = await import('../control-plane/custody-client.js');
     const client = new CustodyClient(target);
-    const path = `agents/${agent}/${requireAgentCredential(resolveAgentSpec(agent)).boxRelPath}`;
+    const path = accountCustodyPath(
+      agent,
+      account,
+      requireAgentCredential(resolveAgentSpec(agent)).boxRelPath,
+    );
     const item = { path, data: Buffer.from(content, 'utf8') };
     const manifest = await client.list('agents');
     if (planPush([item], manifest)[0]!.action === 'skip') return;

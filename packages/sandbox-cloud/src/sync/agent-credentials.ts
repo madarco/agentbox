@@ -57,6 +57,8 @@ import {
   type SyncTransport,
 } from '@agentbox/core';
 import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { agentCloudModule } from './agent-cloud-module.js';
 import { createCloudSyncTransport } from './sync-transport.js';
 
@@ -801,4 +803,38 @@ async function withAccountStager(
         ? stageSingleFileTarball(`${spec.kind}-acct-creds`, secret, cred.boxRelPath)
         : Promise.resolve({ tarballPath: null, cleanup: () => Promise.resolve(), warnings: [] }),
   };
+}
+
+/**
+ * How a box's named accounts change the newest-wins reconcile (llm-accounts
+ * Phase 4): a named LOGIN reconciles against its account's own secret (both
+ * directions, like the default), and a pasted kind is left out entirely — its
+ * secret is a token, never a login file to place or read back.
+ */
+export async function accountReconcilePlan(
+  accounts: Readonly<Record<string, string>> | undefined,
+): Promise<{ backups: Record<string, string>; skip: string[] }> {
+  const backups: Record<string, string> = {};
+  const skip: string[] = [];
+  const named = namedAccounts(accounts) ?? {};
+  if (Object.keys(named).length === 0) return { backups, skip };
+  const file = await readAccounts().catch(() => null);
+  for (const [agent, account] of Object.entries(named)) {
+    // Per agent and never throwing: one odd record (an agent since removed, a
+    // store that cannot be read) must not stop the DEFAULT agents' reconcile.
+    try {
+      const spec = resolveAgentSpec(agent);
+      const path = accountSecretPath(spec, account, STATE_DIR);
+      if (file && path && findAccount(file, spec.id, account)?.kind === 'login') {
+        // A first capture may create the account dir: owner-only, like the store's.
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        backups[agent] = path;
+      } else {
+        skip.push(agent);
+      }
+    } catch {
+      skip.push(agent);
+    }
+  }
+  return { backups, skip };
 }
