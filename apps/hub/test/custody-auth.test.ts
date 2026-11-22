@@ -148,3 +148,17 @@ describe('custodyByteReadAuthorized — device tokens', () => {
     ).toBe(false);
   });
 });
+
+describe('custodyByteReadAuthorized — #7 no admin token, no elevated tier', () => {
+  it('a device token is refused when the hub has no admin token', () => {
+    expect(
+      custodyByteReadAuthorized({
+        mode: 'password',
+        adminToken: '',
+        providedToken: 'abdev_x',
+        isLoopback: false,
+        providedTokenIsDevice: true,
+      }),
+    ).toBe(false);
+  });
+});

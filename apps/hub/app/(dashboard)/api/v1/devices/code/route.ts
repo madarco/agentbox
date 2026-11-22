@@ -3,6 +3,7 @@
 // returned `userCode` in the web UI, and the number of open codes is capped.
 // An enrolled PC re-logging in sends its current token as `currentToken`, which
 // marks the code as coming from that computer (`proven`).
+import { SOURCE_IP_HEADER } from '@/lib/peer';
 import { fail, ok } from '../../lib/envelope';
 import { devicesOrFail, jsonBody } from '../_service';
 
@@ -18,6 +19,7 @@ export async function POST(req: Request): Promise<Response> {
     deviceId: body.deviceId,
     label: body.label,
     currentToken: body.currentToken,
+    sourceIp: req.headers.get(SOURCE_IP_HEADER) ?? '',
   });
   if (!res.ok) return fail(res.code, res.message);
   return ok(

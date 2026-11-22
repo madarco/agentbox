@@ -48,6 +48,8 @@ export {
   applyDeviceCredentialEnv,
   deviceCredentialPath,
   deviceTokenFor,
+  hubBearerFor,
+  isDeviceToken,
   normalizeHubUrl,
   readDeviceCredential,
   removeDeviceCredential,

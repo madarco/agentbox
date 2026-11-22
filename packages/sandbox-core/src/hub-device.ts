@@ -105,10 +105,55 @@ export function applyDeviceCredentialEnv(
   env: NodeJS.ProcessEnv,
   hubUrl: string,
   home: string = homedir(),
+  keys: readonly ('AGENTBOX_HUB_API_KEY' | 'AGENTBOX_RELAY_ADMIN_TOKEN')[] = [
+    'AGENTBOX_HUB_API_KEY',
+    'AGENTBOX_RELAY_ADMIN_TOKEN',
+  ],
 ): DeviceCredential | null {
   const cred = readDeviceCredential(home);
   if (!cred || !hubUrl || cred.hubUrl !== normalizeHubUrl(hubUrl)) return null;
-  if (!env.AGENTBOX_HUB_API_KEY) env.AGENTBOX_HUB_API_KEY = cred.token;
-  if (!env.AGENTBOX_RELAY_ADMIN_TOKEN) env.AGENTBOX_RELAY_ADMIN_TOKEN = cred.token;
+  for (const k of keys) if (!env[k]) env[k] = cred.token;
   return cred;
+}
+
+export function isDeviceToken(value: string): boolean {
+  return value.startsWith('abdev_');
+}
+
+/**
+ * The Bearer to present to the hub at `url`, resolved per URL so a credential
+ * never reaches a hub that did not issue it (a box record can name an older hub
+ * than the one configured now).
+ *
+ * 1. An explicitly exported shared key (`AGENTBOX_HUB_API_KEY` for `api`,
+ *    `AGENTBOX_RELAY_ADMIN_TOKEN` for `admin`) — the operator's override, as
+ *    everywhere else. A device token in the env, or a value the CLI merely
+ *    copied in from `control-plane.env`, does not count as explicit.
+ * 2. This PC's device token, when `url` is the hub that issued it.
+ * 3. The shared key in `control-plane.env`, only for `configuredUrl` — the hub
+ *    `hub setup` wrote it for.
+ */
+export function hubBearerFor(
+  url: string,
+  kind: 'api' | 'admin',
+  opts: { configuredUrl?: string; env?: NodeJS.ProcessEnv; home?: string } = {},
+): string {
+  const env = opts.env ?? process.env;
+  const home = opts.home ?? homedir();
+  const key = kind === 'api' ? 'AGENTBOX_HUB_API_KEY' : 'AGENTBOX_RELAY_ADMIN_TOKEN';
+  const filePath = join(home, '.agentbox', 'control-plane', 'control-plane.env');
+  let fileValue = '';
+  if (existsSync(filePath)) {
+    const m = new RegExp(`^${key}=(.*)$`, 'm').exec(readFileSync(filePath, 'utf8'));
+    fileValue = m?.[1]?.trim() ?? '';
+  }
+  const fromEnv = (env[key] ?? '').trim();
+  if (fromEnv && !isDeviceToken(fromEnv) && fromEnv !== fileValue) return fromEnv;
+  const own = deviceTokenFor(url, home);
+  if (own) return own;
+  const target = normalizeHubUrl(url);
+  if (fileValue && opts.configuredUrl && normalizeHubUrl(opts.configuredUrl) === target) {
+    return fileValue;
+  }
+  return '';
 }

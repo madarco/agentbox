@@ -9,7 +9,10 @@ import {
   readDeviceCredential,
   removeDeviceCredential,
   writeDeviceCredential,
+  hubBearerFor,
 } from '../src/hub-device.js';
+import { scrubControlPlaneHubEnv } from '../src/hub-expose.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 let home: string;
 beforeEach(() => {
@@ -54,5 +57,50 @@ describe('device credential file', () => {
     const other: NodeJS.ProcessEnv = {};
     expect(applyDeviceCredentialEnv(other, 'https://other.example.com', home)).toBeNull();
     expect(other).toEqual({});
+  });
+});
+
+describe('hubBearerFor (#4, #6)', () => {
+  const A = 'https://old-hub.example.com';
+  const B = 'https://hub.example.com';
+  const writeFileEnv = (body: string) => {
+    mkdirSync(join(home, '.agentbox', 'control-plane'), { recursive: true });
+    writeFileSync(join(home, '.agentbox', 'control-plane', 'control-plane.env'), body);
+  };
+
+  it("never sends hub B's device token to a box's older hub A", () => {
+    writeDeviceCredential({ ...cred, hubUrl: B }, home);
+    // The env holds B's device token (loadControlPlaneEnv for the configured hub).
+    const env = { AGENTBOX_RELAY_ADMIN_TOKEN: 'abdev_tok', AGENTBOX_HUB_API_KEY: 'abdev_tok' };
+    expect(hubBearerFor(A, 'admin', { configuredUrl: B, env, home })).toBe('');
+    expect(hubBearerFor(B, 'admin', { configuredUrl: B, env, home })).toBe('abdev_tok');
+  });
+
+  it('the shared key on disk goes only to the hub it was written for', () => {
+    writeFileEnv('AGENTBOX_HUB_API_KEY=shared\n');
+    const env = { AGENTBOX_HUB_API_KEY: 'shared' }; // copied in by loadControlPlaneEnv
+    expect(hubBearerFor(B, 'api', { configuredUrl: B, env, home })).toBe('shared');
+    expect(hubBearerFor(A, 'api', { configuredUrl: B, env, home })).toBe('');
+  });
+
+  it('an explicitly exported shared key beats the device token (operator override)', () => {
+    writeDeviceCredential({ ...cred, hubUrl: B }, home);
+    const env = { AGENTBOX_HUB_API_KEY: 'operator-key' };
+    expect(hubBearerFor(B, 'api', { configuredUrl: B, env, home })).toBe('operator-key');
+  });
+
+  it('the device token beats the shared key on disk', () => {
+    writeDeviceCredential({ ...cred, hubUrl: B }, home);
+    writeFileEnv('AGENTBOX_HUB_API_KEY=shared\n');
+    expect(hubBearerFor(B, 'api', { configuredUrl: B, env: {}, home })).toBe('abdev_tok');
+  });
+});
+
+describe('scrubControlPlaneHubEnv', () => {
+  it('drops a device token from the local hub env, keeps a shared admin token', () => {
+    expect(scrubControlPlaneHubEnv({ AGENTBOX_RELAY_ADMIN_TOKEN: 'abdev_x' })).toEqual({});
+    expect(scrubControlPlaneHubEnv({ AGENTBOX_RELAY_ADMIN_TOKEN: 'shared' })).toEqual({
+      AGENTBOX_RELAY_ADMIN_TOKEN: 'shared',
+    });
   });
 });

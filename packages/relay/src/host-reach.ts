@@ -226,7 +226,12 @@ export class HostReachQueue {
    * means. Presence is what decides whether a copy waits for that machine or
    * falls back, so a live-but-quiet stream must keep it fresh.
    */
-  /** Record which device a poller runs on (see {@link pollerDevice}). */
+  /**
+   * Record which device a poller runs on (see {@link pollerDevice}). The
+   * pollerId is chosen by the client, so a later call can relabel it; harmless
+   * while this is only reported. Phase 4 routing must bind a pollerId to the
+   * first verified device that used it before trusting the mapping.
+   */
   identify(pollerId: string, deviceId: string): void {
     if (!deviceId) return;
     // The sweep only runs while actions are parked; an idle queue prunes here.

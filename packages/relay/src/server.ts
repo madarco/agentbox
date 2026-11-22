@@ -534,7 +534,32 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     return pollers;
   }
 
+  // Every response a device is holding open, by device id. Revocation destroys
+  // them all, whichever route served them — the relay's own streams and every
+  // Next route behind `uiHandler` alike — so a future streaming route cannot
+  // forget to honour it.
+  const openByDevice = new Map<string, Set<ServerResponse>>();
+  const trackDevice = (req: IncomingMessage, res: ServerResponse): void => {
+    const device = deviceOf(req);
+    if (!device) return;
+    let set = openByDevice.get(device.id);
+    if (!set) openByDevice.set(device.id, (set = new Set()));
+    set.add(res);
+    res.on('close', () => {
+      set.delete(res);
+      if (set.size === 0 && openByDevice.get(device.id) === set) openByDevice.delete(device.id);
+    });
+  };
+  deviceAuth?.onRevoked((id) => {
+    const set = openByDevice.get(id);
+    if (!set) return;
+    openByDevice.delete(id);
+    for (const res of set) res.destroy();
+    log(`devices: closed ${String(set.size)} open request(s) of revoked device ${id.slice(0, 8)}`);
+  });
+
   const server = createServer((req, res) => {
+    trackDevice(req, res);
     handle(req, res).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       log(`relay: handler error: ${msg}`);
@@ -735,17 +760,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           }
         }, SSE_HEARTBEAT_MS);
         if (typeof heartbeat.unref === 'function') heartbeat.unref();
-        // A revoked device's stream ends now, not at its next reconnect.
-        const unwatchRevoke =
-          hostReachDevice && deviceAuth
-            ? deviceAuth.onRevoked((id) => {
-                if (id === hostReachDevice.id) res.end();
-              })
-            : () => {};
         res.on('close', () => {
           clearInterval(heartbeat);
           unsubscribe();
-          unwatchRevoke();
           log(`host-reach: machine ${pollerId.slice(0, 8)} disconnected`);
         });
         log(`host-reach: machine ${pollerId.slice(0, 8)} streaming`);

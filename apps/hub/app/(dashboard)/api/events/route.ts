@@ -10,8 +10,6 @@
 // relay route (the relay owns `/events` POST, not `/api/events`), so it falls
 // through to Next on the embedded server. On vercel there is no notifier — the
 // stream degrades to heartbeats only.
-import { closeOnDeviceRevoke } from '@/lib/request-actor';
-
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -32,20 +30,15 @@ export function GET(req: Request): Response {
       send('open');
       const unsub = notifier?.subscribe(() => send('change')) ?? (() => {});
       const ping = setInterval(() => send('ping'), HEARTBEAT_MS);
-      let unwatchRevoke = (): void => {};
-      const end = (): void => {
+      req.signal.addEventListener('abort', () => {
         clearInterval(ping);
         unsub();
-        unwatchRevoke();
         try {
           controller.close();
         } catch {
           /* already closed */
         }
-      };
-      // A revoked device's stream ends now, not at its next reconnect.
-      unwatchRevoke = closeOnDeviceRevoke(req, end);
-      req.signal.addEventListener('abort', end);
+      });
     },
   });
 

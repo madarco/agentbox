@@ -89,9 +89,15 @@ const CONTROL_PLANE_HUB_IDENTITY_ENV = [
   'AGENTBOX_HUB_ADMIN_PASSWORD',
 ] as const;
 
-/** `env` without the control box's identity keys (see the constant's note). */
+/**
+ * `env` without the control box's identity keys (see the constant's note), and
+ * without a device token in `AGENTBOX_RELAY_ADMIN_TOKEN`: the local hub would
+ * adopt it as its OWN relay admin secret (it binds 0.0.0.0). Its relay still
+ * polls the remote hub with it — the daemon reads `device.json` for that.
+ */
 export function scrubControlPlaneHubEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env };
   for (const key of CONTROL_PLANE_HUB_IDENTITY_ENV) delete out[key];
+  if (out.AGENTBOX_RELAY_ADMIN_TOKEN?.startsWith('abdev_')) delete out.AGENTBOX_RELAY_ADMIN_TOKEN;
   return out;
 }

@@ -51,17 +51,3 @@ export function canManageDevice(actor: RequestActor, id: string): boolean {
   if (canApproveDevices(actor)) return true;
   return actor.kind === 'device' && actor.deviceId === id;
 }
-
-/**
- * For a long-lived response (an SSE stream): call `close` the moment the device
- * that opened it is revoked, so revocation ends an open stream instead of waiting
- * for its next reconnect. Returns the unsubscribe; a no-op for other actors.
- */
-export function closeOnDeviceRevoke(req: Request, close: () => void): () => void {
-  const actor = requestActor(req);
-  const devices = globalThis.__AGENTBOX_HUB_DEVICES;
-  if (actor.kind !== 'device' || !devices) return () => {};
-  return devices.onRevoked((id) => {
-    if (id === actor.deviceId) close();
-  });
-}

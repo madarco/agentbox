@@ -79,7 +79,10 @@ export async function resolveBoxPlane(box: PlaneAddressable): Promise<BoxPlane> 
   const url = (box.cloud?.controlPlaneUrl ?? configured ?? '').replace(/\/+$/, '');
   if (!url) return 'none';
   loadControlPlaneEnv();
-  const adminToken = process.env['AGENTBOX_RELAY_ADMIN_TOKEN'] ?? '';
+  // Per URL: the box may belong to an older hub than the configured one, and a
+  // credential must never reach a hub that did not issue it.
+  const { hubBearerFor } = await import('@agentbox/sandbox-core');
+  const adminToken = hubBearerFor(url, 'admin', { configuredUrl: configured });
   return adminToken ? { url, adminToken } : 'no-token';
 }
 
@@ -104,7 +107,8 @@ async function resolveBoxHubTarget(box: PlaneAddressable): Promise<BoxHubTarget>
   const url = (box.cloud?.controlPlaneUrl ?? configured ?? '').replace(/\/+$/, '');
   if (!url) return 'none';
   loadControlPlaneEnv();
-  const apiKey = process.env['AGENTBOX_HUB_API_KEY'] ?? '';
+  const { hubBearerFor } = await import('@agentbox/sandbox-core');
+  const apiKey = hubBearerFor(url, 'api', { configuredUrl: configured });
   return apiKey ? { url, apiKey } : 'no-token';
 }
 

@@ -21,3 +21,14 @@ describe('isLoopbackAddress', () => {
     expect(PEER_LOOPBACK_HEADER).toBe('x-agentbox-peer-loopback');
   });
 });
+
+describe('sourceAddress', () => {
+  it('uses the socket peer unless it is a loopback proxy', async () => {
+    const { sourceAddress } = await import('../lib/peer');
+    expect(sourceAddress('203.0.113.9', '1.2.3.4')).toBe('203.0.113.9');
+    expect(sourceAddress('::ffff:203.0.113.9', undefined)).toBe('203.0.113.9');
+    // Caddy on the same host: the last X-Forwarded-For entry is the one it added.
+    expect(sourceAddress('127.0.0.1', 'spoofed, 198.51.100.1')).toBe('198.51.100.1');
+    expect(sourceAddress('127.0.0.1', undefined)).toBe('127.0.0.1');
+  });
+});

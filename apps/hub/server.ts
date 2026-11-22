@@ -43,7 +43,13 @@ import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
 import { cloudBackendLoader } from './lib/provider-importers';
-import { DEVICE_ID_HEADER, PEER_LOOPBACK_HEADER, isLoopbackAddress } from './lib/peer';
+import {
+  DEVICE_ID_HEADER,
+  PEER_LOOPBACK_HEADER,
+  SOURCE_IP_HEADER,
+  isLoopbackAddress,
+  sourceAddress,
+} from './lib/peer';
 import { createDeviceService, type DeviceService } from './lib/backend/devices';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -264,6 +270,12 @@ async function main(): Promise<void> {
       }
       // Same strip-then-stamp for the device a Bearer belongs to: the gate
       // (proxy.ts) cannot open the devices database, so it trusts this header.
+      delete req.headers[SOURCE_IP_HEADER];
+      const xff = req.headers['x-forwarded-for'];
+      req.headers[SOURCE_IP_HEADER] = sourceAddress(
+        req.socket.remoteAddress,
+        Array.isArray(xff) ? xff.join(',') : xff,
+      );
       delete req.headers[DEVICE_ID_HEADER];
       const device = devices?.verifyToken(bearerOf(req.headers.authorization));
       if (device) req.headers[DEVICE_ID_HEADER] = device.id;

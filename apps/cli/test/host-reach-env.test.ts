@@ -72,7 +72,8 @@ describe('applyHostReachEnvAtStartup', () => {
     await applyHostReachEnvAtStartup();
     // Beats the shared admin token on disk.
     expect(process.env.AGENTBOX_RELAY_ADMIN_TOKEN).toBe('abdev_t');
-    expect(process.env.AGENTBOX_HUB_API_KEY).toBe('abdev_t');
+    // Exactly the one key: the API key is resolved per call, never exported here.
+    expect(process.env.AGENTBOX_HUB_API_KEY).toBeUndefined();
   });
 
   it('never sends a device token to a different hub', async () => {

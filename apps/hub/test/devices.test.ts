@@ -3,6 +3,7 @@ import {
   CODE_TTL_MS,
   DEVICE_TOKEN_PREFIX,
   MAX_PENDING,
+  MAX_PENDING_PER_SOURCE,
   createDeviceService,
   createMemoryDeviceRepo,
   hashDeviceToken,
@@ -73,11 +74,14 @@ describe('device enrollment', () => {
     const { svc } = setup();
     for (let i = 0; i < MAX_PENDING; i++) {
       expect(
-        svc.startCode({ deviceId: `${ID.slice(0, 30)}${String(i).padStart(2, '0')}`, label: 'x' })
-          .ok,
+        svc.startCode({
+          deviceId: `${ID.slice(0, 30)}${String(i).padStart(2, '0')}`,
+          label: 'x',
+          sourceIp: `10.0.0.${String(i)}`,
+        }).ok,
       ).toBe(true);
     }
-    expect(svc.startCode({ deviceId: ID, label: 'x' })).toMatchObject({
+    expect(svc.startCode({ deviceId: ID, label: 'x', sourceIp: '10.9.9.9' })).toMatchObject({
       ok: false,
       code: 'rate_limited',
     });
@@ -205,9 +209,9 @@ describe('review fixes', () => {
     svc.startCode({ deviceId: ID, label: 'pc-a', currentToken: token });
     expect(svc.listPending()[0]).toMatchObject({ reenroll: true, proven: true });
     svc.startCode({ deviceId: ID, label: 'pc-a', currentToken: 'abdev_forged' });
-    // The second code superseded the first for the same machine.
-    expect(svc.listPending()).toHaveLength(1);
-    expect(svc.listPending()[0]).toMatchObject({ reenroll: true, proven: false });
+    // An unproven code from elsewhere does NOT supersede the real PC's code.
+    expect(svc.listPending()).toHaveLength(2);
+    expect(svc.listPending().map((p) => p.proven)).toEqual([true, false]);
   });
 
   it('approving closes the old token streams even if the device enrolled after the code opened', () => {
@@ -219,6 +223,11 @@ describe('review fixes', () => {
     const seen: string[] = [];
     svc.onRevoked((id) => seen.push(id));
     svc.approve(c.userCode);
+    // Nothing changes until the PC collects the token...
+    expect(seen).toEqual([]);
+    expect(svc.verifyToken('abdev_old')?.id).toBe(ID);
+    // ...then the old token stops matching and its streams are closed.
+    expect(svc.claim(c.deviceCode).status).toBe('approved');
     expect(seen).toEqual([ID]);
     expect(svc.verifyToken('abdev_old')).toBeNull();
   });
@@ -230,11 +239,55 @@ describe('review fixes', () => {
       const r = svc.startCode({
         deviceId: `${ID.slice(0, 30)}${String(i).padStart(2, '0')}`,
         label: 'x',
+        sourceIp: `10.0.1.${String(i)}`,
       });
       if (r.ok) codes.push(r.userCode);
     }
-    expect(svc.startCode({ deviceId: ID, label: 'x' }).ok).toBe(false);
+    expect(svc.startCode({ deviceId: ID, label: 'x', sourceIp: '10.9.9.9' }).ok).toBe(false);
     svc.deny(codes[0]!);
-    expect(svc.startCode({ deviceId: ID, label: 'x' }).ok).toBe(true);
+    expect(svc.startCode({ deviceId: ID, label: 'x', sourceIp: '10.9.9.9' }).ok).toBe(true);
+  });
+});
+
+describe('independent review fixes', () => {
+  it('#1 an unauthenticated request cannot knock the real PC code out of the list', () => {
+    const { svc } = setup();
+    const real = svc.startCode({ deviceId: ID, label: 'pc-a', sourceIp: '198.51.100.1' });
+    const evil = svc.startCode({ deviceId: ID, label: 'pc-a', sourceIp: '203.0.113.9' });
+    if (!real.ok || !evil.ok) throw new Error('start');
+    expect(svc.claim(real.deviceCode)).toEqual({ status: 'authorization_pending' });
+    expect(svc.listPending().map((p) => p.sourceIp)).toEqual(['198.51.100.1', '203.0.113.9']);
+    // The same PC re-running `hub login` from the same address does supersede.
+    const again = svc.startCode({ deviceId: ID, label: 'pc-a', sourceIp: '198.51.100.1' });
+    if (!again.ok) throw new Error('start');
+    expect(svc.claim(real.deviceCode)).toEqual({ status: 'expired_token' });
+    expect(svc.listPending()).toHaveLength(2);
+  });
+
+  it("#2 one source cannot use up everyone else's codes; the owner can clear the list", () => {
+    const { svc } = setup();
+    const id = (i: number) => `${ID.slice(0, 30)}${String(i).padStart(2, '0')}`;
+    for (let i = 0; i < MAX_PENDING_PER_SOURCE; i++) {
+      expect(svc.startCode({ deviceId: id(i), label: 'x', sourceIp: '203.0.113.9' }).ok).toBe(true);
+    }
+    expect(svc.startCode({ deviceId: id(9), label: 'x', sourceIp: '203.0.113.9' })).toMatchObject({
+      ok: false,
+      code: 'rate_limited',
+    });
+    const mine = svc.startCode({ deviceId: ID, label: 'pc-a', sourceIp: '198.51.100.1' });
+    expect(mine.ok).toBe(true);
+    expect(svc.clearPending()).toBe(MAX_PENDING_PER_SOURCE + 1);
+    expect(svc.listPending()).toEqual([]);
+    if (mine.ok) expect(svc.claim(mine.deviceCode)).toEqual({ status: 'access_denied' });
+  });
+
+  it('#8 a re-enroll whose handout is never collected leaves the old token working', () => {
+    const { svc } = setup();
+    const old = enroll(svc);
+    const c = svc.startCode({ deviceId: ID, label: 'pc-a', currentToken: old });
+    if (!c.ok) throw new Error('start');
+    expect(svc.approve(c.userCode)).toMatchObject({ ok: true, device: { id: ID } });
+    // The CLI died before polling: the code expires, the old token still works.
+    expect(svc.verifyToken(old)?.id).toBe(ID);
   });
 });

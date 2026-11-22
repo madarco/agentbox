@@ -60,8 +60,10 @@ export function custodyByteReadAuthorized(args: {
   if (args.mode === 'locked') return false;
   if (args.mode === 'token') return args.isLoopback;
   // password:
-  if (args.providedTokenIsDevice === true) return true;
+  // No admin token means no elevated tier at all — the relay switches device
+  // auth off in that case too, so a device token must not be the exception.
   if (args.adminToken.length === 0) return false;
+  if (args.providedTokenIsDevice === true) return true;
   if (args.providedToken.length === 0) return false;
   return timingSafeEqualStr(args.providedToken, args.adminToken);
 }

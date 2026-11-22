@@ -4,6 +4,11 @@
 // enrollment codes waiting for the owner. PURE REST CLIENT over /api/v1/devices:
 // approve or deny a code (the one `hub login` printed is highlighted when the
 // page is opened from its link), rename or revoke a device.
+//
+// Approval is by code, never by a click on a listed row (RFC 8628's rule):
+// anyone who can reach the hub can open a code labelled like your laptop, so the
+// only proof is the code you can read on your own screen — typed here, or carried
+// in the `?code=` link `hub login` printed.
 
 import { useCallback, useEffect, useState } from 'react';
 import { Ago } from '@/components/ago';
@@ -11,7 +16,7 @@ import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
 import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
 
@@ -27,9 +32,11 @@ interface Pending {
   userCode: string;
   deviceId: string;
   label: string;
+  createdAt: string;
   expiresAt: string;
   reenroll: boolean;
   proven: boolean;
+  sourceIp: string;
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -54,7 +61,7 @@ export default function DevicesPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [wanted, setWanted] = useState<string | null>(null);
+  const [typed, setTyped] = useState('');
   const [origin, setOrigin] = useState('');
 
   const load = useCallback(async () => {
@@ -73,7 +80,7 @@ export default function DevicesPage() {
 
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get('code');
-    if (code) setWanted(normalizeCode(code));
+    if (code) setTyped(normalizeCode(code));
     setOrigin(window.location.origin);
     void load();
     // A code opened on the PC shows up here within a few seconds without a reload.
@@ -114,6 +121,7 @@ export default function DevicesPage() {
     );
   };
 
+  const match = pending.find((p) => p.userCode === normalizeCode(typed));
   const active = devices?.filter((d) => !d.revokedAt) ?? [];
   const revoked = devices?.filter((d) => d.revokedAt) ?? [];
 
@@ -141,7 +149,56 @@ export default function DevicesPage() {
             <div className="mt-4 font-mono text-xs text-red-400">{actionError}</div>
           ) : null}
 
-          <SectionLabel>Waiting for approval</SectionLabel>
+          <SectionLabel>Approve a computer</SectionLabel>
+          <Card className="p-4 px-5">
+            <div className="text-[13px] text-muted-foreground">
+              Enter the code `agentbox hub login` printed on the computer you want to add.
+            </div>
+            <form
+              className="mt-3 flex items-center gap-2 max-sm:flex-wrap"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                if (match) void decide(match.userCode, 'approve');
+              }}
+            >
+              <Input
+                value={typed}
+                onChange={(ev) => setTyped(ev.target.value)}
+                placeholder="XXXX-XXXX"
+                className="w-40 font-mono uppercase tracking-wider"
+                autoComplete="off"
+              />
+              <Button type="submit" size="sm" disabled={busy !== null || !match}>
+                <Icons.check /> Approve
+              </Button>
+            </form>
+            {match ? (
+              <div className="mt-3 text-[13px]">
+                <PendingDetails p={match} />
+              </div>
+            ) : normalizeCode(typed).length === 9 ? (
+              <div className="mt-3 text-[12px] text-red-400">
+                No waiting code matches. It may have expired; run `hub login` again.
+              </div>
+            ) : null}
+          </Card>
+
+          <SectionLabel
+            right={
+              pending.length > 0 ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy !== null}
+                  onClick={() => void act('clear', () => api('/pending', { method: 'DELETE' }))}
+                >
+                  Deny all
+                </Button>
+              ) : null
+            }
+          >
+            Waiting
+          </SectionLabel>
           {pending.length === 0 ? (
             <EmptyBox>
               <div>No device is waiting.</div>
@@ -152,39 +209,10 @@ export default function DevicesPage() {
           ) : (
             <Card className="divide-y divide-border/60 overflow-hidden">
               {pending.map((p) => (
-                <div
-                  key={p.userCode}
-                  className={cn(
-                    'flex items-center gap-4 p-4 px-5 max-sm:flex-wrap',
-                    wanted === p.userCode && 'bg-accent/40',
-                  )}
-                >
-                  <span className="font-mono text-[15px] font-semibold tracking-wider">
-                    {p.userCode}
-                  </span>
+                <div key={p.userCode} className="flex items-center gap-4 p-4 px-5 max-sm:flex-wrap">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13.5px] font-medium">{p.label}</div>
-                    <div
-                      className="truncate font-mono text-[11px] text-[#a4a9b0]"
-                      title={p.deviceId}
-                    >
-                      {p.deviceId}
-                      {p.reenroll && p.proven ? ' · re-login from this enrolled computer' : ''}
-                    </div>
-                    {p.reenroll && !p.proven ? (
-                      <div className="mt-0.5 text-[12px] text-red-400">
-                        Claims an enrolled computer&apos;s id without its token. Approving replaces
-                        that computer&apos;s token: approve only if you just ran `hub login` there.
-                      </div>
-                    ) : null}
+                    <PendingDetails p={p} />
                   </div>
-                  <Button
-                    size="sm"
-                    disabled={busy !== null}
-                    onClick={() => void decide(p.userCode, 'approve')}
-                  >
-                    <Icons.check /> Approve
-                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -198,7 +226,7 @@ export default function DevicesPage() {
             </Card>
           )}
           <div className="mt-2 text-[12px] text-muted-foreground">
-            Approve only a code you can see on your own screen.
+            Codes are not shown here on purpose: approve only one you can read on your own screen.
           </div>
 
           <SectionLabel
@@ -227,6 +255,25 @@ export default function DevicesPage() {
         </>
       )}
     </div>
+  );
+}
+
+function PendingDetails({ p }: { p: Pending }) {
+  return (
+    <>
+      <div className="truncate text-[13.5px] font-medium">{p.label}</div>
+      <div className="truncate font-mono text-[11px] text-[#a4a9b0]" title={p.deviceId}>
+        {p.deviceId} · from {p.sourceIp || 'unknown address'} · opened{' '}
+        <Ago ms={Date.parse(p.createdAt)} />
+        {p.reenroll && p.proven ? ' · re-login from this enrolled computer' : ''}
+      </div>
+      {p.reenroll && !p.proven ? (
+        <div className="mt-0.5 text-[12px] text-red-400">
+          Claims an enrolled computer&apos;s id without its token. Approving replaces that
+          computer&apos;s token: approve only if you just ran `hub login` there.
+        </div>
+      ) : null}
+    </>
   );
 }
 

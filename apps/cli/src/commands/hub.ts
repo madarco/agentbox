@@ -24,8 +24,8 @@ import {
 } from './control-plane.js';
 import { hubDeviceSubcommands } from './hub-devices.js';
 import { restoreTunnelIfExposed, stopTunnelIfExposed } from '../control-plane/expose.js';
-import { loadControlPlaneEnv, readControlPlaneEnvMap } from '../control-plane/env-file.js';
-import { deviceTokenFor } from '@agentbox/sandbox-core';
+import { loadControlPlaneEnv } from '../control-plane/env-file.js';
+import { hubBearerFor } from '@agentbox/sandbox-core';
 import { channelOfVersion } from '../lib/channel.js';
 import { AGENTBOX_VERSION } from '../version.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
@@ -94,19 +94,6 @@ export interface HubTarget {
  * loopback, not the plain `~/.agentbox/hub/token`). Same precedence ladder as the
  * default, minus the remote URL — never a second resolver that could disagree.
  */
-/**
- * The Bearer for a remote hub at `url`: this PC's device token when that hub
- * issued it, else the shared key — but never a device token minted by another
- * hub (`--url` can name a hub other than the configured one).
- */
-function remoteHubToken(url: string): string {
-  const own = deviceTokenFor(url);
-  if (own) return own;
-  const env = process.env.AGENTBOX_HUB_API_KEY ?? '';
-  if (!env.startsWith('abdev_')) return env;
-  return readControlPlaneEnvMap().AGENTBOX_HUB_API_KEY ?? '';
-}
-
 export async function resolveHubTarget(
   urlFlag?: string,
   opts: { preferLocal?: boolean } = {},
@@ -141,7 +128,11 @@ export async function resolveHubTarget(
     return {
       mode: 'remote',
       url,
-      token: remoteHubToken(url),
+      // Per URL (`--url` can name a hub other than the configured one), with an
+      // explicitly exported key winning — see hubBearerFor.
+      token: hubBearerFor(url, 'api', {
+        configuredUrl: cfg.effective.relay.controlPlaneUrl ?? undefined,
+      }),
       onThisMachine: false,
     };
   }

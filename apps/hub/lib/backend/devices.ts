@@ -46,6 +46,12 @@ export interface PendingCode {
    * the page warns the owner before they hand that computer's identity away.
    */
   proven: boolean;
+  /**
+   * Where the request came from (the socket peer, or Caddy's X-Forwarded-For on
+   * a deployed box), so the owner can tell their own computer's code from one
+   * somebody else opened. Empty when unknown.
+   */
+  sourceIp: string;
 }
 
 export type ClaimResult =
@@ -63,11 +69,18 @@ export type StartCodeResult =
   | { ok: false; code: 'invalid_request' | 'rate_limited'; message: string };
 
 export interface DeviceService {
-  startCode(input: { deviceId: unknown; label: unknown; currentToken?: unknown }): StartCodeResult;
+  startCode(input: {
+    deviceId: unknown;
+    label: unknown;
+    currentToken?: unknown;
+    sourceIp?: string;
+  }): StartCodeResult;
   claim(deviceCode: string): ClaimResult;
   listPending(): PendingCode[];
   approve(userCode: string): { ok: true; device: DeviceRecord } | { ok: false; error: string };
   deny(userCode: string): boolean;
+  /** Deny every waiting code at once (the owner's way out of a flood). Returns how many. */
+  clearPending(): number;
   list(): DeviceRecord[];
   rename(id: string, label: unknown): { ok: true } | { ok: false; error: string };
   /** Idempotent: false only when no such device exists. */
@@ -81,8 +94,13 @@ export interface DeviceService {
 export const DEVICE_TOKEN_PREFIX = 'abdev_';
 export const CODE_TTL_MS = 10 * 60_000;
 export const POLL_INTERVAL_S = 3;
-/** Unauthenticated callers can open codes, so the set is bounded. */
-export const MAX_PENDING = 20;
+/**
+ * Unauthenticated callers can open codes, so the set is bounded: per source
+ * address first (one host cannot crowd out everyone else's `hub login`), and
+ * overall as a backstop. The owner can also clear the list.
+ */
+export const MAX_PENDING = 50;
+export const MAX_PENDING_PER_SOURCE = 3;
 /** `lastSeenAt` is written at most this often per device. */
 const TOUCH_EVERY_MS = 60_000;
 // No vowels or look-alikes (0/O, 1/I/L), so a code can be read aloud and never spells a word.
@@ -118,7 +136,7 @@ function mintUserCode(): string {
 
 interface PendingEntry extends PendingCode {
   deviceCode: string;
-  state: 'pending' | 'denied' | { approved: { token: string; device: DeviceRecord } };
+  state: 'pending' | 'denied' | { approved: { token: string } };
 }
 
 export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number }): DeviceService {
@@ -152,20 +170,27 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
         return { ok: false, code: 'invalid_request', message: 'deviceId must be the machine id' };
       }
       const label = cleanLabel(input.label) ?? deviceId.slice(0, 8);
+      const sourceIp = (input.sourceIp ?? '').trim();
+      const isProven = proven(deviceId, input.currentToken);
       sweep();
-      // A new code for the same machine supersedes its older waiting one, so a PC
-      // re-running `hub login` never uses up the cap.
+      // A new code supersedes the same machine's older waiting one only when it
+      // provably comes from that machine (its current token, or the same source
+      // address). Otherwise anyone who knows a machine id could knock the real
+      // PC's waiting code out and slip their own in under it.
       for (const [k, e] of pending) {
-        if (e.state === 'pending' && e.deviceId === deviceId) pending.delete(k);
+        if (e.state !== 'pending' || e.deviceId !== deviceId) continue;
+        if (isProven || (sourceIp !== '' && e.sourceIp === sourceIp)) pending.delete(k);
       }
       // Only codes still waiting count: denied and approved-unclaimed ones sit
       // in the map until their poll or expiry, but must not block new logins.
-      const waiting = [...pending.values()].filter((e) => e.state === 'pending').length;
-      if (waiting >= MAX_PENDING) {
+      const waiting = [...pending.values()].filter((e) => e.state === 'pending');
+      const fromSource = waiting.filter((e) => e.sourceIp === sourceIp).length;
+      if (fromSource >= MAX_PENDING_PER_SOURCE || waiting.length >= MAX_PENDING) {
         return {
           ok: false,
           code: 'rate_limited',
-          message: 'too many enrollment codes are waiting; approve or deny some, or retry later',
+          message:
+            'too many enrollment codes are waiting; approve or deny some (or clear them on the Devices page), or retry later',
         };
       }
       let userCode = mintUserCode();
@@ -180,7 +205,8 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
         createdAt: t,
         expiresAt: t + CODE_TTL_MS,
         reenroll: repo.get(deviceId) !== null,
-        proven: proven(deviceId, input.currentToken),
+        proven: isProven,
+        sourceIp,
         state: 'pending',
       });
       return {
@@ -199,31 +225,10 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
       if (e.state === 'pending') return { status: 'authorization_pending' };
       pending.delete(deviceCode);
       if (e.state === 'denied') return { status: 'access_denied' };
-      return { status: 'approved', ...e.state.approved };
-    },
-
-    listPending() {
-      sweep();
-      return [...pending.values()]
-        .filter((e) => e.state === 'pending')
-        .map(({ userCode, deviceId, label, createdAt, expiresAt, proven: p }) => ({
-          userCode,
-          deviceId,
-          label,
-          createdAt,
-          expiresAt,
-          proven: p,
-          // Recomputed: the device may have been enrolled since the code was opened.
-          reenroll: repo.get(deviceId) !== null,
-        }));
-    },
-
-    approve(userCode) {
-      sweep();
-      const e = byUserCode(userCode);
-      if (!e || e.state !== 'pending') return { ok: false, error: 'no pending code matches' };
-      const token = DEVICE_TOKEN_PREFIX + randomBytes(32).toString('base64url');
-      // Read now, not at code time: the device may have been enrolled since.
+      // The token takes effect HERE, when the PC actually holds it — not at
+      // approval. A CLI that dies between the two leaves an enrolled machine's
+      // old token working instead of leaving it with neither.
+      const { token } = e.state.approved;
       const wasEnrolled = repo.get(e.deviceId) !== null;
       const device = repo.enroll({
         id: e.deviceId,
@@ -234,7 +239,45 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
       // A re-enrolled device's old token stopped matching the moment its hash was
       // replaced; anything still streaming on it must be closed like a revocation.
       if (wasEnrolled) for (const l of listeners) l(device.id);
-      e.state = { approved: { token, device } };
+      return { status: 'approved', token, device };
+    },
+
+    listPending() {
+      sweep();
+      return [...pending.values()]
+        .filter((e) => e.state === 'pending')
+        .map(({ userCode, deviceId, label, createdAt, expiresAt, proven: p, sourceIp }) => ({
+          userCode,
+          deviceId,
+          label,
+          createdAt,
+          expiresAt,
+          proven: p,
+          sourceIp,
+          // Recomputed: the device may have been enrolled since the code was opened.
+          reenroll: repo.get(deviceId) !== null,
+        }));
+    },
+
+    approve(userCode) {
+      sweep();
+      const e = byUserCode(userCode);
+      if (!e || e.state !== 'pending') return { ok: false, error: 'no pending code matches' };
+      const token = DEVICE_TOKEN_PREFIX + randomBytes(32).toString('base64url');
+      e.state = { approved: { token } };
+      // What the device will look like once its poll collects the token (that is
+      // when it is written — see `claim`).
+      const existing = repo.get(e.deviceId);
+      const device: DeviceRecord = existing
+        ? { ...existing, label: e.label, revokedAt: null }
+        : {
+            id: e.deviceId,
+            label: e.label,
+            createdAt: now(),
+            lastSeenAt: null,
+            revokedAt: null,
+            userId: null,
+          };
       return { ok: true, device };
     },
 
@@ -244,6 +287,17 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
       if (!e || e.state !== 'pending') return false;
       e.state = 'denied';
       return true;
+    },
+
+    clearPending() {
+      sweep();
+      let n = 0;
+      for (const e of pending.values()) {
+        if (e.state !== 'pending') continue;
+        e.state = 'denied';
+        n++;
+      }
+      return n;
     },
 
     list() {

@@ -36,8 +36,11 @@ export async function applyHostReachEnvAtStartup(): Promise<void> {
     }
     // A PC enrolled with `agentbox hub login` polls with its own device token —
     // only for the hub that issued it — and needs no shared admin token at all.
+    // Still exactly the one key (see above); the API key is resolved per call.
     if (process.env.AGENTBOX_CONTROL_PLANE_URL) {
-      applyDeviceCredentialEnv(process.env, process.env.AGENTBOX_CONTROL_PLANE_URL, homedir());
+      applyDeviceCredentialEnv(process.env, process.env.AGENTBOX_CONTROL_PLANE_URL, homedir(), [
+        'AGENTBOX_RELAY_ADMIN_TOKEN',
+      ]);
     }
     if (!process.env.AGENTBOX_RELAY_ADMIN_TOKEN) {
       // Path resolved HERE, not at module load: `homedir()` is read once at

@@ -29,6 +29,22 @@ function fakeDevices(): RelayDeviceAuth & { revoke(): void } {
   };
 }
 
+/** Whether the stream ends (cleanly or by a reset) within `ms`. */
+async function endsSoon(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  ms = 2000,
+): Promise<boolean> {
+  const timeout = new Promise<boolean>((r) => setTimeout(() => r(false), ms));
+  const ended = (async () => {
+    try {
+      for (;;) if ((await reader.read()).done) return true;
+    } catch {
+      return true;
+    }
+  })();
+  return Promise.race([ended, timeout]);
+}
+
 describe('device tokens on the relay admin surface', () => {
   let handle: RelayServerHandle | undefined;
   afterEach(async () => {
@@ -99,10 +115,45 @@ describe('device tokens on the relay admin surface', () => {
     const reader = res.body!.getReader();
     await reader.read(); // the `: connected` preamble
     devices.revoke();
-    // The server ends the response; the next read reports done.
-    let done = false;
-    for (let i = 0; i < 5 && !done; i++) done = (await reader.read()).done;
-    expect(done).toBe(true);
+    expect(await endsSoon(reader)).toBe(true);
+  });
+
+  it('revocation closes ANY open request of that device, including a Next route behind uiHandler', async () => {
+    const devices = fakeDevices();
+    handle = await startRelayServer({
+      port: 0,
+      host: '127.0.0.1',
+      controlPlane: true,
+      adminToken: ADMIN,
+      deviceAuth: devices,
+      // A route that streams forever and knows nothing about devices (e.g. a log follow).
+      uiHandler: (_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.write('first\n');
+      },
+    });
+    const base = `http://127.0.0.1:${String((handle.server.address() as AddressInfo).port)}`;
+    const res = await get(`${base}/api/v1/boxes/b1/logs?follow=1`, DEVICE);
+    const reader = res.body!.getReader();
+    await reader.read();
+    // The shared admin token's stream on the same route is untouched.
+    const other = await get(`${base}/api/v1/boxes/b1/logs?follow=1`, ADMIN);
+    const otherReader = other.body!.getReader();
+    await otherReader.read();
+    devices.revoke();
+    expect(await endsSoon(reader)).toBe(true);
+    expect(await endsSoon(otherReader, 300)).toBe(false);
+    await otherReader.cancel();
+  });
+
+  it('revocation also cuts a held host-reach long poll', async () => {
+    const { base, devices } = await start();
+    const pending = get(`${base}/admin/hostreach/poll?wait=20000&poller=p1`, DEVICE).then(
+      async (r) => r.text(),
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    devices.revoke();
+    await expect(pending).rejects.toThrow();
   });
 
   it('device tokens mean nothing on a relay with no admin token', async () => {

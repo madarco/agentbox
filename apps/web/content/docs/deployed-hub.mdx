@@ -641,13 +641,21 @@ The keys `hub setup` writes to `~/.agentbox/control-plane/control-plane.env` are
 agentbox hub login https://<your-hub-url>
 ```
 
-It prints a link and a short code (`XXXX-XXXX`) and waits. Open the link — on that computer or any other — sign in as the owner, check the code matches, and click **Approve** on the hub's **Devices** page. The CLI receives a token for this computer only, saves it to `~/.agentbox/control-plane/device.json` (`0600`), points `relay.controlPlaneUrl` at the hub and restarts the local hub so its relay drains your `cp` and host-tool requests with it. From then on every command uses that token. It is never sent to a different hub.
+It prints a link and a short code (`XXXX-XXXX`) and waits. Open the link — on that computer or any other — and sign in as the owner. The hub's **Devices** page fills in the code from the link; check it matches the one on your screen and click **Approve**. Codes are never listed for one-click approval: anyone who can reach the hub can open a code labelled like your laptop, so the code you read on your own screen is the proof. Typing it in works too. The **Waiting** list shows each code's computer name, address and age so you can deny strangers (or **Deny all**); one address can hold at most three waiting codes. The CLI receives a token for this computer only, saves it to `~/.agentbox/control-plane/device.json` (`0600`), points `relay.controlPlaneUrl` at the hub and restarts the local hub so its relay drains your `cp` and host-tool requests with it. From then on every command uses that token. It is never sent to a different hub.
 
 A device is identified by the computer's machine id, so renaming the computer changes nothing. From the operator's machine, `agentbox hub devices approve <code>` approves without a browser.
 
-**Losing a laptop is one revocation.** Click **Revoke** on the Devices page (or run `agentbox hub devices revoke <id>`): that computer's next request is refused, and any live stream it holds (live updates, an attach footer, host-reach) is closed at once. `agentbox hub logout` does the same for the computer you are on. Nothing else needs rotating.
+**Revoking stops a computer's hub access.** Click **Revoke** on the Devices page (or run `agentbox hub devices revoke <id>`): that computer's next request is refused, and every request it holds open — live updates, an attach footer, a log follow, host-reach — is closed at once. `agentbox hub logout` does the same for the computer you are on. The hub-wide keys need no rotation.
 
 A device token can do what a computer needs — the API, the live-update stream, host-reach, reading box SSH keys from custody to attach — but it cannot approve, revoke or rename another device, so a stolen one can neither mint itself a spare nor lock out your other computers before you revoke it. If a code claims to be a computer that is already enrolled but did not come with that computer's token, the Devices page warns you before you approve it.
+
+<Callout type="warn" title="Revoking does not take back what the computer already read">
+  A device token can read box SSH private keys and agent logins from custody — that is how a
+  computer attaches to a box directly. Revoking stops **future** hub access; it does not rotate a
+  box key or an agent login the computer already fetched. For a lost laptop, also recreate the boxes
+  it could reach (or rotate their keys) and sign the agents in again. Automatic key rotation on
+  revoke is not built yet.
+</Callout>
 
 ## The menu-bar app follows your config
 

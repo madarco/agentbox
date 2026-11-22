@@ -3014,7 +3014,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Start enrolling a device',
           description:
-            'Unauthenticated: the PC has no credential yet. Returns a `userCode` the owner approves at `verificationPath` in the web UI, and a secret `deviceCode` the PC polls `/devices/token` with every `interval` seconds until `expiresIn`. At most 20 codes can be open at once.',
+            'Unauthenticated: the PC has no credential yet. Returns a `userCode` the owner approves at `verificationPath` in the web UI, and a secret `deviceCode` the PC polls `/devices/token` with every `interval` seconds until `expiresIn`. At most 3 codes can wait per source address (50 overall); the owner can clear the list.',
           security: [],
           requestBody: {
             required: true,
@@ -3137,6 +3137,10 @@ export function buildOpenApi(): Record<string, unknown> {
                               type: 'boolean',
                               description: "The request carried that device's current token",
                             },
+                            sourceIp: {
+                              type: 'string',
+                              description: 'Address the code was opened from (empty when unknown)',
+                            },
                           },
                           required: [
                             'userCode',
@@ -3146,6 +3150,7 @@ export function buildOpenApi(): Record<string, unknown> {
                             'expiresAt',
                             'reenroll',
                             'proven',
+                            'sourceIp',
                           ],
                         },
                       },
@@ -3156,6 +3161,29 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Devices'],
+          summary: 'Deny every waiting enrollment code',
+          description:
+            'Owner only (signed-in session or API key). The way out of a flood of unsolicited codes; their polls get `access_denied`.',
+          responses: {
+            '200': {
+              description: 'Denied',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { denied: { type: 'number' } },
+                    required: ['denied'],
+                  },
+                },
+              },
+            },
+            '401': errorResponse,
+            '403': errorResponse,
             '503': errorResponse,
           },
         },
