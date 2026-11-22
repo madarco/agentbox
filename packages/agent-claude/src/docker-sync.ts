@@ -41,6 +41,7 @@ import {
   detectEngine,
   hostRsyncStep,
   orbstackVolumePath,
+  boxAccountForContainer,
   sessionAccountPolicy,
 } from '@agentbox/sandbox-docker';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
@@ -992,7 +993,13 @@ export async function ensureClaudeInstalled(
   opts: { onProgress?: (line: string) => void } = {},
 ): Promise<EnsureClaudeInstalledResult> {
   try {
-    return await ensureAgentInstalled(createDockerSyncTransport({ container }), 'claude', opts);
+    // The box's account decides which login an install seeds (never the
+    // owner's default into a box on a named account).
+    const account = await boxAccountForContainer('claude', container);
+    return await ensureAgentInstalled(createDockerSyncTransport({ container }), 'claude', {
+      ...opts,
+      ...(account ? { account } : {}),
+    });
   } catch (err) {
     if (err instanceof AgentInstallError) throw new ClaudeSessionError(err.message);
     throw err;

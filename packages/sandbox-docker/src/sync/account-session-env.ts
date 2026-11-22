@@ -40,3 +40,18 @@ export async function sessionForwardEnv(
 ): Promise<Record<string, string>> {
   return applyAccountEnv(forwarded, await sessionAccountPolicy(agent, container));
 }
+
+/**
+ * The account `agent` runs on in the box running as `container`, or undefined
+ * for `default`. Throws when the registry cannot be read: an install that cannot
+ * tell must not fall back to pushing the owner's default login.
+ */
+export async function boxAccountForContainer(
+  agent: string,
+  container: string,
+): Promise<string | undefined> {
+  const state = await readState();
+  const box = state.boxes.find((b) => dockerField(b, 'container') === container);
+  const account = boxAccount(box, agent);
+  return account === 'default' ? undefined : account;
+}

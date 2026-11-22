@@ -27,6 +27,7 @@ import {
   accountEnvPolicy,
   AGENT_SYNC_SPECS,
   applyAccountEnv,
+  clearAccountCredential,
   ensureAgentInstalled,
   readAccounts,
   stageSingleFileTarball,
@@ -45,6 +46,7 @@ import {
 import {
   accountCloudSubpath,
   accountSecretPath,
+  namedAccounts,
   DEFAULT_ACCOUNT_ID,
   findAccount,
   isDefaultAccount,
@@ -603,16 +605,47 @@ export function agentSpecsForCloud(): Array<{
 export async function ensureAgentsInstalledForCloud(
   backend: CloudBackend,
   handle: CloudHandle,
-  opts: { agents?: readonly string[]; onLog?: (line: string) => void } = {},
+  opts: {
+    agents?: readonly string[];
+    onLog?: (line: string) => void;
+    /** Named LLM account per agent: an install seeds that account's login, never the default's. */
+    accounts?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<void> {
   const agents = opts.agents ?? [];
   if (agents.length === 0) return;
   const transport = createCloudSyncTransport({ backend, handle });
   for (const agent of agents) {
+    const account = opts.accounts?.[agent];
     await ensureAgentInstalled(transport, agent, {
       ...(opts.onLog ? { onProgress: opts.onLog } : {}),
+      ...(account && !isDefaultAccount(account) ? { account } : {}),
     });
   }
+}
+
+/**
+ * A pasted-kind account's box must hold no login file at all — a checkpoint or
+ * an earlier install can have carried the owner's — or the agent would use it
+ * instead of the account's token. Idempotent; runs after the credential seed.
+ */
+export async function clearPastedAccountCredentials(
+  backend: CloudBackend,
+  handle: CloudHandle,
+  accounts: Readonly<Record<string, string>> | undefined,
+): Promise<string[]> {
+  const cleared: string[] = [];
+  const named = namedAccounts(accounts) ?? {};
+  if (Object.keys(named).length === 0) return cleared;
+  const file = await readAccounts();
+  const transport = createCloudSyncTransport({ backend, handle });
+  for (const [agent, account] of Object.entries(named)) {
+    const spec = resolveAgentSpec(agent);
+    if (findAccount(file, spec.id, account)?.kind === 'login') continue;
+    await clearAccountCredential(transport, spec);
+    cleared.push(agent);
+  }
+  return cleared;
 }
 
 /**

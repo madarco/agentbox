@@ -677,13 +677,15 @@ export const createCommand = new Command('create')
     let accounts: Record<string, string> = {};
     try {
       borrowCredentials = resolveBoxModelAuth(opts.modelAuth);
-      // Named LLM accounts: explicit-only here too (an agentless box has no
-      // agent to default from) — the agents named by `--account`, plus each
-      // borrowed lender's `<lender>.account`.
+      // Named LLM accounts. An agentless box carries no agent but its borrowed
+      // lenders, so only a lender can be given one: docker cannot mount an
+      // account's volume for an agent added later, and an install there would
+      // seed the wrong login. `--account claude=…` here is refused with the
+      // reason; use `agentbox claude --account …` instead.
       const flags = parseAccountFlags(opts.account);
       const lenders = agentSourceIds(borrowCredentials);
       const r = await resolveBoxAccounts({
-        agents: [...new Set([...Object.keys(flags), ...lenders])],
+        agents: lenders,
         flags,
         config: cfg,
         loginOnly: lenders,

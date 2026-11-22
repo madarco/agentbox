@@ -15,6 +15,7 @@ import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import {
   generateBoxId,
+  namedAccounts,
   persistentRefusal,
   resolveSyncTopology,
   UserFacingError,
@@ -77,6 +78,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   cloudVolumesUsable,
+  clearPastedAccountCredentials,
   ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
   reconcileAgentCredentials,
@@ -410,6 +412,7 @@ export function createCloudProvider(
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
       agent: box.agents?.[0] ?? box.lastAgent,
+      ...(box.accounts ? { accounts: box.accounts } : {}),
     });
   }
 
@@ -687,6 +690,7 @@ export function createCloudProvider(
           // by origin (Step 4 adoption); best-effort.
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
           agent: box.agents?.[0] ?? box.lastAgent,
+          ...(box.accounts ? { accounts: box.accounts } : {}),
         });
       } catch {
         // best-effort
@@ -1043,6 +1047,7 @@ export function createCloudProvider(
         await ensureAgentsInstalledForCloud(backend, handle, {
           agents: agentVolumes.agents,
           onLog: log,
+          ...(req.accounts ? { accounts: req.accounts } : {}),
         });
 
         // A backend whose `prepare` did not bake the host's static agent config
@@ -1060,6 +1065,11 @@ export function createCloudProvider(
           ...(req.accounts ? { accounts: req.accounts } : {}),
         });
         await sync.seedCredentials(syncCtx);
+        // A pasted-kind account authenticates by env only: drop any login file
+        // a checkpoint or install carried in (llm-accounts Phase 3).
+        for (const agent of await clearPastedAccountCredentials(backend, handle, req.accounts)) {
+          log(`${agent}: cleared login file (account authenticates by token)`);
+        }
         await sync.seedAgentConfig(syncCtx);
         await sync.seedGitIdentity(syncCtx);
 
@@ -1427,6 +1437,7 @@ export function createCloudProvider(
               ...(req.repoKey ? { repoKey: req.repoKey } : {}),
               ...(req.requester ? { requester: req.requester } : {}),
               agent: req.agents?.[0] ?? req.agent,
+              ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
             });
           } catch (err) {
             log(

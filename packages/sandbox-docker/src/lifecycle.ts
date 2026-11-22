@@ -190,11 +190,19 @@ async function agentSession(id: string, container: string): Promise<AgentSession
  * outside the built-in three has its per-box volume cleaned up instead of
  * leaking (and, before the volume map, being invisible here entirely).
  */
-function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?: string }[] {
+export function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?: string }[] {
   return AGENT_SYNC_SPECS.map((spec) => ({
     agent: spec.id,
     volume: agentConfigVolume(box, spec.id),
-  })).filter((e) => e.volume !== undefined && e.volume !== agentSpecById(e.agent)?.dockerVolume);
+  })).filter(
+    (e) =>
+      e.volume !== undefined &&
+      e.volume !== agentSpecById(e.agent)?.dockerVolume &&
+      // A named LLM account's volume is the ACCOUNT's live login and history,
+      // shared by every box on it — not this box's. Only `agentbox accounts rm`
+      // removes it (same rule as `prune`).
+      !e.volume.includes(ACCOUNT_NAME_INFIX),
+  );
 }
 
 function agentSpecById(id: string): { dockerVolume: string } | undefined {
@@ -549,6 +557,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
         agent: box.agents?.[0] ?? box.lastAgent,
+        ...(box.accounts ? { accounts: box.accounts } : {}),
       });
     } catch {
       // best-effort

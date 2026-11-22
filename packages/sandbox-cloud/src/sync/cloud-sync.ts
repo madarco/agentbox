@@ -116,6 +116,7 @@ export function makeCloudSync(
         await mod.afterDeclaredSeeds?.(backend, handle, {
           hostWorkspace: ctx.hostWorkspace,
           onLog: ctx.onLog,
+          ...(opts.accounts ? { accounts: opts.accounts } : {}),
         });
       }
       await seedDynamicConfig(backend, handle, {

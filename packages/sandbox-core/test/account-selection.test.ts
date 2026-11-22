@@ -121,7 +121,7 @@ describe('resolveBoxAccounts', () => {
     ).rejects.toThrow(/no claude account 'nope'/);
     await expect(
       resolveBoxAccounts({ agents: ['claude'], flags: { codex: 'work' }, store }),
-    ).rejects.toThrow(/not for codex/);
+    ).rejects.toThrow(/does not carry codex/);
     await expect(
       resolveBoxAccounts({
         agents: ['claude'],

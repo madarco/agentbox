@@ -200,7 +200,7 @@ import type {
 } from './boxes/backend-types';
 import { vncUnavailableReason } from './boxes/vnc-link';
 import { hubProfile } from './auth-config';
-import { resolveCreateAccounts } from './backend/accounts';
+import { resolveCreateAccounts, setDefaultCheckpointRefusal } from './backend/accounts';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import { createProjectDir } from './boxes/create-project';
@@ -487,6 +487,7 @@ function mapBox(
     previewUrls: b.cloud?.previewUrls,
     lastAgent: b.lastAgent,
     borrowedCredentials: b.borrowedCredentials,
+    ...(b.accounts ? { accounts: { ...b.accounts } } : {}),
     topology: b.cloud?.topology,
   };
 }
@@ -614,6 +615,7 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     image: reg.image,
     webPort: reg.webPort,
     lastAgent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']),
+    ...(reg.accounts ? { accounts: { ...reg.accounts } } : {}),
     // A control box only knows a registered box through the plane, so it is by
     // definition a control-plane-topology box.
     topology: 'control-plane',
@@ -3219,6 +3221,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         if (!rp) return { ok: false, error: `box ${id} not found` };
         const { box, provider } = rp;
         const providerName = box.provider ?? 'docker';
+        // A box on a named LLM account carries that account's login in its
+        // filesystem (cloud) — making it every new box's default would hand the
+        // account to boxes that never chose it (llm-accounts Phase 3).
+        const refusal = opts.setDefault ? setDefaultCheckpointRefusal(box) : null;
+        if (refusal) return { ok: false, error: refusal };
         await ensureBoxRunning(provider, box);
         const projectRoot = box.projectRoot ?? (await findProjectRoot(box.workspacePath)).root;
 

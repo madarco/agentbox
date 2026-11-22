@@ -98,7 +98,9 @@ export async function resolveBoxAccounts(o: {
   const accounts: Record<string, string> = {};
   for (const agent of Object.keys(flags)) {
     if (!o.agents.includes(agent)) {
-      throw new Error(`--account ${agent}=${flags[agent]}: this box is not for ${agent}`);
+      throw new Error(
+        `--account ${agent}=${flags[agent]}: this box does not carry ${agent} — create it with \`agentbox ${agent} --account ${flags[agent]}\` (or borrow it with --model-auth ${agent})`,
+      );
     }
   }
   let file: Awaited<ReturnType<typeof readAccounts>> | undefined;

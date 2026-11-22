@@ -59,7 +59,7 @@ export interface CredentialsFanoutDeps {
  * not be able to overwrite the default login everywhere; a default box simply
  * re-posts on its next refresh.
  */
-async function stateBoxAccount(boxId: string, agent: string): Promise<string | undefined> {
+export async function stateBoxAccount(boxId: string, agent: string): Promise<string | undefined> {
   let state;
   try {
     state = await readState();

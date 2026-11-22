@@ -11,6 +11,7 @@ import {
   ensureVolume,
   volumeExists,
   createDockerSyncTransport,
+  boxAccountForContainer,
   sessionForwardEnv,
 } from '@agentbox/sandbox-docker';
 import { ensureAgentInstalled, AgentInstallError, resolveAgentSpec } from '@agentbox/sandbox-core';
@@ -597,7 +598,13 @@ export async function ensureCodexInstalled(
   opts: { onProgress?: (line: string) => void } = {},
 ): Promise<EnsureCodexInstalledResult> {
   try {
-    return await ensureAgentInstalled(createDockerSyncTransport({ container }), 'codex', opts);
+    // The box's account decides which login an install seeds (never the
+    // owner's default into a box on a named account).
+    const account = await boxAccountForContainer('codex', container);
+    return await ensureAgentInstalled(createDockerSyncTransport({ container }), 'codex', {
+      ...opts,
+      ...(account ? { account } : {}),
+    });
   } catch (err) {
     // Rewrap so the CLI's existing `instanceof CodexSessionError` catch sites
     // keep working — this function's contract is unchanged.

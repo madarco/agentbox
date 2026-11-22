@@ -38,6 +38,8 @@ import {
   resolveRemote,
   sanitizeGitArgs,
   upstreamRef,
+  accountIdProblem,
+  namedAccounts,
 } from '@agentbox/core';
 import {
   checkoutGuards,
@@ -98,7 +100,11 @@ import {
 } from './prompts.js';
 import { randomUUID } from 'node:crypto';
 import { BoxRegistry, EventBuffer } from './registry.js';
-import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
+import {
+  CREDENTIALS_UPDATED_EVENT,
+  CredentialsFanout,
+  stateBoxAccount,
+} from './credentials-fanout.js';
 import { BoxStatusStore, isValidBoxStatus, normalizeBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
 import { WriteThroughStore } from './store/write-through-store.js';
@@ -519,7 +525,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   // token reach custody, so the next hub create seeds a current credential
   // instead of the last one a PC pushed. Absent on a localhost relay (no store).
   const credentialsFanout =
-    mode === 'box' ? null : new CredentialsFanout({ log, custody: opts.custody ?? null });
+    mode === 'box'
+      ? null
+      : new CredentialsFanout({
+          log,
+          custody: opts.custody ?? null,
+          // The registration first: it exists before the box's first credential
+          // post (state.json is written later on a cloud create), and it is the
+          // only record a Store-only box has. Then the PC's own record.
+          boxAccountFor: async (boxId, agent) =>
+            namedAccounts((await store.getBox(boxId).catch(() => undefined))?.accounts)?.[agent] ??
+            (await stateBoxAccount(boxId, agent)),
+        });
   if (mode === 'box' && (!opts.bridgeToken || opts.bridgeToken.length === 0)) {
     throw new Error("relay mode='box' requires a non-empty bridgeToken");
   }
@@ -1897,6 +1914,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             ? Math.trunc(body.webPort)
             : undefined,
         agent: typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
+        accounts: sanitizeAccounts(body.accounts),
         projectSlug:
           typeof body.projectSlug === 'string' && body.projectSlug.length > 0
             ? body.projectSlug
@@ -3234,4 +3252,14 @@ function parseReachPrompt(raw: unknown): Omit<PromptAskEvent, 'id'> | null {
         }
       : {}),
   };
+}
+
+/** A registration's `accounts`, kept only when it is `{ agent: account-id }`. */
+function sanitizeAccounts(raw: unknown): Record<string, string> | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [agent, id] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof id === 'string' && accountIdProblem(id) === null) out[agent] = id;
+  }
+  return namedAccounts(out);
 }

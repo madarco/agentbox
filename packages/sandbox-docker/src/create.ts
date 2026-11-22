@@ -902,6 +902,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         originUrl,
         workspacePath: originRepo,
         agent: opts.agents?.[0],
+        ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
       });
       log(`registered box token with relay`);
     } catch (err) {
