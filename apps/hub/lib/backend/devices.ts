@@ -91,7 +91,6 @@ export function hashDeviceToken(token: string): string {
 /** Trim, drop control characters, cap the length. Empty -> null. */
 export function cleanLabel(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
-  // eslint-disable-next-line no-control-regex
   const s = raw
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .trim()
@@ -261,8 +260,14 @@ export function createDeviceService(deps: { repo: DeviceRepo; now?: () => number
 export function createMemoryDeviceRepo(): DeviceRepo {
   const rows = new Map<string, DeviceRecord & { tokenHash: string | null }>();
   const strip = (r: DeviceRecord & { tokenHash: string | null }): DeviceRecord => {
-    const { tokenHash: _t, ...rest } = r;
-    return { ...rest };
+    return {
+      id: r.id,
+      label: r.label,
+      createdAt: r.createdAt,
+      lastSeenAt: r.lastSeenAt,
+      revokedAt: r.revokedAt,
+      userId: r.userId,
+    };
   };
   return {
     get: (id) => {
