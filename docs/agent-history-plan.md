@@ -413,9 +413,13 @@ repo, wrote a file.
 - **Seed** (`memory.seed` RPC, the relay answers in the hub process):
   1. The relay returns the hub's latest version of every path for the box's
      repo and agent.
-  2. It adds the hub machine's own host copy for paths the hub has never
-     seen, imported as versions with origin `host`. The create runs on the
-     hub machine, so this is the same "host copy" the create seeds from today.
+  2. It folds in the hub machine's own host copy, which is one more writer in
+     the last-writer-wins order. A host file is imported, as a version with
+     origin `host`, when this host never imported that path or when it changed
+     since this host's last import. An unchanged host file never overrides a
+     newer box version, so a box edit wins until the host edits again. The
+     create runs on the hub machine, so this is the same "host copy" the create
+     seeded from before.
   3. With `history.capture` off, or no hub behind the relay, it returns the
      host copy only, stores nothing, and write-back is off.
   4. ctl writes the set into the box's memory dir (replacing it), records a
@@ -444,9 +448,13 @@ repo, wrote a file.
     lists the repos.
 - **CLI.** `agentbox memory ls|versions|show|pull`, all hub clients. The repo
   defaults to the cwd's `origin`. `pull` writes the hub's latest into this
-  PC's agent dir for the cwd project (`~/.claude/projects/<key>/memory/`). It
-  removes files the hub has tombstoned, overwrites changed files after
-  showing what changes, and supports `--dry-run`.
+  PC's agent dir for the cwd project (`~/.claude/projects/<key>/memory/`).
+  - It prints the plan (add, update, hub-deleted, PC-only), then confirms on a
+    terminal; with no terminal it requires `-y`.
+  - Overwritten or deleted files are first copied to
+    `~/.agentbox/memory-backups/`.
+  - `--prune` removes only paths whose latest hub version is a tombstone.
+  - A `--repo` that is not the folder's repo is refused without `--dir`.
 - **Done:** in a docker box (DinD, isolated hub), box A writes a memory file.
   It reaches the hub, a new box B of the same repo has it, it survives A's
   destroy, and `memory pull` lands it on the PC. The plan's other-provider leg

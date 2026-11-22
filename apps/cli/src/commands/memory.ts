@@ -11,13 +11,17 @@ import { Command } from 'commander';
 import type { HubApiMemoryFile, HubApiMemoryQuery } from '../control-plane/hub-api-client.js';
 import { withHubClient, type WithHubOptions } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
+import { confirm, isCancel } from '@clack/prompts';
+import { repoKey } from '@agentbox/config';
 import {
+  backupMemoryFiles,
+  gitToplevel,
   localMemoryDir,
+  planPull,
   projectFolder,
   readLocalMemory,
   repoOfFolder,
   writeMemoryFile,
-  type PullPlanEntry,
 } from '../lib/memory-local.js';
 import { shortTime } from '../lib/sessions-format.js';
 
@@ -146,55 +150,118 @@ withCommon(
 withCommon(
   memoryCommand
     .command('pull')
-    .description("Write the hub's latest memory for this repo into this PC's agent dir")
+    .description(
+      "Write the hub's latest memory for this repo into this PC's agent dir (shows the plan, then asks)",
+    )
     .option(
       '--dir <folder>',
       'the project folder the agent keys memory by (default: this git toplevel)',
     )
-    .option('--prune', 'also delete local memory files the hub does not have')
-    .option('--dry-run', 'show what would change, write nothing'),
-).action(async (opts: CommonOpts & { dir?: string; prune?: boolean; dryRun?: boolean }) => {
-  const folder = await projectFolder(opts.dir ?? process.cwd());
-  const q = await queryOf({ ...opts, repo: opts.repo ?? (await repoOfFolder(folder)) });
-  const agent = q.agent ?? 'claude';
-  const dir = localMemoryDir(agent, folder);
-  await withHubClient(hubOf(opts), async (client) => {
-    const { files } = await client.memoryFiles(q);
-    const local = await readLocalMemory(dir);
-    const plan: PullPlanEntry[] = [];
-    const writes: Array<{ path: string; bytes: Buffer }> = [];
-    for (const f of files) {
-      const { bytes } = await client.memoryFile(q, f.path, f.version);
-      const have = local.get(f.path);
-      const action = !have ? 'add' : have.equals(bytes) ? 'same' : 'update';
-      plan.push({ path: f.path, action, version: f.version });
-      if (action !== 'same') writes.push({ path: f.path, bytes });
-    }
-    const hubPaths = new Set(files.map((f) => f.path));
-    const localOnly = [...local.keys()].filter((p) => !hubPaths.has(p));
-    if (!opts.dryRun) {
-      for (const w of writes) await writeMemoryFile(dir, w.path, w.bytes);
-      if (opts.prune) for (const p of localOnly) await rm(join(dir, p), { force: true });
-    }
-    if (opts.json) {
-      process.stdout.write(
-        `${JSON.stringify({ dir, repo: q.repo, agent, dryRun: !!opts.dryRun, files: plan, localOnly, pruned: !opts.dryRun && !!opts.prune }, null, 2)}\n`,
-      );
-      return;
-    }
-    const verb = opts.dryRun ? 'would' : 'did';
-    for (const p of plan)
-      if (p.action !== 'same')
-        process.stdout.write(`${p.action.padEnd(7)}${p.path} (v${String(p.version)})\n`);
-    for (const p of localOnly) {
-      process.stdout.write(
-        `${opts.prune ? 'delete ' : 'local  '}${p}${opts.prune ? '' : ' (not on the hub; --prune deletes it)'}\n`,
+    .option('--prune', 'also delete PC files the hub has deleted (never files the hub never saw)')
+    .option('--dry-run', 'show the plan, write nothing')
+    .option('-y, --yes', 'apply without asking (required without a terminal)'),
+).action(
+  async (opts: CommonOpts & { dir?: string; prune?: boolean; dryRun?: boolean; yes?: boolean }) => {
+    // The folder decides where files land; never guess it outside a checkout.
+    const folder = await gitToplevel(opts.dir ?? process.cwd());
+    if (!folder) {
+      throw new Error(
+        `${opts.dir ?? process.cwd()} is not a git checkout: run inside the project, or pass --dir <folder>`,
       );
     }
-    const changed = plan.filter((p) => p.action !== 'same').length;
-    log.info(
-      `${dir}: ${verb} write ${String(changed)} file(s), ${String(plan.length - changed)} already current` +
-        (opts.prune && localOnly.length > 0 ? `, ${verb} delete ${String(localOnly.length)}` : ''),
-    );
-  });
-});
+    const folderRepo = await repoOfFolder(folder);
+    if (opts.repo && !opts.dir) {
+      const asked = opts.repo.startsWith('local:') ? opts.repo : repoKey(opts.repo);
+      if (asked !== folderRepo) {
+        throw new Error(
+          `--repo ${opts.repo} is not this folder's repo (${folderRepo ?? 'none'}); ` +
+            "pass --dir <folder> to choose which project's memory dir it writes",
+        );
+      }
+    }
+    const repo = opts.repo ?? folderRepo;
+    if (!repo) throw new Error('no repo: this checkout has no origin; pass --repo <url>');
+    const q: HubApiMemoryQuery = { repo, agent: opts.agent ?? 'claude' };
+    const agent = q.agent ?? 'claude';
+    const dir = localMemoryDir(agent, folder);
+    await withHubClient(hubOf(opts), async (client) => {
+      const { files } = await client.memoryFiles(q, { includeDeleted: true });
+      const plan = await planPull(
+        files,
+        await readLocalMemory(dir),
+        async (path, version) => (await client.memoryFile(q, path, version)).bytes,
+      );
+      const writes = plan.filter((e) => e.action === 'add' || e.action === 'update');
+      const deletes = opts.prune ? plan.filter((e) => e.action === 'delete') : [];
+      const changes = writes.length + deletes.length;
+
+      if (!opts.json) {
+        process.stdout.write(`${dir}\n`);
+        for (const e of plan) {
+          if (e.action === 'same') continue;
+          const note =
+            e.action === 'delete'
+              ? opts.prune
+                ? ''
+                : '  (deleted on the hub; --prune removes it)'
+              : e.action === 'local'
+                ? '  (only on this PC; left alone)'
+                : ` (hub v${String(e.version)})`;
+          const verb = e.action === 'local' ? 'keep' : e.action;
+          process.stdout.write(`  ${verb.padEnd(7)}${e.path}${note}\n`);
+        }
+      }
+      const summary = {
+        dir,
+        repo: q.repo,
+        agent,
+        files: plan.map((e) => ({ path: e.path, action: e.action, version: e.version })),
+      };
+      if (changes === 0) {
+        if (opts.json)
+          process.stdout.write(`${JSON.stringify({ ...summary, applied: false }, null, 2)}\n`);
+        else log.info('Already current: nothing to write.');
+        return;
+      }
+      if (opts.dryRun) {
+        if (opts.json)
+          process.stdout.write(`${JSON.stringify({ ...summary, applied: false }, null, 2)}\n`);
+        else
+          log.info(
+            `Dry run: would write ${String(writes.length)}, delete ${String(deletes.length)}.`,
+          );
+        return;
+      }
+      // These files are written by box agents and loaded into this PC's agent
+      // context: a person reviews the plan, or says -y up front.
+      if (!opts.yes) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY || opts.json) {
+          throw new Error('refusing to change local memory without confirmation: re-run with -y');
+        }
+        const ok = await confirm({
+          message: `Write ${String(writes.length)} and delete ${String(deletes.length)} file(s) in ${dir}?`,
+          initialValue: false,
+        });
+        if (isCancel(ok) || !ok) {
+          log.info('Nothing changed.');
+          return;
+        }
+      }
+      const backup = await backupMemoryFiles(
+        dir,
+        [...writes.filter((e) => e.action === 'update'), ...deletes].map((e) => e.path),
+        agent,
+      );
+      for (const w of writes) await writeMemoryFile(dir, w.path, w.bytes!);
+      for (const d of deletes) await rm(join(dir, d.path), { force: true });
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify({ ...summary, applied: true, backup }, null, 2)}\n`);
+        return;
+      }
+      log.info(
+        `Wrote ${String(writes.length)}, deleted ${String(deletes.length)}.` +
+          (backup ? ` Previous copies: ${backup}` : ''),
+      );
+    });
+  },
+);

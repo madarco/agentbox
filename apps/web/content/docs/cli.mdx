@@ -249,9 +249,10 @@ agentbox memory pull
 
 The hub keeps claude's auto-memory per repo, with every version. A box's claude writes memory to a
 dir on the box's own disk; when the box starts, `agentbox-ctl` fills that dir with the hub's latest
-set for the box's repo. The first time a repo has no memory on the hub, the set is the copy in the
-hub machine's own `~/.claude/projects/<project>/memory/`, which is the folder the box was created
-from. Every change the box's claude makes ships back as a new version within about 15 seconds, and
+set for the box's repo. The copy in the hub machine's own `~/.claude/projects/<project>/memory/`
+(the folder the box was created from) counts as one more writer. A host file is added to the set
+when the hub has not seen it before, or when it has changed since the hub last took it. An unchanged
+host file never replaces a newer version a box wrote. Every change the box's claude makes ships back as a new version within about 15 seconds, and
 again when the box is destroyed. When two boxes edit the same file, the last write wins and
 both versions are kept.
 
@@ -262,15 +263,21 @@ snapshot built with this release.
 
 The repo defaults to the current folder's `origin` (`--repo <url>` picks another; any spelling of
 the URL works). `pull` writes the hub's files into this PC's memory dir for the current git
-toplevel (`--dir` for another folder). It overwrites files that differ and leaves files the hub
-does not have, which `--prune` deletes. `--dry-run` only lists the changes.
+toplevel, and refuses outside a git checkout unless `--dir <folder>` names the project. A
+`--repo` that is not that folder's repo is refused unless `--dir` is also given. `pull` first
+prints the plan: files to add, files to update, files the hub has deleted, and files only on
+this PC (always left alone). It then asks before changing anything. Without a terminal it
+refuses unless you pass `-y`. Files it overwrites or deletes are first copied to
+`~/.agentbox/memory-backups/<agent>/<project>/<time>/`. `--prune` deletes only files whose
+latest hub version is a deletion, never files the hub has not seen. `--dry-run` prints the plan
+and stops. The files come from box agents and your PC's claude reads them, so review the plan.
 
-| Command           | Useful flags                                                                       |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| `memory ls`       | `--all-repos`, `--repo <url>`, `--agent <id>`, `--json`                            |
-| `memory versions` | `<path>`, `--repo <url>`, `--agent <id>`, `--json`                                 |
-| `memory show`     | `<path>`, `--version <n>`, `--repo <url>`, `--agent <id>`, `--json`                |
-| `memory pull`     | `--dir <folder>`, `--prune`, `--dry-run`, `--repo <url>`, `--agent <id>`, `--json` |
+| Command           | Useful flags                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `memory ls`       | `--all-repos`, `--repo <url>`, `--agent <id>`, `--json`                                         |
+| `memory versions` | `<path>`, `--repo <url>`, `--agent <id>`, `--json`                                              |
+| `memory show`     | `<path>`, `--version <n>`, `--repo <url>`, `--agent <id>`, `--json`                             |
+| `memory pull`     | `--dir <folder>`, `--prune`, `--dry-run`, `-y, --yes`, `--repo <url>`, `--agent <id>`, `--json` |
 
 All four take `--local`.
 

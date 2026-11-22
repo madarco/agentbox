@@ -177,10 +177,6 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   `originUrl`, falling back to `local:<machine>:<projectRoot>`. A box with no
   origin whose project folder the hub machine does not know gets no key, so
   write-back is off for it.
-- **`memory pull` writes files that differ without asking.** `--dry-run`
-  previews the change. A local edit the hub never saw is overwritten (backed
-  by nothing). Consider writing `<file>.local` or refusing without `--force`
-  when the local file is newer than the hub's version.
 - **Only claude.** codex memory exists but was empty in Phase 0, openclaw's
   lives in the workspace repo, and pi and opencode have none. Each needs a
   `history.memory` block and (codex) a per-box location.
@@ -214,3 +210,31 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
     after a relay restart has no `originUrl`, so `HistoryRelay` stamps no
     `projectRepoUrl` on that box's sessions. Memory now reads the folder's
     `origin` (fixed in this phase); transcripts should do the same.
+- **From the review of #443 (2026-11-22), deferred:**
+  - *A late seed deletes box-local writes (3).* When the seed is delayed
+    (relay unreachable, older relay backoff) and claude writes memory first,
+    `placeSet` removes those never-baselined files. The same happens on a ctl
+    restart after a checkpoint dropped the state while write-back was off.
+    Fix: keep local files absent from the set, with no baseline, so the next
+    pass ships them.
+  - *A failed scan becomes a mass tombstone (4).* A readdir error on the
+    memory dir (or the dir removed) makes one pass ship every baseline path
+    as deleted. Report a root readdir failure from `scanMemoryDir` and skip
+    deletions that pass. The host-as-writer fix (#2) at least lets an edited
+    host file bring a path back.
+  - *Host import stored unredacted (5).* `memorySeed` stores host files byte
+    for byte; puts are redacted. Pass `hostFiles` through `deps.redact` in
+    `MemoryRelay.seed`, and compare the host-version sha on the redacted
+    bytes.
+  - *Smaller items (6):*
+    - A path live as both a file (`sub`) and a dir (`sub/x`) makes every
+      later seed throw ENOTDIR and retry forever. Skip the conflicting
+      entries, or refuse the put.
+    - `pull` in a linked worktree lands in the worktree's key, not the
+      main repo's. Use the parent of `--git-common-dir`.
+    - Leftover `*.agentbox-tmp` / `*.agentbox-part` files after a crash are
+      scanned and shipped. Skip those suffixes.
+    - The docker destroy's in-box flush exits non-zero on pre-Phase-1
+      images: one harmless log line.
+    - A seed reply of 1000 x 256 KB could exceed the cloud bridge's body cap
+      and fail forever. Real sets are KBs.

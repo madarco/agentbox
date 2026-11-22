@@ -4,7 +4,7 @@ import { openSqliteMemoryRepo } from '../lib/history-sqlite';
 
 const key: MemoryKey = { repoKey: 'github.com/o/r', agent: 'claude', scope: 'project' };
 const box = (id: string) => ({ boxId: id, boxName: id, provider: 'docker' });
-const host = { boxId: null, provider: 'host' };
+const host = { boxId: null, provider: 'host', hostId: 'pc-1' };
 const b = (s: string) => Buffer.from(s);
 
 async function service() {
@@ -24,11 +24,11 @@ describe('memory service', () => {
       ['MEMORY.md', 'host index'],
     ]);
     await m.memoryPut({ ...key, path: 'MEMORY.md', bytes: b('box index'), origin: box('a') });
-    // A changed host copy no longer wins on a path the hub holds; a new host path joins.
+    // An unchanged host copy does not override the newer box version.
     const second = await m.memorySeed({
       ...key,
       hostFiles: [
-        { path: 'MEMORY.md', bytes: b('host index v2') },
+        { path: 'MEMORY.md', bytes: b('host index') },
         { path: 'new.md', bytes: b('n') },
       ],
       origin: host,
@@ -37,6 +37,34 @@ describe('memory service', () => {
       ['MEMORY.md', 'box index'],
       ['new.md', 'n'],
     ]);
+  });
+
+  it('a host edit to a known path reaches the next seed (the host is a writer too)', async () => {
+    const m = await service();
+    const seed = (content: string) =>
+      m.memorySeed({ ...key, hostFiles: [{ path: 'MEMORY.md', bytes: b(content) }], origin: host });
+    await seed('host v1');
+    await m.memoryPut({ ...key, path: 'MEMORY.md', bytes: b('box v2'), origin: box('a') });
+    const after = await seed('host v3, edited on the PC');
+    expect(Buffer.from(after[0]!.bytes).toString()).toBe('host v3, edited on the PC');
+    expect((await m.versions(key, 'MEMORY.md')).map((v) => v.origin.provider)).toEqual([
+      'host',
+      'docker',
+      'host',
+    ]);
+    // Seeding again with the same host bytes adds nothing.
+    await seed('host v3, edited on the PC');
+    expect(await m.versions(key, 'MEMORY.md')).toHaveLength(3);
+  });
+
+  it('a host edit brings back a path a box deleted; an unchanged host file does not', async () => {
+    const m = await service();
+    const seed = (content: string) =>
+      m.memorySeed({ ...key, hostFiles: [{ path: 'f.md', bytes: b(content) }], origin: host });
+    await seed('fact');
+    await m.memoryPut({ ...key, path: 'f.md', bytes: null, origin: box('a') });
+    expect(await seed('fact')).toEqual([]);
+    expect((await seed('fact, edited')).map((f) => f.path)).toEqual(['f.md']);
   });
 
   it('keeps every version, last writer wins, identical content is a no-op', async () => {
@@ -59,18 +87,13 @@ describe('memory service', () => {
     expect((await m.file(key, 'a.md', 1))?.bytes.toString()).toBe('1');
   });
 
-  it('a tombstone hides the path from list and seed, and keeps it out of the host import', async () => {
+  it('a tombstone hides the path from list and file', async () => {
     const m = await service();
     await m.memoryPut({ ...key, path: 'x.md', bytes: b('x'), origin: box('a') });
     await m.memoryPut({ ...key, path: 'x.md', bytes: null, origin: box('a') });
     expect(await m.list(key)).toEqual([]);
     expect(await m.file(key, 'x.md')).toBeNull();
-    const seeded = await m.memorySeed({
-      ...key,
-      hostFiles: [{ path: 'x.md', bytes: b('x from host') }],
-      origin: host,
-    });
-    expect(seeded).toEqual([]);
+    expect(await m.memorySeed({ ...key, hostFiles: [], origin: host })).toEqual([]);
     expect((await m.sets())[0]).toMatchObject({ ...key, files: 0, versions: 2 });
   });
 

@@ -1344,8 +1344,13 @@ export class HubApiClient {
     ).sets;
   }
 
-  memoryFiles(q: HubApiMemoryQuery): Promise<HubApiMemoryKey & { files: HubApiMemoryFile[] }> {
-    return this.request('GET', `/history/memory?${this.memoryQs(q)}`);
+  /** The latest version of each path; `includeDeleted` adds tombstones (`deleted: true`). */
+  memoryFiles(
+    q: HubApiMemoryQuery,
+    opts: { includeDeleted?: boolean } = {},
+  ): Promise<HubApiMemoryKey & { files: HubApiMemoryFile[] }> {
+    const extra: Record<string, string> = opts.includeDeleted ? { deleted: '1' } : {};
+    return this.request('GET', `/history/memory?${this.memoryQs(q, extra)}`);
   }
 
   async memoryVersions(q: HubApiMemoryQuery, path: string): Promise<HubApiMemoryFile[]> {

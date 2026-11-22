@@ -1438,7 +1438,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['History'],
           summary: 'Live memory files of a repo',
           description:
-            "The latest version of every memory file the hub holds for one repo's agent; tombstoned (deleted) paths are left out. Boxes seed from this set and ship each change back as a new version (per-file last-writer-wins, every version kept).",
+            "The latest version of every memory file the hub holds for one repo's agent; tombstoned (deleted) paths are left out unless `deleted=1`. Boxes seed from this set and ship each change back as a new version (per-file last-writer-wins, every version kept).",
           parameters: [
             {
               name: 'repo',
@@ -1459,6 +1459,13 @@ export function buildOpenApi(): Record<string, unknown> {
               in: 'query',
               schema: { type: 'string', enum: ['project', 'global'] },
               description: 'Default `project`.',
+            },
+            ,
+            {
+              name: 'deleted',
+              in: 'query',
+              schema: { type: 'string', enum: ['1', 'true'] },
+              description: 'Also list tombstoned paths (`deleted: true`).',
             },
           ],
           responses: {

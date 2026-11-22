@@ -230,12 +230,12 @@ defaults to `claude` and `scope` to `project`. A file is `{ path, version, sha25
 updatedAt, origin: { boxId, boxName, provider, hostId } }`. `origin.provider` is `host` for a file
 imported from the hub machine's own agent dir.
 
-| Method + path                  | Description                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `GET /history/memory`          | `{ repoKey, agent, scope, files }`: the latest version of every live file. Deleted paths are left out.              |
-| `GET /history/memory/repos`    | `{ sets: [{ repoKey, agent, scope, files, versions, updatedAt }] }`, newest write first.                            |
-| `GET /history/memory/versions` | `{ path, versions }`: every version of `?path=`, oldest first, deletions included. `404` for a path never written.  |
-| `GET /history/memory/file`     | `{ file, content }`: `?path=` at `?version=` (default: the latest), `content` base64. `404` when deleted or absent. |
+| Method + path                  | Description                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `GET /history/memory`          | `{ repoKey, agent, scope, files }`: the latest version of every live file. Deleted paths are left out unless `?deleted=1`. |
+| `GET /history/memory/repos`    | `{ sets: [{ repoKey, agent, scope, files, versions, updatedAt }] }`, newest write first.                                   |
+| `GET /history/memory/versions` | `{ path, versions }`: every version of `?path=`, oldest first, deletions included. `404` for a path never written.         |
+| `GET /history/memory/file`     | `{ file, content }`: `?path=` at `?version=` (default: the latest), `content` base64. `404` when deleted or absent.        |
 
 ### Workspaces
 

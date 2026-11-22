@@ -71,8 +71,8 @@ export interface MemoryFileView {
 
 export interface MemoryService extends HistoryMemorySink {
   sets(): Promise<Array<MemoryKey & { files: number; versions: number; updatedAt: number }>>;
-  /** Live files (latest version, not deleted) of one set. */
-  list(key: MemoryKey): Promise<MemoryFileView[]>;
+  /** Live files (latest version, not deleted) of one set; with `includeDeleted`, tombstones too. */
+  list(key: MemoryKey, opts?: { includeDeleted?: boolean }): Promise<MemoryFileView[]>;
   versions(key: MemoryKey, path: string): Promise<MemoryFileView[]>;
   /** A version's bytes (default: the latest); null when absent or a tombstone. */
   file(
@@ -149,12 +149,25 @@ export function createMemoryService(deps: { repo: MemoryRepo; now?: () => number
       return serialized(async () => {
         const key: MemoryKey = { repoKey: input.repoKey, agent: input.agent, scope: input.scope };
         const known = new Set((await repo.latest(key)).map((r) => r.path));
-        // The host copy fills only paths the hub has never seen: the hub is the
-        // authority once it holds a path, tombstones included.
+        // The host copy is one more writer in the last-writer-wins order. A
+        // host file is imported when this host never imported that path, or
+        // when it changed since its last import here; an unchanged host file
+        // never overrides a newer box version (a box edit wins until the host
+        // edits again).
         for (const f of input.hostFiles) {
           const p = safeMemoryPath(f.path);
-          if (!p || known.has(p) || f.bytes.length > MEMORY_FILE_MAX_BYTES) continue;
-          if (known.size >= MEMORY_MAX_FILES) break;
+          if (!p || f.bytes.length > MEMORY_FILE_MAX_BYTES) continue;
+          if (!known.has(p) && known.size >= MEMORY_MAX_FILES) continue;
+          const lastFromHost = (await repo.versions(key, p))
+            .filter(
+              (v) =>
+                v.boxId === null &&
+                v.provider === input.origin.provider &&
+                v.hostId === (input.origin.hostId ?? null),
+            )
+            .at(-1);
+          if (lastFromHost && !lastFromHost.deleted && lastFromHost.sha256 === sha(f.bytes))
+            continue;
           await append(key, p, f.bytes, input.origin);
           known.add(p);
         }
@@ -180,8 +193,8 @@ export function createMemoryService(deps: { repo: MemoryRepo; now?: () => number
 
     sets: () => repo.sets(),
 
-    async list(key) {
-      return (await repo.latest(key)).filter((r) => !r.deleted).map(view);
+    async list(key, opts) {
+      return (await repo.latest(key)).filter((r) => opts?.includeDeleted || !r.deleted).map(view);
     },
 
     async versions(key, path) {
