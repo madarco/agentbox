@@ -524,6 +524,8 @@ Creating a cloud box from your laptop pushes the seed automatically. To register
 agentbox hub project push
 ```
 
+The seed is filed under the repo's key (`projects/github.com__owner__repo/`), so every spelling of one origin (ssh or https, any case, an ssh host alias) lands in one place, and a GitHub and a GitLab repo of the same name stay apart. Seeds pushed by an older CLI under the old `owner__repo` name are still read; nothing needs re-pushing.
+
 Re-pushes are hash-skipped: an unchanged working tree uploads nothing. When the control box creates a box, it overlays the seed onto the fresh clone — the **clone wins** on any conflict, so a file that has since been committed keeps the repo's version, and the job log records how old the seed is.
 
 The seed captures files that are **untracked but not ignored** (`git ls-files --others --exclude-standard`), plus your `.env`/secret files. A **gitignored** path — a database dump under an ignored `backups/`, say — is deliberately not swept up. To send one, list it in your `agentbox.yaml` `carry:` block: approved `carry:` entries travel with the seed, so a control-box-built box gets exactly the files a locally-built one would.

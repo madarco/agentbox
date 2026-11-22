@@ -134,7 +134,7 @@ which is wrong on a case-sensitive filesystem.
 | A7 | `create-worker.ts:207-213` | one clone, one custody seed |
 | A8 | docker `originUrl` from `gitWorktrees[0]` (`sandbox-docker/src/create.ts:848`); cloud from `box.workspacePath` (`cloud-provider.ts:629, :686`) | one origin per box |
 | A9 | `BoxRegistration.originUrl` / `projectSlug` (`relay/src/types.ts:107, :126`) | one origin, one custody scope |
-| A10 | `runGitRpc` cloud push (`packages/relay/src/host-actions.ts:1326-1400`) | bundles from the requested `containerPath` (nested allowed) but fetches into / pushes from **`lookup.workspacePath`**, the root host folder, with the single registered origin. **[code] A push from a nested repo in a cloud box therefore targets the root repo**: a latent bug today, independent of this plan. Docker is correct: it uses `resolveWorktree` (`packages/relay/src/worktree.ts:11`), which picks the worktree by longest path prefix. |
+| A10 | **[fixed in Phase 1]** `runGitRpc` cloud push (`packages/relay/src/host-actions.ts:1326-1400`) | bundles from the requested `containerPath` (nested allowed) but fetches into / pushes from **`lookup.workspacePath`**, the root host folder, with the single registered origin. **[code] A push from a nested repo in a cloud box therefore targets the root repo**: a latent bug today, independent of this plan. Docker is correct: it uses `resolveWorktree` (`packages/relay/src/worktree.ts:11`), which picks the worktree by longest path prefix. |
 | A11 | `resolveHostGitRepo` (`host-actions.ts:1259`) | the checkout-less fallback uses the single origin |
 | A12 | `POST /api/v1/boxes/{id}/git/{op}` (`apps/hub/app/(dashboard)/api/v1/boxes/[id]/git/[op]/route.ts`) and `agentbox git` (`apps/cli/src/commands/git.ts:166-270`) | no repo selector; `git pr create` injects the **root** branch (`git.ts:333`) |
 | A13 | Box payload `repo`, `branch`, `pr`, `projectId`, `projectRoot` (`apps/hub/lib/boxes/types.ts:54-122`); `branch` = `gitWorktrees[0]` (`apps/hub/lib/hub-backend.ts:399`) | one repo/branch/PR per box |
@@ -478,6 +478,44 @@ One session each: branch off origin, implement, gates (`pnpm typecheck`, `pnpm t
 smoke, `/code-review medium`, update `apps/web/content/docs/` in the same change.
 
 ### Phase 1: repo key + checkouts registry (single repo; unblocks multi-PC Phase 4)
+
+**Status: done** (branch `feat/repo-key-checkouts`). What landed, and where it differs from the
+design above:
+
+- **Where `repoKey` lives.** In `@agentbox/config` (`packages/config/src/repo-key.ts`), not
+  `packages/relay/src/workspaces/repo-key.ts`: sandbox-cloud and the hub's seed route need it too,
+  and that route can't import an execa-carrying barrel. `repoKey()` is pure with an injected
+  `expandHost`; `repoKeyAtEdge()` in `@agentbox/sandbox-core` supplies `ssh -G` and the machine id.
+  `normalizeRepoUrl` and `normalizeOriginUrl` are deleted; the hub's inlined slug mirror
+  (`seed-slug.ts`) is gone.
+- **Workspace project ids did not move.** `repoProjectKey` hashes the *unexpanded* key (identical to
+  the old output for every remote URL) and keeps the old lowercased-path id for a local-path remote,
+  so existing workspace records and the tasks filed under their project ids are untouched. The
+  scan's alias-expanded `repoKey` feeds the checkouts registry only. Re-keying workspace projects by
+  the expanded key goes with B1.
+- **Custody slug** is `custodySlugForRepoKey` (`github.com__owner__repo`, capped at 80 chars with a
+  hash suffix). Writers on the PC use `projectSlugAtEdge` (alias-expanded); every reader tries
+  `custodySlugCandidates` (registered key, URL-derived key, the registration's `projectSlug`, the
+  legacy `owner__repo`): hub-worker seed overlay, seed status, the CLI's seed pull, the cp-cache
+  lookup. A legacy entry is not copied forward on read; the next seed push or cp capture simply
+  writes the new slug.
+- **Registration only, not `BoxRecord`.** `repoKey`, `originMachineId` and `originMachineLabel` are
+  stamped in `registerBoxWithRelay` and `registerBoxWithPlane` (`registrationOrigin()`), and the
+  relay keeps the first origin machine across re-registers (`mergeRegistrationOrigin`): a start from
+  PC B does not claim a box PC A seeded. A hub-built box (per-job clone) gets no origin machine.
+  The `BoxRecord` stamp moves to Phase 2 with `sources`, which is where it is read.
+- **Checkouts writers.** The CLI reports on `create` (`apps/cli/src/lib/checkouts-report.ts`,
+  quietly, pruning its own vanished folders); the hub records a workspace scan's projects in the
+  same request (`checkoutReportFromScan`) and a project registered on its own disk. No CLI command
+  lists checkouts yet; `GET /api/v1/checkouts` is the surface.
+- **`hostCandidatesFor`** takes a `CandidateBox` (`{ boxId, originMachineId?, repos }`) until Phase 2's
+  `BoxSources`; `candidateBoxFromRegistration` builds one. It returns `{ ok: false, error }` for a
+  relative path with no repo to resolve it against. Host-absolute paths keep today's `abs:` key
+  under the project prefix (not box-scoped as §4 says), so a `agentbox cp <file> hub:` pre-load of
+  an absolute path still hits; they are served by the origin only.
+- **A10 is fixed** (small): `runGitRpc` resolves the in-box repo's toplevel and fetches into /
+  pushes from the matching host subfolder; with no host checkout of a nested repo it refuses
+  instead of pushing that repo's branch to the root origin.
 
 Builds on multi-PC Phase 1a, landed in #418 (`getMachineId()` / `thisMachine()` in
 `@agentbox/config`).

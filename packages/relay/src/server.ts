@@ -2907,4 +2907,3 @@ export async function startRelayServer(opts: RelayServerOptions): Promise<RelayS
 }
 
 export type { BoxRegistration, RelayEvent };
-

@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  parseCheckoutFilter,
+  parseCheckoutReport,
   parseCheckpointCreate,
   parseCloneBox,
   parseCreateBox,
@@ -673,5 +675,77 @@ describe('parseCreateBox providerOptions', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.message).toContain('not a known provider option');
+  });
+});
+
+describe('parseCheckoutReport', () => {
+  const machineId = '0b9d6c3e-5f0a-4c1e-9d2b-7a8e6f4c3b21';
+
+  it('accepts a report keyed by machine id', () => {
+    const r = parseCheckoutReport({
+      machineId,
+      label: 'pc-a',
+      entries: [{ repoKey: 'github.com/acme/web', folder: '/Users/a/web', head: 'main' }],
+      removed: [{ repoKey: 'local:x:/srv/old', folder: '/srv/old' }],
+    });
+    expect(r.ok && r.value).toEqual({
+      machineId,
+      label: 'pc-a',
+      entries: [{ repoKey: 'github.com/acme/web', folder: '/Users/a/web', head: 'main' }],
+      removed: [{ repoKey: 'local:x:/srv/old', folder: '/srv/old' }],
+    });
+  });
+
+  it('refuses a report with no machine id: a hostname vouches for nothing', () => {
+    const r = parseCheckoutReport({ label: 'pc-a', entries: [] });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.message).toMatch(/machineId/);
+    expect(parseCheckoutReport({ machineId: 'pc-a', label: 'pc-a', entries: [] }).ok).toBe(false);
+  });
+
+  it('refuses a raw URL as a key and a relative folder', () => {
+    expect(
+      parseCheckoutReport({
+        machineId,
+        label: 'a',
+        entries: [{ repoKey: 'https://github.com/acme/web', folder: '/x' }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseCheckoutReport({
+        machineId,
+        label: 'a',
+        entries: [{ repoKey: 'github.com/acme/web', folder: 'x' }],
+      }).ok,
+    ).toBe(false);
+  });
+});
+
+describe('parseCheckoutFilter', () => {
+  it('passes repoKey and machineId through, and refuses junk', () => {
+    expect(parseCheckoutFilter(new URLSearchParams('repoKey=github.com/acme/web')).ok).toBe(true);
+    expect(parseCheckoutFilter(new URLSearchParams('machineId=nope')).ok).toBe(false);
+    expect(parseCheckoutFilter(new URLSearchParams('')).ok && true).toBe(true);
+  });
+});
+
+describe('parseWorkspaceAdd repoKey', () => {
+  it("carries a scanned project's repo key, and refuses a malformed one", () => {
+    const ok = parseWorkspaceAdd({
+      host: 'pc',
+      root: '/w',
+      projects: [{ path: '/w/a', repoUrl: 'git@gh-work:o/a.git', repoKey: 'github.com/o/a' }],
+    });
+    expect(ok.ok && ok.value.projects[0]).toEqual({
+      path: '/w/a',
+      repoUrl: 'git@gh-work:o/a.git',
+      repoKey: 'github.com/o/a',
+    });
+    const bad = parseWorkspaceAdd({
+      host: 'pc',
+      root: '/w',
+      projects: [{ path: '/w/a', repoKey: 'nonsense' }],
+    });
+    expect(bad.ok).toBe(false);
   });
 });

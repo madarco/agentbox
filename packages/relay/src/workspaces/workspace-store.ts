@@ -514,6 +514,12 @@ export interface WorkspaceProjectInput {
   path: string;
   name?: string;
   repoUrl?: string;
+  /**
+   * The repo key the scanning machine computed (ssh aliases expanded). Feeds
+   * the checkouts registry; project ids still derive from `repoUrl`, so they
+   * stay what existing records and tasks name.
+   */
+  repoKey?: string;
 }
 
 export interface AddWorkspaceInput {
@@ -858,9 +864,7 @@ export function workspaceForBox<
   }
   const repo = repoKey(key.originUrl);
   if (repo) {
-    return (
-      records.find((r) => r.projects.some((p) => repoKey(p.repoUrl) === repo)) ?? null
-    );
+    return records.find((r) => r.projects.some((p) => repoKey(p.repoUrl) === repo)) ?? null;
   }
   return null;
 }

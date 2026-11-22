@@ -29,5 +29,8 @@ export async function POST(req: Request): Promise<Response> {
       ? await backend.addProject(body.path)
       : await backend.createProject({ parent: body.parent, name: body.name, git: body.git });
   if (!res.ok) return fail('invalid_request', res.error);
+  // The folder is on this hub's disk: record it in the checkouts registry.
+  // Bookkeeping, so never fail (or slow) the registration over it.
+  void backend.recordLocalCheckouts([res.path]).catch(() => {});
   return ok({ ok: true, id: res.id, path: res.path });
 }

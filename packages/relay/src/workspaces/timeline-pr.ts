@@ -171,4 +171,3 @@ export function ghRepoArg(repoUrl: string | undefined | null): string | undefine
   if (!host || !owner || !name || rest.length > 0) return undefined;
   return host === 'github.com' ? `${owner}/${name}` : key;
 }
-

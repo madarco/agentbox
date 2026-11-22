@@ -1327,9 +1327,12 @@ function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
   const out: WorkspaceProjectInput[] = [];
   for (const raw of v) {
     if (!isObject(raw)) return { ok: false, message: 'each project must be an object' };
-    const { path, name, repoUrl } = raw;
+    const { path, name, repoUrl, repoKey } = raw;
     if (typeof path !== 'string' || !path.startsWith('/') || path.length > 4096) {
       return { ok: false, message: 'project.path must be an absolute path' };
+    }
+    if (repoKey !== undefined && !isRepoKey(repoKey)) {
+      return { ok: false, message: 'project.repoKey must be a repo key (host/path or local:…)' };
     }
     const parsedName = optionalString(name, 'project.name');
     if (!parsedName.ok) return parsedName;
@@ -1342,9 +1345,109 @@ function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
       path,
       ...(parsedName.value ? { name: parsedName.value } : {}),
       ...(parsedRepo.value ? { repoUrl: parsedRepo.value } : {}),
+      ...(typeof repoKey === 'string' ? { repoKey } : {}),
     });
   }
   return { ok: true, value: out };
+}
+
+/**
+ * A repo key as `repoKey()` produces it: `host/path` or `local:<id>:<path>`,
+ * no control characters. The hub cannot re-derive one (it never expands the
+ * sender's ssh aliases), so it checks the shape and accepts the key as sent.
+ */
+function isRepoKey(v: unknown): v is string {
+  return (
+    typeof v === 'string' &&
+    v.length <= 1024 &&
+    !/[\u0000-\u001f\u007f]/.test(v) &&
+    (v.startsWith('local:') || /^[^/\s]+\/[^/].*/.test(v))
+  );
+}
+
+export interface CheckoutReportInput {
+  machineId: string;
+  label: string;
+  entries: { repoKey: string; folder: string; head?: string }[];
+  removed: { repoKey: string; folder: string }[];
+}
+
+function parseCheckoutRows(
+  v: unknown,
+  field: string,
+): Parsed<{ repoKey: string; folder: string; head?: string }[]> {
+  if (v === undefined) return { ok: true, value: [] };
+  if (!Array.isArray(v)) return { ok: false, message: `${field} must be an array` };
+  if (v.length > 500) return { ok: false, message: `too many ${field} (max 500)` };
+  const out: { repoKey: string; folder: string; head?: string }[] = [];
+  for (const raw of v) {
+    if (!isObject(raw)) return { ok: false, message: `each of ${field} must be an object` };
+    const { repoKey, folder, head } = raw;
+    if (!isRepoKey(repoKey)) {
+      return { ok: false, message: `${field}[].repoKey must be a repo key (host/path or local:…)` };
+    }
+    if (typeof folder !== 'string' || !folder.startsWith('/') || folder.length > 4096) {
+      return { ok: false, message: `${field}[].folder must be an absolute path` };
+    }
+    const parsedHead = optionalString(head, `${field}[].head`);
+    if (!parsedHead.ok) return parsedHead;
+    out.push({
+      repoKey,
+      folder,
+      ...(parsedHead.value ? { head: parsedHead.value.slice(0, 255) } : {}),
+    });
+  }
+  return { ok: true, value: out };
+}
+
+/**
+ * `PUT /checkouts`: one machine's report. A report with no machine id is
+ * refused: a hostname alone vouches for nothing (`machineKeyIn`'s rule), and
+ * there is no legacy hostname-keyed data to adopt.
+ */
+export function parseCheckoutReport(body: unknown): Parsed<CheckoutReportInput> {
+  if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
+  const { machineId, label, entries, removed } = body;
+  if (typeof machineId !== 'string' || !MACHINE_ID_RE.test(machineId)) {
+    return {
+      ok: false,
+      message: 'machineId is required (a lowercase UUID); a hostname alone is not accepted',
+    };
+  }
+  if (typeof label !== 'string' || label.trim().length === 0 || label.length > 255) {
+    return { ok: false, message: 'label is required (the reporting machine’s hostname)' };
+  }
+  const parsedEntries = parseCheckoutRows(entries, 'entries');
+  if (!parsedEntries.ok) return parsedEntries;
+  const parsedRemoved = parseCheckoutRows(removed, 'removed');
+  if (!parsedRemoved.ok) return parsedRemoved;
+  return {
+    ok: true,
+    value: {
+      machineId,
+      label,
+      entries: parsedEntries.value,
+      removed: parsedRemoved.value.map(({ repoKey, folder }) => ({ repoKey, folder })),
+    },
+  };
+}
+
+/** `GET /checkouts?repoKey=&machineId=` filters. */
+export function parseCheckoutFilter(
+  params: URLSearchParams,
+): Parsed<{ repoKey?: string; machineId?: string }> {
+  const repoKey = params.get('repoKey') ?? undefined;
+  const machineId = params.get('machineId') ?? undefined;
+  if (repoKey !== undefined && !isRepoKey(repoKey)) {
+    return { ok: false, message: 'repoKey must be a repo key (host/path or local:…)' };
+  }
+  if (machineId !== undefined && !MACHINE_ID_RE.test(machineId)) {
+    return { ok: false, message: 'machineId must be a machine id (a lowercase UUID)' };
+  }
+  return {
+    ok: true,
+    value: { ...(repoKey ? { repoKey } : {}), ...(machineId ? { machineId } : {}) },
+  };
 }
 
 /**

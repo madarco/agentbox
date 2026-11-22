@@ -1412,11 +1412,9 @@ async function runGitRpc(
       }
       await backend.downloadFile(handle, remoteBundleSave, hostBundleSave);
       const refspec = landRefspec(branch, dest, params.force);
-      const landed = await execa(
-        'git',
-        ['-C', hostRepoDir, 'fetch', hostBundleSave, refspec],
-        { reject: false },
-      );
+      const landed = await execa('git', ['-C', hostRepoDir, 'fetch', hostBundleSave, refspec], {
+        reject: false,
+      });
       if ((landed.exitCode ?? 1) !== 0) {
         return {
           exitCode: landed.exitCode ?? 1,

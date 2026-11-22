@@ -59,9 +59,7 @@ export async function listCheckouts(
   file: string = CHECKOUTS_FILE,
 ): Promise<CheckoutRecord[]> {
   const all = await readAll(file);
-  return all
-    .filter((r) => matches(r, filter))
-    .sort((a, b) => b.seenAt.localeCompare(a.seenAt));
+  return all.filter((r) => matches(r, filter)).sort((a, b) => b.seenAt.localeCompare(a.seenAt));
 }
 
 const sameRow = (a: { repoKey: string; folder: string }, b: { repoKey: string; folder: string }) =>
@@ -86,10 +84,7 @@ export async function applyCheckoutReport(
       const kept = all.filter(
         (r) =>
           r.machineId !== report.machineId ||
-          !(
-            removed.some((x) => sameRow(x, r)) ||
-            report.entries.some((e) => sameRow(e, r))
-          ),
+          !(removed.some((x) => sameRow(x, r)) || report.entries.some((e) => sameRow(e, r))),
       );
       const byRow = new Map<string, CheckoutRecord>();
       for (const e of report.entries) {

@@ -233,9 +233,10 @@ describe('mergeRegistrationOrigin', () => {
 
 describe('cpCachePrefixes', () => {
   it('writes under the repo-key slug and still reads the legacy owner__repo one', () => {
-    expect(
-      cpCachePrefixes({ boxId: 'b', originUrl: 'git@github.com:Acme/App.git' }),
-    ).toEqual(['projects/github.com__acme__app/cp', 'projects/Acme__App/cp']);
+    expect(cpCachePrefixes({ boxId: 'b', originUrl: 'git@github.com:Acme/App.git' })).toEqual([
+      'projects/github.com__acme__app/cp',
+      'projects/Acme__App/cp',
+    ]);
   });
 
   it('prefers the registered (alias-expanded) key', () => {

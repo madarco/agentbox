@@ -48,6 +48,7 @@ import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
+import { createCheckoutBackend } from './backend/checkouts';
 import type { BackendDeps } from './backend/deps';
 import {
   configureBoxPushStat,
@@ -2129,7 +2130,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // `direct` push), and has no provider modules to measure it with — it never
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
-  const workspaces = createWorkspaceBackend(backendDeps);
+  const checkouts = createCheckoutBackend(backendDeps);
+  const workspaces = createWorkspaceBackend(backendDeps, { checkouts });
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
   const boxPrs = createBoxPrLookup({ sync: prSync });
@@ -2210,6 +2212,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     return { ok: true, jobId: id };
   }
   const hub: HubBackend = {
+    ...checkouts,
     ...workspaces,
     ...managers,
     ...timeline,

@@ -10,7 +10,10 @@ import { getProjectSeedStatus, seedSlugsFor } from '@/lib/boxes/seed-status';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<Response> {
   const { id } = await ctx.params;
   const { projects } = await readState();
   const project = projects.find((p) => p.id === id);

@@ -37,7 +37,9 @@ export function projectSlugFromOriginUrl(originUrl: string): string | null {
  * alias-expanded key ({@link repoKeyAtEdge}). Writers on the PC use this;
  * readers try {@link custodySlugCandidates}.
  */
-export async function projectSlugAtEdge(originUrl: string | undefined | null): Promise<string | null> {
+export async function projectSlugAtEdge(
+  originUrl: string | undefined | null,
+): Promise<string | null> {
   return custodySlugForRepoKey(await repoKeyAtEdge(originUrl));
 }
 
@@ -81,7 +83,9 @@ const sshHostCache = new Map<string, string | null>();
  * hub, which has a different (or no) ssh config; the hub accepts the result as
  * sent.
  */
-export async function repoKeyAtEdge(originUrl: string | undefined | null): Promise<string | undefined> {
+export async function repoKeyAtEdge(
+  originUrl: string | undefined | null,
+): Promise<string | undefined> {
   if (!originUrl) return undefined;
   const machineId = tryGetMachineId();
   let aliasHost: string | undefined;

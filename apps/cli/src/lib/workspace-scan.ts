@@ -10,11 +10,14 @@ import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
 import { basename } from 'node:path';
 import { canonicalWorkspaceRoot, scanWorkspaceProjects } from '@agentbox/relay';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
+import { repoKeyAtEdge } from '@agentbox/sandbox-core';
 
 export interface ScannedProject {
   path: string;
   name: string;
   repoUrl?: string;
+  /** `repoUrl`'s key with this machine's ssh aliases expanded (the hub can't). */
+  repoKey?: string;
 }
 
 export interface WorkspaceScan {
@@ -54,7 +57,13 @@ export async function scanWorkspace(root: string): Promise<WorkspaceScan> {
     ORIGIN_CONCURRENCY,
     async (path): Promise<ScannedProject> => {
       const repoUrl = await readGitOriginUrl(path).catch(() => undefined);
-      return { path, name: basename(path), ...(repoUrl ? { repoUrl } : {}) };
+      const repoKey = await repoKeyAtEdge(repoUrl);
+      return {
+        path,
+        name: basename(path),
+        ...(repoUrl ? { repoUrl } : {}),
+        ...(repoKey ? { repoKey } : {}),
+      };
     },
   );
   const machineId = tryGetMachineId();
