@@ -440,7 +440,7 @@ export function resolveLoginAccount(
   if (id === undefined || id === '' || isDefaultAccount(id)) {
     if (kind !== 'login') {
       throw new Error(
-        `a ${kind} needs a named account: add --account <name> (the default account is the agent's login)`,
+        `${kind === 'api-key' ? 'an API key' : 'a setup token'} needs a named account: add --account <name> (the default account is the agent's login)`,
       );
     }
     if (opts.label !== undefined) {

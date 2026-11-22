@@ -39,3 +39,25 @@ Newest phase last.
 - **Plan's open Phase 0 items** (second OAuth login, codex symlink-on-refresh,
   revocation timing) are unchanged and still gate the docker storage choice for
   codex.
+
+## From Phase 2 (logins)
+
+- **Phase 3: an `api-key` account has no docker volume yet.** Its volume must be
+  seeded at box create with `_claude.json` `customApiKeyResponses.approved`
+  holding the key's last 20 characters (Phase 0 (a′)), and it must never hold an
+  OAuth `.credentials.json`. `stripAccountState` already keeps the host's
+  stored answer out of a named volume.
+- **Phase 3: mount the shared `projects/` volume** (`agentbox-claude-projects`)
+  over a named account volume's `~/.claude/projects`, so `--resume` works
+  across accounts. A named volume today has its own `projects/`.
+- **Phase 3: `agentbox accounts default <agent>/<name>`** writes
+  `<agent>.account`, which Phase 3 introduces; deferred with it.
+- **Re-seeding a named volume on every box create** (Phase 3) must pass
+  `account` to `ensureVolume`, or the host's login is rsynced into it.
+- **Renaming an account id** is not offered: the docker volume, Daytona subpath
+  and custody path all derive from it. A rename would be a copy + remove.
+- **`accounts rm` does not touch custody.** Named accounts never reach custody
+  until Phase 4; add the custody delete then.
+- **Not live-run in Phase 2:** a named OAuth login end to end (it needs a second
+  real account) and a named-volume seed against a real image (the seed is
+  covered by a docker-mocked test). Steps for the coordinator are in the PR.
