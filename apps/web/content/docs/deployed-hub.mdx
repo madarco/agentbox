@@ -585,9 +585,10 @@ the control box's admin token on your machine (written by `agentbox hub setup`; 
 <Callout title="Approval is not execution">
   Answering is one thing, running is another. An approved `git push` executes **on the control box**
   with a leased token, so it works with your laptop off. A host action that inherently targets your
-  laptop's filesystem runs **there**: `cp` is brokered back to your machine and approved there (or
-  served from the hub's cache when it is offline — see below), and `download` still needs your
-  laptop up, whoever approves it.
+  laptop's filesystem runs **there**: `cp` is brokered back to your machine (or another computer
+  with the same repo, or served from the hub's cache when none is on — see below), and its approval
+  shows both there and in the hub's approvals. `download` still needs your laptop up, whoever
+  approves it.
 </Callout>
 
 ## Copying between a box and your files
@@ -630,6 +631,33 @@ your machine, not on the VPS. There is no cached fallback for a tool — with yo
 is told so and nothing runs, because a same-named binary somewhere else is a different program.
 Granting is instant too: `agentbox tools add jq` tells every running box and reports which ones took
 it.
+
+### With several computers
+
+When more than one computer is enrolled ([`agentbox hub login`](#using-the-hub-from-another-computer)),
+the hub decides **which** computer serves a copy, in this order:
+
+1. **The computer the box was created from.** It has the files the box was seeded with.
+2. **Any other connected computer that has the same repo checked out**, most recently seen first.
+   Each computer reports its checkouts to the hub (on `create`, every agent command, `workspace
+add`/`rescan`), keyed by the repo, not the folder, so the same repo at a different path on each
+   machine still counts. The hub hands that computer its **own** folder, and relative paths resolve
+   against it.
+3. **The hub's cache** (`fromHost` only), as above.
+
+A computer with a different checkout, or none, is never asked. A copy that names a path outside the
+repo (`/Users/you/Downloads/x`), and every host tool, goes to the creating computer only. If no
+computer serves it, the box is told which computers were tried and why ("laptop: not connected",
+"desk: declined: its checkout /home/you/app is gone").
+
+A computer that has the repo but never adopted the box adopts it from the hub the first time it
+serves it (the same as `agentbox hub adopt`), so a box created on the hub, or on another computer, is
+served without a manual step.
+
+The approval for a copy is raised where it runs, and **also in the hub**: it appears in the web UI's
+Approvals, the menu-bar app and `agentbox hub approvals`, and in the serving computer's attach footer.
+Answer it in any of them; the others clear. The copy itself still runs on the computer that has the
+files.
 
 How long the hub waits for your machine before falling back is
 [`relay.hostReachTimeoutMs`](/docs/configuration#relay) (60s by default). Your machine long-polls the

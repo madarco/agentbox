@@ -8,6 +8,7 @@
 import { backendOrNull } from '../lib/backend';
 import { fail, ok } from '../lib/envelope';
 import { parseCheckoutFilter, parseCheckoutReport, readJson } from '../lib/validate';
+import { DEVICE_ID_HEADER } from '@/lib/peer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,14 @@ export async function PUT(req: Request): Promise<Response> {
   if (!parsedBody.ok) return fail('invalid_request', parsedBody.message);
   const parsed = parseCheckoutReport(parsedBody.value);
   if (!parsed.ok) return fail('invalid_request', parsed.message);
+  // A PC on its own device token reports its own checkouts only: routing hands
+  // a box's files to whichever machine the registry names, so one PC must not
+  // be able to claim another PC's repos. The header is set by server.ts from
+  // the verified token (a client-supplied copy is stripped).
+  const device = (req.headers.get(DEVICE_ID_HEADER) ?? '').trim();
+  if (device && device !== parsed.value.machineId) {
+    return fail('forbidden', 'a device can only report its own checkouts');
+  }
   const res = await backend.reportCheckouts(parsed.value);
   if (!res.ok) return fail('internal', res.error);
   return ok({ checkouts: res.checkouts });
