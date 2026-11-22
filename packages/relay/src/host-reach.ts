@@ -206,16 +206,7 @@ export class HostReachQueue {
           return;
         }
       }
-      pending.timer = setTimeout(() => {
-        // Still undelivered after the grace window: nobody is listening.
-        if (this.map.get(id) === pending && !pending.delivered) {
-          this.map.delete(id);
-          resolve(this.unreachable(pending, 'never-connected'));
-        }
-      }, this.graceMs);
-      // Node keeps the process alive for pending timers; a parked copy must not
-      // be what holds a relay open on shutdown.
-      pending.timer.unref?.();
+      this.armGrace(pending, 'never-connected');
       this.map.set(id, pending);
       this.ensureSweep();
       this.handOff();
@@ -316,8 +307,15 @@ export class HostReachQueue {
     };
   }
 
-  /** Whether `deviceId` has a poller present within the reachability window. */
+  /**
+   * Whether `deviceId` is present: it holds an open event stream (the
+   * connection IS its presence, whatever the heartbeat interval), or a poller
+   * of it polled within the reachability window.
+   */
   private devicePresent(deviceId: string): boolean {
+    for (const sub of this.subscribers) {
+      if (this.pollerDevice.get(sub.pollerId) === deviceId) return true;
+    }
     const now = this.now();
     for (const [pollerId, dev] of this.pollerDevice) {
       if (dev !== deviceId) continue;
@@ -487,14 +485,7 @@ export class HostReachQueue {
     // action could sit undelivered forever and the box would wait on a copy no
     // machine is ever going to make. Re-armed, an unclaimed decline falls
     // through to the cache / outbox / error like any other unreachable copy.
-    if (pending.timer) clearTimeout(pending.timer);
-    pending.timer = setTimeout(() => {
-      if (this.map.get(id) === pending && !pending.delivered) {
-        this.map.delete(id);
-        pending.settle(this.unreachable(pending, 'never-connected'));
-      }
-    }, this.graceMs);
-    pending.timer.unref?.();
+    this.armGrace(pending, 'never-connected');
     // Another machine may already be waiting for work.
     this.handOff();
     return true;
@@ -642,6 +633,32 @@ export class HostReachQueue {
     }
   }
 
+  /**
+   * (Re)start an undelivered action's grace window. When it ends, a routed
+   * action first goes to whichever candidate is present NOW (the one it was
+   * waiting for may have lapsed meanwhile, which no poll announces), and keeps
+   * waiting while one is; only then does it settle as unreachable.
+   */
+  private armGrace(pending: Pending, reason: HostReachUnreachable): void {
+    const id = pending.action.id;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = setTimeout(() => {
+      if (this.map.get(id) !== pending || pending.delivered) return;
+      if (pending.route && !this.exhausted(pending)) {
+        if (this.offerToWaiter(pending)) return;
+        if (this.currentTarget(pending) !== undefined) {
+          this.armGrace(pending, reason);
+          return;
+        }
+      }
+      this.map.delete(id);
+      pending.settle(this.unreachable(pending, reason));
+    }, this.graceMs);
+    // Node keeps the process alive for pending timers; a parked copy must not
+    // be what holds a relay open on shutdown.
+    pending.timer.unref?.();
+  }
+
   private ensureSweep(): void {
     if (this.sweepTimer) return;
     this.sweepTimer = setInterval(() => this.sweep(), this.sweepIntervalMs);
@@ -664,7 +681,13 @@ export class HostReachQueue {
     }
     const now = this.now();
     for (const [id, pending] of this.map) {
-      if (!pending.delivered) continue;
+      if (!pending.delivered) {
+        // The device a routed action was waiting for can lapse with nothing
+        // announcing it (a killed relay sends no goodbye): offer it to the
+        // candidate that is present now, which may already be connected.
+        if (pending.route) this.offerToWaiter(pending);
+        continue;
+      }
       // Ask whether THIS action's owner is still alive, not whether anyone is.
       // A global "someone polled recently" check hangs the box whenever another
       // machine keeps polling: the owner is gone, the survivor already declined
@@ -688,14 +711,7 @@ export class HostReachQueue {
       // waiter right now) waits for that machine's next poll, under a fresh
       // grace window, instead of failing over to the cache.
       if (pending.route && this.currentTarget(pending) !== undefined) {
-        if (pending.timer) clearTimeout(pending.timer);
-        pending.timer = setTimeout(() => {
-          if (this.map.get(id) === pending && !pending.delivered) {
-            this.map.delete(id);
-            pending.settle(this.unreachable(pending, 'went-away'));
-          }
-        }, this.graceMs);
-        pending.timer.unref?.();
+        this.armGrace(pending, 'went-away');
         continue;
       }
       this.map.delete(id);

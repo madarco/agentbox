@@ -323,3 +323,69 @@ describe('hostReachRouteFor', () => {
     });
   });
 });
+
+describe('HostReachQueue presence over a stream', () => {
+  it('counts a device with an open stream as present, however long since its heartbeat', async () => {
+    let now = 1_000;
+    const q = new HostReachQueue({ graceMs: 10_000, reachTimeoutMs: 100, now: () => now });
+    q.identify('sa', 'pc-a');
+    const got: string[] = [];
+    const unsubscribe = q.subscribe('sa', (actions) => got.push(...actions.map((a) => a.id)));
+    // Longer than the reach window with no heartbeat (a 15s heartbeat against a
+    // 10s `relay.hostReachTimeoutMs`): the open stream still makes it present.
+    now += 500;
+    const pending = q.request(
+      'box1',
+      'cp.fromHost',
+      {},
+      {
+        route: { candidates: [{ deviceId: 'pc-a', folder: '/a' }] },
+      },
+    );
+    await new Promise((r) => setImmediate(r));
+    expect(got).toHaveLength(1);
+    q.resolve(got[0]!, { exitCode: 0, stdout: '', stderr: '' }, 'sa');
+    await expect(pending).resolves.toMatchObject({ kind: 'result' });
+    unsubscribe();
+  });
+});
+
+describe('HostReachQueue failover when the origin dies silently', () => {
+  it('hands the action to an already-connected PC once the origin lapses (no poll announces it)', async () => {
+    let now = 1_000;
+    const q = new HostReachQueue({
+      graceMs: 10_000,
+      reachTimeoutMs: 100,
+      sweepIntervalMs: 10,
+      now: () => now,
+    });
+    // pc-a polled a moment ago (so it still counts as present), then its relay died.
+    q.identify('pa', 'pc-a');
+    q.touch('pa');
+    // pc-b is connected over the stream and stays that way.
+    q.identify('sb', 'pc-b');
+    const got: string[] = [];
+    q.subscribe('sb', (actions) => got.push(...actions.map((a) => a.route?.folder ?? '?')));
+    const pending = q.request(
+      'box1',
+      'cp.fromHost',
+      {},
+      {
+        route: {
+          candidates: [
+            { deviceId: 'pc-a', folder: '/a' },
+            { deviceId: 'pc-b', folder: '/b' },
+          ],
+        },
+      },
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    // pc-a is the target while it looks present: pc-b is not offered it yet.
+    expect(got).toEqual([]);
+    now += 150; // pc-a lapses
+    await new Promise((r) => setTimeout(r, 40)); // a sweep runs
+    expect(got).toEqual(['/b']);
+    void pending;
+    q.stop();
+  });
+});
