@@ -200,7 +200,10 @@
         },
         "daytonaClass": {
           "type": "string",
-          "enum": ["linux-vm", "container"]
+          "enum": [
+            "linux-vm",
+            "container"
+          ]
         },
         "daytonaRegion": {
           "type": "string",
@@ -268,10 +271,17 @@
           "type": "boolean"
         },
         "install": {
-          "enum": ["native", "npm"]
+          "enum": [
+            "native",
+            "npm"
+          ]
         },
         "tui": {
-          "enum": ["default", "fullscreen", "auto"]
+          "enum": [
+            "default",
+            "fullscreen",
+            "auto"
+          ]
         },
         "account": {
           "type": "string",
@@ -359,7 +369,12 @@
       "additionalProperties": false,
       "properties": {
         "openIn": {
-          "enum": ["split", "window", "tab", "same"]
+          "enum": [
+            "split",
+            "window",
+            "tab",
+            "same"
+          ]
         },
         "cmuxStatus": {
           "type": "boolean"
@@ -374,10 +389,17 @@
       "additionalProperties": false,
       "properties": {
         "carrier": {
-          "enum": ["auto", "pty", "tmux"]
+          "enum": [
+            "auto",
+            "pty",
+            "tmux"
+          ]
         },
         "lifetime": {
-          "enum": ["leased", "persistent"]
+          "enum": [
+            "leased",
+            "persistent"
+          ]
         },
         "leaseGraceSeconds": {
           "type": "integer"
@@ -386,7 +408,11 @@
           "type": "integer"
         },
         "windowSize": {
-          "enum": ["latest", "smallest", "largest"]
+          "enum": [
+            "latest",
+            "smallest",
+            "largest"
+          ]
         },
         "submitDelayMs": {
           "type": "integer"
@@ -401,7 +427,11 @@
       "additionalProperties": false,
       "properties": {
         "ide": {
-          "enum": ["vscode", "cursor", "auto"]
+          "enum": [
+            "vscode",
+            "cursor",
+            "auto"
+          ]
         },
         "wait": {
           "type": "boolean"
@@ -435,7 +465,12 @@
       "additionalProperties": false,
       "properties": {
         "kind": {
-          "enum": ["orbstack", "docker-desktop", "other", "auto"]
+          "enum": [
+            "orbstack",
+            "docker-desktop",
+            "other",
+            "auto"
+          ]
         }
       }
     },
@@ -444,7 +479,11 @@
       "additionalProperties": false,
       "properties": {
         "default": {
-          "enum": ["agent-browser", "playwright", "both"]
+          "enum": [
+            "agent-browser",
+            "playwright",
+            "both"
+          ]
         }
       }
     },
@@ -483,7 +522,12 @@
       "additionalProperties": false,
       "properties": {
         "pushMode": {
-          "enum": ["auto", "relay", "lease", "direct"]
+          "enum": [
+            "auto",
+            "relay",
+            "lease",
+            "direct"
+          ]
         }
       }
     },
@@ -492,10 +536,17 @@
       "additionalProperties": false,
       "properties": {
         "gitAuth": {
-          "enum": ["gh", "app"]
+          "enum": [
+            "gh",
+            "app"
+          ]
         },
         "mode": {
-          "enum": ["auto", "thin", "local"]
+          "enum": [
+            "auto",
+            "thin",
+            "local"
+          ]
         }
       }
     },
@@ -589,7 +640,12 @@
           "type": "integer"
         },
         "openIn": {
-          "enum": ["none", "split", "window", "tab"]
+          "enum": [
+            "none",
+            "split",
+            "window",
+            "tab"
+          ]
         }
       }
     },
@@ -613,7 +669,11 @@
           "type": "boolean"
         },
         "channel": {
-          "enum": ["auto", "stable", "nightly"]
+          "enum": [
+            "auto",
+            "stable",
+            "nightly"
+          ]
         },
         "registry": {
           "type": "string"
