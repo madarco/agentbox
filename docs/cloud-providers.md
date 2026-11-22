@@ -57,7 +57,9 @@ build images from a Dockerfile). Three things differ from Hetzner:
   attaching from a second PC no longer locks the first one out (it used to be
   "last PC wins"). The list is capped at `DEVICE_ALLOWLIST_CAP` (10): past it
   the oldest `seen` goes first. An entry written by the control box
-  (`AGENTBOX_HUB_WORKER=on`) is flagged `hub` and never evicted; a hub create
+  (`AGENTBOX_HUB_WORKER=on`) is flagged `hub`, and the newest `hub` entry is
+  never evicted (an older one is the same control box under a previous key
+  and ages out normally); a hub create
   also writes the admin PC CIDR as an `admin` entry. The entries live on the
   provider so another PC reads them: Hetzner as one tcp/22 rule per device
   with `description: agentbox-device key=<k> host=<label> seen=<epoch>[ hub][ pinned]`;
@@ -91,11 +93,14 @@ build images from a Dockerfile). Three things differ from Hetzner:
   prefix, or the `hub` flag trigger a rewrite). The update is read → write →
   re-read (up to 3 tries): neither API has a conditional write, so two PCs
   repairing one box at once could drop each other's entry, and the re-read
-  catches that. The machine key is a random id minted once into
-  `~/.agentbox/device-key` (not the hostname: two Macs named `MacBook-Pro`
-  would share it, and macOS hostnames flip); the hostname is only a label.
-  `localMachineKey()` in `@agentbox/sandbox-core` (`device-allowlist.ts`) is
-  the one function to switch to `getMachineId()` once that lands.
+  catches that. The machine key is `getMachineId()` from `@agentbox/config`
+  (`~/.agentbox/machine-id`, the identity every multi-PC record uses) without
+  its hyphens, 32 hex chars to fit a DO tag field; the hostname is only a
+  label. `localMachineKey()` in `@agentbox/sandbox-core`
+  (`device-allowlist.ts`) is the one place it is derived. Entries written
+  under an earlier key (the pre-release `~/.agentbox/device-key` id) are not
+  migrated: the machine writes a fresh entry and the old one ages out through
+  the cap.
 - **The relay watches the egress IP** (`packages/relay/src/egress-watch.ts`,
   started by `startRelayDaemon`). On start and every 5 minutes it reads
   `state.json`; with no running, non-`open` hetzner/digitalocean box it stops

@@ -7,8 +7,8 @@
  * per-machine key, holding its own egress CIDRs. A machine only ever replaces
  * its own entry; the others are carried over untouched. The set is bounded by
  * {@link DEVICE_ALLOWLIST_CAP}: past it, the least recently written entries go
- * first. An entry written by the control box (`hub`) is never evicted, because
- * the hub must keep reaching the boxes it manages.
+ * first. The newest entry written by the control box (`hub`) is never evicted,
+ * because the hub must keep reaching the boxes it manages.
  *
  * The entries live ON the provider (Hetzner rule descriptions, DigitalOcean
  * droplet tags), not host-side, so a second PC reading the box sees who owns
@@ -16,17 +16,13 @@
  * providers encode/decode and do the API I/O.
  */
 
-import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
-import { dirname, join } from 'node:path';
+import { getMachineId, getMachineLabel } from '@agentbox/config';
 import {
   cidrKey,
   detectEgressCidr,
   detectEgressIpv6,
   type DetectEgressIpOptions,
 } from './egress-ip.js';
-import { STATE_DIR } from './state.js';
 
 export interface DeviceAllowEntry {
   /** Stable per-machine key (see {@link localMachineKey}). */
@@ -36,8 +32,9 @@ export interface DeviceAllowEntry {
   /** When the owning machine last wrote the entry, epoch seconds. 0 = unknown. */
   seen: number;
   /**
-   * Written by the control box: never evicted by the cap. Sticky: a non-hub
-   * writer on the same key (the CLI on a `hub expose` Mac) keeps it.
+   * Written by the control box: the newest such entry is never evicted by the
+   * cap. Sticky: a non-hub writer on the same key (the CLI on a `hub expose`
+   * Mac) keeps it.
    */
   hub?: boolean;
   /**
@@ -60,38 +57,25 @@ export const LEGACY_DEVICE_KEY = 'legacy';
 /** Key for the admin PC CIDR a control box adds when it creates a box. */
 export const ADMIN_DEVICE_KEY = 'admin';
 
-export const DEVICE_KEY_FILE = join(STATE_DIR, 'device-key');
-
 /**
- * This machine's key on box firewalls. The single seam for machine identity:
- * once `getMachineId()` (`~/.agentbox/machine-id`, branch `feat/machine-id`)
- * lands, derive the key from it here and nothing else changes.
+ * This machine's key on box firewalls: `getMachineId()` (`~/.agentbox/machine-id`,
+ * the identity every other multi-PC record uses) without its hyphens — 32 hex
+ * chars, which fits the `[a-z0-9-]{1,32}` a Hetzner description and a
+ * DigitalOcean tag field allow. Throws like `getMachineId()` when no id can be
+ * read or minted (an unwritable `$HOME`): a firewall write under a made-up key
+ * would add a new entry on every run. The hostname rides along as a label only.
  *
- * Until then: a random id minted once into `~/.agentbox/device-key`. Not the
- * hostname — two Macs both named `MacBook-Pro` would share a key and replace
- * each other's entry, and macOS hostnames flip (`-2` suffix, DHCP names),
- * which would pile up entries. The hostname rides along as a label only.
+ * Entries written under an earlier key (a hostname, or a `~/.agentbox/device-key`
+ * id from before the machine id) are not migrated: this machine writes a fresh
+ * entry and the old one ages out through the cap like any stale entry.
  */
-export function localMachineKey(file: string = DEVICE_KEY_FILE): string {
-  try {
-    const existing = sanitizeDeviceKey(readFileSync(file, 'utf8'));
-    if (existing) return existing;
-  } catch {
-    // first use on this machine
-  }
-  const minted = randomBytes(6).toString('hex');
-  try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, minted + '\n', { mode: 0o600 });
-  } catch {
-    // unwritable home: the key is per-process then, and the extra entry ages out
-  }
-  return minted;
+export function localMachineKey(): string {
+  return getMachineId().replace(/-/g, '');
 }
 
 /** The label shown next to this machine's entry. */
 export function localMachineLabel(): string {
-  return sanitizeDeviceKey(hostname()).slice(0, 24).replace(/-+$/, '') || 'host';
+  return sanitizeDeviceKey(getMachineLabel()).slice(0, 24).replace(/-+$/, '') || 'host';
 }
 
 /**
@@ -234,9 +218,11 @@ export function selfDeviceEntry(
 /**
  * Put `self` into `entries`: its old entry (same key) is replaced, every other
  * key is kept as is, then the cap is applied. Eviction order: oldest `seen`
- * first, never `self` and never a `hub` entry. A `hub` flag already on the old
- * entry is kept (sticky; pass `clearHub` to drop it on purpose). Returns a new
- * array.
+ * first, never `self` and never the NEWEST `hub` entry. A box answers to one
+ * control box, so an older `hub` entry is that control box under a previous key
+ * (before the machine id) and ages out like any stale entry instead of being
+ * protected forever. A `hub` flag already on the old entry is kept (sticky;
+ * pass `clearHub` to drop it on purpose). Returns a new array.
  */
 export function upsertDeviceEntry(
   entries: readonly DeviceAllowEntry[],
@@ -248,8 +234,13 @@ export function upsertDeviceEntry(
   const mine = prev?.hub && !self.hub && !opts.clearHub ? { ...self, hub: true } : self;
   const others = entries.filter((e) => e.key !== self.key);
   const out = [...others, mine];
+  const hubs = out.filter((e) => e.hub);
+  const currentHub = hubs.reduce<DeviceAllowEntry | undefined>(
+    (best, e) => (best && best.seen >= e.seen ? best : e),
+    undefined,
+  );
   const evictable = others
-    .filter((e) => !e.hub)
+    .filter((e) => e !== currentHub)
     .sort((a, b) => a.seen - b.seen || a.key.localeCompare(b.key));
   while (out.length > cap && evictable.length > 0) {
     const victim = evictable.shift();

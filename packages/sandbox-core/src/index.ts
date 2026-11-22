@@ -99,7 +99,6 @@ export {
 export {
   ADMIN_DEVICE_KEY,
   DEVICE_ALLOWLIST_CAP,
-  DEVICE_KEY_FILE,
   LEGACY_DEVICE_KEY,
   ipv4Cidrs,
   localMachineLabel,

@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -42,9 +42,9 @@ describe('upsertDeviceEntry', () => {
     expect(upsertDeviceEntry(many, e('me', 100))).toHaveLength(DEVICE_ALLOWLIST_CAP);
   });
 
-  it('keeps hub entries even past the cap when nothing else is evictable', () => {
+  it('protects only the newest hub entry: an older one (same control box, old key) is evictable', () => {
     const hubs = [e('h1', 1, '1.1.1.1/32', true), e('h2', 2, '2.2.2.2/32', true)];
-    expect(upsertDeviceEntry(hubs, e('me', 3), 2)).toHaveLength(3);
+    expect(upsertDeviceEntry(hubs, e('me', 3), 2).map((x) => x.key)).toEqual(['h2', 'me']);
   });
 });
 
@@ -144,11 +144,66 @@ describe('review fixes', () => {
     expect(deviceEntryNeedsUpdate([mine], [], 'me', ['5.5.5.5/32'], true)).toBe(true);
   });
 
-  it('localMachineKey mints once and then reuses the persisted key', () => {
-    const file = join(mkdtempSync(join(tmpdir(), 'devkey-')), 'device-key');
-    const k = localMachineKey(file);
-    expect(k).toMatch(/^[0-9a-f]{12}$/);
-    expect(localMachineKey(file)).toBe(k);
+  it('localMachineKey is the machine id without hyphens, and fits a DO tag field', () => {
+    const home = mkdtempSync(join(tmpdir(), 'mid-'));
+    const prev = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const k = localMachineKey();
+      expect(k).toMatch(/^[0-9a-f]{32}$/);
+      expect(sanitizeDeviceKey(k)).toBe(k);
+      expect(
+        readFileSync(join(home, '.agentbox', 'machine-id'), 'utf8')
+          .trim()
+          .replace(/-/g, ''),
+      ).toBe(k);
+      expect(existsSync(join(home, '.agentbox', 'device-key'))).toBe(false);
+    } finally {
+      process.env.HOME = prev;
+    }
+  });
+});
+
+describe('an entry under an old key ages out (machine-id switch)', () => {
+  const now = 1_000_000;
+  const others = Array.from({ length: 8 }, (_, i) => e(`pc${String(i)}`, now - 100 + i));
+
+  it('a non-hub entry under the old key is evicted once the cap is reached', () => {
+    const old: DeviceAllowEntry = { key: 'd795d9d370ba', cidrs: ['5.5.5.5/32'], seen: now - 500 };
+    const mine: DeviceAllowEntry = { key: 'f'.repeat(32), cidrs: ['5.5.5.5/32'], seen: now };
+    let list = upsertDeviceEntry([old, ...others], mine);
+    expect(list.map((x) => x.key)).toContain('d795d9d370ba'); // 10 entries: still under the cap
+    list = upsertDeviceEntry(list, e('newcomer', now + 1));
+    expect(list.map((x) => x.key)).not.toContain('d795d9d370ba');
+  });
+
+  it("the control box's old-key hub entry is no longer protected once its new hub entry exists", () => {
+    const oldHub: DeviceAllowEntry = {
+      key: 'oldhubkey',
+      cidrs: ['9.9.9.9/32'],
+      seen: now - 900,
+      hub: true,
+    };
+    const newHub: DeviceAllowEntry = {
+      key: 'a'.repeat(32),
+      cidrs: ['9.9.9.9/32'],
+      seen: now,
+      hub: true,
+    };
+    let list = upsertDeviceEntry([oldHub, ...others], newHub);
+    list = upsertDeviceEntry(list, e('newcomer', now + 1));
+    const keys = list.map((x) => x.key);
+    expect(keys).not.toContain('oldhubkey');
+    expect(keys).toContain('a'.repeat(32));
+  });
+
+  it('the newest hub entry stays protected even when it is the oldest entry overall', () => {
+    const hub: DeviceAllowEntry = { key: 'hub', cidrs: ['9.9.9.9/32'], seen: 1, hub: true };
+    const crowd = Array.from({ length: 12 }, (_, i) => e(`c${String(i)}`, now + i));
+    let list: DeviceAllowEntry[] = [hub];
+    for (const c of crowd) list = upsertDeviceEntry(list, c);
+    expect(list.map((x) => x.key)).toContain('hub');
+    expect(list).toHaveLength(10);
   });
 });
 
