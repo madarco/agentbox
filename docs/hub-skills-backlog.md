@@ -57,18 +57,6 @@ delivery to boxes, no web page (Phase 1b).
   do today.
 - **Version retention is a constant (newest 5).** Promote to a config key only
   if someone asks.
-- **The hub trusts the uploader's tree hash.** `importSkill` stores the tarball
-  under the client-stated `sha256` and records its size and file count as
-  stated. Verification happens on download (the PC re-derives the hash and
-  refuses a mismatch), so a bad upload can't install the wrong files anywhere,
-  but it can overwrite another version's tarball and make that version
-  undownloadable. Verifying on the hub means parsing the tarball there (a
-  pure-JS reader like the CLI's, shared through a package the hub routes can
-  import). From the Phase 1 review; the uploader is an authenticated owner.
-- **`meta.json` is read-modify-write without a lock.** Two concurrent uploads of
-  the same skill can drop one version entry and orphan its tarball. Rare (one
-  owner, uploads are explicit, the seed runs once per hub); needs a per-skill
-  lock or compare-and-swap in custody. From the Phase 1 review.
 - **The generic custody PUT routes can write the `skills/` scope directly**
   (`/api/v1/custody/{path}`, `/api/v1/custody/blob/{path}`), bypassing the
   skills name/reserved-prefix checks, and could write `skills/.seeded`. Same
@@ -77,3 +65,67 @@ delivery to boxes, no web page (Phase 1b).
 - **The per-PC seeded memo keys hubs by URL.** A local hub that is wiped and
   recreated at the same `http://127.0.0.1:8787` reads as already seeded here;
   `agentbox skills --upload-all` covers it.
+
+## From the independent review of PR #434 (2026-11-22)
+
+`/workspace/REVIEW-434.md`. Finding 1 (BLOCKING: the scan missed `.env`-style
+secrets) is fixed in the PR. The rest are below.
+
+- **MUST-FIX before skills reach a remote control box: symlinks are followed
+  out of the skill tree.** `readSkillTree` (`apps/cli/src/lib/skills/tree.ts`)
+  dereferences every link wherever it points, so a skill holding
+  `refs -> ~/Projects/app` uploads that checkout (its `.env` included) up to the
+  50 MB cap. The plan's Security list says out-of-tree links are rejected; its
+  Data-model paragraph says they're resolved on the host. The existing carry
+  behaves the same, so not a regression. Fix: resolve a link only when its
+  realpath stays under the skill root (or under `~/.agents/skills` /
+  `~/.claude/skills` for the usual cross-link); otherwise record a problem.
+- **MUST-FIX before skills reach a remote control box: the tarball route uses
+  the normal `/api/v1` gate, not custody's elevated byte read.**
+  `api/v1/skills/[name]/tarball/route.ts`: any holder of the distributed API key
+  (tray, thin clients) or a device token can read every skill's bytes. Safe only
+  while the PC-side scan is trustworthy and `--allow-findings` is rare. Options:
+  a device-scoped read, or the elevated read for versions uploaded with findings
+  overridden.
+- **The hub trusts the uploader's tree sha and writes the tarball first.**
+  `importSkill` `putStream`s to `<meta.sha256>.tar.gz` before reading meta, so an
+  upload claiming an existing version's sha with different bytes overwrites the
+  good tarball (every download of it then fails the PC-side hash check; nothing
+  wrong is installed). Concurrent imports of one skill also race on `meta.json`
+  and can drop a version entry / orphan a tarball. Fix: stream to a temp custody
+  path and promote, refuse to replace an existing `<sha>.tar.gz` whose bytes
+  differ, serialize per-skill meta writes; verifying the tree hash on the hub
+  needs a tar reader the hub routes can import.
+- **`GET /api/v1/skills` reads every stored tarball in full.** `listSkills` →
+  `FsCustodyStore.list` → `readEntry` `readFile`s and hashes each match (up to 5
+  versions × N skills, each up to 100 MiB) on every `agentbox skills`, every
+  create until the memo is written, and the `/custody` page. Fix: a stat-only /
+  streamed-hash listing (`readEntryMeta`).
+- **The auto-seed retries on every create when the hub can't answer.** The memo
+  is written only after a successful listing; an older hub (404 on
+  `/api/v1/skills`) or a no-custody hub (`backend_unavailable`) costs a health +
+  list call per create, `health()` has no timeout, and `create-action.ts` passes
+  no `debug` so the reason is hidden. Fix: memo `not_found` /
+  `backend_unavailable` per hub URL + version, short `timeoutMs` on the seed's
+  calls.
+- **The download prompt names `r.local.dir`, the write goes to
+  `~/.agents/skills/<name>`.** A copy discovered in `~/.codex/skills` or
+  `~/.config/opencode/skills` is named in the prompt but left untouched and
+  unreported (codex/opencode then see two same-named skills); and when
+  `~/.agents/skills/<name>` exists but discovery ignored it (no `SKILL.md`) while a
+  different claude copy was discovered, confirming replaces the `~/.agents` dir
+  the prompt never named. Fix: prompt with the actual target and report every
+  other location left in place (`alsoAt` has them).
+- **Description over 2048 chars** is rejected by the hub and not truncated by
+  the CLI, so such a skill shows as `failed` in the seed (the spec caps 1024).
+- **Case collisions:** on a case-insensitive FS a tarball with both `a.md` and
+  `A.md` passes the tree-hash check but only one file lands.
+- **Phase 2:** the hub never validates tarball contents; the zip-slip / symlink
+  guard is only the CLI's `readTar`. The box-side materializer must reuse it (or
+  an equivalent), never `tar -x`.
+- **Seed latency:** the first-create seed reads every local skill into memory and
+  uploads inline before the create continues, with no spinner.
+- **The `.npmrc` name rule flags registry-only files** (seen in four plugin
+  folders in this owner's `~/.claude/plugins`; plugins aren't seeded). A skill
+  shipping a registry-only `.npmrc` gets a confirm; narrowing it to files holding
+  `_auth` / `_authToken` would remove that.

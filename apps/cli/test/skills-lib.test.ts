@@ -172,7 +172,10 @@ describe('secret scan', () => {
   it('flags real-looking secrets with rule, path and line only', () => {
     const key = 'ghp_' + 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3hJ5';
     const f = scanSkillFiles([file('SKILL.md', `line one\nexport GITHUB_TOKEN=${key}\n`)]);
-    expect(f).toEqual([{ rule: 'github-token', path: 'SKILL.md', line: 2 }]);
+    expect(f).toEqual([
+      { rule: 'github-token', path: 'SKILL.md', line: 2 },
+      { rule: 'env-assignment', path: 'SKILL.md', line: 2 },
+    ]);
     expect(JSON.stringify(f)).not.toContain(key);
   });
 
@@ -203,6 +206,75 @@ describe('secret scan', () => {
     const fixture = 'sk-ant-' + 'Zq8Lm2Np4Rs6Tv8Xz0Bd2Fh4Jk6Mn8Pq0St2Vx4Za';
     expect(scanSkillFiles([file('tests/redaction.test.ts', `const t = "${fixture}"`)])).toEqual([]);
     expect(scanSkillFiles([file('src/x.ts', `const t = "${fixture}"`)])).toHaveLength(1);
+  });
+
+  it('catches the .env-style secrets the PR #434 review found missed', () => {
+    // The review's examples, each previously returning [] for a file named `.env`.
+    const rules = (text: string, path = 'scripts/config.txt') =>
+      scanSkillFiles([file(path, text)]).map((f) => f.rule);
+    expect(rules('API_KEY=Zk3q9XbP2mLw7RtY8vN4cJ6hD1sF0gQa')).toEqual(['env-assignment']);
+    expect(rules('REPLICATE_API_TOKEN=r8_Hk2Lm9Pq4Rt7Vx1Zb3Nd6Fg8Jw0Ys5Ce2')).toEqual([
+      'env-assignment',
+    ]);
+    expect(rules('DATABASE_URL=postgres://admin:S3cr3tPassw0rd!@db.internal:5432/app')).toEqual([
+      'url-credentials',
+    ]);
+    expect(rules('token: Zk3q9XbP2mLw7RtY8vN4cJ6hD1sF0gQa')).toEqual(['env-assignment']);
+    expect(rules('  export FAL_KEY=a1B2c3D4e5F6g7H8i9J0kLmN')).toEqual(['env-assignment']);
+    // And in a file named `.env`, the name alone is a finding too.
+    expect(rules('API_KEY=Zk3q9XbP2mLw7RtY8vN4cJ6hD1sF0gQa', '.env')).toEqual([
+      'secret-file',
+      'env-assignment',
+    ]);
+  });
+
+  it('flags credential files by name, not templates or public keys', () => {
+    const named = (path: string) =>
+      scanSkillFiles([file(path, 'nothing secret in here')]).some((f) => f.rule === 'secret-file');
+    for (const p of [
+      '.env',
+      '.env.local',
+      'scripts/.env.production',
+      'certs/server.pem',
+      'tls.key',
+      'id_rsa',
+      'keys/id_ed25519',
+      '.netrc',
+      '.npmrc',
+      '.pypirc',
+      'credentials.json',
+      'gcp/credentials-prod.json',
+    ]) {
+      expect(named(p), p).toBe(true);
+    }
+    for (const p of [
+      '.env.example',
+      '.env.sample',
+      'id_rsa.pub',
+      'keys.md',
+      'SKILL.md',
+      'monkey.ts',
+    ]) {
+      expect(named(p), p).toBe(false);
+    }
+  });
+
+  it('keeps the placeholder filters for the new rules', () => {
+    const none = (text: string) => expect(scanSkillFiles([file('.env.example', text)])).toEqual([]);
+    none('API_KEY=your-api-key-here-xxxxxxxx');
+    none('API_KEY=<YOUR_API_KEY_GOES_HERE>');
+    none('OPENAI_API_KEY=$OPENAI_API_KEY_FROM_THE_ENV');
+    none('TOKEN=${GITHUB_TOKEN_FROM_ENVIRONMENT}');
+    none('SSH_KEY_PATH=~/.ssh/id_ed25519_for_deploys');
+    none('PASSWORD=aaaaaaaaaaaaaaaaaaaa');
+    none('DATABASE_URL=postgres://user:password@localhost:5432/app');
+    none('REDIS_URL=redis://default:${REDIS_PASSWORD}@redis:6379');
+    none('commit: 0123456789abcdef0123456789abcdef01234567');
+    // Source code, not literals (each was a real false positive in Phase 1 data).
+    none('    api_key = get_api_key(args.api_key)');
+    none('    combineTokensWithinMilliseconds: SWITCH_CAPTIONS_EVERY_MS,');
+    none('      total_tokens: s.subagentTokens,');
+    none('    unexpected_keys = set(frontmatter.keys()) - ALLOWED_PROPERTIES');
   });
 
   it('skips binary files', () => {

@@ -92,11 +92,14 @@ The table compares each skill by content: `same`, `differs` (with which side cha
 - **Upload** keeps the hub's older versions (the newest 5 per skill).
 
 <Callout type="warn" title="SECRET SCAN">
-  Before a skill leaves your PC it is scanned for credentials (private keys, cloud and LLM API keys,
-  tokens). Documentation placeholders such as `YOUR_API_KEY`, git hashes and test fixtures are
-  ignored. A flagged skill is skipped by the automatic seed and named in its summary; upload it from
-  `agentbox skills` after reviewing the finding, or with `--allow-findings`. Findings name the file
-  and line, never the value.
+  Before a skill leaves your PC it is scanned for credentials: private keys, cloud and LLM API keys,
+  tokens, `KEY=value` / `key: value` lines naming a secret, passwords inside URLs, and files whose
+  name says they hold credentials (`.env*`, `*.pem`, `*.key`, `id_*` private keys, `.netrc`,
+  `.npmrc`, `.pypirc`, `credentials*.json`; `.env.example`-style templates excepted). Documentation
+  placeholders such as `YOUR_API_KEY`, git hashes and test fixtures are ignored. A flagged skill is
+  skipped by the automatic seed and named in its summary; upload it from `agentbox skills` after
+  reviewing the finding, or with `--allow-findings`. Findings name the file and line, never the
+  value.
 </Callout>
 
 A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. Boxes don't read the library yet; until they do, they keep receiving skills the way described above.
