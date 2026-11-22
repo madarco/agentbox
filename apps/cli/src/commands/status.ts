@@ -1,4 +1,6 @@
 import { log } from '@clack/prompts';
+import { findAccount, namedAccounts } from '@agentbox/core';
+import { readAccounts } from '@agentbox/sandbox-core';
 import { Command } from 'commander';
 import type { BoxStatus } from '@agentbox/ctl';
 import { boxResourceStats, inspectBox, type InspectedBox } from '@agentbox/sandbox-docker';
@@ -121,6 +123,9 @@ export const statusCommand = withWatchOptions(
           {
             state: inspected.state,
             persistent: inspected.record.persistent === true,
+            ...(namedAccounts(inspected.record.accounts)
+              ? { accounts: namedAccounts(inspected.record.accounts) }
+              : {}),
             source: live ? 'live' : 'persisted',
             ...(live ?? {}),
             resources,
@@ -154,6 +159,8 @@ async function buildStatusText(id: string, container: string): Promise<string> {
       '',
     );
   }
+  const acctLines = await renderAccounts(inspected.record.accounts);
+  if (acctLines.length > 0) out.push('ACCOUNTS', ...acctLines, '');
   const epLines = renderEndpointLines(endpoints, process.stdout);
   if (epLines.length > 0) {
     out.push('ENDPOINTS', epLines.join('\n'), '');
@@ -177,6 +184,18 @@ async function buildStatusText(id: string, container: string): Promise<string> {
   }
   out.push('', renderPersisted(persistedStatus, state));
   return out.join('\n');
+}
+
+/** The box's named LLM accounts (`claude  work (Work laptop, login)`); none on default. */
+async function renderAccounts(accounts: Record<string, string> | undefined): Promise<string[]> {
+  const named = namedAccounts(accounts);
+  if (!named) return [];
+  const file = await readAccounts().catch(() => null);
+  return Object.entries(named).map(([agent, id]) => {
+    const row = file ? findAccount(file, agent, id) : undefined;
+    const meta = [row?.label, row?.kind].filter((x): x is string => Boolean(x)).join(', ');
+    return `  ${agent}  ${id}${meta ? ` (${meta})` : row ? '' : ' (not in this machine\'s store)'}`;
+  });
 }
 
 function renderResources(s: BoxResourceStats): string {

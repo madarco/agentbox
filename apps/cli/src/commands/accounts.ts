@@ -7,23 +7,10 @@
  * which account a box uses is Phase 3 (`<agent>.account`, `--account`).
  */
 import { Command } from 'commander';
-import { execa } from 'execa';
 import { confirm, isCancel, log } from '@agentbox/cli-kit';
-import {
-  accountConfigVolume,
-  findAccount,
-  isDefaultAccount,
-  type LlmAccount,
-} from '@agentbox/core';
-import {
-  boxesOnAccount,
-  readAccounts,
-  readAccountSecret,
-  readState,
-  removeAccount,
-  resolveAgentSpec,
-  upsertAccount,
-} from '@agentbox/sandbox-core';
+import { accountConfigVolume, isDefaultAccount } from '@agentbox/core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { withHubClient } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
 import { describeIdentity } from '../lib/account-login.js';
 
@@ -42,34 +29,33 @@ function fail(err: unknown): never {
 }
 
 async function listAccounts(opts: { json?: boolean }): Promise<void> {
-  const { accounts } = await readAccounts();
-  const rows = await Promise.all(
-    accounts.map(async (a) => ({
-      ...a,
-      hasSecret: (await readAccountSecret(a.agent, a.id)) !== null,
-    })),
-  );
-  if (opts.json) {
-    process.stdout.write(JSON.stringify({ accounts: rows }, null, 2) + '\n');
-    return;
-  }
-  if (rows.length === 0) {
-    log.info(
-      'No accounts yet. Sign in with `agentbox <agent> login`, or add a named one with `--account <name>`.',
+  // This machine's accounts, through its own hub (`/api/v1/accounts`): the
+  // store is per machine, so a configured remote control box is not asked.
+  await withHubClient({ preferLocal: true }, async (client) => {
+    const { accounts } = await client.listAccounts();
+    if (opts.json) {
+      process.stdout.write(JSON.stringify({ accounts }, null, 2) + '\n');
+      return;
+    }
+    if (accounts.length === 0) {
+      log.info(
+        'No accounts yet. Sign in with `agentbox <agent> login`, or add a named one with `--account <name>`.',
+      );
+      return;
+    }
+    renderTable(
+      ['AGENT', 'ACCOUNT', 'KIND', 'LABEL', 'IDENTITY', 'SECRET', 'BOXES'],
+      accounts.map((r) => [
+        r.agent,
+        r.id,
+        r.kind,
+        r.label ?? '',
+        describeIdentity(r.identity).replace(/^ \((.*)\)$/, '$1'),
+        r.hasSecret ? 'stored' : 'missing',
+        r.boxes.length > 0 ? r.boxes.join(', ') : '',
+      ]),
     );
-    return;
-  }
-  renderTable(
-    ['AGENT', 'ACCOUNT', 'KIND', 'LABEL', 'IDENTITY', 'SECRET'],
-    rows.map((r) => [
-      r.agent,
-      r.id,
-      r.kind,
-      r.label ?? '',
-      describeIdentity(r.identity).replace(/^ \((.*)\)$/, '$1'),
-      r.hasSecret ? 'stored' : 'missing',
-    ]),
-  );
+  });
 }
 
 async function removeAccountCommand(ref: string, opts: { yes?: boolean }): Promise<void> {
@@ -80,18 +66,6 @@ async function removeAccountCommand(ref: string, opts: { yes?: boolean }): Promi
     );
   }
   const spec = resolveAgentSpec(name);
-  if (!findAccount(await readAccounts(), spec.id, id)) {
-    throw new Error(`no account '${id}' for ${spec.id} (see \`agentbox accounts\`)`);
-  }
-  // Never while a box still runs on (or borrows) it: re-adding the name for
-  // another subscription would let that box's refresh overwrite the new login
-  // and fan out to every new box on it.
-  const inUse = boxesOnAccount((await readState()).boxes, spec.id, id);
-  if (inUse.length > 0) {
-    throw new Error(
-      `${spec.id} account '${id}' is still used by ${inUse.map((b) => b.name).join(', ')}; destroy ${inUse.length === 1 ? 'that box' : 'those boxes'} first`,
-    );
-  }
   if (!opts.yes) {
     if (!process.stdin.isTTY) throw new Error('refusing to remove without a terminal; pass --yes');
     const ok = await confirm({
@@ -103,22 +77,16 @@ async function removeAccountCommand(ref: string, opts: { yes?: boolean }): Promi
       return;
     }
   }
-  await removeAccount(spec.id, id);
-  // The account's docker config volume (a `login` account signed in there).
-  // `docker volume rm` refuses a volume a container still mounts; say so
-  // rather than force it out from under a running box.
-  const volume = accountConfigVolume(spec.dockerVolume, id);
-  const rm = await execa('docker', ['volume', 'rm', volume], { reject: false });
-  if (rm.exitCode === 0) {
-    log.success(`removed ${spec.id} account '${id}' and its volume ${volume}`);
-  } else if (/no such volume/i.test(rm.stderr ?? '')) {
-    log.success(`removed ${spec.id} account '${id}'`);
-  } else {
-    log.success(`removed ${spec.id} account '${id}'`);
-    log.warn(
-      `could not remove its volume ${volume}: ${(rm.stderr ?? '').trim() || 'docker failed'}`,
+  // The hub refuses while a box still records the account, and removes the
+  // account's docker volume with it.
+  await withHubClient({ preferLocal: true }, async (client) => {
+    const r = await client.removeAccount(spec.id, id);
+    log.success(
+      r.volumeRemoved
+        ? `removed ${spec.id} account '${id}' and its volume ${accountConfigVolume(spec.dockerVolume, id)}`
+        : `removed ${spec.id} account '${id}'`,
     );
-  }
+  });
 }
 
 async function labelAccountCommand(
@@ -128,22 +96,14 @@ async function labelAccountCommand(
 ): Promise<void> {
   const { agent: name, id } = parseAccountRef(ref);
   const spec = resolveAgentSpec(name);
-  const existing = findAccount(await readAccounts(), spec.id, id);
-  if (!existing) throw new Error(`no account '${id}' for ${spec.id} (see \`agentbox accounts\`)`);
-  const next: LlmAccount = { ...existing };
   const text = label?.trim();
-  if (opts.clear || !text) {
-    if (!opts.clear) throw new Error('give a label, or --clear to remove it');
-    delete next.label;
-  } else {
-    next.label = text;
-  }
-  await upsertAccount(next);
-  log.success(
-    next.label
-      ? `labelled ${spec.id}/${id} '${next.label}'`
-      : `cleared the label of ${spec.id}/${id}`,
-  );
+  if (!opts.clear && !text) throw new Error('give a label, or --clear to remove it');
+  await withHubClient({ preferLocal: true }, async (client) => {
+    const next = await client.labelAccount(spec.id, id, opts.clear ? null : (text ?? null));
+    log.success(
+      next.label ? `labelled ${spec.id}/${id} '${next.label}'` : `cleared the label of ${spec.id}/${id}`,
+    );
+  });
 }
 
 const listCmd = new Command('list')
