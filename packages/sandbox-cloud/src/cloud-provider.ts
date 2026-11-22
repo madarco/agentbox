@@ -1289,6 +1289,7 @@ export function createCloudProvider(
                 name,
                 originUrl,
                 ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
+                ...(req.repoKey ? { repoKey: req.repoKey } : {}),
                 backend: backend.name,
                 sandboxId: handle.sandboxId,
                 // hostMainRepo is the create-time seed checkout; on a hub
@@ -1406,6 +1407,7 @@ export function createCloudProvider(
                 : await readGitOriginUrl(req.workspacePath).catch(() => undefined),
               // An in-box clone has no host folder: nothing here to ask for files.
               ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
+              ...(req.repoKey ? { repoKey: req.repoKey } : {}),
               agent: req.agents?.[0] ?? req.agent,
             });
           } catch (err) {

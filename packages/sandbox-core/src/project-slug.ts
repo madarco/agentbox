@@ -62,12 +62,14 @@ export interface RegistrationOrigin {
 export async function registrationOrigin(args: {
   originUrl?: string | null;
   folder?: string | null;
+  /** A key the requesting machine computed (a worker building for a PC). */
+  repoKey?: string | null;
 }): Promise<RegistrationOrigin> {
   const out: RegistrationOrigin = {};
-  const key = await repoKeyAtEdge(args.originUrl);
+  const key = args.repoKey || (await repoKeyAtEdge(args.originUrl));
   if (key) out.repoKey = key;
   const id = tryGetMachineId();
-  if (id && args.folder && !isHubWorkerClone(args.folder)) {
+  if (id && args.folder && !isEphemeralWorkerClone(args.folder)) {
     out.originMachineId = id;
     out.originMachineLabel = getMachineLabel();
   }
@@ -130,6 +132,22 @@ export async function repoKeyAtEdge(
  * directory in `agentbox ls`.
  */
 export const HUB_WORKER_CLONE_PREFIX = 'agentbox-hub-worker-';
+
+/**
+ * Prefix of the per-job clone the Postgres control-plane worker (`agentbox
+ * control-plane worker`, `$TMPDIR/agentbox-cp-worker-<jobId>`) builds from and
+ * deletes the same way.
+ */
+export const CP_WORKER_CLONE_PREFIX = 'agentbox-cp-worker-';
+
+/**
+ * True for EITHER worker's throwaway per-job clone: a folder that is gone once
+ * the create returns, so no machine can be asked for files from it later.
+ */
+export function isEphemeralWorkerClone(dir: string): boolean {
+  const name = basename(dir);
+  return name.startsWith(HUB_WORKER_CLONE_PREFIX) || name.startsWith(CP_WORKER_CLONE_PREFIX);
+}
 
 /**
  * True for a control box's throwaway per-job checkout.

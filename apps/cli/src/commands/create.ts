@@ -42,6 +42,7 @@ import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import {
   resolveCreateTarget,
   pushCreateSeed,
+  repoKeyField,
   type CreateTarget,
 } from '../control-plane/create-target.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
@@ -314,6 +315,8 @@ async function runCreateViaHubApi(
     const { jobId } = await client.createBox({
       ...(manager ? { managerId: manager.managerId } : {}),
       repoUrl: target.repoUrl,
+      // The key this machine filed the seed under (its ssh aliases expanded).
+      ...(await repoKeyField(target.repoUrl)),
       provider: providerSpecFor(providerName, remoteHost),
       agent: 'none',
       name: opts.name?.trim() || undefined,

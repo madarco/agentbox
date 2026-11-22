@@ -290,7 +290,9 @@ export { checkoutEntriesFor } from './checkout-entries.js';
 export {
   boxNameBasisFromOriginUrl,
   deriveRepoLabel,
+  CP_WORKER_CLONE_PREFIX,
   HUB_WORKER_CLONE_PREFIX,
+  isEphemeralWorkerClone,
   isHubWorkerClone,
   custodySlugCandidates,
   legacyProjectSlugFromOriginUrl,

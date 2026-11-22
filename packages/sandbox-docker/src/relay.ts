@@ -690,6 +690,8 @@ export interface RegisterBoxArgs {
    * whether this machine is recorded as the box's origin machine.
    */
   workspacePath?: string;
+  /** Repo key computed by the requesting machine (CreateBoxRequest.repoKey). */
+  repoKey?: string;
   /**
    * The agent the box was created for. The relay's `agents.list` hands a
    * `surface: 'service'` agent's units only to a box that runs it; a
@@ -711,6 +713,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     ? await registrationOrigin({
         originUrl: args.originUrl,
         folder: args.workspacePath ?? args.worktrees?.[0]?.hostMainRepo,
+        repoKey: args.repoKey ?? null,
       })
     : {};
   await adminPost('/admin/register-box', {

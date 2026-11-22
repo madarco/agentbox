@@ -16,8 +16,10 @@ import {
 } from '@agentbox/config';
 import {
   DEFAULT_ENV_PATTERNS,
+  CP_WORKER_CLONE_PREFIX,
   custodySlugCandidates,
   projectSlugAtEdge,
+  repoKeyAtEdge,
   readPreparedStateRaw,
   relayPort,
 } from '@agentbox/sandbox-core';
@@ -1037,11 +1039,12 @@ const workerSub = new Command('worker')
         },
         cloneRepo: (authedUrl, repoUrl, dest, branch) =>
           cloneRepoWithLfs(runGit, authedUrl, repoUrl, dest, branch, (line) => log.info(line)),
-        createBox: async ({ workspacePath, name, provider, agent, onLog }) => {
+        createBox: async ({ workspacePath, name, repoKey, provider, agent, onLog }) => {
           const p = await providerForCreate({ flag: provider, config: cfg.effective });
           const created = await p.create({
             workspacePath,
             name,
+            ...(repoKey ? { repoKey } : {}),
             projectRoot: workspacePath,
             // Registered on the plane so an adopting PC relaunches the right agent.
             // `isAgentKind` rather than three `===`: it is the leaf's own
@@ -1057,13 +1060,18 @@ const workerSub = new Command('worker')
         // come up missing the untracked files + env material the seed exists to
         // provide. Unlike the hub, this worker is not the custody host, so it
         // reads the blobs over HTTP.
-        fetchSeedMaterial: async (repoUrl, dest) => {
+        fetchSeedMaterial: async (repoUrl, dest, repoKey) => {
           const target = await resolveCustodyApiTarget(undefined, {
             quiet: true,
             remoteOnly: true,
           });
           if (!target) return null;
-          const slugs = custodySlugCandidates({ originUrl: repoUrl });
+          // This worker runs on a PC, so it can expand this machine's aliases
+          // too; the requester's key goes first.
+          const slugs = [
+            ...custodySlugCandidates({ repoKey, originUrl: repoUrl }),
+            ...custodySlugCandidates({ repoKey: await repoKeyAtEdge(repoUrl) }),
+          ].filter((s, i, all) => all.indexOf(s) === i);
           if (slugs.length === 0) return null;
           // Probe + bound like every other custody call: a down control box must
           // not park each blob `get` on undici's ~10s connect timeout and stall
@@ -1089,7 +1097,7 @@ const workerSub = new Command('worker')
           }
           return null;
         },
-        tmpDir: (jobId) => join(tmpdir(), `agentbox-cp-worker-${jobId}`),
+        tmpDir: (jobId) => join(tmpdir(), `${CP_WORKER_CLONE_PREFIX}${jobId}`),
         cleanup: (dir) => rm(dir, { recursive: true, force: true }),
         log: (line) => process.stdout.write(`agentbox-cp-worker: ${line}\n`),
       });

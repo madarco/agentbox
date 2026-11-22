@@ -105,7 +105,7 @@ export function parseCreateBox(
 ): Parsed<CreateBoxInput> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const { projectId, repoUrl, agent, provider, name, prompt, fromBranch, setupWizard } = body;
-  const { agentArgs, startAgent, foreground, opts, managerId } = body;
+  const { agentArgs, startAgent, foreground, opts, managerId, repoKey } = body;
   // Exactly one of projectId / repoUrl: projectId → a registered project on the
   // hub's machine (local file queue); repoUrl → the origin the control-plane
   // worker clones (no local checkout).
@@ -173,10 +173,16 @@ export function parseCreateBox(
   if (!po.ok) return po;
   const mid = optionalManagerId(managerId, 'managerId');
   if (!mid.ok) return mid;
+  if (repoKey !== undefined && !isRepoKey(repoKey)) {
+    return { ok: false, message: 'repoKey must be a repo key (host/path or local:…)' };
+  }
   return {
     ok: true,
     value: {
       ...(mid.value ? { managerId: mid.value } : {}),
+      // The repo key the sender computed with its own ssh aliases expanded. The
+      // hub cannot recompute it, and the PC filed the seed under its slug.
+      ...(typeof repoKey === 'string' && hasRepo ? { repoKey } : {}),
       projectId: hasProject ? (projectId as string) : undefined,
       repoUrl: hasRepo ? (repoUrl as string) : undefined,
       agent: agent as CreateBoxInput['agent'],

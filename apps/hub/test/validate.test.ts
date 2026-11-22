@@ -721,6 +721,25 @@ describe('parseCheckoutReport', () => {
   });
 });
 
+describe('parseCreateBox repoKey', () => {
+  it('accepts a repo key beside repoUrl and refuses a malformed one', () => {
+    const ok = parseCreateBox({
+      repoUrl: 'git@gh-work:acme/web.git',
+      repoKey: 'github.com/acme/web',
+      agent: 'claude',
+      provider: 'e2b',
+    });
+    expect(ok.ok && ok.value.repoKey).toBe('github.com/acme/web');
+    const bad = parseCreateBox({
+      repoUrl: 'git@gh-work:acme/web.git',
+      repoKey: 'git@gh-work:acme/web.git',
+      agent: 'claude',
+      provider: 'e2b',
+    });
+    expect(bad.ok).toBe(false);
+  });
+});
+
 describe('parseCheckoutFilter', () => {
   it('passes repoKey and machineId through, and refuses junk', () => {
     expect(parseCheckoutFilter(new URLSearchParams('repoKey=github.com/acme/web')).ok).toBe(true);

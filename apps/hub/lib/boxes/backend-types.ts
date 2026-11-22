@@ -305,6 +305,9 @@ export interface CreateBoxInput {
   // repoUrl (or a projectId with no local folder) → control-plane clone queue.
   projectId?: string;
   repoUrl?: string;
+  // `repoUrl`'s key as the sender computed it (ssh aliases expanded on its
+  // machine). With repoUrl only; the hub uses it to find the seed the PC pushed.
+  repoKey?: string;
   // 'none' = just create the box (like `agentbox create`), don't start an agent.
   agent: AgentId | 'none';
   // Sandbox provider to create on. Defaults to 'docker'. A bare provider name

@@ -18,7 +18,7 @@
  * a surfaced reason) rather than failing.
  */
 import type { EffectiveConfig } from '@agentbox/config';
-import { DEFAULT_ENV_PATTERNS, projectSlugAtEdge } from '@agentbox/sandbox-core';
+import { DEFAULT_ENV_PATTERNS, projectSlugAtEdge, repoKeyAtEdge } from '@agentbox/sandbox-core';
 import {
   adminCustodySink,
   CarrySeedError,
@@ -185,4 +185,16 @@ export async function pushCreateSeed(args: {
       `seed: push failed (continuing without it): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * `{ repoKey }` for a hub create body: the key this machine computed for
+ * `repoUrl` (its `~/.ssh/config` aliases expanded), which is the scope
+ * {@link pushCreateSeed} filed the seed under. The control box cannot expand
+ * this machine's aliases, so without it a hub worker looks for the seed under a
+ * different slug.
+ */
+export async function repoKeyField(repoUrl: string): Promise<{ repoKey?: string }> {
+  const repoKey = await repoKeyAtEdge(repoUrl);
+  return repoKey ? { repoKey } : {};
 }

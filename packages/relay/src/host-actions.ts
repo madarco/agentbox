@@ -50,6 +50,7 @@ import {
   isSupportedApiVersion,
   pluginForProvider,
   readState,
+  detectGitRepos,
 } from '@agentbox/sandbox-core';
 import {
   checkoutGuards,
@@ -1309,12 +1310,50 @@ interface GitPushTrace {
 }
 
 /**
- * A nested repo's path under `/workspace` (`web` for `/workspace/web`), or
- * undefined for the root repo.
+ * Which repo a cloud box's git RPC acts on: the in-box checkout to bundle from
+ * and the host folder to fetch into / push from.
+ *
+ * `probe` is the box's own `git rev-parse --show-toplevel` for the path it sent
+ * (null when it sent `/workspace`), so nothing in it is trusted on its own: a
+ * nested repo is accepted only when it is ONE level under `/workspace` and the
+ * host has it as a seeded repo (`hostNested`, from `detectGitRepos` of the box's
+ * host folder: a real `.git` directory). Otherwise a box could `git init
+ * /workspace/vendor/x` and have the host push, with host credentials, to
+ * whatever that folder's origin is.
+ *
+ * A path that is not a repo at all (`$HOME`) falls back to `/workspace`, as it
+ * always has; a repo OUTSIDE `/workspace` is refused rather than quietly pushing
+ * the root branch in its place.
  */
-export function nestedRepoRel(containerPath: string): string | undefined {
-  const rel = posix.relative('/workspace', posix.normalize(containerPath));
-  return rel.length > 0 && !rel.startsWith('..') ? rel : undefined;
+export function resolveCloudGitTarget(args: {
+  probe: { exitCode: number; top: string } | null;
+  workspacePath: string;
+  hostNested: readonly string[];
+}):
+  | { ok: true; containerPath: string; hostRepoDir: string }
+  | { ok: false; error: string } {
+  const root = { ok: true as const, containerPath: '/workspace', hostRepoDir: args.workspacePath };
+  if (!args.probe || args.probe.exitCode !== 0) return root;
+  const top = posix.normalize(args.probe.top).replace(/\/+$/, '');
+  if (top === '/workspace') return root;
+  if (!top.startsWith('/workspace/')) {
+    return {
+      ok: false,
+      error: `git runs on the box's repos under /workspace; ${top || 'this path'} is outside it`,
+    };
+  }
+  const rel = top.slice('/workspace/'.length);
+  if (rel.includes('/') || !args.hostNested.includes(rel)) {
+    return {
+      ok: false,
+      error:
+        `${top} is not a repo this box was seeded with from a host checkout` +
+        (args.workspacePath ? ` (${args.workspacePath})` : '') +
+        `, so its branch has nowhere safe to go. Push it from inside the box with its own credentials, ` +
+        `or run it from the machine that created the box.`,
+    };
+  }
+  return { ok: true, containerPath: top, hostRepoDir: join(args.workspacePath, rel) };
 }
 
 async function runGitRpc(
@@ -1335,32 +1374,31 @@ async function runGitRpc(
   //
   // Resolve to the repo's TOPLEVEL: a nested repo (`/workspace/web` with its
   // own `.git`) must fetch into and push from its own host folder, not the root
-  // one, or its branch lands in the wrong repository (box-sources A10).
-  let containerPath = params.path ?? '/workspace';
-  if (containerPath !== '/workspace') {
-    const probe = await backend.exec(
+  // one, or its branch lands in the wrong repository (box-sources A10). The
+  // path and the toplevel are the BOX's answers, so a nested repo is accepted
+  // only when the host has it as a seeded repo (see resolveCloudGitTarget).
+  const requestedPath = params.path ?? '/workspace';
+  let probe: { exitCode: number; top: string } | null = null;
+  if (requestedPath !== '/workspace') {
+    const r = await backend.exec(
       handle,
-      `git -C ${shellQuote(containerPath)} rev-parse --show-toplevel`,
+      `git -C ${shellQuote(requestedPath)} rev-parse --show-toplevel`,
     );
-    const top = (probe.stdout ?? '').trim();
-    containerPath = probe.exitCode === 0 && top.startsWith('/workspace') ? top : '/workspace';
+    probe = { exitCode: r.exitCode, top: (r.stdout ?? '').trim() };
   }
-  const nested = nestedRepoRel(containerPath);
-  const hostRepoDir =
-    nested && lookup.workspacePath.length > 0
-      ? join(lookup.workspacePath, nested)
-      : lookup.workspacePath;
-  if (nested && (hostRepoDir.length === 0 || !existsSync(join(hostRepoDir, '.git')))) {
-    // The checkout-less fallback pushes to the box's ONE registered origin,
-    // which is the root repo's: it would publish this repo's branch there.
-    return {
-      exitCode: 64,
-      stdout: '',
-      stderr:
-        `git for the nested repo ${containerPath} needs its host checkout (${hostRepoDir || '<unset>'}), ` +
-        `which this machine does not have. Run it from the machine that created the box.\n`,
-    };
-  }
+  const hostNested =
+    probe && lookup.workspacePath.length > 0 && existsSync(lookup.workspacePath)
+      ? (await detectGitRepos(lookup.workspacePath))
+          .filter((r) => r.kind === 'nested')
+          .map((r) => r.relPathFromWorkspace)
+      : [];
+  const target = resolveCloudGitTarget({
+    probe,
+    workspacePath: lookup.workspacePath,
+    hostNested,
+  });
+  if (!target.ok) return { exitCode: 64, stdout: '', stderr: `${target.error}\n` };
+  const { containerPath, hostRepoDir } = target;
 
   // 1. Resolve the box's current branch (the per-box `agentbox/<name>`).
   const branchProbe = await backend.exec(

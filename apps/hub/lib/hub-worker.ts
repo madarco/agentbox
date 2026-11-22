@@ -184,6 +184,7 @@ async function applySeedFromCustody(
   repoUrl: string,
   dest: string,
   log: (l: string) => void,
+  repoKey?: string,
 ): Promise<{
   files: number;
   capturedAt?: string;
@@ -192,7 +193,7 @@ async function applySeedFromCustody(
 } | null> {
   // New key-derived slug first, then the legacy `owner__repo` one a PC on an
   // older CLI pushed under (docs/box-sources-plan.md §6).
-  for (const slug of custodySlugCandidates({ originUrl: repoUrl })) {
+  for (const slug of custodySlugCandidates({ repoKey, originUrl: repoUrl })) {
     // The hub IS the custody host, so it reads the store directly rather than
     // over HTTP. The overlay itself is shared with the laptop worker.
     const applied = await applyProjectSeed({
@@ -292,6 +293,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       workspacePath,
       name,
       repoUrl,
+      repoKey,
       carry,
       provider,
       agent,
@@ -335,6 +337,9 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         workspacePath,
         name,
         ...(nameBasis ? { nameBasis } : {}),
+        // The requester's key, so the box registers under the scope its seed
+        // and cp cache were filed in (this hub cannot expand the PC's aliases).
+        ...(repoKey ? { repoKey } : {}),
         // Approved `carry:` entries, staged from custody beside the clone. The
         // provider's own applyCarry takes it from here — placeholder rendering
         // included, now with a real box context — so a hub-built box gets the
@@ -438,7 +443,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       }
       return { id: created.record.id };
     },
-    fetchSeedMaterial: (repoUrl, dest) => applySeedFromCustody(custody, repoUrl, dest, log),
+    fetchSeedMaterial: (repoUrl, dest, repoKey) =>
+      applySeedFromCustody(custody, repoUrl, dest, log, repoKey),
     tmpDir: (jobId) => join(tmpdir(), `${HUB_WORKER_CLONE_PREFIX}${jobId}`),
     cleanup: async (dir) => {
       // The carry staging dir is a sibling of the clone (see applySeedFromCustody),

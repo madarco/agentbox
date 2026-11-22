@@ -27,7 +27,7 @@ import { adoptHubBox } from '../control-plane/hub-adopt.js';
 import { providerSpecFor } from '../provider/spec.js';
 import { HubApiClient } from '../control-plane/hub-api-client.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
-import { pushCreateSeed } from '../control-plane/create-target.js';
+import { pushCreateSeed, repoKeyField } from '../control-plane/create-target.js';
 import { CustodyClient } from '../control-plane/custody-client.js';
 import { makeProgressReporter } from '@agentbox/cli-kit';
 import type { AgentId } from '@agentbox/core';
@@ -236,6 +236,8 @@ export async function createCloudBoxViaHubAndAdopt(
   const { jobId } = await client.createBox({
     ...(manager ? { managerId: manager.managerId } : {}),
     repoUrl,
+    // The key this machine filed the seed under (its ssh aliases expanded).
+    ...(await repoKeyField(repoUrl)),
     provider: providerSpecFor(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,
@@ -356,6 +358,8 @@ export async function enqueueAgentJobViaHub(
   const { jobId } = await client.createBox({
     ...(manager ? { managerId: manager.managerId } : {}),
     repoUrl,
+    // The key this machine filed the seed under (its ssh aliases expanded).
+    ...(await repoKeyField(repoUrl)),
     provider: providerSpecFor(providerName, remoteHost),
     agent,
     name: name?.trim() || undefined,

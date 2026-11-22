@@ -67,6 +67,8 @@ export interface RegisterBoxWithPlaneArgs {
    * box's origin machine.
    */
   workspacePath?: string;
+  /** Repo key computed by the requesting machine (CreateBoxRequest.repoKey). */
+  repoKey?: string;
 }
 
 /** Read the host workspace's `origin` remote URL (the box's push target). */
@@ -84,6 +86,7 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
   const origin = await registrationOrigin({
     originUrl: args.originUrl,
     folder: args.workspacePath,
+    repoKey: args.repoKey ?? null,
   });
   const res = await fetch(url, {
     method: 'POST',
