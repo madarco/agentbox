@@ -479,51 +479,63 @@ smoke, `/code-review medium`, update `apps/web/content/docs/` in the same change
 
 ### Phase 1: repo key + checkouts registry (single repo; unblocks multi-PC Phase 4)
 
-**Status: done** (branch `feat/repo-key-checkouts`). What landed, and where it differs from the
-design above:
+**Status: done** (PR #424, branch `feat/repo-key-checkouts`). What landed, and where it differs
+from the design above:
 
 - **Where `repoKey` lives.** In `@agentbox/config` (`packages/config/src/repo-key.ts`), not
   `packages/relay/src/workspaces/repo-key.ts`: sandbox-cloud and the hub's seed route need it too,
   and that route can't import an execa-carrying barrel. `repoKey()` is pure with an injected
-  `expandHost`; `repoKeyAtEdge()` in `@agentbox/sandbox-core` supplies `ssh -G` and the machine id.
-  `normalizeRepoUrl` and `normalizeOriginUrl` are deleted; the hub's inlined slug mirror
-  (`seed-slug.ts`) is gone.
-- **Only alias-shaped hosts are expanded.** `ssh -G` runs for a dotless host (`github-work`), never
-  for a real hostname: `Host github.com / HostName ssh.github.com` is a common config, and expanding
-  it would key the ssh spelling apart from the https one the hub derives.
-- **Workspace project ids did not move.** `repoProjectKey` hashes the *unexpanded* key (identical to
-  the old output for every remote URL) and keeps the old lowercased-path id for a local-path remote,
-  so existing workspace records and the tasks filed under their project ids are untouched
-  (`repoMatchKey`, which also keeps local-path remotes joining boxes to workspaces). Known
-  exception: an origin whose old key differs only in spelling the old normaliser kept (a
-  percent-encoded path, an uppercase `.GIT`, `git@host:/abs/path`) gets a new project id on its next
-  scan. The
-  scan's alias-expanded `repoKey` feeds the checkouts registry only. Re-keying workspace projects by
-  the expanded key goes with B1.
+  `expandHost`; `repoKeyAtEdge()` in `@agentbox/sandbox-core` supplies `ssh -G` (60 s cache, `--`
+  before the destination) and the machine id. `normalizeOriginUrl` is deleted, and the hub's inlined
+  slug mirror (`seed-slug.ts`) is gone. A query or fragment is dropped; a bracketed IPv6 scp host
+  parses.
+- **ssh expansion.** A non-http(s) host is replaced by the hostname `ssh -G` resolves it to whenever
+  that differs, dotted aliases included (`github.com-work`, `work.github.com`). `repoKey` maps the
+  forges' ssh-over-443 endpoints back (`ssh.github.com`, `altssh.gitlab.com`,
+  `altssh.bitbucket.org`), so the common `Host github.com / HostName ssh.github.com` config keys
+  like https.
+- **Workspace project ids did not move.** They hash `repoMatchKey`, which is the old
+  `normalizeRepoUrl` kept byte for byte (`workspace-store.ts`), so existing workspace records, the
+  tasks filed under their project ids and workspace joins are untouched for every remote shape,
+  including the ones `repoKey` spells differently (`host:/abs/path`, percent-encoding, `.GIT`, a
+  local path). Moving workspace ids onto `repoKey` goes with B1.
 - **Custody slug** is `custodySlugForRepoKey` (`github.com__owner__repo`). It gets a sha256 suffix
   when it would exceed 80 chars or would not decode unambiguously (a segment sanitised, or holding
-  `__` or an edge `_`, so `a/b/c` and `a/b__c` never share a scope). Writers on the PC use `projectSlugAtEdge` (alias-expanded); every reader tries
-  `custodySlugCandidates` (registered key, URL-derived key, the registration's `projectSlug`, the
-  legacy `owner__repo`): hub-worker seed overlay, seed status, the CLI's seed pull, the cp-cache
-  lookup. A legacy entry is not copied forward on read; the next seed push or cp capture simply
-  writes the new slug.
+  `__` or an edge `_`, so `a/b/c` and `a/b__c` never share a scope). Writers on the PC use
+  `projectSlugAtEdge` (alias-expanded). A hub-routed create carries the PC's `repoKey`
+  (`POST /boxes` → `CreateJobRequest.repoKey` → `CreateBoxRequest.repoKey`), because the control box
+  cannot expand the PC's aliases: the worker reads the seed and the box registers under that key.
+  Both seed readers go through `applyProjectSeedForRepo` (requester's key, URL key, then the legacy
+  `owner__repo` slug only when its manifest names the same repo path); seed status and the cp-cache
+  lookup try `custodySlugCandidates`. A legacy entry is not copied forward on read. Upgrade order:
+  control box first (a new CLI writes slugs an old control box does not read).
 - **Registration only, not `BoxRecord`.** `repoKey`, `originMachineId` and `originMachineLabel` are
   stamped in `registerBoxWithRelay` and `registerBoxWithPlane` (`registrationOrigin()`), and the
   relay keeps the first origin machine across re-registers (`mergeRegistrationOrigin`): a start from
-  PC B does not claim a box PC A seeded. A hub-built box (per-job clone) gets no origin machine.
-  The `BoxRecord` stamp moves to Phase 2 with `sources`, which is where it is read.
-- **Checkouts writers.** The CLI reports on `create` (`apps/cli/src/lib/checkouts-report.ts`,
-  quietly, pruning its own vanished folders); the hub records a workspace scan's projects in the
-  same request (`checkoutReportFromScan`) and a project registered on its own disk. No CLI command
-  lists checkouts yet; `GET /api/v1/checkouts` is the surface.
-- **`hostCandidatesFor`** takes a `CandidateBox` (`{ boxId, originMachineId?, repos }`) until Phase 2's
-  `BoxSources`; `candidateBoxFromRegistration` builds one. It returns `{ ok: false, error }` for a
-  relative path with no repo to resolve it against. Host-absolute paths keep today's `abs:` key
-  under the project prefix (not box-scoped as §4 says), so a `agentbox cp <file> hub:` pre-load of
-  an absolute path still hits; they are served by the origin only.
-- **A10 is fixed** (small): `runGitRpc` resolves the in-box repo's toplevel and fetches into /
-  pushes from the matching host subfolder; with no host checkout of a nested repo it refuses
-  instead of pushing that repo's branch to the root origin.
+  PC B does not claim a box PC A seeded. A box built from either worker's per-job clone
+  (`isEphemeralWorkerClone`: `agentbox-hub-worker-*`, `agentbox-cp-worker-*`) gets no origin
+  machine. The `BoxRecord` stamp moves to Phase 2 with `sources`, which is where it is read.
+- **Checkouts writers** are all on the reporting machine, through
+  `apps/cli/src/lib/checkouts-report.ts` (folders realpath'd by `checkoutEntriesFor`, its own
+  vanished rows sent as `removed`): `agentbox create` and every agent command, `workspace add` /
+  `rescan`, and a manager session that registers a workspace. The hub records only folders on its
+  own disk (a project registered through `POST /projects`). The store moves a corrupt file aside
+  before writing, refuses to overwrite an unreadable one, and drops rows not reported for 90 days.
+  Any caller holding the hub key can report under any machine id: fine for a single-tenant hub,
+  and the thing to tighten for multi-user. No CLI command lists checkouts yet;
+  `GET /api/v1/checkouts` is the surface.
+- **`hostCandidatesFor`** takes a `CandidateBox` (`{ boxId, originMachineId?, repos, cachePrefixes? }`)
+  until Phase 2's `BoxSources`; `candidateBoxFromRegistration` builds one. It returns
+  `{ ok: false, error }` for a relative path with no repo to resolve it against. Its cache fallback
+  is keyed exactly as today's capture keys it (the request as spelled: `rel:x`, `abs:/workspace/x`,
+  `abs:<host path>`) under the root repo's prefixes, legacy slugs included (`readPrefixes`), so
+  existing entries hit; only a nested repo gets its own slug and a repo-relative key. Host-absolute
+  paths are served by the origin only.
+- **A10 is fixed**: `runGitRpc` resolves the in-box repo's toplevel and accepts a nested repo only
+  when it is one level under `/workspace` and the host has it as a seeded repo (`detectGitRepos` of
+  the box's host folder: a real `.git` directory), then fetches into / pushes from that subfolder
+  (`resolveCloudGitTarget`). A box-made `git init`, a deeper or submodule repo, a nested repo with
+  no host checkout, and a repo outside `/workspace` are all refused.
 
 Builds on multi-PC Phase 1a, landed in #418 (`getMachineId()` / `thisMachine()` in
 `@agentbox/config`).

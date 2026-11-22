@@ -8,6 +8,8 @@ import { existsSync } from 'node:fs';
 import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
 import { checkoutEntriesFor } from '@agentbox/sandbox-core';
 import type { HubApiClient, HubApiCheckoutReport } from '../control-plane/hub-api-client.js';
+import { withHubClientQuiet } from '../control-plane/with-hub.js';
+import { workspaceHub } from './workspace-ref.js';
 
 /**
  * Build the report for `folders`, plus removals for any of this machine's
@@ -43,4 +45,15 @@ export async function reportCheckouts(
   const registered = await client.listCheckouts({ machineId }).catch(() => []);
   const report = await buildCheckoutReport(folders, registered);
   if (report) await client.reportCheckouts(report);
+}
+
+/**
+ * Tell the configured hub (the store hub, as for workspaces) that this machine
+ * has `folders` checked out. Every create entry point calls this
+ * (`agentbox create` and the agent commands): it is the registry another PC's
+ * box may be routed to later. Bookkeeping, so quiet, and not awaited on the
+ * create's critical path.
+ */
+export function reportCheckoutInBackground(...folders: string[]): void {
+  void withHubClientQuiet(workspaceHub(), (client) => reportCheckouts(client, folders));
 }

@@ -18,7 +18,12 @@ export async function GET(req: Request): Promise<Response> {
   if (!backend) return ok({ checkouts: [] });
   const filter = parseCheckoutFilter(new URL(req.url).searchParams);
   if (!filter.ok) return fail('invalid_request', filter.message);
-  return ok({ checkouts: await backend.listCheckouts(filter.value) });
+  try {
+    return ok({ checkouts: await backend.listCheckouts(filter.value) });
+  } catch (e) {
+    // An unreadable or corrupt registry file: say so, never answer "empty".
+    return fail('internal', e instanceof Error ? e.message : String(e));
+  }
 }
 
 export async function PUT(req: Request): Promise<Response> {

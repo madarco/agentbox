@@ -39,13 +39,12 @@ import {
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
-  custodySlugCandidates,
   readCredentialBackup,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
 } from '@agentbox/sandbox-core';
 import {
-  applyProjectSeed,
+  applyProjectSeedForRepo,
   startDetachedCloudAgent,
   type MaterializedCarryEntry,
 } from '@agentbox/sandbox-cloud';
@@ -191,25 +190,19 @@ async function applySeedFromCustody(
   repoHeadSha?: string;
   carry?: MaterializedCarryEntry[];
 } | null> {
-  // New key-derived slug first, then the legacy `owner__repo` one a PC on an
-  // older CLI pushed under (docs/box-sources-plan.md §6).
-  for (const slug of custodySlugCandidates({ repoKey, originUrl: repoUrl })) {
-    // The hub IS the custody host, so it reads the store directly rather than
-    // over HTTP. The overlay itself is shared with the laptop worker.
-    const applied = await applyProjectSeed({
-      source: {
-        get: async (rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
-      },
-      dest,
-      // `carry:` payloads land BESIDE the checkout, not inside it: a carry entry's
-      // destination is an arbitrary in-box path, so the provider copies them from
-      // here rather than the workspace overlaying them. Removed with the clone.
-      carryStageDir: `${dest}.carry`,
-      log,
-    });
-    if (applied) return applied;
-  }
-  return null;
+  // The hub IS the custody host, so it reads the store directly rather than
+  // over HTTP. The overlay itself is shared with the laptop worker. `carry:`
+  // payloads land BESIDE the checkout, not inside it: a carry entry's
+  // destination is an arbitrary in-box path, so the provider copies them from
+  // there rather than the workspace overlaying them. Removed with the clone.
+  return applyProjectSeedForRepo({
+    repoUrl,
+    repoKeys: [repoKey],
+    get: async (slug, rel) => (await custody.get(`projects/${slug}/seed/${rel}`))?.data ?? null,
+    dest,
+    carryStageDir: `${dest}.carry`,
+    log,
+  });
 }
 
 // `hydratePreparedFromCustody` now lives in ./prepared-hydrate.js so the

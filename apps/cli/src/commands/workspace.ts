@@ -14,6 +14,7 @@ import { confirm, isCancel, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { withHubClient } from '../control-plane/with-hub.js';
 import { scanWorkspace } from '../lib/workspace-scan.js';
+import { reportCheckouts } from '../lib/checkouts-report.js';
 import { resolveWorkspace, workspaceHub, WorkspaceRefError } from '../lib/workspace-ref.js';
 import type { HubApiClient, HubApiWorkspace } from '../control-plane/hub-api-client.js';
 import { renderTable } from '../lib/text-table.js';
@@ -72,6 +73,12 @@ const addCommand = new Command('add')
         ...scan,
         ...(opts.name ? { name: opts.name } : {}),
       });
+      // The same folders, as this machine's checkouts (realpath'd, and its
+      // vanished rows pruned). Bookkeeping: never fail the add over it.
+      await reportCheckouts(
+        client,
+        scan.projects.map((p) => p.path),
+      ).catch(() => {});
       if (opts.json) {
         process.stdout.write(JSON.stringify(ws, null, 2) + '\n');
         return;
@@ -144,7 +151,12 @@ const rescanCommand = new Command('rescan')
         process.exit(2);
       }
       // A rescan IS an add of the same folder, aimed at this record.
-      printWorkspace(await client.addWorkspace({ ...(await scanWorkspace(root)), id: ws.id }));
+      const scan = await scanWorkspace(root);
+      printWorkspace(await client.addWorkspace({ ...scan, id: ws.id }));
+      await reportCheckouts(
+        client,
+        scan.projects.map((p) => p.path),
+      ).catch(() => {});
     });
   });
 

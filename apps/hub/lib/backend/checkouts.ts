@@ -2,11 +2,9 @@
 // folder F", keyed by machine id and repo key. PCs report their own folders
 // (`PUT /api/v1/checkouts`); the hub never infers one, since it cannot stat a PC.
 // The only folders it reports itself are the ones on its own disk.
-import { repoKey as repoKeyFromUrl } from '@agentbox/config';
 import {
   applyCheckoutReport,
   listCheckouts,
-  type AddWorkspaceInput,
   type CheckoutFilter,
   type CheckoutRecord,
   type CheckoutReport,
@@ -14,22 +12,6 @@ import {
 import { checkoutEntriesFor } from '@agentbox/sandbox-core';
 import { hubMachine, type BackendDeps } from './deps';
 import type { CheckoutBackend } from '../boxes/backend-types';
-
-/**
- * The checkouts a workspace scan names. The scan already carries each
- * project's origin, and from a current CLI the alias-expanded key too; an older
- * CLI sends only the URL, which is keyed here unexpanded (the hub never guesses
- * at an alias). A scan with no machine id reports nothing.
- */
-export function checkoutReportFromScan(input: AddWorkspaceInput): CheckoutReport | null {
-  if (!input.machineId) return null;
-  const entries = input.projects.flatMap((p) => {
-    const key = p.repoKey ?? (p.repoUrl ? repoKeyFromUrl(p.repoUrl) : undefined);
-    return key ? [{ repoKey: key, folder: p.path }] : [];
-  });
-  if (entries.length === 0) return null;
-  return { machineId: input.machineId, label: input.host, entries };
-}
 
 export function createCheckoutBackend(
   deps: Pick<BackendDeps, 'hostname' | 'machineId' | 'notify'> & { file?: string },

@@ -27,6 +27,17 @@ export interface RepoKeyOptions {
   machineId?: string;
 }
 
+/**
+ * The forges' ssh-over-443 endpoints: the same repositories as the plain host,
+ * reached on another hostname (`Host github.com / HostName ssh.github.com
+ * / Port 443` is a common config to get past firewalls).
+ */
+const SSH_ENDPOINT_FORGE: Readonly<Record<string, string>> = {
+  'ssh.github.com': 'github.com',
+  'altssh.gitlab.com': 'gitlab.com',
+  'altssh.bitbucket.org': 'bitbucket.org',
+};
+
 function stripRepoSuffix(s: string): string {
   let out = s;
   while (out.endsWith('/')) out = out.slice(0, -1);
@@ -62,7 +73,8 @@ export function repoKey(
   raw: string | undefined | null,
   opts: RepoKeyOptions = {},
 ): string | undefined {
-  const url = (raw ?? '').trim();
+  // A query or fragment is never part of a repo's identity.
+  const url = (raw ?? '').trim().replace(/[?#].*$/, '');
   if (!url) return undefined;
   const local = localRepoPath(url);
   if (local !== undefined) {
@@ -83,7 +95,8 @@ export function repoKey(
     path = safeDecode(rest.slice(slash + 1));
     aliasable = proto !== 'http' && proto !== 'https';
   } else {
-    const scp = /^(?:[^@/]+@)?([^/:]+):(.+)$/.exec(url);
+    // `[user@]host:path`, the host possibly a bracketed IPv6 literal.
+    const scp = /^(?:[^@/]+@)?(\[[^\]]+\]|[^/:[\]]+):(.+)$/.exec(url);
     if (scp) {
       host = scp[1]!;
       path = scp[2]!;
@@ -101,6 +114,7 @@ export function repoKey(
     const expanded = opts.expandHost(host)?.trim();
     if (expanded) host = expanded;
   }
+  host = SSH_ENDPOINT_FORGE[host.toLowerCase()] ?? host;
   const cleanPath = stripRepoSuffix(path.replace(/\/{2,}/g, '/').replace(/^\/+/, ''));
   if (!host || !cleanPath) return undefined;
   return `${host}/${cleanPath}`.toLowerCase();
@@ -197,4 +211,22 @@ export function custodySlugCandidates(src: {
   add(src.projectSlug);
   if (src.originUrl) add(legacyProjectSlugFromOriginUrl(src.originUrl));
   return out;
+}
+
+/**
+ * Whether a seed found under the LEGACY `owner__repo` slug belongs to the repo
+ * being built. That slug dropped the host and every subgroup, so
+ * `github.com/acme/web` and `gitlab.com/x/acme/web` shared it: compare the
+ * full path of both keys (subgroups included). The host is not compared,
+ * because a legacy seed's origin may be spelled with an ssh alias the reader
+ * cannot expand. A manifest with no origin is accepted, as before.
+ */
+export function legacySeedMatches(
+  manifestOriginUrl: string | undefined | null,
+  repoUrl: string,
+): boolean {
+  if (!manifestOriginUrl) return true;
+  const path = (k: string | undefined) => (k ? k.slice(k.indexOf('/') + 1) : undefined);
+  const a = path(repoKey(manifestOriginUrl));
+  return a !== undefined && a === path(repoKey(repoUrl));
 }

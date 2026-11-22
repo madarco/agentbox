@@ -76,43 +76,46 @@ export async function registrationOrigin(args: {
   return out;
 }
 
-const sshHostCache = new Map<string, string | null>();
+/** Short-lived: the hub is a long-running process and ssh config can change. */
+const SSH_HOST_TTL_MS = 60_000;
+const sshHostCache = new Map<string, { host: string | null; at: number }>();
+
+async function sshHostname(host: string): Promise<string | null> {
+  const hit = sshHostCache.get(host);
+  if (hit && Date.now() - hit.at < SSH_HOST_TTL_MS) return hit.host;
+  const target = await resolveSshConfigTarget(host).catch(() => null);
+  const resolved = target?.host.trim() || null;
+  sshHostCache.set(host, { host: resolved, at: Date.now() });
+  return resolved;
+}
 
 /**
- * The repo key of `originUrl` as THIS machine sees it: `~/.ssh/config` host
- * aliases (dotless hosts such as `github-work`) expanded through `ssh -G`
- * (non-http(s) remotes only), and a
- * local-path remote keyed by this machine's id. Run on the PC, never on the
- * hub, which has a different (or no) ssh config; the hub accepts the result as
- * sent.
+ * The repo key of `originUrl` as THIS machine sees it: the host of a
+ * non-http(s) remote replaced by the hostname `ssh -G` resolves it to when
+ * that differs (a `~/.ssh/config` alias, dotted or not: `github-work`,
+ * `github.com-work`, `work.github.com`), and a local-path remote keyed by this
+ * machine's id. `repoKey` maps the ssh-over-443 endpoints (`ssh.github.com`,
+ * `altssh.gitlab.com`, `altssh.bitbucket.org`) back to their forge, so the
+ * common `Host github.com / HostName ssh.github.com` config keys like https.
+ *
+ * Run on the PC, never on the hub, which has a different (or no) ssh config;
+ * the hub accepts the result as sent. `resolveHost` is injectable for tests.
  */
 export async function repoKeyAtEdge(
   originUrl: string | undefined | null,
+  deps: { resolveHost?: (host: string) => Promise<string | null> } = {},
 ): Promise<string | undefined> {
   if (!originUrl) return undefined;
   const machineId = tryGetMachineId();
-  let aliasHost: string | undefined;
-  // First pass only learns which host (if any) is aliasable.
+  let sshHost: string | undefined;
+  // First pass only learns which host (if any) ssh config applies to.
   repoKey(originUrl, {
     expandHost: (h) => {
-      // Only an alias-shaped (dotless) host. A real hostname is left alone even
-      // when ssh config rewrites it: `Host github.com / HostName ssh.github.com`
-      // is common, and expanding it would key the ssh spelling apart from the
-      // https one the hub derives.
-      if (!h.includes('.')) aliasHost = h;
+      sshHost = h;
       return null;
     },
   });
-  let expanded: string | null = null;
-  if (aliasHost !== undefined) {
-    if (sshHostCache.has(aliasHost)) {
-      expanded = sshHostCache.get(aliasHost) ?? null;
-    } else {
-      const target = await resolveSshConfigTarget(aliasHost).catch(() => null);
-      expanded = target?.host.trim() || null;
-      sshHostCache.set(aliasHost, expanded);
-    }
-  }
+  const expanded = sshHost === undefined ? null : await (deps.resolveHost ?? sshHostname)(sshHost);
   return repoKey(originUrl, {
     expandHost: () => expanded,
     ...(machineId ? { machineId } : {}),

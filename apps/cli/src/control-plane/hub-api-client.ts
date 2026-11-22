@@ -515,7 +515,7 @@ export interface HubApiWorkspaceAdd {
   machineId?: string;
   root: string;
   name?: string;
-  projects: { path: string; name?: string; repoUrl?: string; repoKey?: string }[];
+  projects: { path: string; name?: string; repoUrl?: string }[];
   /** Refresh this record instead of matching by (host, root) then by repo. */
   id?: string;
 }

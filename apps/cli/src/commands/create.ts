@@ -47,7 +47,7 @@ import {
 } from '../control-plane/create-target.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
-import { reportCheckouts } from '../lib/checkouts-report.js';
+import { reportCheckoutInBackground } from '../lib/checkouts-report.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import { readCurrentBranch } from '@agentbox/relay';
 import {
@@ -552,7 +552,7 @@ export const createCommand = new Command('create')
     // And tell the configured hub this machine has the repo checked out here
     // (the checkouts registry another PC's box may be routed to later).
     // Bookkeeping: quiet, and never awaited on the create's critical path.
-    void withHubClientQuiet(workspaceHub(), (client) => reportCheckouts(client, [projectRoot]));
+    reportCheckoutInBackground(projectRoot);
     // `providerName` stays a bare name — it keys the per-provider config
     // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record; the
     // engine rides alongside it in `remoteHost`.

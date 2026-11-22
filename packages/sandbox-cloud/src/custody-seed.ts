@@ -31,7 +31,13 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { execa } from 'execa';
-import { dropHostOnlyPaths, scanHostEnvFiles } from '@agentbox/sandbox-core';
+import {
+  custodySlugCandidates,
+  dropHostOnlyPaths,
+  legacyProjectSlugFromOriginUrl,
+  scanHostEnvFiles,
+} from '@agentbox/sandbox-core';
+import { legacySeedMatches } from '@agentbox/config';
 import { hostReachable } from './reachability.js';
 
 /** Bound on the seed upload once the control box is known to be up. */
@@ -895,4 +901,54 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${String(n)}B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}KB`;
   return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+/**
+ * Overlay the seed for `repoUrl` from the first custody slug that holds one:
+ * the requester's key, then the URL-derived key, then the legacy
+ * `owner__repo` slug, which is used only when its manifest names the same repo
+ * path (that slug dropped the host and subgroups, so two repos could share
+ * it). One implementation for both workers that read seeds.
+ */
+export async function applyProjectSeedForRepo(args: {
+  repoUrl: string;
+  /** Keys to try first: the requester's, and (on a PC) this machine's. */
+  repoKeys?: readonly (string | undefined)[];
+  /** Read `projects/<slug>/seed/<rel>`. */
+  get: (slug: string, rel: string) => Promise<Buffer | null>;
+  dest: string;
+  carryStageDir?: string;
+  log?: (line: string) => void;
+}): Promise<ApplyProjectSeedResult | null> {
+  const slugs = [
+    ...(args.repoKeys ?? []).flatMap((k) => custodySlugCandidates({ repoKey: k ?? null })),
+    ...custodySlugCandidates({ originUrl: args.repoUrl }),
+  ].filter((s, i, all) => all.indexOf(s) === i);
+  const legacy = legacyProjectSlugFromOriginUrl(args.repoUrl);
+  for (const slug of slugs) {
+    if (slug === legacy) {
+      const raw = await args.get(slug, 'manifest.json').catch(() => null);
+      if (!raw) continue;
+      let origin: string | undefined;
+      try {
+        origin = (JSON.parse(raw.toString('utf8')) as { originUrl?: string }).originUrl;
+      } catch {
+        origin = undefined;
+      }
+      if (!legacySeedMatches(origin, args.repoUrl)) {
+        args.log?.(
+          `seed: skipping the legacy ${slug} seed, which belongs to ${origin ?? 'another repo'}`,
+        );
+        continue;
+      }
+    }
+    const applied = await applyProjectSeed({
+      source: { get: (rel) => args.get(slug, rel) },
+      dest: args.dest,
+      ...(args.carryStageDir ? { carryStageDir: args.carryStageDir } : {}),
+      ...(args.log ? { log: args.log } : {}),
+    });
+    if (applied) return applied;
+  }
+  return null;
 }

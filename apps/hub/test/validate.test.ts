@@ -747,24 +747,3 @@ describe('parseCheckoutFilter', () => {
     expect(parseCheckoutFilter(new URLSearchParams('')).ok && true).toBe(true);
   });
 });
-
-describe('parseWorkspaceAdd repoKey', () => {
-  it("carries a scanned project's repo key, and refuses a malformed one", () => {
-    const ok = parseWorkspaceAdd({
-      host: 'pc',
-      root: '/w',
-      projects: [{ path: '/w/a', repoUrl: 'git@gh-work:o/a.git', repoKey: 'github.com/o/a' }],
-    });
-    expect(ok.ok && ok.value.projects[0]).toEqual({
-      path: '/w/a',
-      repoUrl: 'git@gh-work:o/a.git',
-      repoKey: 'github.com/o/a',
-    });
-    const bad = parseWorkspaceAdd({
-      host: 'pc',
-      root: '/w',
-      projects: [{ path: '/w/a', repoKey: 'nonsense' }],
-    });
-    expect(bad.ok).toBe(false);
-  });
-});

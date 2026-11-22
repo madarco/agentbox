@@ -5,11 +5,9 @@ import {
   getMachineLabel,
   hashProjectPath,
   listProjectsConfigured,
-  localRepoPath,
   machineKeyFor,
   machineKeyIn,
   registerProject,
-  repoKey,
   sanitizeMnemonic,
   thisMachine,
   toMachineRef,
@@ -167,16 +165,40 @@ export function repoProjectKey(originUrl: string): string | undefined {
 }
 
 /**
- * What two origins are compared by when joining a box or a scan to a workspace:
- * the repo key, or for a local-path remote (which has no machine-independent
- * key) its lowercased path, as before `repoKey`. Kept so workspace records, the
- * tasks filed under their project ids, and boxes joined by such a remote all
- * survive the move to `repoKey`.
+ * What workspace project ids and workspace joins key a repo by: the
+ * pre-`repoKey` normaliser, kept BYTE FOR BYTE. Workspace records, the tasks
+ * filed under their project ids and box registrations already hold hashes of
+ * this exact string, and `repoKey` spells some remotes differently (an scp
+ * absolute path `host:/srv/x`, a percent-encoded path, `.GIT`, a local path),
+ * so routing ids through `repoKey` would re-key those projects on their next
+ * scan. Machine-independent identity for everything else (checkouts, custody)
+ * is `repoKey`; moving workspace ids onto it is backlog B1.
  */
-export function repoMatchKey(originUrl: string | undefined | null): string | undefined {
-  const key = repoKey(originUrl);
-  if (key !== undefined) return key;
-  return localRepoPath(originUrl)?.toLowerCase();
+export function repoMatchKey(raw: string | undefined | null): string | undefined {
+  const url = (raw ?? '').trim();
+  if (!url) return undefined;
+  const strip = (s: string): string => {
+    let out = s;
+    while (out.endsWith('/')) out = out.slice(0, -1);
+    if (out.endsWith('.git')) out = out.slice(0, -'.git'.length);
+    return out.toLowerCase();
+  };
+  if (url.startsWith('/')) return strip(url) || undefined;
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/i.exec(url);
+  if (scheme) {
+    const rest = scheme[2]!;
+    const authEnd = rest.indexOf('@');
+    const afterAuth = authEnd === -1 ? rest : rest.slice(authEnd + 1);
+    const slash = afterAuth.indexOf('/');
+    if (slash === -1) return undefined;
+    const host = afterAuth.slice(0, slash).replace(/:\d+$/, '');
+    const path = afterAuth.slice(slash + 1);
+    if (!path) return undefined;
+    return strip(host ? `${host}/${path}` : `/${path}`) || undefined;
+  }
+  const scp = /^(?:[^@/]+@)?([^/:]+):(.+)$/.exec(url);
+  if (scp) return strip(`${scp[1]!}/${scp[2]!}`) || undefined;
+  return strip(url) || undefined;
 }
 
 /**
@@ -522,12 +544,6 @@ export interface WorkspaceProjectInput {
   path: string;
   name?: string;
   repoUrl?: string;
-  /**
-   * The repo key the scanning machine computed (ssh aliases expanded). Feeds
-   * the checkouts registry; project ids still derive from `repoUrl`, so they
-   * stay what existing records and tasks name.
-   */
-  repoKey?: string;
 }
 
 export interface AddWorkspaceInput {

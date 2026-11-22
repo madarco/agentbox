@@ -218,7 +218,11 @@ describe('resolveCloudGitTarget (box-sources A10)', () => {
       hostRepoDir: ws,
     });
     expect(
-      resolveCloudGitTarget({ probe: { exitCode: 128, top: '' }, workspacePath: ws, hostNested: [] }),
+      resolveCloudGitTarget({
+        probe: { exitCode: 128, top: '' },
+        workspacePath: ws,
+        hostNested: [],
+      }),
     ).toMatchObject({ ok: true, containerPath: '/workspace' });
     expect(ok('/workspace')).toMatchObject({ ok: true, containerPath: '/workspace' });
   });
@@ -238,7 +242,11 @@ describe('resolveCloudGitTarget (box-sources A10)', () => {
 
   it('refuses any nested repo when the host has no checkout', () => {
     expect(
-      resolveCloudGitTarget({ probe: { exitCode: 0, top: '/workspace/web' }, workspacePath: '', hostNested: [] }).ok,
+      resolveCloudGitTarget({
+        probe: { exitCode: 0, top: '/workspace/web' },
+        workspacePath: '',
+        hostNested: [],
+      }).ok,
     ).toBe(false);
   });
 

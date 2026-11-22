@@ -1333,12 +1333,9 @@ function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
   const out: WorkspaceProjectInput[] = [];
   for (const raw of v) {
     if (!isObject(raw)) return { ok: false, message: 'each project must be an object' };
-    const { path, name, repoUrl, repoKey } = raw;
+    const { path, name, repoUrl } = raw;
     if (typeof path !== 'string' || !path.startsWith('/') || path.length > 4096) {
       return { ok: false, message: 'project.path must be an absolute path' };
-    }
-    if (repoKey !== undefined && !isRepoKey(repoKey)) {
-      return { ok: false, message: 'project.repoKey must be a repo key (host/path or local:…)' };
     }
     const parsedName = optionalString(name, 'project.name');
     if (!parsedName.ok) return parsedName;
@@ -1351,7 +1348,6 @@ function parseWorkspaceProjects(v: unknown): Parsed<WorkspaceProjectInput[]> {
       path,
       ...(parsedName.value ? { name: parsedName.value } : {}),
       ...(parsedRepo.value ? { repoUrl: parsedRepo.value } : {}),
-      ...(typeof repoKey === 'string' ? { repoKey } : {}),
     });
   }
   return { ok: true, value: out };
@@ -1367,7 +1363,9 @@ function isRepoKey(v: unknown): v is string {
     typeof v === 'string' &&
     v.length <= 1024 &&
     !/[\u0000-\u001f\u007f]/.test(v) &&
-    (v.startsWith('local:') || /^[^/\s]+\/[^/].*/.test(v))
+    // `host/path`: no scheme, no user@, no scp `:` (a bracketed IPv6 host may
+    // hold colons); a raw remote URL is not a key.
+    (v.startsWith('local:') || /^(\[[^\]/\s]+\]|[^/\s@:[\]]+)\/[^/\s]/.test(v))
   );
 }
 

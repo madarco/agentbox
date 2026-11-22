@@ -11,6 +11,7 @@ import {
   listWorkspaces,
   readWorkspace,
   removeWorkspace,
+  repoMatchKey,
   repoProjectKey,
   renameWorkspace,
   scanWorkspaceProjects,
@@ -118,6 +119,21 @@ describe('repoKey (through the workspace layer)', () => {
     // Workspace records (and their tasks) already name such projects by the
     // hash of the lowercased path; the id must not move.
     expect(repoProjectKey('/srv/Repos/app.git')).toBe(hashProjectPath('/srv/repos/app'));
+  });
+
+  it('keys project ids exactly as the pre-repoKey normaliser did', () => {
+    // These shapes are where repoKey spells a remote differently; a project id
+    // that moved would orphan every task filed under it.
+    for (const [url, old] of [
+      ['user@server:/srv/git/repo.git', 'server//srv/git/repo'],
+      ['https://example.com/o/re%20po.git', 'example.com/o/re%20po'],
+      ['https://github.com/acme/App.GIT', 'github.com/acme/app.git'],
+      ['https://host:/o/r', 'host:/o/r'],
+      ['git@github.com:Acme/App.git', 'github.com/acme/app'],
+    ] as const) {
+      expect(repoMatchKey(url), url).toBe(old);
+      expect(repoProjectKey(url), url).toBe(hashProjectPath(old));
+    }
   });
 
   it('still joins a box to a workspace by a local-path remote', () => {

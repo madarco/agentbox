@@ -161,6 +161,7 @@ export {
   custodySlugCandidates,
   custodySlugForRepoKey,
   legacyProjectSlugFromOriginUrl,
+  legacySeedMatches,
   localRepoPath,
   ownerRepoFromOriginUrl,
   repoKey,

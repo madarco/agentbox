@@ -176,7 +176,7 @@ describe('makeControlPlaneCreateBox', () => {
     expect(created[0]?.startAgent).toBe(true);
   });
 
-  it('hands the requester\'s repo key to the seed fetch and the provider', async () => {
+  it("hands the requester's repo key to the seed fetch and the provider", async () => {
     const seen: Array<string | undefined> = [];
     const { deps, created } = harness({
       fetchSeedMaterial: (_url, _dest, repoKey) => {

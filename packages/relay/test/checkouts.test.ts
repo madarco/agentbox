@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,6 +13,13 @@ import { cpCacheKey, cpCachePrefixes } from '../src/cp-cache.js';
 import { mergeRegistrationOrigin } from '../src/registration-origin.js';
 
 const KEY = 'github.com/acme/app';
+// Relative to now: listings drop rows older than CHECKOUT_MAX_AGE_MS.
+const DAY0 = Date.UTC(
+  new Date().getUTCFullYear(),
+  new Date().getUTCMonth(),
+  new Date().getUTCDate(),
+);
+const daysAgo = (n: number) => new Date(DAY0 - n * 86_400_000).toISOString();
 
 function co(machineId: string, folder: string, seenAt: string, repoKey = KEY): CheckoutRecord {
   return { repoKey, machineId, folder, label: machineId, seenAt };
@@ -47,6 +54,7 @@ describe('hostCandidatesFor', () => {
     // Same key a capture writes today: `rel:data.csv` under the repo's slug.
     expect(r.cacheKey).toEqual({
       prefix: 'projects/github.com__acme__app/cp',
+      readPrefixes: ['projects/github.com__acme__app/cp'],
       key: cpCacheKey('data.csv'),
     });
   });
@@ -79,7 +87,8 @@ describe('hostCandidatesFor', () => {
   it('accepts a /workspace path and resolves it against the repo', () => {
     const r = hostCandidatesFor(box, '/workspace/src/a.ts', checkouts, all);
     expect(r.ok && r.relPath).toBe('src/a.ts');
-    expect(r.ok && r.cacheKey.key).toBe(cpCacheKey('src/a.ts'));
+    // Keyed as today's capture spells it, so existing entries still hit.
+    expect(r.ok && r.cacheKey.key).toBe(cpCacheKey('/workspace/src/a.ts'));
   });
 
   it('picks the nested repo by longest prefix, keyed relative to its own root', () => {
@@ -137,9 +146,11 @@ describe('hostCandidatesFor', () => {
     });
     expect(b.repos[0]!.repoKey).toBe(KEY);
     const prefix = hostCandidatesFor(b, '/abs/x', [], all);
-    expect(prefix.ok && prefix.cacheKey.prefix).toBe(
-      cpCachePrefixes({ boxId: 'old', originUrl: 'git@github.com:Acme/App.git' })[0],
+    expect(prefix.ok && prefix.cacheKey.readPrefixes).toEqual(
+      cpCachePrefixes({ boxId: 'old', originUrl: 'git@github.com:Acme/App.git' }),
     );
+    // ...which reaches the legacy owner__repo entries written before the key.
+    expect(prefix.ok && prefix.cacheKey.readPrefixes).toContain('projects/Acme__App/cp');
   });
 
   it('uses the origin folder from the registration when the origin never reported', () => {
@@ -187,7 +198,7 @@ describe('checkouts store', () => {
     const t = (iso: string) => () => new Date(iso);
     await applyCheckoutReport(
       { machineId: 'pc-a', label: 'a', entries: [{ repoKey: KEY, folder: '/x' }] },
-      { file, now: t('2026-11-01T00:00:00Z') },
+      { file, now: t(daysAgo(2)) },
     );
     await applyCheckoutReport(
       { machineId: 'pc-b', label: 'b', entries: [{ repoKey: KEY, folder: '/x' }] },
@@ -202,11 +213,11 @@ describe('checkouts store', () => {
           { repoKey: KEY, folder: '/x' },
         ],
       },
-      { file, now: t('2026-11-02T00:00:00Z') },
+      { file, now: t(daysAgo(1)) },
     );
     let mine = await listCheckouts({ machineId: 'pc-a' }, file);
     expect(mine).toHaveLength(1);
-    expect(mine[0]!.seenAt).toBe('2026-11-02T00:00:00.000Z');
+    expect(mine[0]!.seenAt).toBe(daysAgo(1));
     expect(mine[0]!.label).toBe('a2');
 
     await applyCheckoutReport(
@@ -218,8 +229,44 @@ describe('checkouts store', () => {
     expect(await listCheckouts({ machineId: 'pc-b' }, file)).toHaveLength(1);
   });
 
-  it('reads a missing or corrupt file as empty', async () => {
+  it('reads a missing file as empty', async () => {
     expect(await listCheckouts({}, file)).toEqual([]);
+  });
+
+  it('refuses to list a corrupt file, and moves it aside before a write', async () => {
+    await writeFile(file, '{not json');
+    await expect(listCheckouts({}, file)).rejects.toThrow(/not valid JSON/);
+    await applyCheckoutReport(
+      { machineId: 'pc-a', label: 'a', entries: [{ repoKey: KEY, folder: '/x' }] },
+      { file },
+    );
+    expect(await listCheckouts({}, file)).toHaveLength(1);
+    const kept = (await readdir(dir)).filter((n) => n.includes('.corrupt-'));
+    expect(kept).toHaveLength(1);
+    expect(await readFile(join(dir, kept[0]!), 'utf8')).toBe('{not json');
+  });
+
+  it('never overwrites a registry it cannot read', async () => {
+    await mkdir(file); // EISDIR: exists, unreadable as a file
+    await expect(
+      applyCheckoutReport(
+        { machineId: 'pc-a', label: 'a', entries: [{ repoKey: KEY, folder: '/x' }] },
+        { file },
+      ),
+    ).rejects.toThrow(/cannot read/);
+  });
+
+  it('ages out rows no report has named for 90 days', async () => {
+    await applyCheckoutReport(
+      { machineId: 'gone', label: 'g', entries: [{ repoKey: KEY, folder: '/old' }] },
+      { file, now: () => new Date('2026-01-01T00:00:00Z') },
+    );
+    await applyCheckoutReport(
+      { machineId: 'pc-a', label: 'a', entries: [{ repoKey: KEY, folder: '/x' }] },
+      { file, now: () => new Date('2026-06-01T00:00:00Z') },
+    );
+    const raw = JSON.parse(await readFile(file, 'utf8')) as { checkouts: unknown[] };
+    expect(raw.checkouts).toHaveLength(1);
   });
 });
 

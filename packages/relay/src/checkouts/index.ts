@@ -1,5 +1,11 @@
 export type { CheckoutFilter, CheckoutRecord, CheckoutReport } from './types.js';
-export { applyCheckoutReport, CHECKOUTS_FILE, listCheckouts } from './store.js';
+export {
+  applyCheckoutReport,
+  CHECKOUT_MAX_AGE_MS,
+  CHECKOUTS_FILE,
+  CheckoutsFileError,
+  listCheckouts,
+} from './store.js';
 export {
   BOX_WORKSPACE,
   candidateBoxFromRegistration,

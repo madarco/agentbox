@@ -1329,9 +1329,7 @@ export function resolveCloudGitTarget(args: {
   probe: { exitCode: number; top: string } | null;
   workspacePath: string;
   hostNested: readonly string[];
-}):
-  | { ok: true; containerPath: string; hostRepoDir: string }
-  | { ok: false; error: string } {
+}): { ok: true; containerPath: string; hostRepoDir: string } | { ok: false; error: string } {
   const root = { ok: true as const, containerPath: '/workspace', hostRepoDir: args.workspacePath };
   if (!args.probe || args.probe.exitCode !== 0) return root;
   const top = posix.normalize(args.probe.top).replace(/\/+$/, '');

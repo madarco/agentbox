@@ -5,7 +5,7 @@
  */
 import { posix } from 'node:path';
 import { custodySlugForRepoKey, repoKey as repoKeyOf } from '@agentbox/config';
-import { cpCacheKey, cpCachePrefix } from '../cp-cache.js';
+import { cpCacheKey, cpCachePrefix, cpCachePrefixes } from '../cp-cache.js';
 import type { BoxRegistration } from '../types.js';
 import type { CheckoutRecord } from './types.js';
 
@@ -25,6 +25,11 @@ export interface CandidateRepo {
 /** A box as the lookup sees it. Phase 2's `BoxSources` replaces `repos`. */
 export interface CandidateBox {
   boxId: string;
+  /**
+   * The root repo's cp-cache prefixes, best first (`cpCachePrefixes(reg)`),
+   * legacy slugs included. Derived from the root repo's key when absent.
+   */
+  cachePrefixes?: string[];
   /** `getMachineId()` of the machine the box was seeded from. */
   originMachineId?: string;
   repos: CandidateRepo[];
@@ -46,7 +51,12 @@ export type HostCandidatesResult =
       relPath: string;
       candidates: HostCandidate[];
       /** The custody fallback, always present. */
-      cacheKey: { prefix: string; key: string };
+      /**
+       * The custody fallback, always present: `prefix` is where a capture
+       * writes, `readPrefixes` every prefix to try (new slug first, legacy
+       * `owner__repo` after), `key` the entry within it.
+       */
+      cacheKey: { prefix: string; readPrefixes: string[]; key: string };
     }
   | { ok: false; error: string };
 
@@ -122,16 +132,32 @@ export function hostCandidatesFor(
     }
   }
 
-  // Keyed as today's capture keys it: a repo-relative request is `rel:<path>`
-  // under the repo's slug, so every machine with the repo reads and writes one
-  // entry. A host-absolute path keeps its `abs:` key under the root repo's prefix.
-  // A request outside every repo is still filed under the box's ROOT repo
-  // slug, which is where a live capture writes it (`cpCachePrefixes(reg)[0]`).
-  const scopeRepo = repo ?? box.repos.find((r) => r.path === BOX_WORKSPACE);
-  const slug = scopeRepo ? custodySlugForRepoKey(scopeRepo.repoKey) : null;
-  const prefix = cpCachePrefix({ ...(slug ? { projectSlug: slug } : {}), boxId: box.boxId });
-  const key = cpCacheKey(repo ? relPath : raw);
-  return { ok: true, ...(repo ? { repo } : {}), relPath, candidates, cacheKey: { prefix, key } };
+  // Keyed exactly as today's capture keys it, so existing entries still hit:
+  // the request as the box spelled it (`./x` -> `rel:x`, `/workspace/x` ->
+  // `abs:/workspace/x`, a host path -> `abs:<path>`), under the ROOT repo's
+  // prefixes (`cpCachePrefixes(reg)`: the repo-key slug to write, then the
+  // legacy slugs to read). Only a NESTED repo, which no capture has keyed yet,
+  // gets its own slug and a key relative to its own root.
+  const root = box.repos.find((r) => r.path === BOX_WORKSPACE);
+  const nestedRepo = repo && repo !== root ? repo : undefined;
+  let readPrefixes: string[];
+  if (nestedRepo) {
+    const slug = custodySlugForRepoKey(nestedRepo.repoKey);
+    readPrefixes = [cpCachePrefix({ ...(slug ? { projectSlug: slug } : {}), boxId: box.boxId })];
+  } else if (box.cachePrefixes && box.cachePrefixes.length > 0) {
+    readPrefixes = [...box.cachePrefixes];
+  } else {
+    const slug = custodySlugForRepoKey(root?.repoKey);
+    readPrefixes = [cpCachePrefix({ ...(slug ? { projectSlug: slug } : {}), boxId: box.boxId })];
+  }
+  const key = cpCacheKey(nestedRepo ? relPath : raw);
+  return {
+    ok: true,
+    ...(repo ? { repo } : {}),
+    relPath,
+    candidates,
+    cacheKey: { prefix: readPrefixes[0]!, readPrefixes, key },
+  };
 }
 
 /**
@@ -139,7 +165,10 @@ export function hostCandidatesFor(
  * keyed by the registered repo key. Phase 2 derives it from `sources`.
  */
 export function candidateBoxFromRegistration(
-  reg: Pick<BoxRegistration, 'boxId' | 'repoKey' | 'originUrl' | 'originMachineId' | 'worktrees'>,
+  reg: Pick<
+    BoxRegistration,
+    'boxId' | 'repoKey' | 'originUrl' | 'projectSlug' | 'originMachineId' | 'worktrees'
+  >,
 ): CandidateBox {
   const root = reg.worktrees?.find((w) => w.containerPath === BOX_WORKSPACE);
   // A registration from before the repo key existed: derive it (unexpanded)
@@ -147,6 +176,7 @@ export function candidateBoxFromRegistration(
   const key = reg.repoKey ?? repoKeyOf(reg.originUrl);
   return {
     boxId: reg.boxId,
+    cachePrefixes: cpCachePrefixes(reg),
     ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
     repos: [
       {

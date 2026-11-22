@@ -23,20 +23,53 @@ function isRecord(v: unknown): v is CheckoutRecord {
   );
 }
 
-async function readAll(file: string): Promise<CheckoutRecord[]> {
+/** A registry file that exists but cannot be used. Never silently overwritten. */
+export class CheckoutsFileError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CheckoutsFileError';
+  }
+}
+
+/**
+ * Read the registry. A missing file is an empty registry; an UNREADABLE one
+ * (EACCES, EIO) throws, so the next write cannot replace it with a near-empty
+ * list. A corrupt one throws on a read, and on a write is first moved aside to
+ * `<file>.corrupt-<time>` so nothing is lost.
+ */
+async function readAll(
+  file: string,
+  opts: { forWrite?: boolean; now?: Date } = {},
+): Promise<CheckoutRecord[]> {
   let raw: string;
   try {
     raw = await readFile(file, 'utf8');
-  } catch {
-    return [];
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new CheckoutsFileError(
+      `cannot read the checkouts registry ${file}: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
+  let parsed: { checkouts?: unknown };
   try {
-    const parsed = JSON.parse(raw) as { checkouts?: unknown };
-    return Array.isArray(parsed.checkouts) ? parsed.checkouts.filter(isRecord) : [];
+    parsed = JSON.parse(raw) as { checkouts?: unknown };
   } catch {
+    if (!opts.forWrite) {
+      throw new CheckoutsFileError(`the checkouts registry ${file} is not valid JSON`);
+    }
+    const stamp = (opts.now ?? new Date()).toISOString().replace(/[:.]/g, '-');
+    await rename(file, `${file}.corrupt-${stamp}`);
     return [];
   }
+  return Array.isArray(parsed.checkouts) ? parsed.checkouts.filter(isRecord) : [];
 }
+
+/**
+ * A row no report has named for this long is dropped on the next write: a
+ * machine that was wiped or retired never sends the `removed` that would
+ * clear its rows, and Phase 4 would keep offering it as a candidate.
+ */
+export const CHECKOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 async function writeAll(file: string, checkouts: CheckoutRecord[]): Promise<void> {
   await mkdir(dirname(file), { recursive: true });
@@ -58,8 +91,11 @@ export async function listCheckouts(
   filter: CheckoutFilter = {},
   file: string = CHECKOUTS_FILE,
 ): Promise<CheckoutRecord[]> {
+  const cutoff = Date.now() - CHECKOUT_MAX_AGE_MS;
   const all = await readAll(file);
-  return all.filter((r) => matches(r, filter)).sort((a, b) => b.seenAt.localeCompare(a.seenAt));
+  return all
+    .filter((r) => matches(r, filter) && Date.parse(r.seenAt) >= cutoff)
+    .sort((a, b) => b.seenAt.localeCompare(a.seenAt));
 }
 
 const sameRow = (a: { repoKey: string; folder: string }, b: { repoKey: string; folder: string }) =>
@@ -75,11 +111,15 @@ export async function applyCheckoutReport(
   opts: { file?: string; now?: () => Date } = {},
 ): Promise<CheckoutRecord[]> {
   const file = opts.file ?? CHECKOUTS_FILE;
-  const seenAt = (opts.now ?? (() => new Date()))().toISOString();
+  const now = (opts.now ?? (() => new Date()))();
+  const seenAt = now.toISOString();
+  const cutoff = now.getTime() - CHECKOUT_MAX_AGE_MS;
   return withFileLock(
     file,
     async () => {
-      const all = await readAll(file);
+      const all = (await readAll(file, { forWrite: true, now })).filter(
+        (r) => Date.parse(r.seenAt) >= cutoff,
+      );
       const removed = report.removed ?? [];
       const kept = all.filter(
         (r) =>

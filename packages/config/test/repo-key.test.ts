@@ -48,6 +48,12 @@ describe('repoKey', () => {
     expect(repoKey('git@github-work:madarco/agentbox.git')).toBe('github-work/madarco/agentbox');
   });
 
+  it("maps the forges' ssh-over-443 endpoints to the forge", () => {
+    expect(repoKey('ssh://git@ssh.github.com:443/acme/web.git')).toBe('github.com/acme/web');
+    expect(repoKey('ssh://git@altssh.gitlab.com:443/g/r.git')).toBe('gitlab.com/g/r');
+    expect(repoKey('ssh://git@altssh.bitbucket.org:443/o/r.git')).toBe('bitbucket.org/o/r');
+  });
+
   it('keys a local path by machine, case preserved', () => {
     expect(repoKey('/Users/me/src/AgentBox.git', { machineId: 'm1' })).toBe(
       'local:m1:/Users/me/src/AgentBox',
@@ -61,6 +67,12 @@ describe('repoKey', () => {
     expect(repoKey(undefined)).toBeUndefined();
     expect(repoKey('https://github.com')).toBeUndefined();
     expect(repoKey('nonsense')).toBeUndefined();
+  });
+
+  it('drops a query or fragment, and parses a bracketed IPv6 scp host', () => {
+    expect(repoKey('https://github.com/acme/web.git?ref=main#readme')).toBe('github.com/acme/web');
+    expect(repoKey('git@[::1]:acme/web.git')).toBe('[::1]/acme/web');
+    expect(repoKey('ssh://git@[::1]:2222/acme/web.git')).toBe('[::1]/acme/web');
   });
 
   it('is idempotent', () => {

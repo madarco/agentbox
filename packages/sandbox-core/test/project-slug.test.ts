@@ -3,6 +3,7 @@ import {
   boxNameBasisFromOriginUrl,
   deriveRepoLabel,
   custodySlugCandidates,
+  isEphemeralWorkerClone,
   isHubWorkerClone,
   legacyProjectSlugFromOriginUrl,
   ownerRepoFromOriginUrl,
@@ -103,9 +104,47 @@ describe('projectSlugFromOriginUrl', () => {
 });
 
 describe('repoKeyAtEdge', () => {
-  it('leaves a real hostname alone (no ssh -G), so ssh and https spellings agree', async () => {
-    expect(await repoKeyAtEdge('git@github.com:Acme/Web.git')).toBe('github.com/acme/web');
-    expect(await repoKeyAtEdge('https://github.com/acme/web')).toBe('github.com/acme/web');
+  const sshConfig: Record<string, string> = {
+    'github-work': 'github.com',
+    'github.com-work': 'github.com',
+    'work.github.com': 'github.com',
+    // `Host github.com / HostName ssh.github.com / Port 443`
+    'github.com': 'ssh.github.com',
+    'gitlab.com': 'altssh.gitlab.com',
+  };
+  const resolveHost = (h: string) => Promise.resolve(sshConfig[h] ?? h);
+
+  it('expands an alias whenever ssh -G names a different host, dotted or not', async () => {
+    for (const url of [
+      'git@github-work:Acme/Web.git',
+      'git@github.com-work:acme/web.git',
+      'ssh://git@work.github.com/acme/web',
+    ]) {
+      expect(await repoKeyAtEdge(url, { resolveHost }), url).toBe('github.com/acme/web');
+    }
+  });
+
+  it('maps the ssh-over-443 endpoints back, so ssh and https keys agree', async () => {
+    expect(await repoKeyAtEdge('git@github.com:acme/web.git', { resolveHost })).toBe(
+      'github.com/acme/web',
+    );
+    expect(await repoKeyAtEdge('git@gitlab.com:g/sub/r.git', { resolveHost })).toBe(
+      'gitlab.com/g/sub/r',
+    );
+    expect(await repoKeyAtEdge('https://github.com/acme/web', { resolveHost })).toBe(
+      'github.com/acme/web',
+    );
+  });
+
+  it('never consults ssh config for an https remote', async () => {
+    const asked: string[] = [];
+    await repoKeyAtEdge('https://github-work/acme/web', {
+      resolveHost: (h) => {
+        asked.push(h);
+        return Promise.resolve('github.com');
+      },
+    });
+    expect(asked).toEqual([]);
   });
 });
 
@@ -169,6 +208,15 @@ describe('hub-worker clone recognition', () => {
     // A user whose checkout happens to live under a similarly-named parent must
     // not have their own folder mistaken for a throwaway clone.
     expect(isHubWorkerClone('/tmp/agentbox-hub-worker-abc/nested-real-repo')).toBe(false);
+  });
+});
+
+describe('isEphemeralWorkerClone', () => {
+  it("matches both workers' per-job clones and nothing else", () => {
+    expect(isEphemeralWorkerClone('/tmp/agentbox-hub-worker-74d5')).toBe(true);
+    expect(isEphemeralWorkerClone('/var/folders/x/T/agentbox-cp-worker-job-1')).toBe(true);
+    expect(isEphemeralWorkerClone('/Users/me/src/agentbox')).toBe(false);
+    expect(isEphemeralWorkerClone('/tmp/agentbox-cp-worker-1/nested')).toBe(false);
   });
 });
 

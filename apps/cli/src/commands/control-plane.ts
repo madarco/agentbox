@@ -17,14 +17,13 @@ import {
 import {
   DEFAULT_ENV_PATTERNS,
   CP_WORKER_CLONE_PREFIX,
-  custodySlugCandidates,
   projectSlugAtEdge,
   repoKeyAtEdge,
   readPreparedStateRaw,
   relayPort,
 } from '@agentbox/sandbox-core';
 import {
-  applyProjectSeed,
+  applyProjectSeedForRepo,
   deadlineFetch,
   hostReachable,
   pushPreparedToCustody,
@@ -1066,13 +1065,6 @@ const workerSub = new Command('worker')
             remoteOnly: true,
           });
           if (!target) return null;
-          // This worker runs on a PC, so it can expand this machine's aliases
-          // too; the requester's key goes first.
-          const slugs = [
-            ...custodySlugCandidates({ repoKey, originUrl: repoUrl }),
-            ...custodySlugCandidates({ repoKey: await repoKeyAtEdge(repoUrl) }),
-          ].filter((s, i, all) => all.indexOf(s) === i);
-          if (slugs.length === 0) return null;
           // Probe + bound like every other custody call: a down control box must
           // not park each blob `get` on undici's ~10s connect timeout and stall
           // a create the user is waiting on (see sandbox-cloud/reachability.ts).
@@ -1086,16 +1078,15 @@ const workerSub = new Command('worker')
             ...target,
             fetchImpl: deadlineFetch(AbortSignal.timeout(SEED_FETCH_MS)),
           });
-          // New slug first, then the legacy one an older CLI pushed under.
-          for (const slug of slugs) {
-            const applied = await applyProjectSeed({
-              source: { get: (rel) => client.get(`projects/${slug}/seed/${rel}`) },
-              dest,
-              log: (line) => process.stdout.write(`agentbox-cp-worker: ${line}\n`),
-            });
-            if (applied) return applied;
-          }
-          return null;
+          // The requester's key first, then this machine's (this worker runs on
+          // a PC and can expand its own aliases), then the URL's and legacy slugs.
+          return applyProjectSeedForRepo({
+            repoUrl,
+            repoKeys: [repoKey, await repoKeyAtEdge(repoUrl)],
+            get: (slug, rel) => client.get(`projects/${slug}/seed/${rel}`),
+            dest,
+            log: (line) => process.stdout.write(`agentbox-cp-worker: ${line}\n`),
+          });
         },
         tmpDir: (jobId) => join(tmpdir(), `${CP_WORKER_CLONE_PREFIX}${jobId}`),
         cleanup: (dir) => rm(dir, { recursive: true, force: true }),
@@ -1496,7 +1487,7 @@ const secretsPushSub = new Command('push')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option(
     '--project <slug>',
-    'custody project slug (default: owner__repo, else the directory name)',
+    'custody project slug (default: the repo key, e.g. github.com__owner__repo, else the directory name)',
   )
   .option('--force', 'upload even when the stored hash matches')
   .action(async (files: string[], opts: { url?: string; project?: string; force?: boolean }) => {
@@ -1537,7 +1528,7 @@ const projectPushSub = new Command('push')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option(
     '--project <slug>',
-    'custody project slug (default: owner__repo, else the directory name)',
+    'custody project slug (default: the repo key, e.g. github.com__owner__repo, else the directory name)',
   )
   .option('--force', 'upload even when the stored hash matches')
   .action(async (opts: { url?: string; project?: string; force?: boolean }) => {
@@ -1615,7 +1606,7 @@ const projectCmd = new Command('project')
 
 const custodyListSub = new Command('list')
   .description('List custody entries (paths + hashes; values are never returned)')
-  .argument('[prefix]', 'scope to a prefix, e.g. agents or projects/owner__repo')
+  .argument('[prefix]', 'scope to a prefix, e.g. agents or projects/github.com__owner__repo')
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .action(async (prefix: string | undefined, opts: { url?: string }) => {
     try {
@@ -1640,7 +1631,10 @@ const custodyListSub = new Command('list')
 
 const custodyPullSub = new Command('pull')
   .description('Download a custody scope to a local directory (0600 files)')
-  .argument('<scope>', 'custody scope/prefix, e.g. agents, projects/owner__repo, boxes/<id>')
+  .argument(
+    '<scope>',
+    'custody scope/prefix, e.g. agents, projects/github.com__owner__repo, boxes/<id>',
+  )
   .option('--url <url>', 'override the control-plane URL (default: relay.controlPlaneUrl)')
   .option('--dest <dir>', 'destination directory (default: ./agentbox-custody)')
   .action(async (scope: string, opts: { url?: string; dest?: string }) => {

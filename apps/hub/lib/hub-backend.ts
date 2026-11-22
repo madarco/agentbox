@@ -2131,7 +2131,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
   const checkouts = createCheckoutBackend(backendDeps);
-  const workspaces = createWorkspaceBackend(backendDeps, { checkouts });
+  const workspaces = createWorkspaceBackend(backendDeps);
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
   const boxPrs = createBoxPrLookup({ sync: prSync });

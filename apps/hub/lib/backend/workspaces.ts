@@ -38,13 +38,11 @@ import {
   type WorkTask,
 } from '@agentbox/relay';
 import { inBackground } from './background';
-import { checkoutReportFromScan } from './checkouts';
 import { hubMachine, reconcileContext as fleetContext, type BackendDeps } from './deps';
 import type {
   ActionResult,
   AddTaskInput,
   AssignTarget,
-  CheckoutBackend,
   TaskFilter,
   TaskResult,
   TasksResult,
@@ -63,10 +61,7 @@ function unknownWorkspace(id: string): { ok: false; error: string } {
   return err(`unknown workspace ${id}`);
 }
 
-export function createWorkspaceBackend(
-  deps: BackendDeps,
-  seams: { checkouts?: Pick<CheckoutBackend, 'reportCheckouts'> } = {},
-): WorkspaceBackend {
+export function createWorkspaceBackend(deps: BackendDeps): WorkspaceBackend {
   const reconcileContext = (): Promise<ReconcileContext> => fleetContext(deps);
   const probe: ManagerProbe = {
     ...(deps.managerExec ? { exec: deps.managerExec } : {}),
@@ -218,10 +213,6 @@ export function createWorkspaceBackend(
       if (bad) return err(`project paths must be absolute: ${bad.path}`);
       try {
         const rec = await addWorkspace(input);
-        // The scan names every project's folder on the scanning machine: the
-        // same fact the checkouts registry keeps, so record it there too.
-        const report = checkoutReportFromScan(input);
-        if (report && seams.checkouts) await seams.checkouts.reportCheckouts(report);
         deps.notify();
         const view = await viewOf(rec);
         return view ? { ok: true, workspace: view } : err('workspace was not written');

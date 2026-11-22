@@ -43,7 +43,7 @@ async function fileExists(path: string): Promise<boolean> {
 export async function resolveSshConfigTarget(destination: string): Promise<SshConfigTarget | null> {
   let stdout: string;
   try {
-    const res = await execa('ssh', ['-G', destination], { reject: false, timeout: 10_000 });
+    const res = await execa('ssh', ['-G', '--', destination], { reject: false, timeout: 10_000 });
     if (res.exitCode !== 0) return null;
     stdout = res.stdout ?? '';
   } catch {

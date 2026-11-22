@@ -975,7 +975,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Checkouts'],
           summary: 'List the checkouts registry',
           description:
-            'Which machine has which repo checked out where, keyed by machine id and repo key, newest report first. Two machines with the same repo at different folders are two rows under one `repoKey`. Filled by `PUT /checkouts`, by workspace scans that carry a `machineId`, and by projects registered on the hub itself. Empty on the hosted control plane.',
+            'Which machine has which repo checked out where, keyed by machine id and repo key, newest report first. Two machines with the same repo at different folders are two rows under one `repoKey`. Filled by `PUT /checkouts` (the CLI reports on create, workspace add/rescan and manager registration) and by projects registered on the hub itself. Rows not reported for 90 days are dropped. Empty on the hosted control plane.',
           parameters: [
             {
               name: 'repoKey',
@@ -1158,11 +1158,6 @@ export function buildOpenApi(): Record<string, unknown> {
                             type: 'string',
                             description:
                               "The project's `origin` remote. Without one the project is host-local: no other machine can join a box to it.",
-                          },
-                          repoKey: {
-                            type: 'string',
-                            description:
-                              'The repo key the scanning machine computed from `repoUrl`, with its `~/.ssh/config` host aliases expanded. Recorded in `GET /checkouts` (with `machineId`); project ids still derive from `repoUrl`.',
                           },
                         },
                         required: ['path'],
