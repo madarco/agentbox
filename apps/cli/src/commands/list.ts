@@ -599,6 +599,8 @@ async function buildListText(all: boolean, live: boolean): Promise<string> {
   // inactive when docker is gated here, plus a footer note naming the key + reason.
   const muted = await mutedDockerBoxes(boxes);
   lastListing = listing;
+  // Refused, not empty: "no boxes — run agentbox create" would be a lie here.
+  if (listing.reason === 'unauthorized') return staleNote(listing).trimStart();
   const note = staleNote(listing) + dockerHiddenNote(muted.ids.size, muted.reason, muted.hint);
   if (boxes.length === 0) {
     if (scoped) {

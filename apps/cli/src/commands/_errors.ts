@@ -1,3 +1,5 @@
+import { HubApiError } from '../control-plane/hub-api-client.js';
+import { hubUnauthorizedHint } from '../control-plane/unauthorized-hint.js';
 import { log } from '@clack/prompts';
 import { AmbiguousBoxError, BoxNotFoundError } from '@agentbox/sandbox-docker';
 import { ClaudeSessionError } from '@agentbox/agent-claude';
@@ -23,5 +25,11 @@ export function handleLifecycleError(err: unknown): never {
   }
   const msg = err instanceof Error ? err.message : String(err);
   log.error(msg);
+  // Any command that reached a hub and got a 401: say why and what to run, the
+  // same advice `ls` and the relay give (a revoked or never-enrolled computer).
+  if (err instanceof HubApiError && err.status === 401) {
+    const url = process.env.AGENTBOX_CONTROL_PLANE_URL;
+    log.info(hubUnauthorizedHint(url, url ? 'remote' : 'local'));
+  }
   process.exit(1);
 }
