@@ -63,24 +63,21 @@ for teams PCs must never hold it (device tokens only).
 ## docker:hub boxes on other computers (follow-up fix 3), noted, not fixed
 
 - **Direct attach / shell / `cp` from a computer that did not deploy the control box
-  (owner to pick).** Today (option D, shipped): those commands stop with a message
-  naming the reason; hub-side actions (start/stop, git, web UI, tray) work everywhere.
-  They need SSH to the control box's engine, which today is `ssh root@<control box>`
-  with the deploy key, firewalled to the deploying computer: root on the hub. Options:
-  - **A. Hub-relayed attach.** A WebSocket PTY through the hub API, device-token
-    authenticated; the hub `docker exec`s into its own container. No new SSH access.
-    Needs a PTY channel in the hub plus a client in the CLI and tray. The end goal (it
-    also fixes cloud attach behind NAT); `cp` would ride the same channel.
-  - **B. A restricted per-device SSH key on the control box**, with a forced command
-    that runs `docker exec`. Per-device key distribution, a forced-command parser,
-    per-device firewall entries. The docker group is root-equivalent, so any parser
-    hole is root on the hub. Not recommended.
-  - **C. An sshd inside each box container.** The box key from custody, a published
-    port, a per-device firewall rule; the cloud-box model, and remote-docker already
-    has the in-container sshd (`box-ssh.ts`, reached over a ProxyJump). Box-scoped,
-    not hub-scoped, but a port per box and firewall management per device.
-  - Recommendation: keep D until A exists; C if multi-PC docker:hub is needed sooner;
-    not B.
+  (owner decided, 2026-11-22).** They need SSH to the control box's engine, which today
+  is `ssh root@<control box>` with the deploy key, firewalled to the deploying computer:
+  root on the hub.
+  - **Now: D (shipped in #436).** Those commands stop with a message naming the reason;
+    hub-side actions (start/stop, git, web UI, tray) work from every computer.
+  - **Follow-up: A, terminals over WebSocket served by the hub.** Attach and shell for
+    every box, any provider, from any enrolled computer, through the hub: a
+    device-token-authenticated WebSocket PTY, with the hub opening the session on the
+    box itself (`docker exec` for its own engine). No new SSH access for any computer.
+    Not started.
+  - **Rejected: B**, a restricted per-device SSH key on the control box with a
+    forced-command `docker exec`. The docker group is root-equivalent, so any hole in
+    the forced command is root on the hub.
+  - **Not needed: C**, an sshd inside each box container. A covers the same need
+    without a published port and a firewall rule per box and per device.
 - **A pre-existing `hub` alias that is not the control box.** `ensureHubDockerTarget`
   leaves a user's own `hub` alias alone (`hub -> me@nas`), so on the deploying computer
   direct actions on a docker:hub box dial that host instead and fail with "no such
