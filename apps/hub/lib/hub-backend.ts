@@ -131,6 +131,7 @@ import {
   diffFileManifests,
   listProviderDescriptors,
   resolveProviderDescriptor,
+  readAccounts,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
@@ -202,7 +203,12 @@ import type {
 } from './boxes/backend-types';
 import { vncUnavailableReason } from './boxes/vnc-link';
 import { hubProfile } from './auth-config';
-import { resolveCreateAccounts, setDefaultCheckpointRefusal } from './backend/accounts';
+import {
+  accountsInfoOf,
+  createAccountBackend,
+  resolveCreateAccounts,
+  setDefaultCheckpointRefusal,
+} from './backend/accounts';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import { createProjectDir } from './boxes/create-project';
@@ -2151,6 +2157,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
   const checkouts = createCheckoutBackend(backendDeps);
+  const accounts = createAccountBackend();
   const workspaces = createWorkspaceBackend(backendDeps);
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
@@ -2233,6 +2240,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   }
   const hub: HubBackend = {
     ...checkouts,
+    ...accounts,
     ...workspaces,
     ...managers,
     ...timeline,
@@ -2346,15 +2354,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // filesystem probe; the resolver caches per project root, so a fleet of
       // boxes over three projects costs three stats, not one per box.
       const hasGitOf = boxHasGitResolver();
+      // One store read per listing: label + kind for every box's named accounts.
+      const accountFile = await readAccounts().catch(() => null);
       const withTasks = (box: Box): Box => {
         const summary = taskSummaries.byBox.get(box.id);
         const managerId = managerByBox.get(box.id);
         const pr = prOf(box);
+        const accountsInfo = accountsInfoOf(box.accounts, accountFile);
         return {
           ...box,
           ...(summary ? { tasks: summary } : {}),
           ...(managerId ? { managerId } : {}),
           ...(pr ? { pr } : {}),
+          ...(accountsInfo ? { accountsInfo } : {}),
         };
       };
       const listedBoxes = await Promise.all(

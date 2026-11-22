@@ -178,6 +178,17 @@ export interface Box {
    * (llm-accounts Phase 3; labels/kinds arrive with Phase 5's `accounts` list.)
    */
   accounts?: Record<string, string>;
+  /**
+   * Label and kind for each entry of `accounts`, from the hub machine's account
+   * store (`[{ agent, account, label?, kind? }]`). An account the store does not
+   * have keeps only its id. Read-only. (llm-accounts Phase 5.)
+   */
+  accountsInfo?: Array<{
+    agent: string;
+    account: string;
+    label?: string;
+    kind?: 'login' | 'setup-token' | 'api-key';
+  }>;
   // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is
   // 'control-plane'. Absent for docker.
   topology?: string;
