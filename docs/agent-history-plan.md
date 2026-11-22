@@ -344,6 +344,99 @@ memory` commands; extended to every agent that declares memory.
 **Done:** memory written in box A is present in a fresh box B on another
 provider, and `memory pull` lands it on the host.
 
+#### Phase 4 implementation plan (2026-11-22, claude first)
+
+**The Phase 0 problem.** On docker, claude's memory dir
+`~/.claude/projects/-workspace/memory` sits on the config volume every docker
+box of every project shares. The create-time seed `rm -rf`s it and recopies the
+host's copy for the new box's project, so (1) a box's memory writes are lost at
+the next create of any project, (2) two live boxes of different projects read
+and write one dir, and (3) a tailer of that dir cannot tell which box, or which
+repo, wrote a file.
+
+**Decision: a per-box memory dir, not derivation from Write/Edit calls.**
+
+- On docker, `-workspace/memory` on the shared volume becomes a symlink to
+  `~/.local/share/agentbox/memory/claude`. The link is the same in every
+  container, but it resolves into each container's own writable layer, so
+  every box has a private dir. The create no longer deletes anything, and
+  nothing another box does touches it. A file in it belongs to that box and
+  so to the box's repo. Cloud boxes already have a private dir (their own
+  disk) and keep the real one.
+- **Derivation was rejected:**
+  - A `Write` gives the full content, but an `Edit` gives only an old/new
+    pair. Replaying it needs the exact base, and redaction may have changed
+    that base.
+  - Memory written by `Bash` (`echo >>`, `sed -i`, `mv`, `rm`) has no
+    structured record at all.
+  - It would leave the shared dir in place, with its cross-project
+    reads/writes and the destroy-on-create.
+  - It needs the parsed transcript before memory exists: a hub-side
+    projection that a parser bug would corrupt silently.
+- **What the per-box dir costs:**
+  - The symlink must exist before claude writes. The container-local target
+    must exist too, or the link dangles. The volume seed writes the link;
+    ctl creates the target at boot.
+  - A box running an older ctl, when a new create first turns the dir into a
+    link, sees a dangling link until it restarts (backlog).
+
+**Shape (every provider, ctl is the edge):**
+
+- **Spec.** `history.memory: [{ root, scope, hostKey }]` on the agent row, data
+  only. claude: `projects/<projectKey>/memory`, `scope: 'project'`, `hostKey:
+  'dashed-path'` (how the host spells a project folder in `<projectKey>`). The
+  box dir is `boxDir/root` with `-workspace`. The host dir is
+  `~/<hostHomeRel>/root` with the encoded project folder.
+- **Store.** `history_memory` in `history.db`, every version kept:
+  - keyed by `(repo_key, agent, scope, path, version)`;
+  - holds content (inline: memory is small markdown, capped at 256 KB a
+    file), sha256, a `deleted` tombstone flag, and the origin (box, provider,
+    host, or `host` for a host import);
+  - `repo_key` is `repoKey(originUrl)` from `@agentbox/config`, so ssh and
+    https spellings of one repo are one key.
+  - **Write rule:** last writer wins per file. A write whose content equals the
+    latest version is a no-op.
+- **Seed** (`memory.seed` RPC, the relay answers in the hub process):
+  1. The relay returns the hub's latest version of every path for the box's
+     repo and agent.
+  2. It adds the hub machine's own host copy for paths the hub has never
+     seen, imported as versions with origin `host`. The create runs on the
+     hub machine, so this is the same "host copy" the create seeds from today.
+  3. With `history.capture` off, or no hub behind the relay, it returns the
+     host copy only, stores nothing, and write-back is off.
+  4. ctl writes the set into the box's memory dir (replacing it), records a
+     baseline sha per file in `~/.local/state/agentbox/memory-state.json`, and
+     never seeds again in that box.
+
+  The cloud create's `seedDynamicConfig` host copy stays, as the fallback when
+  the hub cannot be reached.
+- **Write-back.** ctl polls the memory dir every 15 s. A file whose sha differs
+  from the baseline ships as `memory.put` (content, or `deleted`). The relay
+  redacts it with the host's exact secret values and stamps the box from its
+  token, and the hub adds a version. A box that never edits a file never
+  overwrites another box's newer version of it.
+- **Flush on destroy.** `agentbox-ctl history flush` also runs a memory pass.
+  The hub runs it for running boxes of every provider before the destroy,
+  docker included. A paused docker box's last 15 s are not flushed (backlog).
+- **Checkpoints.** `agentbox-checkpoint-cleanup` deletes the memory state and
+  the container-local dir, so a box from a checkpoint seeds fresh for its own
+  repo.
+- **API** (`/api/v1`, Bearer, read-only):
+  - `GET /history/memory?repo&agent`: the latest version per path.
+  - `GET /history/memory/versions?repo&agent&path`: every version.
+  - `GET /history/memory/file?repo&agent&path&version`: the content.
+  - `repo` accepts any spelling of the URL, and `GET /history/memory/repos`
+    lists the repos.
+- **CLI.** `agentbox memory ls|versions|show|pull`, all hub clients. The repo
+  defaults to the cwd's `origin`. `pull` writes the hub's latest into this
+  PC's agent dir for the cwd project (`~/.claude/projects/<key>/memory/`). It
+  removes files the hub has tombstoned, overwrites changed files after
+  showing what changes, and supports `--dry-run`.
+- **Done:** in a docker box (DinD, isolated hub), box A writes a memory file.
+  It reaches the hub, a new box B of the same repo has it, it survives A's
+  destroy, and `memory pull` lands it on the PC. The plan's other-provider leg
+  is unit-tested, not run live (e2b is off-limits this phase).
+
 ### Phase 5 — host sessions + multiple PCs
 
 Opt-in relay watcher, per-project allow/deny, tray toggle + status; a second
