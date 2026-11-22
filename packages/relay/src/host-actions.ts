@@ -419,7 +419,7 @@ export async function executeCloudAction(
       exitCode: 0,
       stdout: JSON.stringify(
         action.method === 'history.config'
-          ? { enabled: false, reason: 'not ingested on this path', agents: [] }
+          ? { enabled: false, reason: 'not ingested on this path', agents: [], credentialFiles: [] }
           : { ok: false, code: 'disabled', message: 'not ingested on this path' },
       ),
       stderr: '',

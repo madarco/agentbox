@@ -3,7 +3,8 @@ import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
 import {
   HistoryShipper,
   createRedactor,
-  type HistoryFrame,
+  parseHistoryFrame,
+  type HistoryConfigReply,
   type HistoryIngestResult,
   type HistoryIngestSink,
   type HistoryOrigin,
@@ -11,7 +12,7 @@ import {
   type ShipStats,
   type ShippedAgent,
 } from '@agentbox/core';
-import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, findBox, readState } from '@agentbox/sandbox-core';
 import type { BoxRegistration } from '../types.js';
 import { dockerHistorySource, type DockerRunner } from './docker-source.js';
 import { collectHostSecrets } from './host-secrets.js';
@@ -33,14 +34,6 @@ import { collectHostSecrets } from './host-secrets.js';
 const BOX_PROJECT_KEY = '-workspace';
 const SECRETS_TTL_MS = 5 * 60_000;
 const CAPTURE_TTL_MS = 60_000;
-const MAX_FRAME_BYTES = 8 * 1024 * 1024;
-
-export interface HistoryConfigReply {
-  enabled: boolean;
-  reason?: string;
-  agents: ShippedAgent[];
-  credentialFiles: string[];
-}
 
 export interface HistoryRelayDeps {
   sink: HistoryIngestSink;
@@ -81,9 +74,30 @@ function originOf(reg: BoxRegistration): HistoryOrigin {
 
 const captureCache = new Map<string, { at: number; value: boolean }>();
 
-/** `history.capture` for the box's project (the opt-out), else the global default. */
+/**
+ * The box's project folder on this machine: the registration's worktree, else
+ * the box record's `projectRoot` (a cloud box re-registered after a restart
+ * carries no worktrees).
+ */
+async function projectRootOf(reg: BoxRegistration): Promise<string | null> {
+  const fromReg = reg.worktrees?.[0]?.hostMainRepo;
+  if (fromReg) return fromReg;
+  try {
+    const hit = findBox(reg.boxId, await readState());
+    if (hit.kind === 'ok') return hit.box.projectRoot ?? null;
+  } catch {
+    /* no state file */
+  }
+  return null;
+}
+
+/**
+ * `history.capture` for the box's project (the opt-out). A box whose project
+ * folder this machine does not know (built by a control box from a temp clone)
+ * gets the global value; see the backlog.
+ */
 export async function projectCaptureEnabled(reg: BoxRegistration): Promise<boolean> {
-  const root = reg.worktrees?.[0]?.hostMainRepo || homedir();
+  const root = (await projectRootOf(reg)) ?? homedir();
   const hit = captureCache.get(root);
   if (hit && Date.now() - hit.at < CAPTURE_TTL_MS) return hit.value;
   let value = true;
@@ -155,7 +169,7 @@ export class HistoryRelay {
 
   /** One frame from an in-box shipper. The box id comes from its token, never the frame. */
   async chunk(reg: BoxRegistration, params: unknown): Promise<HistoryIngestResult> {
-    const frame = parseFrame(params);
+    const frame = parseHistoryFrame(params);
     if (!frame) return { ok: false, code: 'invalid', message: 'malformed history frame' };
     if (!(await this.captureEnabled(reg))) {
       return { ok: false, code: 'disabled', message: 'history.capture is off for this project' };
@@ -230,6 +244,9 @@ export class HistoryRelay {
     // running vs paused/stopped decides exec vs a helper container; the
     // shipper keeps its cursors across passes.
     await entry.source.refreshState();
+    // A paused/stopped box writes nothing new; reading it costs a helper
+    // container per file op, so only a destroy's final flush does that.
+    if (!final && !entry.source.isRunning()) return null;
     const stats = await entry.shipper.pass({ final });
     if (stats.frames > 0 || stats.errors.length > 0) {
       this.deps.log(
@@ -238,34 +255,4 @@ export class HistoryRelay {
     }
     return stats;
   }
-}
-
-export function parseFrame(params: unknown): HistoryFrame | null {
-  if (!params || typeof params !== 'object') return null;
-  const p = params as Record<string, unknown>;
-  if (
-    typeof p.agent !== 'string' ||
-    typeof p.path !== 'string' ||
-    typeof p.offset !== 'number' ||
-    !Number.isSafeInteger(p.offset) ||
-    p.offset < 0 ||
-    typeof p.sha256Prefix !== 'string' ||
-    typeof p.sha256 !== 'string' ||
-    typeof p.data !== 'string' ||
-    p.data.length > (MAX_FRAME_BYTES * 4) / 3 + 4
-  ) {
-    return null;
-  }
-  // Relative, no traversal: the path becomes part of an archive key at the hub.
-  if (p.path.startsWith('/') || p.path.split('/').some((s) => s === '..' || s === '')) return null;
-  return {
-    origin: { boxId: '' },
-    agent: p.agent,
-    path: p.path,
-    offset: p.offset,
-    sha256Prefix: p.sha256Prefix,
-    sha256: p.sha256,
-    data: p.data,
-    ...(p.reset === true ? { reset: true } : {}),
-  };
 }

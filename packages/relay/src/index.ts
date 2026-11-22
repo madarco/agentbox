@@ -357,10 +357,8 @@ export {
 } from './timeline-hooks.js';
 export {
   HistoryRelay,
-  parseFrame as parseHistoryFrame,
   projectCaptureEnabled,
   shippedAgents,
-  type HistoryConfigReply,
   type HistoryRelayDeps,
 } from './history/history-relay.js';
 export { dockerHistorySource, untarSingleFile } from './history/docker-source.js';

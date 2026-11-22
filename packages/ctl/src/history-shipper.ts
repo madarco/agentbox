@@ -13,11 +13,11 @@ import {
   parseBindingLog,
   secretValuesFromEnv,
   secretValuesFromJson,
+  type HistoryConfigReply,
   type HistoryFileSource,
   type HistoryFrame,
   type HistoryIngestResult,
   type ShipStats,
-  type ShippedAgent,
 } from '@agentbox/core';
 import { postRpcAwait } from './relay-rpc.js';
 import { resolveRelayEnv } from './relay-env.js';
@@ -26,14 +26,6 @@ import { HISTORY_BINDINGS_PATH } from './session-pointer.js';
 /** Raw frame cap: base64 of this plus the JSON envelope stays under the relay's 1 MiB `/rpc` cap. */
 export const CTL_FRAME_MAX = 512 * 1024;
 const RPC_TIMEOUT_MS = 60_000;
-
-export interface HistoryConfigReply {
-  enabled: boolean;
-  reason?: string;
-  agents: ShippedAgent[];
-  /** Box paths of agent credential files: their values seed the exact redaction list. */
-  credentialFiles?: string[];
-}
 
 class RpcTimeout extends Error {}
 
@@ -188,9 +180,13 @@ export class HistoryLoop {
     const base = this.opts.intervalMs ?? 30_000;
     let stats: ShipStats | null = null;
     try {
-      if (!this.shipper || Date.now() - this.configAt > 10 * 60_000 || this.shipper.isDisabled) {
+      // A disabled answer (a docker box, an opted-out project) is cached like an
+      // enabled one, so it is asked again every 10 min rather than every tick.
+      const stale = Date.now() - this.configAt > 10 * 60_000;
+      if (stale || (this.shipper?.isDisabled ?? false)) {
         const cfg = await fetchHistoryConfig();
-        this.configAt = Date.now();
+        // An unanswered fetch (hub not up yet) is retried next tick.
+        if (cfg) this.configAt = Date.now();
         this.shipper = cfg?.enabled ? await buildShipper(cfg) : null;
       }
       if (this.shipper) stats = await this.shipper.pass({ final });

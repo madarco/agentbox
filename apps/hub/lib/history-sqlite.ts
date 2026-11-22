@@ -202,8 +202,15 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     `INSERT INTO history_chunks (file_id, generation, start_offset, end_offset, archive_key, codec, sealed, deduped, ends_nl, stored_bytes)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  const addChunkSync = (c: NewChunk): number =>
-    Number(
+  const dropSameStart = db.prepare(
+    'DELETE FROM history_chunks WHERE file_id = ? AND generation = ? AND start_offset = ?',
+  );
+  // Idempotent on (file, generation, start): a frame retried after a failure
+  // between this insert and the offset update replaces its earlier row
+  // instead of duplicating its bytes.
+  const addChunkSync = (c: NewChunk): number => {
+    dropSameStart.run(c.fileId, c.generation, c.start);
+    return Number(
       insertChunk.run(
         c.fileId,
         c.generation,
@@ -217,6 +224,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         c.storedBytes,
       ).lastInsertRowid,
     );
+  };
 
   const deleteTurnsOfFile = (fileId: number): void => {
     if (fts) {

@@ -2470,6 +2470,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         await flushBoxHistory(box, {
           ...(handle.history ? { relayHistory: handle.history } : {}),
           exec: (b, argv, o) => provider.exec(b, argv, o),
+          probeState: (b) => provider.probeState(b),
           log: (line) => console.warn(`[hub] ${line}`),
         });
         await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });

@@ -11,6 +11,8 @@ export interface HistoryFlushDeps {
   /** The relay's docker shipper, when this hub has history enabled. */
   relayHistory?: { flushBox(boxId: string): Promise<unknown> };
   exec(box: BoxRecord, argv: string[], opts?: ExecOptions): Promise<ExecResult>;
+  /** The provider's cheap state probe: a cloud box is flushed only when running. */
+  probeState(box: BoxRecord): Promise<string>;
   log(line: string): void;
   timeoutMs?: number;
 }
@@ -18,9 +20,17 @@ export interface HistoryFlushDeps {
 export async function flushBoxHistory(box: BoxRecord, deps: HistoryFlushDeps): Promise<void> {
   if (!deps.relayHistory) return;
   const isDocker = (box.provider ?? 'docker') === 'docker';
+  // A paused or stopped cloud box is not woken for its history: resuming bills
+  // and boots it, and its last turn was shipped before it went idle unless it
+  // was cut off mid-pass. A docker box is read host-side in any state.
   const work = isDocker
     ? deps.relayHistory.flushBox(box.id)
-    : deps.exec(box, ['agentbox-ctl', 'history', 'flush']).then((r) => {
+    : deps.probeState(box).then(async (state) => {
+        if (state !== 'running') {
+          deps.log(`history: ${box.name} is ${state}; skipping the final flush`);
+          return;
+        }
+        const r = await deps.exec(box, ['agentbox-ctl', 'history', 'flush']);
         if (r.exitCode !== 0) {
           deps.log(`history: final flush of ${box.name} exited ${String(r.exitCode)}`);
         }

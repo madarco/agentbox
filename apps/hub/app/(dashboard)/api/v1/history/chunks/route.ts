@@ -4,7 +4,10 @@
 // `{ok: true, offset, sha256}`, or `{ok: false, code, message, offset?, sha256?}`
 // (200 either way: an `offset_mismatch` tells the shipper where to resume).
 // The hub's own relay calls the same service in-process; this route is for a
-// relay or shipper elsewhere.
+// relay or shipper elsewhere. The caller holds a hub credential (admin or
+// device token) and is trusted to name the origin box, like every other
+// /api/v1 write; boxes themselves never reach this route.
+import { parseHistoryFrame } from '@agentbox/core';
 import { fail, ok } from '../../lib/envelope';
 
 export const runtime = 'nodejs';
@@ -23,45 +26,13 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return fail('invalid_request', 'body is not JSON');
   }
-  const b = body as Record<string, unknown> | null;
-  const origin = b && typeof b.origin === 'object' ? (b.origin as Record<string, unknown>) : null;
-  if (
-    !b ||
-    !origin ||
-    typeof origin.boxId !== 'string' ||
-    typeof b.agent !== 'string' ||
-    typeof b.path !== 'string' ||
-    typeof b.offset !== 'number' ||
-    !Number.isSafeInteger(b.offset) ||
-    b.offset < 0 ||
-    typeof b.sha256Prefix !== 'string' ||
-    typeof b.sha256 !== 'string' ||
-    typeof b.data !== 'string'
-  ) {
+  const frame = parseHistoryFrame(body);
+  if (!frame || !frame.origin.boxId) {
     return fail(
       'invalid_request',
-      'expected {origin:{boxId}, agent, path, offset, sha256Prefix, sha256, data}',
+      'expected {origin:{boxId}, agent, path (relative), offset, sha256Prefix, sha256, data}',
     );
   }
-  if (b.path.startsWith('/') || b.path.split('/').some((s) => s === '..' || s === '')) {
-    return fail('invalid_request', 'path must be relative with no empty or .. segments');
-  }
-  const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
-  const res = await history.ingest({
-    origin: {
-      boxId: origin.boxId,
-      ...(str(origin.boxName) ? { boxName: str(origin.boxName) } : {}),
-      ...(str(origin.provider) ? { provider: str(origin.provider) } : {}),
-      ...(str(origin.hostId) ? { hostId: str(origin.hostId) } : {}),
-      ...(str(origin.projectRepoUrl) ? { projectRepoUrl: str(origin.projectRepoUrl) } : {}),
-    },
-    agent: b.agent,
-    path: b.path,
-    offset: b.offset,
-    sha256Prefix: b.sha256Prefix,
-    sha256: b.sha256,
-    data: b.data,
-    ...(b.reset === true ? { reset: true } : {}),
-  });
+  const res = await history.ingest(frame);
   return ok(res);
 }

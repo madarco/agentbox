@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HistoryFrame, HistoryIngestResult } from '@agentbox/core';
-import { HistoryRelay, parseFrame } from '../src/history/history-relay.js';
+import { parseHistoryFrame as parseFrame } from '@agentbox/core';
+import { HistoryRelay } from '../src/history/history-relay.js';
 import { untarSingleFile } from '../src/history/docker-source.js';
 import { runHistoryRpc } from '../src/history/rpc.js';
 import type { BoxRegistration } from '../src/types.js';

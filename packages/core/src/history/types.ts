@@ -72,6 +72,15 @@ export interface HistoryIngestSink {
   ingest(frame: HistoryFrame): Promise<HistoryIngestResult>;
 }
 
+/** What the relay tells an in-box shipper (`history.config`). */
+export interface HistoryConfigReply {
+  enabled: boolean;
+  reason?: string;
+  agents: Array<{ agent: string; configDir: string; projectKey: string; spec: AgentHistorySpec }>;
+  /** Box paths of agent credential files: their values seed the exact redaction list. */
+  credentialFiles: string[];
+}
+
 /** A session → box binding, one line of the box's append-only binding log. */
 export interface HistoryBinding {
   ts: string;

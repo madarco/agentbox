@@ -51,6 +51,7 @@ export interface DockerSourceOptions {
 
 export function dockerHistorySource(opts: DockerSourceOptions): HistoryFileSource & {
   refreshState(): Promise<void>;
+  isRunning(): boolean;
 } {
   const run = opts.run ?? defaultRunner;
   const c = opts.container;
@@ -76,6 +77,7 @@ export function dockerHistorySource(opts: DockerSourceOptions): HistoryFileSourc
   };
 
   return {
+    isRunning: () => running,
     async refreshState() {
       const status = (await run(['inspect', '-f', '{{.State.Status}}', c])).toString('utf8').trim();
       running = status === 'running';
