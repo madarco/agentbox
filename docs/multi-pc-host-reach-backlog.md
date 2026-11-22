@@ -83,3 +83,28 @@ for teams PCs must never hold it (device tokens only).
   direct actions on a docker:hub box dial that host instead and fail with "no such
   container". Pre-existing; fix: register the control box's engine under a reserved
   name, or have setup refuse/rename when `hub` is taken.
+
+## From the review of #436 (docker:hub on other computers), noted, not fixed
+
+- **The unregistered-alias hint replaces the ssh advice for the user's own single-word
+  hosts.** A pre-registry box id that baked a `~/.ssh/config` Host (`nas`), or a PC's
+  own `Host hub`, gets "registered on another computer" (or the control-box text) when
+  that dial fails for its own reasons, and loses the "Check that `ssh <spec> true`
+  works" line (the raw ssh stderr is still appended). Fix: keep the original line and
+  append the hint as a conditional, or add it only for boxes from a remote hub listing.
+- **The hint can surface inside the hub.** The hub is itself a remote-docker client:
+  after `remote-docker unshare <alias>`, or when deploy only warned in
+  `ensureSelfDockerHost` (no `hub` on the control box), a hub-side action fails with
+  "use the hub web UI or the tray". Fix: wording that fits any caller, or a CLI-only
+  flag to enable the hint.
+- **A stale cache is assumed to come from the control box.** If `hub-boxes-cache.json`
+  was last written by the local hub (just before a control box was configured) and the
+  control box is unreachable, local remote-docker leftovers show live instead of
+  inactive. Cosmetic, stale path only. Fix: record the source mode in the cache (no
+  secrets, so the token-free rule holds).
+- **Plain docker in a remote listing is always tagged inactive, even when the control
+  box IS this machine** (`hub expose` with `relay.controlPlaneUrl` set): this Mac's real
+  docker boxes show "(inactive)", and so does a PC pointed at it. Pre-existing (nightly
+  never consulted `controlBoxIsThisMachine`); #436 only makes the always-mute explicit.
+  Fix: skip the mute when `controlBoxIsThisMachine()`, the same exception
+  `dockerProviderRefusal` makes.
