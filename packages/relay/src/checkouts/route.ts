@@ -76,6 +76,8 @@ export function hostReachRouteFor(
 
   // Host tools: grants and binaries live with the machine that made them, so
   // only the origin PC may run one (any other PC is a different program).
+  // Downloads too: a download WRITES the box into the project it was created
+  // from, and on another PC's clone that would overwrite its working tree.
   const paths = requestPaths(method, params);
   if (paths === undefined) return originOnly();
 

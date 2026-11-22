@@ -55,7 +55,9 @@ for teams PCs must never hold it (device tokens only).
 
 - `docker:hub` boxes show as `remote-docker (inactive)` on PCs and are unreachable
   from a second PC (the control box's ssh is locked to the operator's IP).
-- `download.*` is not a host-reach method, so it is not routed (it still needs the
-  machine that created the box).
+- `download.*` is routed to the box's origin PC only (no fallback, no cache): it
+  writes the box into the project it was created from, so another PC's clone would
+  be overwritten. `env`/`config`/`claude` kinds are still unsupported for cloud
+  boxes, as before.
 - Multi-repo boxes: `hostCandidatesFor` already picks a nested repo by path prefix,
   but registrations describe one root repo until box-sources Phase 2.

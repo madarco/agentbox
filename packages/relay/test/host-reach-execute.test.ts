@@ -296,4 +296,31 @@ describe('executeHostReachAction', () => {
       else process.env.AGENTBOX_CLI_ENTRY = prevEntry;
     }
   });
+
+  it('an origin PC with no record adopts the box once a download is approved (follow-up 2)', async () => {
+    const adopted: string[] = [];
+    const r = await executeHostReachAction(
+      action({
+        method: 'download.workspace',
+        params: { kind: 'workspace' },
+        route: {
+          repoKey: 'github.com/acme/app',
+          folder: dir,
+          role: 'origin',
+          box: { name: 'b1', backend: 'hetzner', originMachineId: 'pc-a' },
+        },
+      }),
+      deps({
+        machineId: () => 'pc-a',
+        repoKeyOf: () => Promise.resolve('github.com/acme/app'),
+        adopt: (boxId) => {
+          adopted.push(boxId);
+          return Promise.resolve({ ok: false, error: 'stubbed' });
+        },
+      }),
+    );
+    // A download into the project auto-approves (contained), then adopts.
+    expect(adopted).toEqual(['box-1']);
+    expect(r).toMatchObject({ exitCode: 69, stderr: 'could not adopt box box-1 here: stubbed\n' });
+  });
 });

@@ -244,4 +244,44 @@ describe('host-reach routing on the control box', () => {
     await rpc;
     expect(handle.prompts.size()).toBe(0);
   });
+
+  it('parks a download for the ORIGIN only, and says so when it is offline', async () => {
+    // PC B has the repo and is online; the origin (PC A) is not.
+    await poll(handle, 'pb', PC_B, 50);
+    const rpc = req(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'download.workspace', params: { kind: 'workspace' } },
+    });
+    expect((await poll(handle, 'pb', PC_B, 600)).body.actions).toEqual([]);
+    const answer = await rpc;
+    expect(answer.status).toBe(500);
+    expect(answer.body.stderr).toMatch(
+      /download could not run: the computer it was created from \(laptop\)/,
+    );
+    expect(answer.body.stderr).toMatch(/working\ntree overwritten|working tree overwritten/);
+  });
+
+  it('hands a download to the origin with its own folder', async () => {
+    await poll(handle, 'pa', PC_A, 50);
+    const rpc = req(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'download.workspace', params: { kind: 'workspace' } },
+    });
+    const a = await poll(handle, 'pa', PC_A);
+    // Routed to the origin (this registration names no origin folder, so the
+    // origin PC serves from its own record of the box).
+    expect(a.body.actions?.[0]?.route).toMatchObject({ role: 'origin' });
+    await req(handle, 'POST', '/admin/hostreach/result', {
+      token: ADMIN,
+      device: PC_A,
+      body: {
+        id: a.body.actions![0]!.id,
+        poller: 'pa',
+        exitCode: 0,
+        stdout: '/Users/a/app\n',
+        stderr: '',
+      },
+    });
+    expect((await rpc).body.exitCode).toBe(0);
+  });
 });

@@ -1197,7 +1197,22 @@ async function runDownloadRpc(
       stderr: `download.${kind} is not yet supported for cloud boxes (only download.workspace is)\n`,
     };
   }
-  const lookup = await lookupCloudBox(deps.boxId);
+  // A host-reach download names THIS machine's checkout (`hostFolder`); a box
+  // it has not adopted yet has no record, and is adopted only once approved.
+  const record = deps.hostFolder
+    ? await lookupCloudBox(deps.boxId).catch(() => null)
+    : await lookupCloudBox(deps.boxId);
+  const base = deps.hostFolder ?? record?.workspacePath ?? '';
+  if (!base || !existsSync(base)) {
+    return {
+      exitCode: 69,
+      stdout: '',
+      stderr:
+        `download could not run on this machine: the project folder ${base || '(none)'} does not ` +
+        `exist here (a download lands in the project the box was created from).\n`,
+    };
+  }
+  const lookup = { workspacePath: base };
   // params.hostPath is reserved in the wire shape; v1 lands /workspace under
   // box.workspacePath (the host project root), matching docker's default. A
   // relative override resolves against the box workspace, not the relay's CWD.
@@ -1239,8 +1254,12 @@ async function runDownloadRpc(
       return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
     }
   }
+  if (deps.prepareBox) {
+    const stop = await deps.prepareBox();
+    if (stop) return { exitCode: 69, stdout: '', stderr: `${stop}\n` };
+  }
   const backend = await resolveCloudBackend(deps.backendName);
-  const handle: CloudHandle = cloudHandleOf(lookup);
+  const handle: CloudHandle = cloudHandleOf(record ?? (await lookupCloudBox(deps.boxId)));
   const cp = await loadCloudCp();
   try {
     const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst);

@@ -532,3 +532,46 @@ describe('sign-off of #426: origin folder of a hub-built box', () => {
     });
   });
 });
+
+describe('download.* routing (multi-PC follow-up)', () => {
+  const KEY = 'github.com/acme/app';
+  const rows = [
+    {
+      repoKey: KEY,
+      machineId: 'pc-a',
+      folder: '/Users/a/app',
+      label: 'laptop',
+      seenAt: '2026-11-22T00:00:00Z',
+    },
+    {
+      repoKey: KEY,
+      machineId: 'pc-b',
+      folder: '/home/b/app',
+      label: 'desk',
+      seenAt: '2026-11-23T00:00:00Z',
+    },
+  ];
+  it('goes to the origin only, never to another PC with the repo', () => {
+    const r = hostReachRouteFor(
+      {
+        boxId: 'b',
+        repoKey: KEY,
+        originMachineId: 'pc-a',
+        originFolder: '/Users/a/app',
+      },
+      'download.workspace',
+      { kind: 'workspace' },
+      rows,
+    );
+    expect(r.kind === 'routed' && r.route.candidates).toEqual([
+      { deviceId: 'pc-a', role: 'origin', label: 'laptop', folder: '/Users/a/app' },
+    ]);
+  });
+  it('stays unrouted for a box with no origin machine (served as before)', () => {
+    expect(hostReachRouteFor({ boxId: 'b', repoKey: KEY }, 'download.workspace', {}, rows)).toEqual(
+      {
+        kind: 'unrouted',
+      },
+    );
+  });
+});

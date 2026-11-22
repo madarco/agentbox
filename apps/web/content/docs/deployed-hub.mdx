@@ -587,8 +587,10 @@ the control box's admin token on your machine (written by `agentbox hub setup`; 
   with a leased token, so it works with your laptop off. A host action that inherently targets your
   laptop's filesystem runs **there**: `cp` is brokered back to your machine (or another computer
   with the same repo, or served from the hub's cache when none is on — see below), and its approval
-  shows both there and in the hub's approvals. `download` still needs your laptop up, whoever
-  approves it.
+  shows both there and in the hub's approvals. A box's `agentbox-ctl download` is brokered to the
+  computer the box was **created from** only, because it writes the box into that project: another
+  computer with the same repo would have its working tree overwritten, and there is no cached copy.
+  With that computer off, the box is told so.
 </Callout>
 
 ## Copying between a box and your files

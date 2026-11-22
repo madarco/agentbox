@@ -1478,6 +1478,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           });
           return;
         }
+        // A download WRITES the box's files into the project it was created
+        // from: only that computer may take it (another clone would have its
+        // working tree overwritten), and there is nothing to cache or park.
+        if (body.method.startsWith('download.')) {
+          send(res, 500, {
+            exitCode: 69,
+            stdout: '',
+            stderr:
+              downloadUnreachableMessage(reg.name, reachReason, reg.originMachineLabel) + tried,
+          });
+          return;
+        }
         // The machine is offline — but a copy it made earlier may be in custody.
         // Only reads can be served that way: an outbound copy has nowhere to go
         // until that machine is back (see the outbox in `cp.toHost` below).
@@ -2866,7 +2878,12 @@ async function boxWorkspaceExistsHere(boxId: string): Promise<boolean> {
  * that machine) and the binaries they name.
  */
 function isHostReachMethod(method: string): boolean {
-  return method === 'cp.toHost' || method === 'cp.fromHost' || method.startsWith('tool.');
+  return (
+    method === 'cp.toHost' ||
+    method === 'cp.fromHost' ||
+    method.startsWith('tool.') ||
+    method.startsWith('download.')
+  );
 }
 
 /**
@@ -2875,6 +2892,32 @@ function isHostReachMethod(method: string): boolean {
  * same-named binary from somewhere else is not a degraded answer, it is a
  * different program.
  */
+/** What a box is told when the computer its download is for did not take it. */
+export function downloadUnreachableMessage(
+  boxName: string,
+  reason: HostReachUnreachable,
+  originLabel?: string,
+): string {
+  const who = originLabel
+    ? `the computer it was created from (${originLabel})`
+    : 'the computer it was created from';
+  const lead =
+    reason === 'went-away'
+      ? `${who} stopped responding`
+      : reason === 'declined'
+        ? `${who} could not take it (see below)`
+        : `${who} is not connected to this hub`;
+  return [
+    `download could not run: ${lead}.`,
+    '',
+    'A download writes this box into the project it was created from, so only that',
+    'computer takes it: another computer with the same repo would have its own working',
+    'tree overwritten, and there is no cached copy to fall back to.',
+    `Start AgentBox there (\`agentbox relay start\`) and retry, or run it there: agentbox download ${boxName}`,
+    '',
+  ].join('\n');
+}
+
 function toolUnreachableMessage(boxName: string, reason: HostReachUnreachable): string {
   const lead =
     reason === 'went-away'
