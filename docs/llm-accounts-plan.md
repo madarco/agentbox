@@ -288,6 +288,61 @@ Keep `--resume` working across accounts by mounting one shared
 keyed by cwd, `-workspace`, the same for every box). Drop the
 `~/.agentbox-creds/claude` symlink idea for docker.
 
+### (a′) Login + API-key mix on one volume (measured)
+
+The owner provided an Anthropic key as a stand-in "account B". Its prefix is
+`sk-ant-usr`, 106 characters: not a Console key (`sk-ant-api03`) and not an
+OAuth token (`sk-ant-oat01`). The API accepts it both as `x-api-key` and as a
+Bearer (`GET /v1/models` → 200 both ways), so Claude Code treats it as an API
+key. Which product issues `sk-ant-usr` keys, and which account it bills, is for
+the owner to confirm. Calls were made 2026-11-22 between **10:26Z and 10:30Z**
+(about 14 one-word `haiku` turns; none used the key before 10:27Z).
+
+Setup: one shared config dir holding a copy of the subscription login
+(`.credentials.json`, today's docker layout). Container A had no key; container
+B had the same dir plus `ANTHROPIC_API_KEY` from a 0600 `--env-file`.
+
+- **Both turns work at the same time.** A and B ran concurrently and both
+  succeeded.
+- **With both available, the key wins in `-p` mode.** B's `claude auth status`
+  shows `authMethod: api_key`, `apiKeySource: ANTHROPIC_API_KEY`, and no
+  org/email fields. B prints a warning on every turn: "claude.ai connectors are
+  disabled because ANTHROPIC_API_KEY … takes precedence over your claude.ai
+  login". A reports `authMethod: claude.ai` with the subscription's org and
+  email, unaffected.
+- **The interactive TUI prompts, and its default is to ignore the key.** It
+  shows "Detected a custom API key in your environment … Do you want to use this
+  API key?" with **No (recommended)** preselected, after the folder-trust
+  dialog. Answering No wrote `customApiKeyResponses.rejected` into the **shared**
+  `_claude.json`. From then on, an interactive session in a container that has
+  the key no longer asks, and **silently runs on the volume's OAuth
+  subscription** (`/status`: "Login method: Claude … account", the
+  subscription's org and email). `-p` ignores the rejection and keeps using the
+  key. So the plan's trap "host-env spray beats a subscription" holds only for
+  `-p`. In the TUI, which is how boxes run claude, it can go either way, and one
+  box's answer decides it for every box on the volume.
+  Answering Yes records the key in `customApiKeyResponses.approved`, its last 20
+  characters only (code, not measured: the test answered No). `apiKeyHelper` is
+  not needed.
+- **The key container does not touch `.credentials.json`** (hash unchanged
+  across every B run), and it **does not overwrite `oauthAccount`** (unchanged
+  after a B-only turn). What it does add to the shared `_claude.json`:
+  `metricsStatusCacheByPrincipal` keyed `key:<hash>`, plus, on first run, the
+  unkeyed feature-flag and model-option caches, which it shares with the OAuth
+  boxes.
+
+What this does **not** stand in for: two OAuth subscriptions colliding on one
+volume (the refresh replacing the symlink, two `oauthAccount`s fighting), and
+the revocation timing test. Both still need a second OAuth login, on a
+throwaway account for the revocation test.
+
+Consequence for `api-key` accounts in docker: give them their own config volume
+(no `.credentials.json` in it), as the per-account volume recommendation already
+implies, and pre-seed that volume's `_claude.json` with
+`customApiKeyResponses.approved` holding the key's last 20 characters, so the
+TUI never prompts and never falls back. Do not put an API key into a box whose
+volume holds an OAuth login.
+
 ### (b) Codex `auth.json`
 
 The first run found the carried codex login dead (access token expired
@@ -352,7 +407,13 @@ hub, and would also see the relay token in the URL. The split proxy is needed.
 | codex | `github.com` | plugin marketplace `git`, not an LLM host |
 | codex | `*.oaiusercontent.com` (`sdmntpr<region>…`) | seen once, on a turn that failed with an unsupported model; content storage, probably not needed |
 
-Not seen in this run (no interactive login, no API-key mode): `claude.ai` and
+**claude on an API key** (measured, container through the proxy): only
+`api.anthropic.com` (11) and the datadog telemetry. No `mcp-proxy.anthropic.com`
+(connectors are off with a key) and no `platform.claude.com` (nothing to
+refresh). The OAuth login on the same volume, same prompt: `api.anthropic.com`
+(9), `mcp-proxy.anthropic.com` (7), telemetry.
+
+Not seen in this run (no interactive login, no codex API-key mode): `claude.ai` and
 `console.anthropic.com` (login), `api.openai.com` (codex API-key mode). Add them
 from code. The host config also reached the user's own MCP servers; those are
 per-user, not registry data.
@@ -370,6 +431,16 @@ the split proxy.
   returned 200. **Everything else bypassed it**: 8 other `api.anthropic.com`
   calls in one `-p` turn, `mcp-proxy.anthropic.com`, telemetry, and OAuth
   refreshes (`platform.claude.com`) all went direct.
+- **claude, API key via `ANTHROPIC_BASE_URL` (measured).** Not "everything
+  follows" by default: only `POST /v1/messages` reached the forwarder (with
+  `x-api-key`), and 7 `api.anthropic.com` calls plus telemetry still went direct.
+- **`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` closes most of the gap
+  (measured).** On the key, **every** call went to the base URL, with zero
+  direct connections. On the OAuth login, inference went to the base URL and
+  only 1 `api.anthropic.com` call plus the `mcp-proxy.anthropic.com` connector
+  calls went direct, plus refreshes when they happen. The flag also turns off
+  telemetry, the auto-updater and similar background calls. Whether it costs
+  anything that matters in a box (feature flags) is untested.
 - **codex, ChatGPT login (measured, live).** Ran against a forwarder to
   `chatgpt.com`, with the CONNECT proxy logging whatever went direct:
   - `OPENAI_BASE_URL` is **ignored** under ChatGPT auth (dead-login run: all
@@ -395,7 +466,9 @@ the split proxy.
 
 So reverse moves **inference** (codex's `chatgpt_base_url` also moves the
 backend side calls), but the identity, flag and refresh traffic still leaves from
-the box's IP for both agents, which defeats "every call from one address". For
+the box's IP for both agents, which defeats "every call from one address". The
+exception is claude on an API key with
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, where reverse carries everything. For
 codex, the custom provider is the cleaner reverse knob: it accepts plain `http`
 and leaves `chatgpt_base_url` alone. `chatgpt_base_url` needs a TLS origin the
 box trusts, so a tunnel URL with a public certificate.
@@ -430,7 +503,15 @@ box trusts, so a tunnel URL with a public certificate.
   reason when the hub is unreachable. A refused connection makes claude retry
   silently for minutes, which is not the clear failure the fail-closed rule
   requires.
-- **Reverse** (Phase 8): claude `ANTHROPIC_BASE_URL`; codex a generated
+- **Env spray / `api-key` accounts** (Phase 3): an `api-key` account gets its
+  own config volume with no OAuth credential and a pre-approved
+  `customApiKeyResponses` entry (see (a′)). Suppressing the host's
+  `ANTHROPIC_API_KEY` on `login` boxes stays necessary, and so does keeping a
+  key out of an OAuth volume entirely: the TUI's stored answer is shared by
+  every box on the volume.
+- **Reverse** (Phase 8): set `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` with
+  `ANTHROPIC_BASE_URL`, which makes reverse complete for claude API keys and
+  nearly complete for claude logins. Codex: a generated
   `model_providers.agentbox` (`base_url` = hub, `wire_api = "responses"`,
   `requires_openai_auth = true`) selected with `model_provider`, written into the
   box's codex config at launch. Not `OPENAI_BASE_URL`, which is ignored under
@@ -445,7 +526,8 @@ box trusts, so a tunnel URL with a public certificate.
 ### Still blocked on the owner
 
 1. ~~Re-login codex~~: done 2026-11-22T10:20Z; the codex results above use it.
-2. **Account B for claude**, without touching account A. In this box (Linux, so
+2. **A second claude OAuth login** (a throwaway account; the API key in (a′)
+   covered the login + key mix only), without touching account A. In this box (Linux, so
    the credential is a file rather than the macOS Keychain), type in the session:
    `! CLAUDE_CONFIG_DIR=/home/vscode/poc-account-b/claude claude auth login`.
    The credential lands at `/home/vscode/poc-account-b/claude/.credentials.json`,
@@ -458,7 +540,9 @@ With those in place, the remaining Phase 0 runs are: two containers on two
 per-account config volumes sharing `projects/` (both turns work, each
 `claude auth status` shows its own account, usage shows on B's account page), the
 codex symlink-on-refresh check, and the throwaway-account revocation timing test
-above. Delete `/home/vscode/poc-account-b` afterwards.
+above. Delete `/home/vscode/poc-account-b` afterwards. Also for the owner:
+confirm on the key's account that usage appeared for 10:27–10:30Z on
+2026-11-22, and only for the B turns.
 
 ## Backlog (not in these phases)
 
