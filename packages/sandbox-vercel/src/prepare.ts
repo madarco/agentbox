@@ -38,7 +38,8 @@ import {
   renderAgentSettingEnv,
   type AgentSettingsMap,
   resolveAgentSpec,
-  bakeSkillsDigest,
+  bakeSkillsStamp,
+  skillsMatchForSkip,
   variantFingerprint,
 } from '@agentbox/sandbox-core';
 import { type StageResult, stageAllAgentStatic } from '@agentbox/sandbox-cloud';
@@ -141,12 +142,10 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, {
-    agentSettings,
-    agents,
-    // The bake stages this machine's skills; a change to them re-bakes.
-    skills: await bakeSkillsDigest(),
-  });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
+  // The skills this bake stages, recorded on the entry (NOT folded into
+  // contextSha, which bake sharing compares across machines).
+  const skillsStamp = await bakeSkillsStamp();
 
   const existing = readPreparedState();
   // A derived bake boots the agentless base, so that has to exist first.
@@ -162,7 +161,11 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
   const existingEntry = preparedEntryFor(existing, variantKey);
   if (!opts.force && existingEntry) {
     const stillThere = await snapshotExists(existingEntry.snapshotId, creds);
-    if (stillThere && existingEntry.contextSha256 === contextSha) {
+    if (
+      stillThere &&
+      existingEntry.contextSha256 === contextSha &&
+      skillsMatchForSkip(existingEntry, skillsStamp)
+    ) {
       progress(
         `${derived ? `${variantKey} snapshot` : 'base snapshot'} ${existingEntry.snapshotId} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping (pass --force to rebuild)`,
       );
@@ -174,7 +177,9 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
       );
     } else {
       progress(
-        `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${variantKey || 'base'} snapshot`,
+        existingEntry.contextSha256 === contextSha
+          ? `your skills changed since the last bake; rebuilding ${variantKey || 'base'} snapshot`
+          : `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${variantKey || 'base'} snapshot`,
       );
     }
   }
@@ -305,6 +310,7 @@ export async function prepareVercel(opts: PrepareVercelOptions = {}): Promise<Pr
   const entry = {
     snapshotId: snap.snapshotId,
     contextSha256: contextSha,
+    ...skillsStamp,
     files: contextManifest.files,
     cliVersion: cliStamp.cliVersion,
     cliCommit: cliStamp.cliCommit,

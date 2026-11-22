@@ -43,40 +43,43 @@ delivery to boxes, no web page (Phase 1b).
 9. **Docs**: public page + CLI reference + configuration key; this backlog;
    plan status.
 
-## Phase 1b — implementation plan (2026-11-22)
+## Phase 1b — implementation plan (2026-11-22, revised after review)
 
 Scope: the hub web Skills page (list + discard), the System page swap, and a
-skills digest folded into the cloud base fingerprint.
+skills digest on cloud bakes so a base reads stale when the host's skills
+change and a control box declines a PC bake whose skills differ from its
+library.
 
 1. **Skills digest.** sha256 over sorted `<name>:<treeSha>` lines of the skills
    the first seed would upload (discoverable, valid, no scan findings), so a PC's
-   digest equals the library's when they hold the same skills. An empty set
-   folds nothing (`variantFingerprint` unchanged), so a user with no skills sees
-   no fingerprint change. The pure discovery/tree/scan/frontmatter modules move
-   from `apps/cli/src/lib/skills/` into `@agentbox/sandbox-core` so the providers
-   can compute it.
-2. **Where it folds.** `variantFingerprint` gains an optional `skills` input. The
-   five providers whose bakes stage host static config (daytona, hetzner,
-   vercel, e2b, digitalocean) pass `bakeSkillsDigest()` in `prepare` (so
-   skip-fast rebuilds on a skills change) and in their live base fingerprint (so
-   `prepare`/create/hub report the base stale). Docker and remote-docker don't
+   digest equals the library's when they hold the same skills. The pure
+   discovery/tree/scan/frontmatter modules move from `apps/cli/src/lib/skills/`
+   into `@agentbox/sandbox-core` so the providers can compute it.
+2. **Recorded, not folded.** The first draft folded the digest into
+   `variantFingerprint`; the review showed why that's wrong: `contextSha256` is
+   the cross-machine identity bake sharing compares (a PC adopting a control
+   box's bake and the reverse), two machines' skills differ, so every share for
+   anyone with skills would stop — a regression. Instead each bake records
+   `base.skillsDigest` + `base.skillsHost` (the machine id) next to
+   `contextSha256`, in the five providers whose bakes stage host static config
+   (daytona, hetzner, vercel, e2b, digitalocean). Docker and remote-docker don't
    bake host config and are untouched.
-3. **Which skills count — the source rule.** `bakeSkillsDigest()` uses this
-   machine's own skills, unless `AGENTBOX_SKILLS_DIGEST` is set. The hub sets it
-   to the LIBRARY digest only when its own machine has no eligible skills and the
-   library is seeded, i.e. a deployed control box. Why not "always the library":
-   on a PC (local hub, or `hub expose` on the laptop) the CLI and the hub share
-   one prepared-state, and the bake stages from that home, so both must use the
-   home. Why not "always local": a VPS has no skills, so it would refuse every PC
-   bake that carries skills and re-bake without them. With the rule, a VPS
-   adopts a PC bake exactly when its skills match the library, and re-bakes
-   otherwise. The hub refreshes the variable at start and after every skills
-   import/discard; its bake workers inherit it.
-4. **Web.** `/skills` page in the hub (pure `/api/v1` client): name,
+3. **Staleness is judged by the machine that baked.** `prepare`'s skip-fast
+   re-bakes when the record was stamped here and this machine's skills changed
+   ("your skills changed since the last bake"); `evaluateBaseFreshness` (CLI)
+   and the hub's provider freshness report such a base `stale` with that reason
+   (`withSkillsFreshness`). A record from another machine, or from before this
+   change, is never judged on skills — no one-time re-bake on upgrade.
+4. **Library gate on the control box.** `hydratePreparedFromCustody` declines a
+   shared bake whose `skillsDigest` differs from a seeded library
+   (`libraryBlocksAdoption`). A record without a digest, or an unseeded library,
+   adopts exactly as before.
+5. **Web.** `/skills` page in the hub (pure `/api/v1` client): name,
    description, size, files, source PC, updated, versions; discard with a
    confirm. Sidebar entry. The System page's "Skills · this control box" section
-   becomes a library summary linking to `/skills`.
-5. **Docs.** Public skills page (web UI + stale bases), deployed-hub web UI
+   becomes a library summary (from the custody manifest it already fetches)
+   linking to `/skills`.
+6. **Docs.** Public skills page (web UI + stale bases), deployed-hub web UI
    list; plan status.
 
 ## Open items
@@ -165,3 +168,38 @@ secrets) is fixed in the PR. The rest are below.
   folders in this owner's `~/.claude/plugins`; plugins aren't seeded). A skill
   shipping a registry-only `.npmrc` gets a confirm; narrowing it to files holding
   `_auth` / `_authToken` would remove that.
+
+## From the Phase 1b `/code-review medium` (2026-11-22)
+
+The first draft's design (folding the digest into the shared fingerprint, with
+a hub-set `AGENTBOX_SKILLS_DIGEST` override) was replaced, which resolved the
+review's findings 1, 2 (a regression: remote-hub bakes no longer adopted by a
+PC with skills), 3, 5 and 6 outright, and 7 (a transient discovery failure
+cached as "no skills": the memo now keeps only successful reads, and a failed
+stamp records nothing). Still open:
+
+- **The digest counts only library-eligible skills, but the bake stages every
+  skill.** Editing or removing a skill the scan flags (or one over the size cap)
+  doesn't mark the base stale, and a PC bake containing a flagged skill passes
+  the library gate when its eligible set matches. Not a regression (bake sharing
+  adopted everything before). Fix with a second, full-set digest for staleness.
+- **Per-agent bakes are judged against every agent's skill dirs.** A codex skill
+  edit marks a claude-only derived snapshot stale (over-reports, never
+  under-reports). Fix by digesting only the dirs the variant stages.
+- **The control box's worker-side adoption isn't library-gated.**
+  `_run-queued-prepare` → `tryAdoptPreparedBase` can still adopt a PC's shared
+  record on the control box without comparing skills to the library, exactly as
+  before this phase. Gate it the same way (it needs the library digest, which
+  the worker can read from its own custody).
+- **Freshness re-runs discovery once the 30 s memo expires**, reading and
+  scanning every skill on the hub's provider-freshness path and the CLI's
+  create path. A stat-based change key (mtime/size) gating rediscovery would
+  remove the repeated I/O.
+- **`@madarco/agentbox-provider-sdk` is not republished.** sandbox-core gained
+  exports and `PreparedBaseSnapshot.base` two optional fields; nothing an
+  existing plugin uses changed, so a stale SDK only means community providers
+  don't record skills (and are never judged on them). Republish per
+  `docs/provider-plugins.md` when convenient.
+- **The hub's bake diff can't explain a skills-only stale verdict** — it diffs
+  build-context files, so the System page shows the reason string but an empty
+  file diff.

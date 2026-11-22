@@ -26,8 +26,6 @@
  */
 
 import {
-  bakeSkillsDigest,
-  variantFingerprint,
   computeContextManifest,
   computeContextSha256,
   readPreparedStateRaw,
@@ -51,6 +49,12 @@ export interface PreparedVercelBase {
    * manifests existed simply lack it.
    */
   files?: FileManifest;
+  /**
+   * The skills the bake staged and the machine it ran on (`bakeSkillsStamp`).
+   * Not part of `contextSha256`; see sandbox-core's `skills/digest.ts`.
+   */
+  skillsDigest?: string;
+  skillsHost?: string;
   /** CLI version that produced this snapshot (informational). */
   cliVersion?: string;
   /** Git short SHA of the CLI build (informational). */
@@ -159,10 +163,8 @@ export async function currentVercelBaseFingerprintLive(): Promise<string | undef
   try {
     const assets = resolveRuntimeAssets({ cliRuntimeRoot: findStagedCliRuntimeRoot() });
     // The AGENTLESS base: no agent setting folds in, because it installs no
-    // agent. Per-agent artifacts get their own `variantFingerprint`. Its bake
-    // does stage this machine's skills, so their digest folds in, as at prepare.
-    const sha = await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath })));
-    return variantFingerprint(sha, { skills: await bakeSkillsDigest() });
+    // agent. Per-agent artifacts get their own `variantFingerprint`.
+    return await computeContextSha256(assets.map((a) => ({ rel: a.name, abs: a.localPath })));
   } catch {
     return undefined;
   }

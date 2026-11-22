@@ -135,6 +135,7 @@ import {
 import { renderCloneIdentity } from './boxes/clone-render.js';
 import {
   baseFreshnessFromFingerprints,
+  withSkillsFreshness,
   currentCloudBaseFingerprint,
   listAllCloudCheckpoints,
   listCloudBackendDirs,
@@ -1109,7 +1110,7 @@ async function providerBaseFreshness(id: string): Promise<BaseStatus> {
     }
     freshnessCache.set(id, { at: Date.now(), stored: stored ?? '', live });
   }
-  return baseFreshnessFromFingerprints(stored, live);
+  return withSkillsFreshness(id, baseFreshnessFromFingerprints(stored, live));
 }
 
 /**

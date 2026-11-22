@@ -14,8 +14,6 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DaytonaSandboxClass } from '@agentbox/config';
 import {
-  bakeSkillsDigest,
-  variantFingerprint,
   computeContextSha256,
   DOCKER_CONTEXT_FILE_MAP,
   readCliStamp,
@@ -70,6 +68,9 @@ export interface DaytonaPreparedExtras {
 export interface DaytonaVariantRecord {
   imageRef: string;
   contextSha256?: string;
+  /** See `PreparedBaseSnapshot.base.skillsDigest`. */
+  skillsDigest?: string;
+  skillsHost?: string;
   createdAt?: string;
   extras?: DaytonaPreparedExtras;
 }
@@ -102,6 +103,8 @@ export function preparedEntryFor(
   return {
     imageRef: state.base.imageRef,
     ...(state.base.contextSha256 !== undefined ? { contextSha256: state.base.contextSha256 } : {}),
+    ...(state.base.skillsDigest !== undefined ? { skillsDigest: state.base.skillsDigest } : {}),
+    ...(state.base.skillsHost !== undefined ? { skillsHost: state.base.skillsHost } : {}),
     ...(state.extras ? { extras: state.extras } : {}),
   };
 }
@@ -226,9 +229,8 @@ export async function currentDaytonaBaseFingerprintLive(): Promise<string | unde
     const fp = await computeDaytonaContextFingerprint();
     if (!fp?.contextSha256) return undefined;
     // The AGENTLESS base: no agent setting folds in, because it installs no
-    // agent. Per-agent artifacts get their own `variantFingerprint`. Its bake
-    // does stage this machine's skills, so their digest folds in, as at prepare.
-    return variantFingerprint(fp.contextSha256, { skills: await bakeSkillsDigest() });
+    // agent. Per-agent artifacts get their own `variantFingerprint`.
+    return fp.contextSha256;
   } catch {
     return undefined;
   }
@@ -283,6 +285,9 @@ export function writePreparedDaytonaState(opts: {
   class?: DaytonaSandboxClass;
   /** The image env the linux-vm bake had to restore (see DaytonaPreparedExtras). */
   env?: string[];
+  /** The skills the bake staged (`bakeSkillsStamp`). */
+  skillsDigest?: string;
+  skillsHost?: string;
 }): void {
   const stamp = readCliStamp();
   const extras: DaytonaPreparedExtras = {
@@ -294,9 +299,14 @@ export function writePreparedDaytonaState(opts: {
   const createdAt = new Date().toISOString();
   const variant = opts.variant ?? '';
   const prior = readPreparedDaytonaState();
+  const skills = {
+    ...(opts.skillsDigest !== undefined ? { skillsDigest: opts.skillsDigest } : {}),
+    ...(opts.skillsHost !== undefined ? { skillsHost: opts.skillsHost } : {}),
+  };
   const entry: DaytonaVariantRecord = {
     imageRef: opts.snapshotName,
     contextSha256: opts.contextSha256,
+    ...skills,
     createdAt,
     ...(Object.keys(extras).length > 0 ? { extras } : {}),
   };
@@ -311,6 +321,7 @@ export function writePreparedDaytonaState(opts: {
           base: {
             imageRef: opts.snapshotName,
             contextSha256: opts.contextSha256,
+            ...skills,
             cliVersion: stamp.cliVersion,
             cliCommit: stamp.cliCommit,
             createdAt,

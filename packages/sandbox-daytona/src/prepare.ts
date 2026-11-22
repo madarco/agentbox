@@ -29,7 +29,8 @@ import { providerWarning } from '@agentbox/core';
 import { DAYTONA_VM_REGION, type DaytonaSandboxClass } from '@agentbox/config';
 import {
   type AgentStaticStage,
-  bakeSkillsDigest,
+  bakeSkillsStamp,
+  skillsMatchForSkip,
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
@@ -238,11 +239,12 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         contextSha256: variantFingerprint(rawFingerprint.contextSha256, {
           agentSettings,
           agents,
-          // The bake stages this machine's skills; a change to them re-bakes.
-          skills: await bakeSkillsDigest(),
         }),
       }
     : rawFingerprint;
+  // The skills this bake stages, recorded on the entry (NOT folded into the
+  // fingerprint, which bake sharing compares across machines).
+  const skillsStamp = await bakeSkillsStamp();
   // Not const: a linux-vm bake that finds no published base image downgrades to
   // container below, and must then drop the `-vm` suffix from its name.
   let snapshotName =
@@ -277,7 +279,14 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
   if (
     !opts.force &&
     fingerprint &&
-    preparedVariantMatches(prepared, variantKey, fingerprint.contextSha256, sizeKey, sandboxClass)
+    preparedVariantMatches(
+      prepared,
+      variantKey,
+      fingerprint.contextSha256,
+      sizeKey,
+      sandboxClass,
+    ) &&
+    skillsMatchForSkip(preparedEntryFor(prepared, variantKey), skillsStamp)
   ) {
     // Confirm the snapshot still exists on Daytona before short-circuiting.
     // A "yes locally, no on the server" mismatch must rebuild.
@@ -312,6 +321,8 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         `daytona size changed (was ${bakedSize ?? 'default'}, now ${sizeKey ?? 'default'}); ` +
           `rebuilding snapshot`,
       );
+    } else if (sameContext) {
+      log('your skills changed since the last bake; rebuilding snapshot');
     } else {
       log(
         `daytona build context changed (was ${prepared.base.contextSha256.slice(0, 12)}, ` +
@@ -356,6 +367,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         variant: variantKey,
         snapshotName: baked.snapshotName,
         contextSha256: fingerprint.contextSha256,
+        ...skillsStamp,
         size: sizeKey,
         effectiveSize: baseEntry!.extras?.effectiveSize,
         class: 'linux-vm',
@@ -412,6 +424,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
           variant: '',
           snapshotName: baked.snapshotName,
           contextSha256: fingerprint.contextSha256,
+          ...skillsStamp,
           size: sizeKey,
           // This path always sends explicit resources (see the `resources:` line
           // above), so the effective size is exactly what we asked for.
@@ -543,6 +556,7 @@ export async function prepareDaytona(opts: PrepareOptions): Promise<PrepareResul
         variant: variantKey,
         snapshotName: snapshot.name ?? snapshotName,
         contextSha256: fingerprint.contextSha256,
+        ...skillsStamp,
         size: sizeKey,
         // This path always sends explicit resources (see `bakeResources`), so
         // the baked size is known. Still prefer what the API reports back when

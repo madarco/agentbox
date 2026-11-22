@@ -23,6 +23,9 @@ vi.mock('@agentbox/sandbox-cloud', () => ({
   // evaluateBaseFreshness but must still be present so the module loads.
   probeCloudCheckpoint: vi.fn(),
   resolveCloudCheckpoint: vi.fn(),
+  // The skills axis (a record this machine baked whose skills changed since).
+  // Pass-through by default; a test that needs it stale overrides it.
+  withSkillsFreshness: vi.fn((_provider: string, status: unknown) => Promise.resolve(status)),
 }));
 vi.mock('../src/provider/cloud-backend.js', () => ({
   cloudBackendForProvider: vi.fn(),
@@ -39,7 +42,7 @@ vi.mock('@agentbox/sandbox-docker', () => ({
 }));
 
 import { evaluateBaseFreshness } from '../src/checkpoint-lookup.js';
-import { currentCloudBaseFingerprint } from '@agentbox/sandbox-cloud';
+import { currentCloudBaseFingerprint, withSkillsFreshness } from '@agentbox/sandbox-cloud';
 import { currentCloudBaseFingerprintLive } from '../src/provider/cloud-backend.js';
 import { evaluateDockerBaseFreshness } from '@agentbox/sandbox-docker';
 
@@ -117,5 +120,18 @@ describe('evaluateBaseFreshness', () => {
     expect(r.reason).toContain(stored.slice(0, 12));
     expect(r.reason).toContain(current.slice(0, 12));
     expect(r.reason).not.toMatch(/cli|version/i);
+  });
+
+  it('reports a matching base stale when the skills axis says so', async () => {
+    const fp = 'a'.repeat(64);
+    vi.mocked(currentCloudBaseFingerprint).mockReturnValue(fp);
+    vi.mocked(currentCloudBaseFingerprintLive).mockResolvedValue(fp);
+    vi.mocked(withSkillsFreshness).mockResolvedValueOnce({
+      state: 'stale',
+      reason: 'your skills changed since this base was baked',
+    });
+    const r = await evaluateBaseFreshness('e2b');
+    expect(r).toEqual({ state: 'stale', reason: 'your skills changed since this base was baked' });
+    expect(vi.mocked(withSkillsFreshness)).toHaveBeenLastCalledWith('e2b', { state: 'fresh' });
   });
 });

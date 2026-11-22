@@ -38,7 +38,8 @@ import {
   computeContextManifest,
   readCliStamp,
   type AgentStaticStage,
-  bakeSkillsDigest,
+  bakeSkillsStamp,
+  skillsMatchForSkip,
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
@@ -182,12 +183,10 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
   const templateName = templateNameFor(variantKey);
-  const contextSha = variantFingerprint(contextManifest.contextSha256, {
-    agentSettings,
-    agents,
-    // The bake stages this machine's skills; a change to them re-bakes.
-    skills: await bakeSkillsDigest(),
-  });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
+  // The skills this bake stages, recorded on the entry (NOT folded into
+  // contextSha, which bake sharing compares across machines).
+  const skillsStamp = await bakeSkillsStamp();
 
   // Bake-time size. A `--size` / `box.sizeE2b` like `4-8` overrides the default
   // cpu/memory (E2B rejects per-create resources, so it MUST be baked). The
@@ -217,7 +216,11 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
   if (!opts.force && existingEntry) {
     const bakedSize = existingEntry.size;
     const label = derived ? `${variantKey} template` : 'template';
-    if (existingEntry.contextSha256 === contextSha && bakedSize === sizeKey) {
+    if (
+      existingEntry.contextSha256 === contextSha &&
+      bakedSize === sizeKey &&
+      skillsMatchForSkip(existingEntry, skillsStamp)
+    ) {
       const stillThere = await templateExists(existingEntry.templateId, apiKey);
       if (stillThere) {
         progress(
@@ -232,7 +235,9 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
       );
     } else {
       progress(
-        `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${label}`,
+        existingEntry.contextSha256 === contextSha
+          ? `your skills changed since the last bake; rebuilding ${label}`
+          : `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${label}`,
       );
     }
   }
@@ -404,6 +409,7 @@ export async function prepareE2b(opts: PrepareE2bOptions = {}): Promise<PrepareE
       // and produced `agentbox-base:latest:latest` in the status display.
       templateName: info.name,
       contextSha256: contextSha,
+      ...skillsStamp,
       files: contextManifest.files,
       ...(sizeKey ? { size: sizeKey } : {}),
       cliVersion: cliStamp.cliVersion,

@@ -109,15 +109,6 @@ declare global {
     | null
     | undefined;
 
-  /**
-   * Whether this hub's machine has library-eligible skills of its own (measured
-   * by the custom server, which can import sandbox-core). Decides whether the
-   * library or the home feeds the cloud base skills digest; see
-   * `refreshSkillsDigestEnv`. Undefined until measured.
-   */
-  // eslint-disable-next-line no-var
-  var __AGENTBOX_HUB_LOCAL_SKILLS: boolean | undefined;
-
   /** Streaming-blob cap the hub enforces (`AGENTBOX_CUSTODY_MAX_BLOB_BYTES`). */
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES: number | undefined;

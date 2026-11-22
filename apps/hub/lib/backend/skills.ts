@@ -331,7 +331,8 @@ export async function discardSkill(store: SkillsStore, name: string): Promise<{ 
 /**
  * The library's skills digest: the same hash `@agentbox/sandbox-core`'s
  * `skillsDigest` computes on a PC (sorted `<name>:<treeSha>` lines, '' for none),
- * so a PC whose skills match the library produces the same value. Re-implemented
+ * so a PC whose skills match the library produces the same value. A control box
+ * compares it with a shared bake's `base.skillsDigest` before adopting it. Re-implemented
  * here because Next routes can't import sandbox-core (execa breaks the standalone
  * build); `test/skills-backend.test.ts` pins the two to the same output.
  */
@@ -345,34 +346,18 @@ export function libraryDigest(skills: readonly { name: string; current: string }
   return h.digest('hex');
 }
 
-/** Mirrors sandbox-core's `SKILLS_DIGEST_ENV`. */
-export const SKILLS_DIGEST_ENV = 'AGENTBOX_SKILLS_DIGEST';
-
 /**
- * Decide which skills a cloud base fingerprint counts on this hub's machine
- * (docs/hub-skills-backlog.md, Phase 1b plan item 3). When the machine has no
- * eligible skills of its own and the library is seeded — a deployed control box —
- * the library decides: the variable is set to its digest, and this process and
- * every bake worker it spawns fold that instead of the (empty) home. Otherwise
- * the variable is cleared and the home decides, as on any PC.
- *
- * `localHasSkills` is measured once by the custom server (it can import
- * sandbox-core; routes can't). Undefined = not measured here: leave it alone.
+ * Whether a control box should decline a shared bake because the skills baked
+ * into it differ from the library (docs/hub-skills-plan.md, Phase 1b). A record
+ * from before skills were tracked (no digest), or a library never seeded, never
+ * blocks: that is exactly how adoption behaved before this check existed.
  */
-export async function refreshSkillsDigestEnv(
+export async function libraryBlocksAdoption(
   store: SkillsStore,
-  localHasSkills: boolean | undefined,
-  env: Record<string, string | undefined> = process.env,
-): Promise<void> {
-  if (localHasSkills === undefined) return;
-  if (localHasSkills) {
-    delete env[SKILLS_DIGEST_ENV];
-    return;
-  }
+  recordDigest: string | undefined,
+): Promise<boolean> {
+  if (recordDigest === undefined) return false;
   const listing = await listSkills(store);
-  if (!listing.seeded) {
-    delete env[SKILLS_DIGEST_ENV];
-    return;
-  }
-  env[SKILLS_DIGEST_ENV] = libraryDigest(listing.skills);
+  if (!listing.seeded) return false;
+  return libraryDigest(listing.skills) !== recordDigest;
 }

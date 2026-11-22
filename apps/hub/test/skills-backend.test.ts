@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { SKILLS_DIGEST_ENV as CORE_ENV, skillsDigest } from '@agentbox/sandbox-core';
+import { skillsDigest } from '@agentbox/sandbox-core';
 import {
   MAX_SKILL_VERSIONS,
   SEEDED_MARKER,
@@ -12,8 +12,7 @@ import {
   openSkillTarball,
   libraryDigest,
   parseImportMeta,
-  refreshSkillsDigestEnv,
-  SKILLS_DIGEST_ENV,
+  libraryBlocksAdoption,
   skillNameProblem,
   type SkillsStore,
   type SkillsStoreEntry,
@@ -201,7 +200,7 @@ describe('skills library over custody', () => {
   });
 });
 
-describe('skills digest for cloud base fingerprints', () => {
+describe('skills digest + the control-box adoption gate', () => {
   it('matches sandbox-core on the PC side exactly', () => {
     const set = [
       { name: 'zeta', sha: sha('1') },
@@ -211,28 +210,21 @@ describe('skills digest for cloud base fingerprints', () => {
       skillsDigest(set.map((e) => ({ name: e.name, treeSha: e.sha }))),
     );
     expect(libraryDigest([])).toBe('');
-    expect(SKILLS_DIGEST_ENV).toBe(CORE_ENV);
   });
 
-  it('sets the library digest only on a machine without skills and a seeded library', async () => {
+  it('declines a shared bake only when a seeded library differs from its skills', async () => {
     const store = memStore();
-    const env: Record<string, string | undefined> = { [SKILLS_DIGEST_ENV]: 'stale' };
-    await refreshSkillsDigestEnv(store, false, env);
-    expect(env[SKILLS_DIGEST_ENV]).toBeUndefined(); // not seeded: the home decides
-
+    // Not seeded, or a record from before skills were tracked: adopt as always.
+    expect(await libraryBlocksAdoption(store, 'f'.repeat(64))).toBe(false);
     await importSkill(store, { name: 'one', meta: meta(sha('a')), body: body('a') });
-    await refreshSkillsDigestEnv(store, false, env);
-    expect(env[SKILLS_DIGEST_ENV]).toBe(libraryDigest([{ name: 'one', current: sha('a') }]));
-
-    await refreshSkillsDigestEnv(store, true, env);
-    expect(env[SKILLS_DIGEST_ENV]).toBeUndefined(); // a PC: its own skills decide
-
+    expect(await libraryBlocksAdoption(store, undefined)).toBe(false);
+    const lib = libraryDigest([{ name: 'one', current: sha('a') }]);
+    expect(await libraryBlocksAdoption(store, lib)).toBe(false);
+    expect(await libraryBlocksAdoption(store, 'f'.repeat(64))).toBe(true);
+    expect(await libraryBlocksAdoption(store, '')).toBe(true); // a PC with no skills
+    // Emptied library: only a skill-less bake matches.
     await discardSkill(store, 'one');
-    await refreshSkillsDigestEnv(store, false, env);
-    expect(env[SKILLS_DIGEST_ENV]).toBe(''); // seeded but emptied: no skills to fold
-
-    env[SKILLS_DIGEST_ENV] = 'kept';
-    await refreshSkillsDigestEnv(store, undefined, env);
-    expect(env[SKILLS_DIGEST_ENV]).toBe('kept'); // not measured: untouched
+    expect(await libraryBlocksAdoption(store, '')).toBe(false);
+    expect(await libraryBlocksAdoption(store, lib)).toBe(true);
   });
 });

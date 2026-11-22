@@ -66,6 +66,15 @@ export interface PreparedBaseSnapshot<TImage = string, TExtra = unknown> {
      * diff" rather than inventing one.
      */
     files?: FileManifest;
+    /**
+     * Digest of the skills the bake staged (`bakeSkillsStamp`), and the machine
+     * it was taken on. Kept OUT of `contextSha256` on purpose: that hash is the
+     * cross-machine identity bake sharing compares, and skills differ per
+     * machine. Skills staleness is judged only by the machine that baked.
+     * Absent on records written before skills were tracked.
+     */
+    skillsDigest?: string;
+    skillsHost?: string;
   };
   /** Provider-specific extras (e.g. hetzner's per-project snapshot tier). */
   extras?: TExtra;
@@ -258,29 +267,19 @@ export function bakeSettingsFingerprintInput(settings?: AgentSettingsMap): strin
  * built from the same context but carrying different agents (or a different
  * value for a bake-affecting agent setting) are distinct cache identities.
  *
- * The empty variant — no agents, every setting at its default, no skills — is
- * the identity fold, so the plain base keeps the raw context hash and a provider
- * that never passes a variant is unaffected.
+ * The empty variant — no agents, every setting at its default — is the identity
+ * fold, so the plain base keeps the raw context hash and a provider that never
+ * passes a variant is unaffected.
  */
 export function variantFingerprint(
   baseSha: string,
-  variant: {
-    agents?: readonly string[];
-    agentSettings?: AgentSettingsMap;
-    /**
-     * The skills digest (`bakeSkillsDigest()`), for a provider whose bake stages
-     * the host's static config, skills included. '' or absent folds nothing.
-     */
-    skills?: string;
-  } = {},
+  variant: { agents?: readonly string[]; agentSettings?: AgentSettingsMap } = {},
 ): string {
   const agents = agentSetArg(variant.agents);
   const settings = bakeSettingsFingerprintInput(variant.agentSettings);
-  const skills = variant.skills ?? '';
-  if (settings.length === 0 && agents === '' && skills === '') return baseSha;
+  if (settings.length === 0 && agents === '') return baseSha;
   const parts: string[] = [...settings];
   if (agents !== '') parts.push(`agents=${agents}`);
-  if (skills !== '') parts.push(`skills=${skills}`);
   return createHash('sha256')
     .update(`${baseSha}\0${parts.join('\0')}`)
     .digest('hex');

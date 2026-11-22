@@ -401,10 +401,12 @@ export type { SecretFinding } from './skills/scan.js';
 export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {
-  SKILLS_DIGEST_ENV,
-  bakeSkillsDigest,
+  bakeSkillsStamp,
   isLibraryEligible,
   localSkillsDigest,
   resetSkillsDigestMemo,
   skillsDigest,
+  skillsMatchForSkip,
+  skillsStaleness,
 } from './skills/digest.js';
+export type { SkillsStamp } from './skills/digest.js';

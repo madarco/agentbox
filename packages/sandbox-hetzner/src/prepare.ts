@@ -35,7 +35,8 @@ import { UserFacingError } from '@agentbox/core';
 import {
   computeContextManifest,
   readCliStamp,
-  bakeSkillsDigest,
+  bakeSkillsStamp,
+  skillsMatchForSkip,
   variantFingerprint,
   normalizeAgentSet,
   agentSetArg,
@@ -161,12 +162,10 @@ export async function prepareHetzner(
   const agents = normalizeAgentSet(opts.agents);
   const variantKey = agentSetArg(agents);
   const derived = agents.length > 0;
-  const contextSha = variantFingerprint(contextManifest.contextSha256, {
-    agentSettings,
-    agents,
-    // The bake stages this machine's skills; a change to them re-bakes.
-    skills: await bakeSkillsDigest(),
-  });
+  const contextSha = variantFingerprint(contextManifest.contextSha256, { agentSettings, agents });
+  // The skills this bake stages, recorded on the entry (NOT folded into
+  // contextSha, which bake sharing compares across machines).
+  const skillsStamp = await bakeSkillsStamp();
 
   // A derived bake boots the agentless base, so that has to exist first.
   const baseEntry = preparedEntryFor(existingState, '');
@@ -180,7 +179,11 @@ export async function prepareHetzner(
   const existingEntry = preparedEntryFor(existingState, variantKey);
   if (!opts.force && existingEntry) {
     const remote = await client.getImage(existingEntry.imageId).catch(() => null);
-    if (remote && existingEntry.contextSha256 === contextSha) {
+    if (
+      remote &&
+      existingEntry.contextSha256 === contextSha &&
+      skillsMatchForSkip(existingEntry, skillsStamp)
+    ) {
       progress(
         `${derived ? `${variantKey} snapshot` : 'base snapshot'} ${String(existingEntry.imageId)} already exists (fingerprint ${contextSha.slice(0, 12)} matches); skipping rebuild (pass --force to override)`,
       );
@@ -195,7 +198,9 @@ export async function prepareHetzner(
       );
     } else {
       progress(
-        `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${variantKey || 'base'} snapshot`,
+        existingEntry.contextSha256 === contextSha
+          ? `your skills changed since the last bake; rebuilding ${variantKey || 'base'} snapshot`
+          : `build context changed (was ${existingEntry.contextSha256?.slice(0, 12) ?? '<none>'}, now ${contextSha.slice(0, 12)}); rebuilding ${variantKey || 'base'} snapshot`,
       );
     }
   }
@@ -513,6 +518,7 @@ export async function prepareHetzner(
       description: ready.description,
       createdAt: new Date().toISOString(),
       contextSha256: contextSha,
+      ...skillsStamp,
       files: contextManifest.files,
       cliVersion: cliStamp.cliVersion,
       cliCommit: cliStamp.cliCommit,
