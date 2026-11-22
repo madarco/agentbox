@@ -24,7 +24,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { AGENTS_FILE } from '@agentbox/config';
-import type { AgentSyncSpec } from '@agentbox/core';
+import { LLM_ACCOUNT_KINDS, type AgentSyncSpec } from '@agentbox/core';
 
 /**
  * Re-exported, not declared: the path also has to be reachable from
@@ -177,6 +177,27 @@ function credentialProblem(raw: unknown): string | null {
   return null;
 }
 
+/**
+ * `accountKinds` is optional; when present it must name known kinds, once each.
+ * A `login` account's secret is the agent's credential file, so `login` without
+ * a `credential` would give every login a secret path nothing reads.
+ */
+export function accountKindsProblem(raw: unknown, hasCredential: boolean): string | null {
+  if (!Array.isArray(raw)) return '`accountKinds` must be an array';
+  const seen = new Set<string>();
+  for (const kind of raw as unknown[]) {
+    if (typeof kind !== 'string' || !(LLM_ACCOUNT_KINDS as readonly string[]).includes(kind)) {
+      return `\`accountKinds\` entries must be one of ${LLM_ACCOUNT_KINDS.join(', ')}`;
+    }
+    if (seen.has(kind)) return `\`accountKinds\` lists '${kind}' twice`;
+    seen.add(kind);
+  }
+  if (seen.has('login') && !hasCredential) {
+    return "`accountKinds` includes 'login' but the agent declares no `credential`";
+  }
+  return null;
+}
+
 function cloneProblem(raw: unknown): string | null {
   if (raw === null || typeof raw !== 'object') return '`clone` must be an object';
   const clone = raw as Record<string, unknown>;
@@ -263,6 +284,9 @@ export function agentSpecProblem(raw: unknown): string | null {
     // Optional field: absent is a legitimate declaration, malformed is not.
     (spec.credential === undefined ? null : credentialProblem(spec.credential)) ??
     (spec.clone === undefined ? null : cloneProblem(spec.clone)) ??
+    (spec.accountKinds === undefined
+      ? null
+      : accountKindsProblem(spec.accountKinds, spec.credential !== undefined)) ??
     staticPathsProblem(spec.staticPaths);
   if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to

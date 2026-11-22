@@ -78,6 +78,27 @@ export {
   toQueueKind,
   normalizeLastAgent,
 } from './agent-kind.js';
+export type {
+  AccountsFile,
+  LegacyAccountSlot,
+  LlmAccount,
+  LlmAccountIdentity,
+  LlmAccountKind,
+} from './llm-accounts.js';
+export {
+  DEFAULT_ACCOUNT_ID,
+  LLM_ACCOUNT_KINDS,
+  accountCloudSubpath,
+  accountConfigVolume,
+  accountCustodyPath,
+  accountIdProblem,
+  accountKindProblem,
+  accountSecretPath,
+  agentAccountKinds,
+  findAccount,
+  isDefaultAccount,
+  migrateAccountsFile,
+} from './llm-accounts.js';
 export type { ConflictVerdict, ConflictPolicy, Reconciler } from './reconciler.js';
 export type {
   WorkspaceResyncPorts,
