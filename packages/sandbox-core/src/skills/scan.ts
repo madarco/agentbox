@@ -11,7 +11,6 @@
  * A finding names the rule, file and line — never the matched value, so the scan
  * itself can't print a secret.
  */
-import type { TarFile } from './tar.js';
 
 export interface SecretFinding {
   rule: string;
@@ -123,7 +122,7 @@ function lineOf(text: string, index: number): number {
   return n;
 }
 
-export function scanSkillFiles(files: readonly Pick<TarFile, 'path' | 'data'>[]): SecretFinding[] {
+export function scanSkillFiles(files: readonly { path: string; data: Buffer }[]): SecretFinding[] {
   const findings: SecretFinding[] = [];
   for (const f of files) {
     // By name first, ahead of the fixture and binary skips: a file called `.env`

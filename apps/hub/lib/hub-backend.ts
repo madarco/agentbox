@@ -49,6 +49,7 @@ import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
+import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
 import { addBoxAgent } from './backend/box-agents';
 import type { BackendDeps } from './backend/deps';
@@ -138,6 +139,7 @@ import {
 import { renderCloneIdentity } from './boxes/clone-render.js';
 import {
   baseFreshnessFromFingerprints,
+  withSkillsFreshness,
   currentCloudBaseFingerprint,
   listAllCloudCheckpoints,
   listCloudBackendDirs,
@@ -1127,7 +1129,7 @@ async function providerBaseFreshness(id: string): Promise<BaseStatus> {
     }
     freshnessCache.set(id, { at: Date.now(), stored: stored ?? '', live });
   }
-  return baseFreshnessFromFingerprints(stored, live);
+  return withSkillsFreshness(id, baseFreshnessFromFingerprints(stored, live));
 }
 
 /**
@@ -2494,6 +2496,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
       try {
         const provider = await providerForBox(box);
+        await flushBoxHistory(box, {
+          ...(handle.history ? { relayHistory: handle.history } : {}),
+          exec: (b, argv, o) => provider.exec(b, argv, o),
+          probeState: (b) => provider.probeState(b),
+          log: (line) => console.warn(`[hub] ${line}`),
+        });
         await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});

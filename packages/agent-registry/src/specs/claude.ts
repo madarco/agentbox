@@ -129,6 +129,18 @@ export const claudeSpec: AgentSyncSpec = {
       ],
     },
   ],
+  // Session history (docs/agent-history-plan.md). The session id is the file
+  // stem; subagent transcripts are children of their parent's session.
+  history: {
+    transcripts: [
+      {
+        root: 'projects/<projectKey>',
+        format: 'jsonl',
+        mode: 'append',
+        sessionFiles: ['<sessionId>.jsonl', '<sessionId>/subagents/*.jsonl'],
+      },
+    ],
+  },
   credential: {
     boxRelPath: '.credentials.json',
     boxAbsPath: `${CLAUDE_BOX_DIR}/.credentials.json`,

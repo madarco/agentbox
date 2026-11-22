@@ -106,6 +106,11 @@ import type {
 } from './types.js';
 
 export interface CloudActionExecutorDeps {
+  /**
+   * Session-history RPCs (`history.*`) for this box, bound to its registration.
+   * Absent on a path that cannot ingest (the multi-PC host-reach executor).
+   */
+  history?: (method: string, params: unknown) => Promise<HostActionResult>;
   /** From BoxRegistration.backend (e.g. 'daytona'). */
   backendName: string;
   /**
@@ -405,6 +410,18 @@ export async function executeCloudAction(
     return {
       exitCode: 0,
       stdout: JSON.stringify(buildAgentDescriptors({ boxAgents: deps.boxAgents })),
+      stderr: '',
+    };
+  }
+  if (action.method.startsWith('history.')) {
+    if (deps.history) return deps.history(action.method, action.params);
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify(
+        action.method === 'history.config'
+          ? { enabled: false, reason: 'not ingested on this path', agents: [], credentialFiles: [] }
+          : { ok: false, code: 'disabled', message: 'not ingested on this path' },
+      ),
       stderr: '',
     };
   }
@@ -974,6 +991,21 @@ async function loadCloudCp(): Promise<CloudCpModule> {
   }
 }
 
+/**
+ * The host folder a cp/download resolves against, and the box record if this
+ * machine has one. No record is fine when the caller names the folder (a PC
+ * serving a box it has not adopted yet; it adopts only once approved);
+ * otherwise the record is the only base there is.
+ */
+async function hostReachBase(
+  deps: CloudActionExecutorDeps,
+): Promise<{ record: BoxLookup | null; base: string }> {
+  const record = deps.hostFolder
+    ? await lookupCloudBox(deps.boxId).catch(() => null)
+    : await lookupCloudBox(deps.boxId);
+  return { record, base: deps.hostFolder ?? record?.workspacePath ?? '' };
+}
+
 async function runCpRpc(
   action: HostAction,
   deps: CloudActionExecutorDeps,
@@ -1002,12 +1034,8 @@ async function runCpRpc(
   // Resolve host paths against THIS box's workspace so a relative path doesn't
   // land under the relay daemon's CWD (which belongs to whichever project
   // started the relay), and so the consent prompt shows the real destination.
-  // No record is fine when the caller names the folder (a PC serving a box it
-  // has not adopted yet); otherwise the record is the only base there is.
-  const record = deps.hostFolder
-    ? await lookupCloudBox(deps.boxId).catch(() => null)
-    : await lookupCloudBox(deps.boxId);
-  const lookup = { workspacePath: deps.hostFolder ?? record?.workspacePath ?? '' };
+  const { base } = await hostReachBase(deps);
+  const lookup = { workspacePath: base };
   const hostSide = method === 'cp.toHost' ? [norm.dest] : norm.sources;
   const needsFolder = hostSide.some((p) => !p.startsWith('/') && !p.startsWith('~'));
   const folderHere = lookup.workspacePath.length > 0 && existsSync(lookup.workspacePath);
@@ -1197,7 +1225,21 @@ async function runDownloadRpc(
       stderr: `download.${kind} is not yet supported for cloud boxes (only download.workspace is)\n`,
     };
   }
-  const lookup = await lookupCloudBox(deps.boxId);
+  // A host-reach download names THIS machine's checkout (`hostFolder`); a box
+  // it has not adopted yet has no record, and is adopted only once approved.
+  // Only that path insists the folder exists: a plain download recreates a
+  // moved project folder, as it always has.
+  const { record, base } = await hostReachBase(deps);
+  if (deps.hostFolder !== undefined && !existsSync(base)) {
+    return {
+      exitCode: 69,
+      stdout: '',
+      stderr:
+        `download could not run on this machine: the project folder ${base || '(none)'} does not ` +
+        `exist here (a download lands in the project the box was created from).\n`,
+    };
+  }
+  const lookup = { workspacePath: base };
   // params.hostPath is reserved in the wire shape; v1 lands /workspace under
   // box.workspacePath (the host project root), matching docker's default. A
   // relative override resolves against the box workspace, not the relay's CWD.
@@ -1239,8 +1281,24 @@ async function runDownloadRpc(
       return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
     }
   }
+  if (deps.prepareBox) {
+    const stop = await deps.prepareBox();
+    if (stop) return { exitCode: 69, stdout: '', stderr: `${stop}\n` };
+  }
+  let resolved = record;
+  if (!resolved) {
+    try {
+      resolved = await lookupCloudBox(deps.boxId);
+    } catch (err) {
+      return {
+        exitCode: 69,
+        stdout: '',
+        stderr: `download could not run on this machine: ${err instanceof Error ? err.message : String(err)}\n`,
+      };
+    }
+  }
   const backend = await resolveCloudBackend(deps.backendName);
-  const handle: CloudHandle = cloudHandleOf(lookup);
+  const handle: CloudHandle = cloudHandleOf(resolved);
   const cp = await loadCloudCp();
   try {
     const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst);

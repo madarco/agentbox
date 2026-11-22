@@ -79,6 +79,10 @@ export const STORE_DB_PATH = join(STATE_DIR, 'hub', 'store.db');
  */
 export const DEVICES_DB_PATH = join(STATE_DIR, 'hub', 'devices.db');
 
+/** Session history rows (`history.db`) and raw transcript chunks (`history/`). */
+export const HISTORY_DB_PATH = join(STATE_DIR, 'hub', 'history.db');
+export const HISTORY_ARCHIVE_DIR = join(STATE_DIR, 'hub', 'history');
+
 /** Shared-secret file for the localhost token gate (auto-managed by server.ts). */
 export const AUTH_TOKEN_PATH = join(STATE_DIR, 'hub', 'token');
 

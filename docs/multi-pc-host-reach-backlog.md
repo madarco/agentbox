@@ -55,8 +55,10 @@ for teams PCs must never hold it (device tokens only).
 
 - `docker:hub` boxes show as `remote-docker (inactive)` on PCs and are unreachable
   from a second PC (the control box's ssh is locked to the operator's IP).
-- `download.*` is not a host-reach method, so it is not routed (it still needs the
-  machine that created the box).
+- `download.*` is routed to the box's origin PC only (no fallback, no cache): it
+  writes the box into the project it was created from, so another PC's clone would
+  be overwritten. `env`/`config`/`claude` kinds are still unsupported for cloud
+  boxes, as before.
 - Multi-repo boxes: `hostCandidatesFor` already picks a nested repo by path prefix,
   but registrations describe one root repo until box-sources Phase 2.
 
@@ -84,6 +86,36 @@ for teams PCs must never hold it (device tokens only).
   or have `primaryAgent` prefer a service agent. Not a regression: a claude box
   registered `claude` before #429 too.
 
+## From the review of #432 (origin-only download)
+
+- **Fixed in #432 (owner decision): a download never unpacks a `.git`.** The workspace
+  download (`pullCloudDirContents`, the cloud executor behind `agentbox-ctl download`
+  on every hub, local included) used to unpack the box's whole `/workspace`, `.git`
+  included, over the project: the PC's git config, HEAD, index and refs replaced (a
+  hub box's clone is shallow), hooks plantable, and it auto-approves as a contained
+  download. `.git` (any depth) is now excluded when the box packs AND when the PC
+  unpacks. Box commits reach the PC through git (push, `--host-only`), never a copy.
+  Still open: it overwrites tracked files with local uncommitted changes, with no
+  backup (the CLI's `agentbox download` has preview + backups; the cloud executor
+  does not).
+- **Folder guard can be skipped on the origin with a stale record.** When the origin's
+  own record points at a moved folder (`recordOk` false) and the registration has no
+  `originFolder`, `hostFolder` is never set, so the host-reach-only "folder must exist"
+  guard does not run and the download lands in a recreated empty folder (on the origin,
+  nothing overwritten). Fix: key the guard on an explicit host-reach flag from
+  `executeHostReachAction`, not on `hostFolder`.
+- **No PC-side defense for a download routed as `has-repo`.** The hub never routes one
+  that way (origin only), but `executeHostReachAction` only confines `cp.*` for
+  `has-repo`. Fix: decline `download.*` unless the route says `origin` and
+  `route.box.originMachineId` is this machine.
+- **`hub expose` (the hub is the user's PC): a download for a hub-built box from that
+  same machine says "not connected".** No host-reach poller runs on a control box, and
+  there is no "the origin is this machine, run it locally" shortcut (failed before the
+  PR too, ENOENT; `cp` has the same gap). Fix: when `originMachineId` is the hub's own
+  id, execute locally against `originFolder`.
+- **The no-origin refusal names a placeholder** (`agentbox download <box>`), because
+  `hostReachRouteFor` has no box name. Fix: pass `reg.name`, or build the message in
+  `server.ts` where `reg.name` is in scope.
 ## docker:hub boxes on other computers (follow-up fix 3), noted, not fixed
 
 - **Direct attach / shell / `cp` from a computer that did not deploy the control box

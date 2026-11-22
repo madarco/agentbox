@@ -196,6 +196,11 @@ export function buildOpenApi(): Record<string, unknown> {
           'Which machine has which repo checked out where, keyed by machine id and repo key.',
       },
       {
+        name: 'History',
+        description:
+          'Agent session history: transcript ingest from the edges, and the sessions, transcripts and search read from it.',
+      },
+      {
         name: 'Workspaces',
         description:
           'Folders grouping one or more projects, each owning a task list and its manager sessions.',
@@ -1130,6 +1135,415 @@ export function buildOpenApi(): Record<string, unknown> {
                       },
                     },
                     required: ['checkouts'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions': {
+        get: {
+          tags: ['History'],
+          summary: 'List recorded sessions',
+          description:
+            'Agent sessions the hub recorded, newest activity first. Filters are ANDed. `q` is plain words that must all appear in one turn (never query syntax).',
+          parameters: [
+            {
+              name: 'agent',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this agent (e.g. `claude`).',
+            },
+            {
+              name: 'box',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only this box: its id or name.',
+            },
+            {
+              name: 'project',
+              in: 'query',
+              schema: { type: 'string' },
+              description: "Substring of the project's repo URL.",
+            },
+            {
+              name: 'host',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only sessions shipped by this machine id.',
+            },
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Last activity at or after this ISO-8601 time.',
+            },
+            {
+              name: 'q',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Words that must all appear in one of the session turns.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Default 50, max 500.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Sessions',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      sessions: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            key: { type: 'string' },
+                            agent: { type: 'string' },
+                            boxId: { type: 'string', nullable: true },
+                            boxName: { type: 'string', nullable: true },
+                            provider: { type: 'string', nullable: true },
+                            hostId: { type: 'string', nullable: true },
+                            projectRepoUrl: { type: 'string', nullable: true },
+                            parentSessionId: { type: 'string', nullable: true },
+                            title: { type: 'string', nullable: true },
+                            firstTs: { type: 'string', nullable: true },
+                            lastTs: { type: 'string', nullable: true },
+                            turns: { type: 'integer' },
+                            inputTokens: { type: 'integer' },
+                            outputTokens: { type: 'integer' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                            updatedAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                    },
+                    required: ['sessions'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}': {
+        get: {
+          tags: ['History'],
+          summary: 'One session, condensed',
+          description:
+            'The session row, its files (the main transcript plus one per subagent, with byte sizes), the turn count, tool-name counts, and the first user prompt and last assistant reply. 409 with `details.candidates` when a prefix is ambiguous.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The session',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      session: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          key: { type: 'string' },
+                          agent: { type: 'string' },
+                          boxId: { type: 'string', nullable: true },
+                          boxName: { type: 'string', nullable: true },
+                          provider: { type: 'string', nullable: true },
+                          hostId: { type: 'string', nullable: true },
+                          projectRepoUrl: { type: 'string', nullable: true },
+                          parentSessionId: { type: 'string', nullable: true },
+                          title: { type: 'string', nullable: true },
+                          firstTs: { type: 'string', nullable: true },
+                          lastTs: { type: 'string', nullable: true },
+                          turns: { type: 'integer' },
+                          inputTokens: { type: 'integer' },
+                          outputTokens: { type: 'integer' },
+                          createdAt: { type: 'string', format: 'date-time' },
+                          updatedAt: { type: 'string', format: 'date-time' },
+                        },
+                      },
+                      files: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            child: { type: 'boolean' },
+                            bytes: { type: 'integer' },
+                          },
+                        },
+                      },
+                      turns: { type: 'integer' },
+                      tools: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: { name: { type: 'string' }, count: { type: 'integer' } },
+                        },
+                      },
+                      firstPrompt: { type: 'string', nullable: true },
+                      lastReply: { type: 'string', nullable: true },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}/turns': {
+        get: {
+          tags: ['History'],
+          summary: "A session's transcript rows",
+          description:
+            'Turn and tool rows in session order (subagent rows interleaved by time), `from` to `to` inclusive, at most 1000 per call.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+            {
+              name: 'from',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'First row index (default 0).',
+            },
+            {
+              name: 'to',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Last row index, inclusive (default from+199).',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Rows',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      turns: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            index: { type: 'integer' },
+                            kind: { type: 'string', enum: ['turn', 'tool'] },
+                            role: { type: 'string', nullable: true },
+                            name: { type: 'string', nullable: true },
+                            text: { type: 'string', nullable: true },
+                            ts: { type: 'string', nullable: true },
+                            path: { type: 'string' },
+                            at: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/sessions/{ref}/raw': {
+        get: {
+          tags: ['History'],
+          summary: 'Download one transcript file',
+          description:
+            'One file of the session, streamed and byte-identical to what the edge shipped (secrets masked at the edge, length kept). Default: the main transcript; `path` picks one of the detail route `files`. The `x-agentbox-history-path` header names the file.',
+          parameters: [
+            {
+              name: 'ref',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Session id, an id prefix of 8+ characters, or `<agent>:<id>`.',
+            },
+            {
+              name: 'path',
+              in: 'query',
+              schema: { type: 'string' },
+              description: "A file path from the session's `files` list.",
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'The file bytes',
+              content: { 'application/x-ndjson': { schema: { type: 'string', format: 'binary' } } },
+            },
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/search': {
+        get: {
+          tags: ['History'],
+          summary: 'Full-text search over turns',
+          description:
+            'Turns containing all the words in `q`, best first, each with a snippet (matches in [brackets]) and its session.',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Plain words; no query syntax.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Default 20, max 200.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Hits',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      hits: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            session: { type: 'object' },
+                            role: { type: 'string', nullable: true },
+                            ts: { type: 'string', nullable: true },
+                            snippet: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/history/chunks': {
+        post: {
+          tags: ['History'],
+          summary: 'Ingest one transcript frame',
+          description:
+            "One slice of an agent transcript file, shipped by a relay or an in-box shipper. Accepted only at the offset the hub holds for `(origin.boxId, agent, path)`, with `sha256Prefix` equal to the hash it recorded; otherwise the answer is `ok: false, code: offset_mismatch` carrying the hub's `offset` and `sha256`, and the shipper resumes from there (or re-ships from 0 with `reset: true` when its file was rewritten). `data` is base64 of bytes already redacted at the edge; hashes cover the raw file. The hub's own relay calls the same ingest in-process. Always 200 for a well-formed frame, whatever the outcome.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    origin: {
+                      type: 'object',
+                      properties: {
+                        boxId: { type: 'string' },
+                        boxName: { type: 'string' },
+                        provider: { type: 'string' },
+                        hostId: { type: 'string' },
+                        projectRepoUrl: { type: 'string' },
+                      },
+                      required: ['boxId'],
+                    },
+                    agent: { type: 'string', description: 'Agent id, e.g. `claude`.' },
+                    path: {
+                      type: 'string',
+                      description:
+                        'Relative to the agent config dir, e.g. `projects/-workspace/<sessionId>.jsonl`. No empty or `..` segments.',
+                    },
+                    offset: { type: 'integer', minimum: 0 },
+                    sha256Prefix: {
+                      type: 'string',
+                      description: 'sha256 hex of raw bytes [0, offset); empty at 0.',
+                    },
+                    sha256: {
+                      type: 'string',
+                      description: 'sha256 hex of raw bytes [0, offset + length).',
+                    },
+                    data: {
+                      type: 'string',
+                      format: 'byte',
+                      description: 'base64, at most 8 MiB decoded.',
+                    },
+                    reset: {
+                      type: 'boolean',
+                      description: 'The file was rewritten: start a new generation at 0.',
+                    },
+                  },
+                  required: ['origin', 'agent', 'path', 'offset', 'sha256Prefix', 'sha256', 'data'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The ingest result',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { type: 'boolean' },
+                      offset: { type: 'integer' },
+                      sha256: { type: 'string' },
+                      code: {
+                        type: 'string',
+                        enum: ['offset_mismatch', 'disabled', 'invalid', 'unavailable'],
+                      },
+                      message: { type: 'string' },
+                    },
+                    required: ['ok'],
                   },
                 },
               },

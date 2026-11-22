@@ -19,11 +19,16 @@ vi.hoisted(() => {
   process.env.HOME = `${base}/skills-lib-home-${String(process.pid)}-${String(Date.now())}`;
 });
 
-import { parseSkillFrontmatter } from '../src/lib/skills/frontmatter.js';
-import { scanSkillFiles, shannonEntropy } from '../src/lib/skills/scan.js';
+import {
+  discoverLocalSkills,
+  parseSkillFrontmatter,
+  readSkillTree,
+  scanSkillFiles,
+  shannonEntropy,
+  SkillTooLargeError,
+  treeHash,
+} from '@agentbox/sandbox-core';
 import { readTar, SkillTarError, writeTar } from '../src/lib/skills/tar.js';
-import { readSkillTree, SkillTooLargeError, treeHash } from '../src/lib/skills/tree.js';
-import { discoverLocalSkills } from '../src/lib/skills/discover.js';
 import {
   compareSkills,
   downloadHubSkill,

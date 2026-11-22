@@ -207,6 +207,23 @@ is empty.
 | `GET /checkouts` | `{ checkouts }`, newest report first. `?repoKey=` and `?machineId=` filter.                                                                                                                                                                                                                                                                                |
 | `PUT /checkouts` | One machine's report: `{ machineId, label, entries: [{ repoKey, folder, head? }], removed?: [{ repoKey, folder }] }`. Idempotent: the last report per (repoKey, machineId, folder) wins, and a report touches only its own machine's rows. `400` without a `machineId`; `403` when a device token reports another machine's id. Returns the rows it wrote. |
 
+### History
+
+Agent session history: what boxes' agents did, recorded by the hub (today: claude in boxes). A
+session is `{ id, key, agent, boxId, boxName, provider, hostId, projectRepoUrl, parentSessionId,
+title, firstTs, lastTs, turns, inputTokens, outputTokens, createdAt, updatedAt }`. `{ref}` is a
+session id, an id prefix of at least 8 characters, or `<agent>:<id>`. An ambiguous prefix answers
+`409` with `details.candidates`. All routes answer `503` on a hub without history.
+
+| Method + path                       | Description                                                                                                                                                                                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /history/sessions`             | `{ sessions }`, newest activity first. Filters: `agent`, `box` (id or name), `project` (repo URL substring), `host` (machine id), `since` (ISO-8601), `q` (all these words in a turn), `limit` (default 50, max 500).                                   |
+| `GET /history/sessions/{ref}`       | `{ session, files: [{ path, child, bytes }], turns, tools: [{ name, count }], firstPrompt, lastReply }`. `files` holds the main transcript plus one per subagent (`child: true`).                                                                       |
+| `GET /history/sessions/{ref}/turns` | `{ turns: [{ index, kind, role, name, text, ts, path, at }] }` in session order, `?from` (default 0) to `?to` inclusive (default `from+199`, at most 1000 rows). `kind` is `turn` (with `role` and `text`) or `tool` (with `name`).                     |
+| `GET /history/sessions/{ref}/raw`   | One transcript file streamed as `application/x-ndjson`, byte-identical to what the edge shipped (secrets masked at the edge, length kept). `?path=` picks a file from the detail's `files` (default: the main one); `x-agentbox-history-path` names it. |
+| `GET /history/search`               | `{ hits: [{ session: { id, agent, boxName, title }, role, ts, snippet }] }`, best first. `?q=` is plain words (all must match; no query syntax), `?limit=` (default 20, max 200). Matches are in `[brackets]` in the snippet.                           |
+| `POST /history/chunks`              | Ingest one transcript frame from a relay or shipper. Accepted only at the offset the hub holds for that file, otherwise `{ ok: false, code: "offset_mismatch", offset, sha256 }` tells the shipper where to resume. See the OpenAPI spec.               |
+
 ### Workspaces
 
 A workspace groups one or more projects, owning a task list and its manager sessions. It is

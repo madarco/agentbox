@@ -299,7 +299,8 @@ Events your laptop produces for its own boxes — a docker box starting, a backg
 Two read-only pages in the dashboard answer "what does this control box hold?" and "is it up to date?":
 
 - **Custody** lists what the control box holds so a box created from either side is usable from both — agent credentials, project seeds, provider bake records, the [skills library](/docs/skills#your-skills-library-on-the-hub), and per-box SSH keys — grouped by scope with each entry's path, short hash, size, and last-write time. It shows **metadata only**: the value bytes (credentials, `.env` files, keys) never leave the box, the same contract as `agentbox hub custody list`. A localhost hub with no custody shows an explanatory empty state that links to **System & Build** (which answers the same question for a laptop).
-- **System & Build** shows the running hub version + channel, the deploy record, and — the actionable part — each provider's baked base with its fingerprint and a **freshness** verdict, so a `stale` row is exactly when to re-run `agentbox prepare --provider <id>` (or bake from **Settings**). The Docker row also carries the box-image registry, exact pull tag, and stamped fingerprint. Its **Carried into boxes** section answers "what will a box created here actually receive?": the per-agent credentials held in custody (with a link across to **Custody**) alongside the skills this control box itself carries. On a plain localhost hub the same section is titled **Carried from this machine** and lists the agent configs / skills / identity files in your home directory instead.
+- **Skills** lists the hub's [skills library](/docs/skills#your-skills-library-on-the-hub) (size, file count, source PC, last update, kept versions) and discards a skill after a confirm. Uploads and downloads happen on a PC with `agentbox skills`.
+- **System & Build** shows the running hub version + channel, the deploy record, and — the actionable part — each provider's baked base with its fingerprint and a **freshness** verdict, so a `stale` row is exactly when to re-run `agentbox prepare --provider <id>` (or bake from **Settings**). The Docker row also carries the box-image registry, exact pull tag, and stamped fingerprint. Its **Carried into boxes** section answers "what will a box created here actually receive?": the per-agent credentials held in custody (with a link across to **Custody**) alongside a summary of the [skills library](/docs/skills#your-skills-library-on-the-hub), linking to the **Skills** page. On a plain localhost hub the same section is titled **Carried from this machine** and lists the agent configs / skills / identity files in your home directory instead.
 
 Both are pure REST clients over the hub's [`GET /custody` and `GET /system`](/docs/api) endpoints.
 
@@ -587,8 +588,12 @@ the control box's admin token on your machine (written by `agentbox hub setup`; 
   with a leased token, so it works with your laptop off. A host action that inherently targets your
   laptop's filesystem runs **there**: `cp` is brokered back to your machine (or another computer
   with the same repo, or served from the hub's cache when none is on — see below), and its approval
-  shows both there and in the hub's approvals. `download` still needs your laptop up, whoever
-  approves it.
+  shows both there and in the hub's approvals. A box's `agentbox-ctl download` is brokered to the
+  computer the box was **created from** only, because it writes the box into that project: another
+  computer with the same repo would have its working tree overwritten, and there is no cached copy.
+  With that computer off, the box is told so. A download never copies the box's `.git`: the box's
+  commits reach your project through git (`agentbox git push`, or `--host-only`), and your
+  checkout's git config, HEAD and refs stay yours.
 </Callout>
 
 ## Copying between a box and your files

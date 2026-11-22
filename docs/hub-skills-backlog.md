@@ -43,6 +43,47 @@ delivery to boxes, no web page (Phase 1b).
 9. **Docs**: public page + CLI reference + configuration key; this backlog;
    plan status.
 
+## Phase 1b — implementation plan (2026-11-22, revised after review)
+
+Scope: the hub web Skills page (list + discard), the System page swap, and a
+skills digest on cloud bakes so a base reads stale when the host's skills
+change and a control box declines a PC bake whose skills differ from its
+library.
+
+1. **Skills digest.** sha256 over sorted `<name>:<treeSha>` lines of the skills
+   the first seed would upload (discoverable, valid, no scan findings), so a PC's
+   digest equals the library's when they hold the same skills. The pure
+   discovery/tree/scan/frontmatter modules move from `apps/cli/src/lib/skills/`
+   into `@agentbox/sandbox-core` so the providers can compute it.
+2. **Recorded, not folded.** The first draft folded the digest into
+   `variantFingerprint`; the review showed why that's wrong: `contextSha256` is
+   the cross-machine identity bake sharing compares (a PC adopting a control
+   box's bake and the reverse), two machines' skills differ, so every share for
+   anyone with skills would stop — a regression. Instead each bake records
+   `base.skillsDigest` + `base.skillsHost` (the machine id) next to
+   `contextSha256`, in the five providers whose bakes stage host static config
+   (daytona, hetzner, vercel, e2b, digitalocean). Docker and remote-docker don't
+   bake host config and are untouched.
+3. **Staleness is judged by the machine that baked.** `prepare`'s skip-fast
+   re-bakes when the record was stamped here and this machine's skills changed
+   ("your skills changed since the last bake"); `evaluateBaseFreshness` (CLI)
+   and the hub's provider freshness report such a base `stale` with that reason
+   (`withSkillsFreshness`). A record from another machine, or from before this
+   change, is never judged on skills — no one-time re-bake on upgrade.
+4. **Library gate on the control box: deferred to Phase 2.** Implemented, then
+   removed after the second review: declining a PC's shared bake makes the
+   control box bake from its own (empty) home, so its boxes got NO skills
+   instead of the PC's — a regression, since before this phase it adopted the
+   bake. The gate only helps once the control box can bake (or deliver) the
+   library's skills. The recorded `skillsDigest` is what it will compare.
+5. **Web.** `/skills` page in the hub (pure `/api/v1` client): name,
+   description, size, files, source PC, updated, versions; discard with a
+   confirm. Sidebar entry. The System page's "Skills · this control box" section
+   becomes a library summary (from the custody manifest it already fetches)
+   linking to `/skills`.
+6. **Docs.** Public skills page (web UI + stale bases), deployed-hub web UI
+   list; plan status.
+
 ## Open items
 
 - **`--link` (a PC folder watched and re-uploaded on change)** is not in
@@ -129,3 +170,81 @@ secrets) is fixed in the PR. The rest are below.
   folders in this owner's `~/.claude/plugins`; plugins aren't seeded). A skill
   shipping a registry-only `.npmrc` gets a confirm; narrowing it to files holding
   `_auth` / `_authToken` would remove that.
+
+## From the Phase 1b `/code-review medium` (2026-11-22)
+
+The first draft's design (folding the digest into the shared fingerprint, with
+a hub-set `AGENTBOX_SKILLS_DIGEST` override) was replaced, which resolved the
+review's findings 1, 2 (a regression: remote-hub bakes no longer adopted by a
+PC with skills), 3, 5 and 6 outright, and 7 (a transient discovery failure
+cached as "no skills": the memo now keeps only successful reads, and a failed
+stamp records nothing). Still open:
+
+- **The digest counts only library-eligible skills, but the bake stages every
+  skill.** Editing or removing a skill the scan flags (or one over the size cap)
+  doesn't mark the base stale, and a PC bake containing a flagged skill passes
+  the library gate when its eligible set matches. Not a regression (bake sharing
+  adopted everything before). Fix with a second, full-set digest for staleness.
+- **Per-agent bakes are judged against every agent's skill dirs.** A codex skill
+  edit marks a claude-only derived snapshot stale (over-reports, never
+  under-reports). Fix by digesting only the dirs the variant stages.
+- **The control box's worker-side adoption isn't library-gated.**
+  `_run-queued-prepare` → `tryAdoptPreparedBase` can still adopt a PC's shared
+  record on the control box without comparing skills to the library, exactly as
+  before this phase. Gate it the same way (it needs the library digest, which
+  the worker can read from its own custody).
+- **Freshness re-runs discovery once the 30 s memo expires**, reading and
+  scanning every skill on the hub's provider-freshness path and the CLI's
+  create path. A stat-based change key (mtime/size) gating rediscovery would
+  remove the repeated I/O.
+- **`@madarco/agentbox-provider-sdk` is not republished.** sandbox-core gained
+  exports and `PreparedBaseSnapshot.base` two optional fields; nothing an
+  existing plugin uses changed, so a stale SDK only means community providers
+  don't record skills (and are never judged on them). Republish per
+  `docs/provider-plugins.md` when convenient.
+- **The hub's bake diff can't explain a skills-only stale verdict** — it diffs
+  build-context files, so the System page shows the reason string but an empty
+  file diff.
+
+## From the second Phase 1b `/code-review medium` (2026-11-22)
+
+Fixed in the PR: the library gate removed (finding 1, a regression — see plan
+item 4; that also removes findings 4 and 7); daytona's variant rebuild message
+named the base's context instead of the variant's (6); the bake stamp read the
+30 s freshness memo, so a record could carry an older digest than the skills it
+staged (8); the digest test leaked temp dirs (10). Still open:
+
+- **A control box's base never goes stale on library changes.** Its home has no
+  skills, so its records stamp `''` and compare against `''`. Becomes real once
+  the library is delivered to boxes (Phase 2), which is also when the control
+  box should judge staleness against the library.
+- **A PC that adopts a control box's shared bake is never judged on skills.**
+  The record carries the control box's `skillsHost`, so the PC never reports it
+  stale and boxes lack the PC's skills until a `--force` bake. Same as before
+  this phase (adoption ignored skills); resolved by Phase 2's delivery.
+- **Only the agentless `base` record is checked for skills staleness.** A
+  derived variant (e.g. claude) keeps its old digest and snapshot after the base
+  re-bakes, and skills deleted on the host survive in it (the tar overlay never
+  removes files). Check variant records too, and re-bake the variant a create
+  actually boots.
+
+## From the independent review of PR #438 (2026-11-22)
+
+`/workspace/REVIEW-438.md`: no blocking findings, no regressions. L2 (the stale-
+base prompt now names the reason, e.g. "host skills changed since this base was
+baked", and says Yes starts without the default checkpoint) and L3 (the bake
+digest ignores `__pycache__`, `node_modules`, `.venv`/`venv`, caches and `*.pyc`
+a skill writes into its own folder; the library tree hash is unchanged) are
+fixed in the PR. Still open:
+
+- **L1. The System page mis-explains a skills-only stale base.** The bake diff
+  finds no changed build-context file and says the difference is "in how the
+  fingerprint was folded (e.g. a different bake-affecting agent setting)",
+  hiding the real reason. Fix: in `StaleDiff`
+  (`apps/hub/app/(dashboard)/system/page.tsx`), show `baseStaleReason` when the
+  diff is empty, or skip `providerBakeDiff` for the skills reason.
+- **L4. A variant `prepare` re-bakes for skills in other agents' folders** (the
+  digest covers all six skill dirs; a claude variant stages only claude's config
+  plus `~/.agents`). Costs time on an explicit prepare only. Same item as the
+  per-agent note above: digest only the dirs the variant stages.
+- **L5. Provider SDK not republished** — additive change; see the SDK note above.

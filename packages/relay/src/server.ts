@@ -99,6 +99,9 @@ import {
 import { randomUUID } from 'node:crypto';
 import { BoxRegistry, EventBuffer } from './registry.js';
 import { CREDENTIALS_UPDATED_EVENT, CredentialsFanout } from './credentials-fanout.js';
+import type { HistoryIngestSink } from '@agentbox/core';
+import { HistoryRelay } from './history/history-relay.js';
+import { runHistoryRpc } from './history/rpc.js';
 import { BoxStatusStore, isValidBoxStatus, normalizeBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
 import { WriteThroughStore } from './store/write-through-store.js';
@@ -228,6 +231,12 @@ export interface RelayServerOptions {
    * `/rpc`, etc. Lets the hub serve Next on the relay's own port.
    */
   uiHandler?: (req: IncomingMessage, res: ServerResponse) => void;
+  /**
+   * The hub's session-history ingest (docs/agent-history-plan.md). Present ⇒
+   * this relay ships docker boxes' transcripts and accepts in-box shippers'
+   * `history.*` RPCs; absent (a relay with no hub) ⇒ both answer `disabled`.
+   */
+  history?: HistoryIngestSink;
 }
 
 export interface RelayServerHandle {
@@ -275,6 +284,8 @@ export interface RelayServerHandle {
    * that box; a later `/admin/register-box` starts a fresh one.
    */
   stopCloudPoller: (boxId: string) => Promise<void>;
+  /** Session-history shipping, when this relay has a hub sink. */
+  history?: HistoryRelay;
   close: () => Promise<void>;
 }
 
@@ -419,6 +430,13 @@ function isLoopbackAddress(addr: string | undefined): boolean {
 export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const log = opts.logger ?? (() => {});
   const registry = new BoxRegistry();
+  const historyRelay =
+    opts.history && (opts.mode ?? 'host') !== 'box'
+      ? new HistoryRelay({ sink: opts.history, listBoxes: () => store.listBoxes(), log })
+      : null;
+  historyRelay?.start();
+  const historyRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
+    runHistoryRpc(historyRelay, reg, method, params);
   const events = new EventBuffer();
   const statusStore = new BoxStatusStore();
   const prompts = new PendingPrompts();
@@ -1169,6 +1187,11 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       // registered worktree must still get it), and it must never be gated
       // behind askPrompt — a prompt would hang every box's startup reconcile.
       // Same posture as `tool.list`, which is also read-only and unprompted.
+      // Session history: unprompted and not worktree-scoped, like agents.list.
+      if (body.method.startsWith('history.')) {
+        send(res, 200, await historyRpc(reg)(body.method, body.params));
+        return;
+      }
       if (body.method === 'agents.list') {
         send(res, 200, {
           exitCode: 0,
@@ -1223,6 +1246,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             controlPlane: opts.controlPlane === true,
             originUrl: reg.originUrl,
             boxAgents: registrationAgents(reg),
+            history: historyRpc(reg),
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -1476,6 +1500,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             exitCode: 69,
             stdout: '',
             stderr: toolUnreachableMessage(reg.name, reachReason) + tried,
+          });
+          return;
+        }
+        // A download WRITES the box's files into the project it was created
+        // from: only that computer may take it (another clone would have its
+        // working tree overwritten), and there is nothing to cache or park.
+        if (body.method.startsWith('download.')) {
+          send(res, 500, {
+            exitCode: 69,
+            stdout: '',
+            stderr:
+              downloadUnreachableMessage(reg.name, reachReason, reg.originMachineLabel) + tried,
           });
           return;
         }
@@ -1982,6 +2018,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       boxAgents: registrationAgents(
                         (await store.getBox(reg.boxId).catch(() => undefined)) ?? reg,
                       ),
+                      history: historyRpc(reg),
                       log,
                     });
                     await respond(result);
@@ -2352,7 +2389,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     stopCloudPoller: async (boxId) => {
       if (pollers) await pollers.stop(boxId);
     },
+    ...(historyRelay ? { history: historyRelay } : {}),
     close: async () => {
+      historyRelay?.stop();
       if (pollers) await pollers.stopAll();
       // Settles every parked copy as unreachable, so an in-flight `cp` fails
       // fast on hub restart instead of hanging until the box's own timeout.
@@ -2881,7 +2920,40 @@ async function boxWorkspaceExistsHere(boxId: string): Promise<boolean> {
  * that machine) and the binaries they name.
  */
 function isHostReachMethod(method: string): boolean {
-  return method === 'cp.toHost' || method === 'cp.fromHost' || method.startsWith('tool.');
+  return (
+    method === 'cp.toHost' ||
+    method === 'cp.fromHost' ||
+    method.startsWith('tool.') ||
+    // Only the kind a cloud box supports: env/config/claude still fail at once
+    // as unsupported rather than waiting on a PC that would refuse them too.
+    method === 'download.workspace'
+  );
+}
+
+/** What a box is told when the computer its download is for did not take it. */
+export function downloadUnreachableMessage(
+  boxName: string,
+  reason: HostReachUnreachable,
+  originLabel?: string,
+): string {
+  const who = originLabel
+    ? `the computer it was created from (${originLabel})`
+    : 'the computer it was created from';
+  const lead =
+    reason === 'went-away'
+      ? `${who} stopped responding`
+      : reason === 'declined'
+        ? `${who} could not take it (see below)`
+        : `${who} is not connected to this hub`;
+  return [
+    `download could not run: ${lead}.`,
+    '',
+    'A download writes this box into the project it was created from, so only that',
+    'computer takes it: another computer with the same repo would have its own working',
+    'tree overwritten, and there is no cached copy to fall back to.',
+    `Start AgentBox there (\`agentbox relay start\`) and retry, or run it there: agentbox download ${boxName}`,
+    '',
+  ].join('\n');
 }
 
 /**

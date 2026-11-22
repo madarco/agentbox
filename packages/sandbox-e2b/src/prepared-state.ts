@@ -45,6 +45,12 @@ export interface PreparedE2bBase {
    * manifests existed simply lack it.
    */
   files?: FileManifest;
+  /**
+   * The skills the bake staged and the machine it ran on (`bakeSkillsStamp`).
+   * Not part of `contextSha256`; see sandbox-core's `skills/digest.ts`.
+   */
+  skillsDigest?: string;
+  skillsHost?: string;
   /** Normalized `cpu-memory` GB size the template was baked with (absent = default resources). */
   size?: string;
   /** CLI version that produced this template (informational). */

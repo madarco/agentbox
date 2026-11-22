@@ -68,6 +68,9 @@ export interface DaytonaPreparedExtras {
 export interface DaytonaVariantRecord {
   imageRef: string;
   contextSha256?: string;
+  /** See `PreparedBaseSnapshot.base.skillsDigest`. */
+  skillsDigest?: string;
+  skillsHost?: string;
   createdAt?: string;
   extras?: DaytonaPreparedExtras;
 }
@@ -100,6 +103,8 @@ export function preparedEntryFor(
   return {
     imageRef: state.base.imageRef,
     ...(state.base.contextSha256 !== undefined ? { contextSha256: state.base.contextSha256 } : {}),
+    ...(state.base.skillsDigest !== undefined ? { skillsDigest: state.base.skillsDigest } : {}),
+    ...(state.base.skillsHost !== undefined ? { skillsHost: state.base.skillsHost } : {}),
     ...(state.extras ? { extras: state.extras } : {}),
   };
 }
@@ -280,6 +285,9 @@ export function writePreparedDaytonaState(opts: {
   class?: DaytonaSandboxClass;
   /** The image env the linux-vm bake had to restore (see DaytonaPreparedExtras). */
   env?: string[];
+  /** The skills the bake staged (`bakeSkillsStamp`). */
+  skillsDigest?: string;
+  skillsHost?: string;
 }): void {
   const stamp = readCliStamp();
   const extras: DaytonaPreparedExtras = {
@@ -291,9 +299,14 @@ export function writePreparedDaytonaState(opts: {
   const createdAt = new Date().toISOString();
   const variant = opts.variant ?? '';
   const prior = readPreparedDaytonaState();
+  const skills = {
+    ...(opts.skillsDigest !== undefined ? { skillsDigest: opts.skillsDigest } : {}),
+    ...(opts.skillsHost !== undefined ? { skillsHost: opts.skillsHost } : {}),
+  };
   const entry: DaytonaVariantRecord = {
     imageRef: opts.snapshotName,
     contextSha256: opts.contextSha256,
+    ...skills,
     createdAt,
     ...(Object.keys(extras).length > 0 ? { extras } : {}),
   };
@@ -308,6 +321,7 @@ export function writePreparedDaytonaState(opts: {
           base: {
             imageRef: opts.snapshotName,
             contextSha256: opts.contextSha256,
+            ...skills,
             cliVersion: stamp.cliVersion,
             cliCommit: stamp.cliCommit,
             createdAt,

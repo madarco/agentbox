@@ -140,3 +140,4 @@ export {
   scanLoopbackJsonFiles,
   stripJsonComments,
 } from './loopback-endpoints.js';
+export * from './history/index.js';
