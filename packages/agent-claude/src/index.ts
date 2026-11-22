@@ -21,6 +21,7 @@ import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandb
 import { stageClaudeCredentialsForUpload, stageClaudeStaticForUpload } from './host-stage.js';
 import { seedClaudeJsonAtCreate } from './cloud-json-overlay.js';
 import {
+  approveAccountApiKey,
   buildClaudeMounts,
   claudeSessionInfo,
   ensureClaudeVolume,
@@ -62,11 +63,17 @@ export const claudeSyncModule: AgentSyncModule = {
       syncFromHost: opts.syncFromHost,
       image: opts.image,
       hostWorkspace: opts.hostWorkspace,
+      ...(spec.account === undefined ? {} : { account: spec.account }),
     });
+    // An API-key account's volume answers the TUI's "use this API key?" with
+    // yes up front (Phase 0 (a′)): otherwise the default answer is No and the
+    // box silently runs without the key.
+    const approved = spec.account ? await approveAccountApiKey(spec.volume, spec.account, opts.image) : false;
     return {
       created: r.created,
       synced: r.synced,
       notes: [
+        ...(approved ? [`pre-approved account '${spec.account ?? ''}' API key in ${spec.volume}`] : []),
         ...ensureNotes(r, opts.hostWorkspace),
         ...(await loopbackEndpointNotes('claude', r.loopbackEndpoints ?? [])),
       ],

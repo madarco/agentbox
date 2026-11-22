@@ -431,3 +431,4 @@ export {
   type CaptureVolumeLoginResult,
   type VolumeFileReader,
 } from './sync/account-login.js';
+export { sessionAccountPolicy, sessionForwardEnv } from './sync/account-session-env.js';

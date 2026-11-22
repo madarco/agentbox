@@ -9,6 +9,7 @@ import type { AgentSettings, LoopbackEndpoint } from '@agentbox/core';
 import {
   DOCKER_HOST_ALIAS,
   findLoopbackEndpoints,
+  findAccount,
   LIVE_DATABASE_EXCLUDES,
   requireAgentCredential,
 } from '@agentbox/core';
@@ -16,7 +17,13 @@ import {
   agentTuiEnv,
   ensureAgentInstalled,
   AgentInstallError,
+  applyAccountEnv,
+  decodePastedSecret,
+  NO_ACCOUNT_ENV,
+  readAccounts,
+  readAccountSecret,
   resolveAgentSpec,
+  type AccountEnvPolicy,
 } from '@agentbox/sandbox-core';
 import {
   addProjectAlias,
@@ -25,11 +32,17 @@ import {
   accountStateJqDelete,
   setInstallMethodNative,
   stripAccountState,
+  stripAuthSettings,
   trustWorkspace,
 } from './hooks-filter.js';
 import { referencedPluginVersionKeys } from '@agentbox/sandbox-core';
 export type { PullClaudeResult } from '@agentbox/sandbox-core';
-import { detectEngine, hostRsyncStep, orbstackVolumePath } from '@agentbox/sandbox-docker';
+import {
+  detectEngine,
+  hostRsyncStep,
+  orbstackVolumePath,
+  sessionAccountPolicy,
+} from '@agentbox/sandbox-docker';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 // The host-side unsyncable-symlink pre-scan moved to the shared sync layer
 // (also used by the ~/.agents skills seed); re-exported for existing importers
@@ -263,10 +276,17 @@ export async function ensureClaudeVolume(
       join(hostClaude, 'settings.json'),
       join(filterDir, 'settings.json'),
       hostHome,
-      { loopback: { host: DOCKER_HOST_ALIAS, source: '~/.claude/settings.json' } },
+      {
+        loopback: { host: DOCKER_HOST_ALIAS, source: '~/.claude/settings.json' },
+        // The owner's auth must not ride the host's settings into a named
+        // account's volume: `env.ANTHROPIC_API_KEY` there wins in `-p` mode.
+        stripAuthSettings: opts.account !== undefined,
+      },
     );
     filteredHookCount += settingsResult.removedHooks;
     loopbackEndpoints = settingsResult.loopbackEndpoints;
+    // Counts as an overlay change so the stripped settings are what is copied.
+    if (settingsResult.accountStateStripped) accountStateStripped = true;
     if (!seedClaudeJson) {
       // The volume already has a `_claude.json`; write-once leaves it intact
       // (see seedClaudeJson). No host overlay is generated for it — the
@@ -286,7 +306,7 @@ export async function ensureClaudeVolume(
         },
       );
       filteredHookCount += jsonResult.removedHooks;
-      accountStateStripped = jsonResult.accountStateStripped;
+      if (jsonResult.accountStateStripped) accountStateStripped = true;
       installMethodFixed = jsonResult.installMethodFixed;
       aliasedProjectKey = jsonResult.aliasedProjectKey;
       workspaceTrusted = jsonResult.workspaceTrusted;
@@ -449,6 +469,8 @@ async function maybeFilterTo(
     loopback?: { host: string; source: string };
     /** Drop the host's account state (a named LLM account's volume). */
     stripAccountState?: boolean;
+    /** Drop auth-bearing `env.*` keys and `apiKeyHelper` from a settings file. */
+    stripAuthSettings?: boolean;
   } = {},
 ): Promise<{
   removedHooks: number;
@@ -492,6 +514,12 @@ async function maybeFilterTo(
     working = r.data;
     trusted = r.trusted;
   }
+  let authSettingsStripped = false;
+  if (opts.stripAuthSettings) {
+    const r = stripAuthSettings(working);
+    working = r.data;
+    authSettingsStripped = r.stripped;
+  }
   let accountStateStripped = false;
   if (opts.stripAccountState) {
     const r = stripAccountState(working);
@@ -511,6 +539,7 @@ async function maybeFilterTo(
     !aliased &&
     !trusted &&
     !accountStateStripped &&
+    !authSettingsStripped &&
     loopbackEndpoints.length === 0
   ) {
     return zero;
@@ -521,7 +550,7 @@ async function maybeFilterTo(
     installMethodFixed: installFixed,
     aliasedProjectKey: aliased,
     workspaceTrusted: trusted,
-    accountStateStripped,
+    accountStateStripped: accountStateStripped || authSettingsStripped,
     loopbackEndpoints,
   };
 }
@@ -995,11 +1024,21 @@ async function resolveClaudeSettings(
  * setting existed, or one whose `claude.tui` has since changed, would keep the
  * old renderer forever. Same reasoning as {@link CLAUDE_FORWARDED_ENV_KEYS}.
  */
-export function claudeSessionEnvFlags(settings: AgentSettings, env: NodeJS.ProcessEnv): string[] {
+export function claudeSessionEnvFlags(
+  settings: AgentSettings,
+  env: NodeJS.ProcessEnv,
+  accountPolicy: AccountEnvPolicy = NO_ACCOUNT_ENV,
+): string[] {
   const flags: string[] = ['-e', `TERM=${env['TERM'] ?? 'xterm-256color'}`];
+  const forwarded: Record<string, string> = {};
   for (const k of FORWARDED_ENV_KEYS) {
     const v = env[k];
-    if (typeof v === 'string' && v.length > 0) flags.push('-e', `${k}=${v}`);
+    if (typeof v === 'string' && v.length > 0) forwarded[k] = v;
+  }
+  // A box on a named account gets exactly that account's auth, never the
+  // host's key re-forwarded on top of it (llm-accounts Phase 3).
+  for (const [k, v] of Object.entries(applyAccountEnv(forwarded, accountPolicy))) {
+    flags.push('-e', `${k}=${v}`);
   }
   // `docker exec` inherits the container environment, so setting only the
   // variable the current mode wants is not enough: a container that already
@@ -1061,6 +1100,7 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
   const envFlags = claudeSessionEnvFlags(
     await resolveClaudeSettings(opts.agentSettings, opts.workspacePath),
     process.env,
+    await sessionAccountPolicy('claude', opts.container),
   );
   const result = await execa(
     'docker',
@@ -1401,4 +1441,40 @@ export async function resetVolumeAccountState(volume: string, image: string): Pr
     '-c',
     script,
   ]);
+}
+
+/**
+ * Claude Code records "use this API key" answers by the key's LAST 20
+ * characters (`customApiKeyResponses.approved`). Phase 0 (a′) — the TUI's
+ * default answer is No, after which it silently ignores the key.
+ */
+export const API_KEY_APPROVAL_SUFFIX = 20;
+
+/**
+ * When `account` is an `api-key` account, pre-approve its key in the volume's
+ * `_claude.json` so the in-box TUI never asks and never falls back. Returns
+ * true when an approval was written. The suffix travels on stdin, never argv.
+ */
+export async function approveAccountApiKey(
+  volume: string,
+  account: string,
+  image: string,
+): Promise<boolean> {
+  const row = findAccount(await readAccounts(), 'claude', account);
+  if (row?.kind !== 'api-key') return false;
+  const secret = await readAccountSecret('claude', account);
+  const pasted = secret ? decodePastedSecret(secret) : null;
+  if (pasted?.kind !== 'api-key') return false;
+  const suffix = pasted.token.slice(-API_KEY_APPROVAL_SUFFIX);
+  const script =
+    'K=$(cat); f=/dst/_claude.json; [ -f "$f" ] || echo "{}" > "$f"; ' +
+    'jq --arg k "$K" \'.customApiKeyResponses.approved = (((.customApiKeyResponses.approved // []) + [$k]) | unique) ' +
+    '| .customApiKeyResponses.rejected = ((.customApiKeyResponses.rejected // []) - [$k])\' "$f" > "$f.tmp" ' +
+    '&& mv "$f.tmp" "$f" && chown 1000:1000 "$f"';
+  const res = await execa(
+    'docker',
+    ['run', '--rm', '-i', '--user', '0', '-v', `${volume}:/dst`, image, 'sh', '-c', script],
+    { input: suffix, reject: false },
+  );
+  return res.exitCode === 0;
 }

@@ -3,6 +3,7 @@ import { readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BoxState, ResyncResult } from '@agentbox/core';
 import {
+  ACCOUNT_NAME_INFIX,
   agentConfigVolume,
   AmbiguousBoxError,
   BoxNotFoundError,
@@ -947,7 +948,13 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       ...manifestPinnedImages,
     ]);
     orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
-    orphanVolumes = liveVolumes.filter((v) => !expectedVolumes.has(v));
+    // A named LLM account's config volume is not an orphan when no box uses
+    // it: it is the account's live login (llm-accounts Phase 3), removed only
+    // by `agentbox accounts rm`. `agent add` refuses the infix in a base volume
+    // name, so it identifies these exactly.
+    orphanVolumes = liveVolumes.filter(
+      (v) => !expectedVolumes.has(v) && !v.includes(ACCOUNT_NAME_INFIX),
+    );
     orphanSnapshots = liveSnapshotDirs.filter((d) => !expectedSnapshots.has(d));
     orphanBoxDirs = liveBoxDirs.filter((d) => !expectedBoxDirs.has(d));
     orphanCheckpointImages = liveCheckpointImages.filter((t) => !expectedCheckpointImages.has(t));

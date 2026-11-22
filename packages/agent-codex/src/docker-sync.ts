@@ -11,6 +11,7 @@ import {
   ensureVolume,
   volumeExists,
   createDockerSyncTransport,
+  sessionForwardEnv,
 } from '@agentbox/sandbox-docker';
 import { ensureAgentInstalled, AgentInstallError, resolveAgentSpec } from '@agentbox/sandbox-core';
 import {
@@ -628,9 +629,16 @@ export async function startCodexSession(opts: StartCodexSessionOptions): Promise
   const cmd = ['codex', ...flags, ...opts.codexArgs].map(shQuote).join(' ');
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
+  const hostForwarded: Record<string, string> = {};
   for (const k of CODEX_FORWARDED_ENV_KEYS) {
     const v = process.env[k];
-    if (typeof v === 'string' && v.length > 0) envFlags.push('-e', `${k}=${v}`);
+    if (typeof v === 'string' && v.length > 0) hostForwarded[k] = v;
+  }
+  // A box on a named account must not get the host's key back at exec time.
+  for (const [k, v] of Object.entries(
+    await sessionForwardEnv('codex', opts.container, hostForwarded),
+  )) {
+    envFlags.push('-e', `${k}=${v}`);
   }
   const result = await execa(
     'docker',
