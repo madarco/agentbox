@@ -350,6 +350,15 @@ function staticPathsProblem(raw: unknown): string | null {
   return null;
 }
 
+// The value lands on the agent's command line ahead of the user's prompt, so it
+// has to be one flag token; anything else would be read as the prompt or a path.
+function seedPromptFlagProblem(v: unknown): string | null {
+  if (v === undefined) return null;
+  return typeof v === 'string' && /^--?[A-Za-z0-9][A-Za-z0-9-]*$/.test(v)
+    ? null
+    : '`seedPromptFlag` must be a single flag such as `--prompt`';
+}
+
 /** Why a spec was rejected, or null when it is usable. */
 export function agentSpecProblem(raw: unknown): string | null {
   if (raw === null || typeof raw !== 'object') return 'not an object';
@@ -376,6 +385,7 @@ export function agentSpecProblem(raw: unknown): string | null {
       : accountKindsProblem(spec.accountKinds, spec.credential !== undefined)) ??
     accountEnvProblem(spec.accountEnv, spec.accountKinds) ??
     (spec.llmHosts === undefined ? null : llmHostsProblem(spec.llmHosts)) ??
+    seedPromptFlagProblem(spec.seedPromptFlag) ??
     staticPathsProblem(spec.staticPaths);
   if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to

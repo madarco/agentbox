@@ -982,6 +982,14 @@ export interface AgentSyncSpec {
    */
   launchFlags?: readonly string[];
   /**
+   * The flag this agent takes its `-i` seed prompt behind (`--prompt` for
+   * opencode). Absent means the prompt is a leading positional, which is what
+   * claude, codex and pi take. opencode needs it because its positional is the
+   * project directory: a positional prompt made it `cd` into
+   * `/workspace/<prompt>` and exit. Read by `resolveAgentLauncher`.
+   */
+  seedPromptFlag?: string;
+  /**
    * Environment that pins the agent's in-box terminal renderer, keyed by mode.
    *
    * Data rather than code because the alternative was a `binary === 'claude'`

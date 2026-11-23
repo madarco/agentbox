@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BoxRecord, ExecResult, Provider } from '@agentbox/core';
-import { startDetachedCloudAgent } from '../src/detached-agent.js';
+import {
+  startDetachedCloudAgent,
+  verifyAgentSessionStaysUp,
+  type SessionProbeExec,
+} from '../src/detached-agent.js';
 
 // A live, authenticated pane — verifyDetachedSession sees the session and no
 // auth-rejection markers, so it resolves.
@@ -257,5 +261,66 @@ describe('startDetachedCloudAgent — declared-file seeding', () => {
     expect(order).not.toContain('start');
     expect(order.indexOf('seed')).toBeGreaterThanOrEqual(0);
     expect(order.indexOf('seed')).toBeLessThan(order.indexOf('launch'));
+  });
+});
+
+describe('verifyAgentSessionStaysUp (the docker path runs it over docker exec)', () => {
+  it('fails when the session is gone', async () => {
+    const exec = vi.fn<SessionProbeExec>(async () => ({ exitCode: 7, stdout: '' }));
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', { windowMs: 0 }),
+    ).rejects.toThrow(/exited immediately after launch in box b1/);
+    expect(exec.mock.calls[0]![0]).toEqual([
+      'bash',
+      '-lc',
+      expect.stringContaining('tmux has-session -t'),
+    ]);
+  });
+
+  it('passes a live session and keeps polling through a transport error', async () => {
+    const exec = vi
+      .fn<(argv: string[]) => Promise<{ exitCode: number; stdout: string }>>()
+      .mockRejectedValueOnce(new Error('docker hiccup'))
+      .mockResolvedValue({ exitCode: 0, stdout: 'Working on it...' });
+    // Fake timers drive both the poll sleep and the Date.now() deadline, so the
+    // probe count is exact rather than whatever a loaded CI box fits in 5 ms.
+    vi.useFakeTimers();
+    try {
+      const done = verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', {
+        windowMs: 3_000,
+        pollMs: 1_000,
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(done).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+    // t=0 (transport error), 1s, 2s, 3s (deadline reached).
+    expect(exec).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not read the echoed seed prompt as an auth failure', async () => {
+    const seed = 'fix the 401 Unauthorized handler';
+    const exec = vi.fn<SessionProbeExec>(async () => ({ exitCode: 0, stdout: `> ${seed}` }));
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'claude', 'claude', { windowMs: 0, seedText: seed }),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'claude', 'claude', { windowMs: 0 }),
+    ).rejects.toThrow(/credentials were rejected/);
+  });
+
+  it('scanAuth: false keeps only the stay-up check', async () => {
+    const exec = vi.fn<SessionProbeExec>(async () => ({
+      exitCode: 0,
+      stdout: 'throw new Unauthorized()',
+    }));
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'claude', 'claude', { windowMs: 0, scanAuth: false }),
+    ).resolves.toBeUndefined();
+    const dead = vi.fn<SessionProbeExec>(async () => ({ exitCode: 7, stdout: '' }));
+    await expect(
+      verifyAgentSessionStaysUp(dead, 'b1', 'claude', 'claude', { windowMs: 0, scanAuth: false }),
+    ).rejects.toThrow(/exited immediately/);
   });
 });

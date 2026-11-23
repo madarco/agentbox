@@ -28,6 +28,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { BOX_CREDS_DIR } from '@agentbox/core';
 import type { AgentCredential, SyncTransport } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '../registry.js';
 import type { AgentId } from '@agentbox/core';
@@ -458,13 +459,22 @@ export async function pushCredentialToBox(
     }
     await transport.pushFile(tmp, abs);
     const normalize = `chown "$(id -un):" '${abs}' && chmod 600 '${abs}'`;
+    // A path that resolves into the cloud credential volume is exempt: Daytona's
+    // virtiofs mount refuses chown/chmod even for root, and the file is already
+    // written (see BOX_CREDS_DIR).
     const norm = await transport.exec([
       'sh',
       '-c',
-      `{ ${normalize}; } 2>/dev/null || sudo sh -c "${normalize.replaceAll('"', '\\"')}"`,
+      `{ ${normalize}; } 2>/dev/null || sudo sh -c "${normalize.replaceAll('"', '\\"')}" || ` +
+        `case "$(readlink -f '${abs}')" in "$(readlink -f '${BOX_CREDS_DIR}')"/*) exit 0 ;; *) exit 1 ;; esac`,
     ]);
     if (norm.exitCode !== 0) {
-      throw new Error(`chown/chmod of ${abs} in box failed: ${norm.stderr.trim()}`);
+      // Some transports (Daytona) return the combined output as stdout.
+      const out = [norm.stderr, norm.stdout]
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .join('\n');
+      throw new Error(`chown/chmod of ${abs} in box failed: ${out}`);
     }
   } finally {
     await rm(stage, { recursive: true, force: true });

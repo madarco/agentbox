@@ -508,7 +508,10 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       const seedPrompt = prompt && prompt.length > 0 ? prompt : undefined;
       if (boxAgent && (seedPrompt || startAgent)) {
         const kind: QueueAgentKind = toQueueKind(boxAgent);
-        const extraArgs = resolveAgentLauncher(kind).buildArgs(seedPrompt ?? '', agentArgs ?? []);
+        const extraArgs = resolveAgentLauncher(kind, agentSpec).buildArgs(
+          seedPrompt ?? '',
+          agentArgs ?? [],
+        );
         log(
           `starting ${boxAgent} in ${created.record.name}${seedPrompt ? ' with the seed prompt' : ''}`,
         );

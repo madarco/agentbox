@@ -58,6 +58,7 @@ import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '@agentbox/cli-kit';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { verifyDockerAgentSession } from '../lib/queue/verify-docker-session.js';
 import { planJobAgent } from '../lib/queue/job-agent.js';
 import { applyQueuedRestore, requireRestoreSpec } from '../lib/queue/apply-restore.js';
 import { loadAgentModuleOrNull } from '../agents/index.js';
@@ -515,40 +516,54 @@ async function runDockerJob(
     );
   }
 
+  let sessionName: string;
   if (job.agent === 'claude-code') {
     log.write(`starting claude session`);
+    sessionName = cfg.effective.claude.sessionName;
     await startClaudeSession({
       container: result.record.container,
       claudeArgs: claudeRuntime.skipPermissions!.apply(promptedArgs, cfg.effective),
-      sessionName: cfg.effective.claude.sessionName,
+      sessionName,
       boxName: result.record.name,
       agentSettings: agentSettings(cfg.effective, 'claude'),
     });
   } else if (job.agent === 'codex') {
     log.write(`starting codex session`);
+    sessionName = cfg.effective.codex.sessionName;
     await startCodexSession({
       container: result.record.container,
       codexArgs: codexRuntime.skipPermissions!.apply(promptedArgs, cfg.effective),
-      sessionName: cfg.effective.codex.sessionName,
+      sessionName,
     });
   } else if (job.agent === 'opencode') {
     log.write(`starting opencode session`);
+    sessionName = cfg.effective.opencode.sessionName;
     await startOpencodeSession({
       container: result.record.container,
       opencodeArgs: promptedArgs,
-      sessionName: cfg.effective.opencode.sessionName,
+      sessionName,
     });
   } else {
     log.write(`starting pi session`);
+    sessionName = cfg.effective.pi.sessionName;
     await startPiSession({
       container: result.record.container,
       // No `skipPermissions.apply`: Pi has no bypass flag because it has no
       // permission prompts, so `piRuntime.skipPermissions` is null and the
       // prompted args go through untouched.
       piArgs: promptedArgs,
-      sessionName: cfg.effective.pi.sessionName,
+      sessionName,
     });
   }
+
+  // Without this an agent that dies at launch left a `done` job and a box with
+  // no session.
+  await verifyDockerAgentSession({
+    container: result.record.container,
+    boxName: result.record.name,
+    sessionName,
+    binary: plan.spec.binary,
+  });
 
   await maybeOpenQueuedTerminal(job, plan.spec.id, result.record.name, log);
 }

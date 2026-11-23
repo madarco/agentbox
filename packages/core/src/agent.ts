@@ -1,4 +1,5 @@
 import type { QueueAgentKind } from './sync/agent-kind.js';
+import type { AgentSyncSpec } from './sync/agent-spec.js';
 
 export interface AgentLauncher {
   readonly kind: QueueAgentKind;
@@ -6,24 +7,29 @@ export interface AgentLauncher {
 }
 
 /**
- * Every agent we ship takes a leading positional as the seed user turn
- * (`claude "<msg>"`, `codex "<msg>"`, `opencode "<msg>"`), dropping the user into
- * the TUI with that turn pre-submitted — so one launcher serves all of them.
+ * How an agent takes its seed user turn, read off its registry row:
+ * `seedPromptFlag` absent means a leading positional (`claude "<msg>"`,
+ * `codex "<msg>"`, `pi "<msg>"`); present means the prompt goes behind that
+ * flag (`opencode --prompt "<msg>"`, whose positional is the project directory).
  *
- * The indirection stays because the shape is not guaranteed: an agent that wants
- * its seed prompt on stdin, or behind a flag, gets its own launcher here without
- * every call site learning about it.
+ * Takes the spec rather than looking it up because this leaf cannot reach the
+ * registry; a caller without one gets the positional shape.
  */
-function positionalSeedLauncher(kind: QueueAgentKind): AgentLauncher {
+export function resolveAgentLauncher(
+  kind: QueueAgentKind,
+  spec?: Pick<AgentSyncSpec, 'seedPromptFlag'>,
+): AgentLauncher {
+  const flag = spec?.seedPromptFlag;
   return {
     kind,
     buildArgs(initialMessage, userArgs) {
       if (!initialMessage) return [...userArgs];
-      return [initialMessage, ...userArgs];
+      if (!flag) return [initialMessage, ...userArgs];
+      // `--prompt=<msg>` for a long flag: as a separate token, a prompt that
+      // starts with `-` is parsed as flags and lost.
+      return flag.startsWith('--')
+        ? [`${flag}=${initialMessage}`, ...userArgs]
+        : [flag, initialMessage, ...userArgs];
     },
   };
-}
-
-export function resolveAgentLauncher(kind: QueueAgentKind): AgentLauncher {
-  return positionalSeedLauncher(kind);
 }

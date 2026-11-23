@@ -186,8 +186,52 @@ export async function verifyDetachedSession(
   box: BoxRecord,
   sessionName: string,
   binary: string,
-  opts: { windowMs?: number; pollMs?: number } = {},
+  opts: VerifySessionOpts = {},
 ): Promise<void> {
+  await verifyAgentSessionStaysUp(
+    (argv) => provider.exec(box, argv, { user: 'vscode' }),
+    box.name,
+    sessionName,
+    binary,
+    opts,
+  );
+}
+
+/** Runs argv in the box as the box user; only `exitCode` and `stdout` are read. */
+export type SessionProbeExec = (argv: string[]) => Promise<{ exitCode: number; stdout: string }>;
+
+/**
+ * The provider-agnostic body of {@link verifyDetachedSession}, over a bare exec
+ * so the docker path (which drives `docker exec` directly, not a `Provider`)
+ * runs the same check.
+ */
+export interface VerifySessionOpts {
+  windowMs?: number;
+  pollMs?: number;
+  /**
+   * What the agent was launched with (its seed prompt). The pane echoes it, so
+   * when it contains an auth-failure marker itself the scan can't tell the
+   * user's words from the agent's error and is skipped; the stay-up check still
+   * runs.
+   */
+  seedText?: string;
+  /**
+   * Scan the pane for auth-failure markers (default true). Off where the login
+   * was already checked before create (docker): the scan also matches the
+   * agent's own output (`throw new Unauthorized()`), so it can only add false
+   * failures there.
+   */
+  scanAuth?: boolean;
+}
+
+export async function verifyAgentSessionStaysUp(
+  exec: SessionProbeExec,
+  boxName: string,
+  sessionName: string,
+  binary: string,
+  opts: VerifySessionOpts = {},
+): Promise<void> {
+  const scanAuth = opts.scanAuth !== false && !AGENT_AUTH_FAILURE.test(opts.seedText ?? '');
   const windowMs = opts.windowMs ?? 10_000;
   const pollMs = opts.pollMs ?? 2_000;
   const q = tmuxTarget(sessionName);
@@ -198,11 +242,11 @@ export async function verifyDetachedSession(
   for (;;) {
     let pane = '';
     try {
-      const r = await provider.exec(box, ['bash', '-lc', probe], { user: 'vscode' });
+      const r = await exec(['bash', '-lc', probe]);
       if (r.exitCode === 7) {
         throw new Error(
-          `agent '${binary}' exited immediately after launch in box ${box.name} — the session did not stay up. ` +
-            `Attach to inspect: agentbox ${binary} attach ${box.name}`,
+          `agent '${binary}' exited immediately after launch in box ${boxName} — the session did not stay up. ` +
+            `Attach to inspect: agentbox ${binary} attach ${boxName}`,
         );
       }
       pane = r.stdout;
@@ -211,7 +255,7 @@ export async function verifyDetachedSession(
       // of death (don't false-fail on a flaky exec) — keep polling.
       if (err instanceof Error && err.message.startsWith(`agent '${binary}'`)) throw err;
     }
-    if (AGENT_AUTH_FAILURE.test(pane)) {
+    if (scanAuth && AGENT_AUTH_FAILURE.test(pane)) {
       throw new Error(
         `box ${binary} credentials were rejected — the agent launched but printed an auth error, so no work will run. ` +
           `Refresh them with \`agentbox ${binary} login\`, then re-run.`,
@@ -399,7 +443,10 @@ export async function startDetachedCloudAgent(
             : ''),
     );
   }
-  await verifyDetachedSession(provider, box, sessionName, binary, args.verify);
+  await verifyDetachedSession(provider, box, sessionName, binary, {
+    ...args.verify,
+    seedText: (args.extraArgs ?? []).join(' '),
+  });
   return box;
 }
 
