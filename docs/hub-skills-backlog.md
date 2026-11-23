@@ -264,6 +264,10 @@ only once the prompt mailbox exists). Still open:
 - **opencode's in-box `.claude/skills` and `~/.agents/skills` are not read**:
   only skill dirs under the agent's own box config dir are, because the docker
   transport mounts that dir alone.
+- **A box skill already downloaded to this PC is never proposed** (it reads as a
+  copy carried from here), e.g. one pulled by an older CLI or with
+  `--no-propose`. Upload it with `agentbox skills --upload <name>`, or compare
+  against the box's carried set instead of the PC's folders.
 - **An approved MCP install needs `agentbox-ctl skills sync`** in the box; pushing
   the sync is Phase 5.
 - **MCP `skills_list` re-implements the library listing** (`libraryNames` next to

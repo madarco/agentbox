@@ -49,69 +49,68 @@ export const downloadClaudeCommand = new Command('claude')
       // agent's docker config VOLUME mounted at its box path (so the box can be
       // stopped — no unpause/start dance).
       const { transport } = await pullTransportForBox(box, 'claude');
-      // The agent's own pull first; its early returns end only this part.
-      await (async () => {
-        const pull = (dryRun: boolean): Promise<PullClaudeResult> =>
-          pullClaudeExtrasViaTransport(transport, { dryRun });
-
-        const preview = await pull(true);
-
-        if (preview.newItems.length === 0 && preview.mergedRegistries.length === 0) {
-          process.stdout.write('no new Claude extensions to download into ~/.claude\n');
-          return;
-        }
-
-        for (const item of preview.newItems) process.stdout.write(`${tag(item)}\n`);
-        for (const reg of preview.mergedRegistries) {
-          process.stdout.write(`  plugins/${reg} (merge new entries)\n`);
-        }
-
-        if (opts.dryRun) {
-          process.stdout.write(
-            `\n[dry-run] ${preview.newItems.length} item(s)` +
-              `${preview.mergedRegistries.length > 0 ? ` + ${preview.mergedRegistries.length} registry merge(s)` : ''}` +
-              ` would be downloaded into ~/.claude\n`,
-          );
-          return;
-        }
-
-        const applyToHost =
-          opts.yes ||
-          (await confirm({
-            message: `Download ${preview.newItems.length} new Claude extension(s) into ~/.claude? (existing items are never overwritten)`,
-            initialValue: false,
-          }));
-        if (applyToHost) {
-          const result = await pull(false);
-          process.stdout.write(
-            `downloaded ${result.newItems.length} extension(s)` +
-              `${result.mergedRegistries.length > 0 ? `, merged ${result.mergedRegistries.join(', ')}` : ''}` +
-              ' into ~/.claude\n',
-          );
-        } else {
-          log.info('skipped the host ~/.claude write');
-        }
-
-        // Propagation stages from the source (volume or live box), so it works
-        // whether or not the host write above was accepted.
-        const items = claudeStagedItems(preview);
-        await runPropagateStep({
-          agent: 'claude',
-          sourceBox: box,
-          items,
-          sourceRegistries: preview.sourceRegistries,
-          stage: (stagingDir) =>
-            stageItemsViaTransport(transport, agentBoxConfigDir('claude'), items, stagingDir),
-          scopeFlag,
-          yes: opts.yes,
-        });
-      })();
+      // Proposals first: the pull below may copy a box-written skill into this
+      // PC's folders, after which it would read as a copy carried from here.
       await runSkillProposeStep({
         box,
         agent: 'claude',
         transport,
         propose: opts.propose,
         dryRun: opts.dryRun,
+      });
+      const pull = (dryRun: boolean): Promise<PullClaudeResult> =>
+        pullClaudeExtrasViaTransport(transport, { dryRun });
+
+      const preview = await pull(true);
+
+      if (preview.newItems.length === 0 && preview.mergedRegistries.length === 0) {
+        process.stdout.write('no new Claude extensions to download into ~/.claude\n');
+        return;
+      }
+
+      for (const item of preview.newItems) process.stdout.write(`${tag(item)}\n`);
+      for (const reg of preview.mergedRegistries) {
+        process.stdout.write(`  plugins/${reg} (merge new entries)\n`);
+      }
+
+      if (opts.dryRun) {
+        process.stdout.write(
+          `\n[dry-run] ${preview.newItems.length} item(s)` +
+            `${preview.mergedRegistries.length > 0 ? ` + ${preview.mergedRegistries.length} registry merge(s)` : ''}` +
+            ` would be downloaded into ~/.claude\n`,
+        );
+        return;
+      }
+
+      const applyToHost =
+        opts.yes ||
+        (await confirm({
+          message: `Download ${preview.newItems.length} new Claude extension(s) into ~/.claude? (existing items are never overwritten)`,
+          initialValue: false,
+        }));
+      if (applyToHost) {
+        const result = await pull(false);
+        process.stdout.write(
+          `downloaded ${result.newItems.length} extension(s)` +
+            `${result.mergedRegistries.length > 0 ? `, merged ${result.mergedRegistries.join(', ')}` : ''}` +
+            ' into ~/.claude\n',
+        );
+      } else {
+        log.info('skipped the host ~/.claude write');
+      }
+
+      // Propagation stages from the source (volume or live box), so it works
+      // whether or not the host write above was accepted.
+      const items = claudeStagedItems(preview);
+      await runPropagateStep({
+        agent: 'claude',
+        sourceBox: box,
+        items,
+        sourceRegistries: preview.sourceRegistries,
+        stage: (stagingDir) =>
+          stageItemsViaTransport(transport, agentBoxConfigDir('claude'), items, stagingDir),
+        scopeFlag,
+        yes: opts.yes,
       });
     } catch (err) {
       handleLifecycleError(err);

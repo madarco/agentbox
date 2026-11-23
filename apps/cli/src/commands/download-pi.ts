@@ -39,59 +39,58 @@ export const downloadPiCommand = new Command('pi')
       // agent's docker config VOLUME mounted at its box path (so the box can be
       // stopped — no unpause/start dance).
       const { transport } = await pullTransportForBox(box, 'pi');
-      // The agent's own pull first; its early returns end only this part.
-      await (async () => {
-        const pull = (dryRun: boolean): Promise<{ newItems: string[] }> =>
-          agentPull('pi', transport, { dryRun });
-
-        const preview = await pull(true);
-
-        if (preview.newItems.length === 0) {
-          process.stdout.write('no new Pi config to download\n');
-          return;
-        }
-
-        for (const item of preview.newItems) process.stdout.write(`  ${item} (new)\n`);
-
-        if (opts.dryRun) {
-          process.stdout.write(
-            `\n[dry-run] ${preview.newItems.length} item(s) would be downloaded\n`,
-          );
-          return;
-        }
-
-        const applyToHost =
-          opts.yes ||
-          (await confirm({
-            message: `Download ${preview.newItems.length} Pi item(s) into ~/.pi/agent? (existing items are never overwritten)`,
-            initialValue: false,
-          }));
-        if (applyToHost) {
-          const result = await pull(false);
-          process.stdout.write(`downloaded ${result.newItems.length} item(s)\n`);
-        } else {
-          log.info('skipped the host write');
-        }
-
-        // Propagation stages from the source (volume or live box), so it works
-        // whether or not the host write above was accepted.
-        const items = piStagedItems(preview.newItems);
-        await runPropagateStep({
-          agent: 'pi',
-          sourceBox: box,
-          items,
-          stage: (stagingDir) =>
-            stageItemsViaTransport(transport, agentBoxConfigDir('pi'), items, stagingDir),
-          scopeFlag,
-          yes: opts.yes,
-        });
-      })();
+      // Proposals first: the pull below may copy a box-written skill into this
+      // PC's folders, after which it would read as a copy carried from here.
       await runSkillProposeStep({
         box,
         agent: 'pi',
         transport,
         propose: opts.propose,
         dryRun: opts.dryRun,
+      });
+      const pull = (dryRun: boolean): Promise<{ newItems: string[] }> =>
+        agentPull('pi', transport, { dryRun });
+
+      const preview = await pull(true);
+
+      if (preview.newItems.length === 0) {
+        process.stdout.write('no new Pi config to download\n');
+        return;
+      }
+
+      for (const item of preview.newItems) process.stdout.write(`  ${item} (new)\n`);
+
+      if (opts.dryRun) {
+        process.stdout.write(
+          `\n[dry-run] ${preview.newItems.length} item(s) would be downloaded\n`,
+        );
+        return;
+      }
+
+      const applyToHost =
+        opts.yes ||
+        (await confirm({
+          message: `Download ${preview.newItems.length} Pi item(s) into ~/.pi/agent? (existing items are never overwritten)`,
+          initialValue: false,
+        }));
+      if (applyToHost) {
+        const result = await pull(false);
+        process.stdout.write(`downloaded ${result.newItems.length} item(s)\n`);
+      } else {
+        log.info('skipped the host write');
+      }
+
+      // Propagation stages from the source (volume or live box), so it works
+      // whether or not the host write above was accepted.
+      const items = piStagedItems(preview.newItems);
+      await runPropagateStep({
+        agent: 'pi',
+        sourceBox: box,
+        items,
+        stage: (stagingDir) =>
+          stageItemsViaTransport(transport, agentBoxConfigDir('pi'), items, stagingDir),
+        scopeFlag,
+        yes: opts.yes,
       });
     } catch (err) {
       handleLifecycleError(err);

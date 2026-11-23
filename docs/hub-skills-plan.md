@@ -5,8 +5,8 @@
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
 from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3 and 4
-implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
-they left open); Phases 5+ not started.
+implemented, and Phase 7 (see [`hub-skills-backlog.md`](./hub-skills-backlog.md)
+for what they left open); Phases 5 and 6 not started here.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -795,8 +795,8 @@ one approval and appears in the next box.
    `importSkill`, unless the library's current moved meanwhile (then nothing is
    written, as with `memory_propose`). The route reaches the handler through
    `globalThis`, like the MCP route, so the relay stays out of Next's bundle.
-2. **`agentbox download <agent>`** (claude, codex, opencode, pi, openclaw): after its
-   existing pull, it reads the agent's in-box skill dirs (the agent's
+2. **`agentbox download <agent>`** (claude, codex, opencode, pi, openclaw): before
+   its own pull (which may copy a box skill into the PC's folders), it reads the agent's in-box skill dirs (the agent's
    `skills.dirs` that sit under its box config dir, so the docker volume
    transport reaches them on a stopped box too), skipping symlinked entries
    (carried copies), reserved names, skills this PC has with the same tree hash
@@ -820,6 +820,24 @@ one approval and appears in the next box.
    `agentbox-ctl skills sync` (Phase 5 owns pushing syncs).
 5. **Docs:** public skills page (proposals, MCP tools), CLI reference
    (`--no-propose`), OpenAPI, backlog.
+
+**Status: implemented 2026-11-23**, live-checked on an isolated hub (scratch
+HOME, port 18797) with docker boxes on this branch's hub and CLI: in box B
+(created with `--skip-skills p7-demo`) a skill was written as the box user into
+`~/.claude/skills/p7-demo`; `agentbox download claude p7b -y` proposed it and the
+hub parked one approval (`1 file(s), 126 B; secret scan: clean`) while the
+library stayed empty; answering it yes stored version `e0c780ff0155` with source
+`box p7b`. From inside box B, `agentbox-ctl mcp` listed the three skills tools
+next to the history ones, `skills_list` showed `p7-demo` with `installed: false`,
+`skill_get` returned its SKILL.md, and `skills_propose_install` answered
+`pending`; once approved, a box binding was written and `agentbox-ctl skills
+sync` linked it into `/etc/claude-code/.claude/skills`. Box C, created next with
+no flags, had it linked at boot and Claude's `system/init` listed it. The
+agent's write was simulated with `docker exec` (no model turn). Deviations: the
+propose step runs **before** the agent's pull (the pull copies a box skill into
+the PC's folders, after which it reads as carried from there); `download
+opencode` proposes too; a box binding outranks the create flags. See
+[`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 Stage 2 (team libraries) is not a phase here. It follows the multi-user work
 and only adds `team_id` scope plus admin publishing to this schema.
