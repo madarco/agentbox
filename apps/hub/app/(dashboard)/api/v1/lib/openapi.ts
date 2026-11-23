@@ -3,6 +3,17 @@
 // verification checklist asserts every route appears here. Served verbatim at
 // GET /api/v1/openapi.json; GET /api/v1/docs renders it with Scalar.
 
+/** The token sums of `GET /usage` (totals and each group). */
+const USAGE_TOTALS = {
+  inputTokens: { type: 'integer' },
+  outputTokens: { type: 'integer' },
+  cacheReadTokens: { type: 'integer' },
+  cacheWriteTokens: { type: 'integer' },
+  totalTokens: { type: 'integer' },
+  messages: { type: 'integer', description: 'Model responses counted.' },
+  sessions: { type: 'integer' },
+};
+
 const errorResponse = {
   description: 'Error',
   content: {
@@ -1364,6 +1375,7 @@ export function buildOpenApi(): Record<string, unknown> {
                             provider: { type: 'string', nullable: true },
                             hostId: { type: 'string', nullable: true },
                             projectRepoUrl: { type: 'string', nullable: true },
+                            account: { type: 'string', nullable: true },
                             parentSessionId: { type: 'string', nullable: true },
                             title: { type: 'string', nullable: true },
                             firstTs: { type: 'string', nullable: true },
@@ -1424,6 +1436,7 @@ export function buildOpenApi(): Record<string, unknown> {
                           provider: { type: 'string', nullable: true },
                           hostId: { type: 'string', nullable: true },
                           projectRepoUrl: { type: 'string', nullable: true },
+                          account: { type: 'string', nullable: true },
                           parentSessionId: { type: 'string', nullable: true },
                           title: { type: 'string', nullable: true },
                           firstTs: { type: 'string', nullable: true },
@@ -1616,6 +1629,105 @@ export function buildOpenApi(): Record<string, unknown> {
             '401': errorResponse,
             '404': errorResponse,
             '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/usage': {
+        get: {
+          tags: ['History'],
+          summary: 'Token usage',
+          description:
+            'Tokens from the recorded sessions (every agent, box and PC that ships to this hub), summed per model response and grouped by up to two dimensions. Usage rows outlive transcript retention. Cost is not computed.',
+          parameters: [
+            {
+              name: 'by',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'Comma-separated, at most two of: day, agent, account, box, project, host, model, session. Omit for totals only.',
+            },
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'ISO-8601, or a duration back from now (`30m`, `24h`, `7d`, `2w`).',
+            },
+            {
+              name: 'until',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Exclusive end, same forms as `since`.',
+            },
+            {
+              name: 'tzOffset',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Minutes east of UTC that `day` buckets in (default 0).',
+            },
+            { name: 'agent', in: 'query', schema: { type: 'string' } },
+            { name: 'account', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'box',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Box id or name.',
+            },
+            {
+              name: 'project',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Substring of the repo URL.',
+            },
+            { name: 'host', in: 'query', schema: { type: 'string' }, description: 'Machine id.' },
+            { name: 'model', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Groups returned; default 200, max 1000.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Totals and groups',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      by: { type: 'array', items: { type: 'string' } },
+                      since: { type: 'string', nullable: true },
+                      until: { type: 'string', nullable: true },
+                      tzOffset: { type: 'integer' },
+                      totals: { type: 'object', properties: USAGE_TOTALS },
+                      groups: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            keys: {
+                              type: 'object',
+                              description: 'One entry per `by` dimension; null = unknown.',
+                              additionalProperties: { type: 'string', nullable: true },
+                            },
+                            labels: {
+                              type: 'object',
+                              description: 'Box name for `box`, title for `session`.',
+                              additionalProperties: { type: 'string', nullable: true },
+                            },
+                            ...USAGE_TOTALS,
+                          },
+                        },
+                      },
+                      truncated: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
             '503': errorResponse,
           },
         },

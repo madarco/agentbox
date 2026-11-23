@@ -12,6 +12,10 @@ import type {
   HistoryRepo,
   HistorySessionRow,
   NewChunk,
+  UsageDimension,
+  UsageQuery,
+  UsageReport,
+  UsageTotals,
 } from './backend/history';
 import type { MemoryRepo, MemoryVersionRow } from './backend/history-memory';
 
@@ -142,6 +146,7 @@ function toSession(r: Row): HistorySessionRow {
     provider: s(r.provider),
     hostId: s(r.host_id),
     projectRepoUrl: s(r.project_repo_url),
+    account: s(r.account),
     parentSessionId: s(r.parent_session_id),
     firstTs: s(r.first_ts),
     lastTs: s(r.last_ts),
@@ -171,6 +176,146 @@ function toChunk(r: Row): HistoryChunkRow {
   };
 }
 
+/** Epoch ms of an ISO timestamp, or null. */
+function epochMs(ts: string | undefined): number | null {
+  if (!ts) return null;
+  const ms = Date.parse(ts);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function columns(db: Db, table: string): Set<string> {
+  return new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as Row[]).map((r) => String(r.name)),
+  );
+}
+
+/**
+ * Phase 7 columns on a store created before it. `ts_ms` is filled from `ts` in
+ * SQL (julianday reads the parsers' ISO strings), so no re-parse is needed.
+ */
+function migrateUsage(db: Db): void {
+  const sessions = columns(db, 'history_sessions');
+  if (!sessions.has('account')) db.exec('ALTER TABLE history_sessions ADD COLUMN account TEXT');
+  if (!sessions.has('purged_at')) {
+    db.exec('ALTER TABLE history_sessions ADD COLUMN purged_at INTEGER');
+  }
+  if (!columns(db, 'history_usage').has('ts_ms')) {
+    db.exec('ALTER TABLE history_usage ADD COLUMN ts_ms INTEGER');
+    db.exec(
+      `UPDATE history_usage SET ts_ms = CAST(ROUND((julianday(ts) - 2440587.5) * 86400000) AS INTEGER)
+       WHERE ts IS NOT NULL`,
+    );
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS history_usage_ts ON history_usage(ts_ms)');
+}
+
+/** A usage row's time: its own, else its session's last activity, else ingest time. */
+const USAGE_TIME = `COALESCE(u.ts_ms,
+  CAST(ROUND((julianday(s.last_ts) - 2440587.5) * 86400000) AS INTEGER), s.updated_at)`;
+
+const DIMENSION_SQL: Record<Exclude<UsageDimension, 'day'>, string> = {
+  agent: 's.agent',
+  account: 's.account',
+  box: 's.box_id',
+  project: 's.project_repo_url',
+  host: 's.host_id',
+  model: 'u.model',
+  session: 's.key',
+};
+
+const LABEL_SQL: Partial<Record<UsageDimension, string>> = {
+  box: 'MAX(s.box_name)',
+  session: 'MAX(s.title)',
+};
+
+const SUMS = `COALESCE(SUM(u.input_tokens), 0) AS input, COALESCE(SUM(u.output_tokens), 0) AS output,
+  COALESCE(SUM(u.cache_read_tokens), 0) AS cache_read, COALESCE(SUM(u.cache_write_tokens), 0) AS cache_write,
+  COUNT(*) AS messages, COUNT(DISTINCT u.session_key) AS sessions`;
+
+function totalsOf(r: Row): UsageTotals {
+  const t = {
+    inputTokens: n(r.input),
+    outputTokens: n(r.output),
+    cacheReadTokens: n(r.cache_read),
+    cacheWriteTokens: n(r.cache_write),
+  };
+  return {
+    ...t,
+    totalTokens: t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens,
+    messages: n(r.messages),
+    sessions: n(r.sessions),
+  };
+}
+
+/** `GET /api/v1/usage`: totals plus groups, over the usage rows joined to their session. */
+function usageReport(db: Db, q: UsageQuery): UsageReport {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  const eq = (col: string, v: string | undefined): void => {
+    if (v === undefined) return;
+    where.push(`${col} = ?`);
+    args.push(v);
+  };
+  eq('s.agent', q.agent);
+  eq('s.account', q.account);
+  eq('s.host_id', q.host);
+  eq('u.model', q.model);
+  if (q.box !== undefined) {
+    where.push('(s.box_id = ? OR s.box_name = ?)');
+    args.push(q.box, q.box);
+  }
+  if (q.project !== undefined) {
+    where.push("s.project_repo_url LIKE ? ESCAPE '\\'");
+    args.push(`%${q.project.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  }
+  if (q.sinceMs !== undefined) {
+    where.push(`${USAGE_TIME} >= ?`);
+    args.push(q.sinceMs);
+  }
+  if (q.untilMs !== undefined) {
+    where.push(`${USAGE_TIME} < ?`);
+    args.push(q.untilMs);
+  }
+  const from = `FROM history_usage u JOIN history_sessions s ON s.key = u.session_key
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}`;
+  const totals = totalsOf(db.prepare(`SELECT ${SUMS} ${from}`).get(...args) as Row);
+  if (q.by.length === 0) return { totals, groups: [], truncated: false };
+
+  // The offset is a clamped integer (the service), so it is inlined.
+  const offsetMs = Math.trunc(q.tzOffsetMin) * 60_000;
+  const exprOf = (d: UsageDimension): string =>
+    d === 'day'
+      ? `strftime('%Y-%m-%d', (${USAGE_TIME} + ${String(offsetMs)}) / 1000, 'unixepoch')`
+      : DIMENSION_SQL[d];
+  const keyCols = q.by.map((d, i) => `${exprOf(d)} AS k${String(i)}`);
+  const labelCols = q.by.flatMap((d, i) =>
+    LABEL_SQL[d] ? [`${LABEL_SQL[d]!} AS l${String(i)}`] : [],
+  );
+  const groupBy = q.by.map((_, i) => `k${String(i)}`).join(', ');
+  // Days read in time order; everything else by size.
+  const order = [
+    ...q.by.flatMap((d, i) => (d === 'day' ? [`k${String(i)}`] : [])),
+    '(input + output + cache_read + cache_write) DESC',
+    groupBy,
+  ].join(', ');
+  const rows = db
+    .prepare(
+      `SELECT ${[...keyCols, ...labelCols, SUMS].join(', ')} ${from}
+       GROUP BY ${groupBy} ORDER BY ${order} LIMIT ?`,
+    )
+    .all(...args, q.limit + 1) as Row[];
+  const groups = rows.slice(0, q.limit).map((r) => {
+    const keys: Partial<Record<UsageDimension, string | null>> = {};
+    const labels: Partial<Record<UsageDimension, string | null>> = {};
+    q.by.forEach((d, i) => {
+      keys[d] = s(r[`k${String(i)}`]);
+      if (LABEL_SQL[d]) labels[d] = s(r[`l${String(i)}`]);
+    });
+    return { keys, labels, ...totalsOf(r) };
+  });
+  return { totals, groups, truncated: rows.length > q.limit };
+}
+
 export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> {
   const { DatabaseSync } = await import('node:sqlite');
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
@@ -178,6 +323,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
+  migrateUsage(db);
   // Full-text over turn text, for Phase 2's search. Optional: a node built
   // without FTS5 still ingests.
   let fts = true;
@@ -229,7 +375,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     );
   };
 
-  const deleteTurnsOfFile = (fileId: number): void => {
+  const deleteTurnsOfFile = (fileId: number, usage = true): void => {
     if (fts) {
       db.prepare(
         `INSERT INTO history_turns_fts(history_turns_fts, rowid, text)
@@ -237,7 +383,27 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       ).run(fileId);
     }
     db.prepare('DELETE FROM history_turns WHERE file_id = ?').run(fileId);
-    db.prepare('DELETE FROM history_usage WHERE file_id = ?').run(fileId);
+    if (usage) db.prepare('DELETE FROM history_usage WHERE file_id = ?').run(fileId);
+  };
+
+  /** Delete a session's files with their chunks and turns (its usage stays). */
+  const dropFilesOf = (key: string): string[] => {
+    const files = (
+      db.prepare('SELECT id FROM history_files WHERE session_key = ?').all(key) as Row[]
+    ).map((r) => n(r.id));
+    const keys: string[] = [];
+    for (const id of files) {
+      for (const c of db
+        .prepare('SELECT id, archive_key FROM history_chunks WHERE file_id = ?')
+        .all(id) as Row[]) {
+        keys.push(String(c.archive_key));
+        db.prepare('DELETE FROM history_chunk_blobs WHERE chunk_id = ?').run(n(c.id));
+      }
+      db.prepare('DELETE FROM history_chunks WHERE file_id = ?').run(id);
+      deleteTurnsOfFile(id, false);
+      db.prepare('DELETE FROM history_files WHERE id = ?').run(id);
+    }
+    return keys;
   };
 
   return {
@@ -302,12 +468,14 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     async upsertSession(x) {
       db.prepare(
         `INSERT INTO history_sessions (key, agent, session_id, box_id, box_name, provider, host_id, project_repo_url,
-           parent_session_id, first_ts, last_ts, title, turns, input_tokens, output_tokens, parser_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           account, parent_session_id, first_ts, last_ts, title, turns, input_tokens, output_tokens, parser_version,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET box_id = excluded.box_id, box_name = excluded.box_name,
            provider = excluded.provider, host_id = excluded.host_id, project_repo_url = excluded.project_repo_url,
+           account = COALESCE(history_sessions.account, excluded.account),
            parent_session_id = excluded.parent_session_id, parser_version = excluded.parser_version,
-           updated_at = excluded.updated_at`,
+           purged_at = NULL, updated_at = excluded.updated_at`,
       ).run(
         x.key,
         x.agent,
@@ -317,6 +485,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         x.provider,
         x.hostId,
         x.projectRepoUrl,
+        x.account,
         x.parentSessionId,
         x.firstTs,
         x.lastTs,
@@ -384,7 +553,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
           : null;
         const usage = db.prepare(
           `INSERT OR IGNORE INTO history_usage (session_key, message_id, file_id, model, input_tokens, output_tokens,
-             cache_read_tokens, cache_write_tokens, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             cache_read_tokens, cache_write_tokens, ts, ts_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const meta = db.prepare('UPDATE history_sessions SET title = ? WHERE key = ?');
         const seqAt = new Map<number, number>();
@@ -400,6 +569,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
               r.cacheReadTokens,
               r.cacheWriteTokens,
               r.ts ?? null,
+              epochMs(r.ts),
             );
             continue;
           }
@@ -453,26 +623,40 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     },
     async expiredSessions(beforeMs) {
       return (
-        db.prepare('SELECT key FROM history_sessions WHERE updated_at < ?').all(beforeMs) as Row[]
+        db
+          .prepare('SELECT key FROM history_sessions WHERE updated_at < ? AND purged_at IS NULL')
+          .all(beforeMs) as Row[]
       ).map((r) => String(r.key));
+    },
+    async purgeSession(key, nowMs) {
+      return tx(() => {
+        const keys = dropFilesOf(key);
+        db.prepare('DELETE FROM history_turns WHERE session_key = ?').run(key);
+        db.prepare('UPDATE history_sessions SET purged_at = ? WHERE key = ?').run(nowMs, key);
+        return keys;
+      });
+    },
+    async sessionsWithoutAccount(limit) {
+      return (
+        db
+          .prepare(
+            'SELECT key, box_id, agent FROM history_sessions WHERE account IS NULL AND box_id IS NOT NULL ORDER BY key LIMIT ?',
+          )
+          .all(limit) as Row[]
+      ).map((r) => ({ key: String(r.key), boxId: String(r.box_id), agent: String(r.agent) }));
+    },
+    async setSessionAccount(key, account) {
+      db.prepare('UPDATE history_sessions SET account = ? WHERE key = ? AND account IS NULL').run(
+        account,
+        key,
+      );
+    },
+    async usage(q) {
+      return usageReport(db, q);
     },
     async deleteSession(key) {
       return tx(() => {
-        const files = (
-          db.prepare('SELECT id FROM history_files WHERE session_key = ?').all(key) as Row[]
-        ).map((r) => n(r.id));
-        const keys: string[] = [];
-        for (const id of files) {
-          for (const c of db
-            .prepare('SELECT id, archive_key FROM history_chunks WHERE file_id = ?')
-            .all(id) as Row[]) {
-            keys.push(String(c.archive_key));
-            db.prepare('DELETE FROM history_chunk_blobs WHERE chunk_id = ?').run(n(c.id));
-          }
-          db.prepare('DELETE FROM history_chunks WHERE file_id = ?').run(id);
-          deleteTurnsOfFile(id);
-          db.prepare('DELETE FROM history_files WHERE id = ?').run(id);
-        }
+        const keys = dropFilesOf(key);
         db.prepare('DELETE FROM history_turns WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_usage WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_sessions WHERE key = ?').run(key);
@@ -483,7 +667,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       return (
         db
           .prepare(
-            'SELECT key FROM history_sessions WHERE agent = ? AND parser_version < ? ORDER BY updated_at DESC LIMIT ?',
+            'SELECT key FROM history_sessions WHERE agent = ? AND parser_version < ? AND purged_at IS NULL ORDER BY updated_at DESC LIMIT ?',
           )
           .all(agent, version, limit) as Row[]
       ).map((r) => String(r.key));
@@ -504,7 +688,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     },
 
     async querySessions(f: HistorySessionFilter) {
-      const where: string[] = [];
+      const where: string[] = ['purged_at IS NULL'];
       const args: unknown[] = [];
       if (f.agent) {
         where.push('agent = ?');
@@ -548,7 +732,9 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     async matchSessionKeys(ref) {
       if (!ref) return [];
       const exact = db
-        .prepare('SELECT key FROM history_sessions WHERE key = ? OR session_id = ?')
+        .prepare(
+          'SELECT key FROM history_sessions WHERE (key = ? OR session_id = ?) AND purged_at IS NULL',
+        )
         .all(ref, ref) as Row[];
       if (exact.length > 0) return exact.map((r) => String(r.key));
       if (ref.length < 8) return [];
@@ -558,7 +744,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       return (
         db
           .prepare(
-            "SELECT key FROM history_sessions WHERE session_id LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 11",
+            "SELECT key FROM history_sessions WHERE session_id LIKE ? ESCAPE '\\' AND purged_at IS NULL ORDER BY updated_at DESC LIMIT 11",
           )
           .all(pattern) as Row[]
       ).map((r) => String(r.key));

@@ -20,6 +20,7 @@ export function sessionJson(s: HistorySessionRow): Record<string, unknown> {
     provider: s.provider,
     hostId: s.hostId,
     projectRepoUrl: s.projectRepoUrl,
+    account: s.account,
     parentSessionId: s.parentSessionId,
     title: s.title,
     firstTs: s.firstTs,

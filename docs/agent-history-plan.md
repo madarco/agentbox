@@ -541,6 +541,50 @@ Usage extraction backfilled over stored sessions, `/api/v1/usage`,
 
 **Done:** dashboard totals match a hand count over one day's sessions.
 
+#### Phase 7 implementation plan (2026-11-23)
+
+What already exists: every parser (claude, codex, pi, opencode) emits `usage`
+records since Phases 1 and 3, stored one row per message in `history_usage`
+(deduped by message id within a session). Phase 7 adds the query, the account
+dimension, keeps usage past transcript retention, and the three surfaces.
+
+- **Store.** `history_usage` gains `ts_ms` (epoch ms of the message, from its
+  ISO `ts`; a migration fills it for stored rows in SQL, no re-parse needed).
+  `history_sessions` gains `account` (the box's named LLM account for that
+  agent, `default` when the box names none) and `purged_at`.
+- **Account.** Stamped hub-side when a session is first seen: the history
+  service asks a `accountOf(boxId, agent)` dep, which `server.ts` answers from
+  the box record (`record.accounts`), so every provider is covered with no edge
+  change. A start-up pass backfills sessions stored before this phase whose box
+  is still known; the rest stay unknown (null).
+- **Usage outlives the transcript** (Decision 3: usage rows forever). The
+  retention sweep now purges a session's files, chunks and turns but keeps its
+  session row (stamped `purged_at`) and its usage rows. Purged sessions are
+  hidden from the session reads; a new file for that session clears the stamp.
+- **Copied usage (claude).** `/branch` copies (lines with `forkedFrom`) and
+  desktop continuations (lines carrying another session's id) repeat usage
+  already counted in the parent; the claude parser drops usage on those lines.
+  Its `parserVersion` goes to 2, so the existing re-parse job is the backfill
+  over what is stored.
+- **Query** (`HistoryRepo.usage`, `HistoryService.usage`): sums of input,
+  output, cache-read, cache-write tokens, message and session counts, grouped by
+  up to two of `day | agent | account | box | project | host | model |
+  session`, filtered by the same dimensions plus a `[since, until)` window on
+  the message time (a row with no time uses its session's last activity). Days
+  are bucketed in the caller's UTC offset (`tzOffset`, minutes).
+- **API.** `GET /api/v1/usage?by&since&until&tzOffset&agent&account&box&project&host&model&limit`
+  → `{ totals, groups: [{ keys, labels?, ...totals }], by, since, until }`.
+- **CLI.** `agentbox usage [--by …] [--since 7d|ISO] [--until] [filters]
+  [--json] [--local]`, a hub client like `sessions`.
+- **Dashboard.** A `Usage` page in the hub web UI, pure REST client: a range
+  picker (1/7/30/90 days, all) and filters, totals tiles, tokens per day
+  stacked by agent, and breakdown tables by agent, model, account, project,
+  box, PC and session. No cost: prices are deferred (backlog).
+- **Done check.** A scratch hub seeded with real-shaped transcripts of every
+  agent over two days (frames through `POST /api/v1/history/chunks`); one
+  day's dashboard and `agentbox usage` totals compared with a hand count over
+  the seeded files.
+
 Each phase updates `apps/web/content/docs/` for any new command, flag or key.
 
 ## Phase 0 results (2026-11-22)

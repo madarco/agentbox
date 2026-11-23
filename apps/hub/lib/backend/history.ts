@@ -44,6 +44,11 @@ export interface HistorySessionRow {
   provider: string | null;
   hostId: string | null;
   projectRepoUrl: string | null;
+  /**
+   * The box's named LLM account for this agent when the session was first
+   * seen (`default` when the box names none); null when the box was unknown.
+   */
+  account: string | null;
   parentSessionId: string | null;
   firstTs: string | null;
   lastTs: string | null;
@@ -112,6 +117,66 @@ export interface HistorySearchHit {
   snippet: string;
 }
 
+/** Usage dimensions, for grouping and filtering (`GET /api/v1/usage`). */
+export const USAGE_DIMENSIONS = [
+  'day',
+  'agent',
+  'account',
+  'box',
+  'project',
+  'host',
+  'model',
+  'session',
+] as const;
+export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
+
+export interface UsageFilter {
+  agent?: string;
+  account?: string;
+  /** A box id or a box name, exact. */
+  box?: string;
+  /** Substring of the project's repo URL. */
+  project?: string;
+  host?: string;
+  model?: string;
+  /** Message time window `[sinceMs, untilMs)`, epoch ms. */
+  sinceMs?: number;
+  untilMs?: number;
+}
+
+export interface UsageQuery extends UsageFilter {
+  /** Group keys, at most two; none = totals only. */
+  by: UsageDimension[];
+  /** Minutes east of UTC that `day` buckets in (e.g. 60 for CET). */
+  tzOffsetMin: number;
+  limit: number;
+}
+
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** All four token counts summed. */
+  totalTokens: number;
+  /** Model responses counted (usage rows). */
+  messages: number;
+  sessions: number;
+}
+
+export interface UsageGroup extends UsageTotals {
+  keys: Partial<Record<UsageDimension, string | null>>;
+  /** Display names where the key is an id: `box` (box name), `session` (title). */
+  labels: Partial<Record<UsageDimension, string | null>>;
+}
+
+export interface UsageReport {
+  totals: UsageTotals;
+  groups: UsageGroup[];
+  /** More groups matched than `limit` returned. */
+  truncated: boolean;
+}
+
 /** Turn plain words into an FTS5 query that matches them all, with no operators. */
 export function ftsQuery(q: string): string | null {
   const words = q.match(/[\p{L}\p{N}_][\p{L}\p{N}_.-]*/gu) ?? [];
@@ -153,6 +218,17 @@ export interface HistoryRepo {
   expiredSessions(beforeMs: number): Promise<string[]>;
   /** Delete a session with its files, chunks and projection; returns archive keys to delete. */
   deleteSession(key: string): Promise<string[]>;
+  /**
+   * Retention: delete a session's files, chunks and turns, keep the session row
+   * (stamped purged) and its usage rows. Returns archive keys to delete.
+   */
+  purgeSession(key: string, nowMs: number): Promise<string[]>;
+  /** Sessions with no account stamped yet, that name a box. */
+  sessionsWithoutAccount(
+    limit: number,
+  ): Promise<Array<{ key: string; boxId: string; agent: string }>>;
+  setSessionAccount(key: string, account: string): Promise<void>;
+  usage(q: UsageQuery): Promise<UsageReport>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
   /** Keys of `agent`'s sessions projected by a parser older than `version`. */
@@ -205,6 +281,11 @@ export interface HistoryServiceDeps {
   repo: HistoryRepo;
   archive: HistoryArchive;
   retentionDays: number;
+  /**
+   * The named LLM account `agent` runs on in box `boxId` (`default` when the
+   * box names none), or null when the box is unknown here.
+   */
+  accountOf?: (boxId: string, agent: string) => Promise<string | null>;
   now?: () => number;
   log?: (line: string) => void;
 }
@@ -235,6 +316,10 @@ export interface HistoryService extends HistoryIngestSink {
   /** The file to download: `path` when it belongs to the session, else its main file. */
   sessionFile(key: string, path?: string): Promise<HistoryFileRow | null>;
   search(q: string, limit: number): Promise<HistorySearchHit[]>;
+  /** Token usage, grouped and filtered (limits clamped here). */
+  usage(q: UsageQuery): Promise<UsageReport>;
+  /** Stamp the account on sessions stored without one whose box is still known. */
+  backfillAccounts(): Promise<number>;
   /**
    * Re-derive the projection of every session whose parser is older than its
    * agent module's, from the raw archive. Returns how many sessions it redid.
@@ -262,6 +347,15 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
     return run;
   };
   const timers: NodeJS.Timeout[] = [];
+
+  const accountFor = async (boxId: string, agent: string): Promise<string | null> => {
+    if (!deps.accountOf) return null;
+    try {
+      return await deps.accountOf(boxId, agent);
+    } catch {
+      return null;
+    }
+  };
 
   const mismatch = (file: HistoryFileRow | null, message: string): HistoryIngestResult => ({
     ok: false,
@@ -356,6 +450,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       if (id && sessionKey) {
         const existing = await repo.getSession(sessionKey);
         const o = frame.origin;
+        const account = existing?.account ?? (await accountFor(o.boxId, frame.agent));
         await repo.upsertSession({
           key: sessionKey,
           agent: frame.agent,
@@ -365,6 +460,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
           provider: existing?.provider ?? o.provider ?? null,
           hostId: existing?.hostId ?? o.hostId ?? null,
           projectRepoUrl: existing?.projectRepoUrl ?? o.projectRepoUrl ?? null,
+          account,
           parentSessionId: existing?.parentSessionId ?? id.parentSessionId ?? null,
           firstTs: existing?.firstTs ?? null,
           lastTs: existing?.lastTs ?? null,
@@ -585,6 +681,35 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return repo.search(fts, Math.min(Math.max(limit, 1), 200));
     },
 
+    usage: (q) =>
+      repo.usage({
+        ...q,
+        by: [...new Set(q.by)].slice(0, 2),
+        tzOffsetMin: Math.min(Math.max(Math.trunc(q.tzOffsetMin) || 0, -14 * 60), 14 * 60),
+        limit: Math.min(Math.max(q.limit, 1), 1000),
+      }),
+
+    async backfillAccounts() {
+      let done = 0;
+      // Boxes this hub no longer knows stay null; `seen` stops the loop there.
+      const seen = new Set<string>();
+      for (;;) {
+        const rows = (await repo.sessionsWithoutAccount(200 + seen.size)).filter(
+          (r) => !seen.has(r.key),
+        );
+        if (rows.length === 0) break;
+        for (const r of rows) {
+          seen.add(r.key);
+          const account = await accountFor(r.boxId, r.agent);
+          if (account) {
+            await repo.setSessionAccount(r.key, account);
+            done++;
+          }
+        }
+      }
+      return done;
+    },
+
     reparse() {
       // One job at a time; each session is its own turn in the ingest queue,
       // so frames keep landing between sessions.
@@ -625,8 +750,9 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         let blobs = 0;
         if (opts.retention) {
           const cutoff = now() - deps.retentionDays * 24 * 60 * 60_000;
+          // Usage rows are kept forever (plan, Decision 3); only the transcript goes.
           for (const key of await repo.expiredSessions(cutoff)) {
-            for (const k of await repo.deleteSession(key)) {
+            for (const k of await repo.purgeSession(key, now())) {
               await archive.delete(k).catch(() => undefined);
             }
             expired++;
@@ -659,6 +785,14 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       };
       // A parser bump takes effect at the first start that carries it.
       redo();
+      service
+        .backfillAccounts()
+        .then((n) => {
+          if (n > 0) log(`history: stamped the account on ${String(n)} session(s)`);
+        })
+        .catch((e: unknown) =>
+          log(`history: account backfill failed: ${e instanceof Error ? e.message : String(e)}`),
+        );
       const a = setInterval(() => run(false), 60_000);
       const b = setInterval(() => {
         run(true);

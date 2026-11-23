@@ -232,6 +232,30 @@ The hub records the transcript of every claude, codex, pi and opencode session y
 
 All four take `--local`.
 
+## Usage
+
+```bash
+# Tokens per agent over the last 7 days (the default window)
+agentbox usage
+
+# Per day and agent this month, in this machine's time zone
+agentbox usage --by day,agent --since 30d
+
+# One project's usage by box, or one box by model, over all time
+agentbox usage --by box --project acme/api --since all
+agentbox usage --by model --box auth-work --since all --json
+```
+
+`usage` sums the tokens the [recorded sessions](#session-history) spent, one count per model response: input, output, cache read and cache write, plus how many responses and sessions they came from. It covers every box, provider and PC that ships to the hub, and keeps counting sessions whose transcripts retention already deleted. `--by` groups by up to two of `day`, `agent`, `account` (the box's [named LLM account](/docs/run-an-agent#several-accounts-per-agent), `default` for the agent's default login), `box`, `project`, `host` (the PC), `model` and `session`; the last row is the total. `--since`/`--until` take an ISO-8601 time or a duration back from now (`24h`, `7d`, `2w`; `--since all` for no bound) and select on each response's own time. Cost is not computed. The hub web UI's **Usage** page shows the same numbers, and the data comes from [`GET /api/v1/usage`](/docs/api#history).
+
+| Flag                                                              | Meaning                                                                                                |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `--by <dims>`                                                     | up to two of `day`, `agent`, `account`, `box`, `project`, `host`, `model`, `session` (default `agent`) |
+| `--since <when>`, `--until <when>`                                | window; default `--since 7d`                                                                           |
+| `--agent`, `--account`, `--box`, `--project`, `--host`, `--model` | filters (`--box` takes an id or a name, `--project` a repo URL substring)                              |
+| `-n, --limit <n>`                                                 | at most this many groups (default 200); the total row still covers all of them                         |
+| `--local`, `--json`                                               | read this machine's hub; print the API's JSON                                                          |
+
 ## Agent memory
 
 ```bash
