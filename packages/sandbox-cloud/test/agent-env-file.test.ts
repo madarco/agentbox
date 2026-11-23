@@ -1,5 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -118,9 +129,149 @@ describe('writeCloudAgentEnvFile', () => {
     } as unknown as CloudBackend;
     await writeCloudAgentEnvFile(runDenied, {} as CloudHandle, { A: 'b' });
     expect(targets).toHaveLength(2);
-    expect(targets[1]).toMatch(/^\/tmp\/agentbox\.agent-env-[0-9a-f]+$/);
+    expect(targets[1]).toMatch(/^\/tmp\/\.agent-env-[0-9a-f]+$/);
     expect(execs[0]).toContain(`install -m 600 ${targets[1]} `);
   });
+
+  it('removes both staging paths when the first upload writes the file and then throws', async () => {
+    // Daytona: the /run upload lands a 0644 copy and still throws; /run there
+    // is not tmpfs, so a snapshot would carry the secret.
+    const targets: string[] = [];
+    const execs: string[] = [];
+    const backend = {
+      async uploadFile(_h: CloudHandle, _l: string, remote: string) {
+        targets.push(remote);
+        if (remote.startsWith('/run/')) throw new Error('wrote, then failed');
+      },
+      async exec(_h: CloudHandle, cmd: string) {
+        execs.push(cmd);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    } as unknown as CloudBackend;
+    await writeCloudAgentEnvFile(backend, {} as CloudHandle, { GEMINI_API_KEY: SECRET });
+    expect(execs).toHaveLength(1);
+    const cmd = execs[0]!;
+    // chown to the box user, then chmod, before install reads the staging copy
+    const chown = cmd.indexOf(`asroot chown "$(id -un):$(id -gn)" ${targets[1]}`);
+    expect(chown).toBeGreaterThan(-1);
+    expect(chown).toBeLessThan(cmd.indexOf(`chmod 600 ${targets[1]}`));
+    expect(cmd.indexOf(`chmod 600 ${targets[1]}`)).toBeGreaterThan(-1);
+    expect(cmd.indexOf(`chmod 600 ${targets[1]}`)).toBeLessThan(cmd.indexOf('install -m 600'));
+    expect(cmd).toContain(`rm -f ${targets[0]} ${targets[1]}`);
+    expect(cmd.indexOf(`rm -f ${targets[0]}`)).toBeGreaterThan(cmd.indexOf('install -m 600'));
+    expect(cmd).not.toContain('sk-dummy');
+  });
+
+  it('sweeps staging copies left by earlier failed writes', async () => {
+    const execs: string[] = [];
+    const backend = {
+      async uploadFile() {},
+      async exec(_h: CloudHandle, cmd: string) {
+        execs.push(cmd);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    } as unknown as CloudBackend;
+    await writeCloudAgentEnvFile(backend, {} as CloudHandle, { A: 'b' });
+    expect(execs[0]).toMatch(/find \/run\/agentbox \/tmp -maxdepth 1 -type f/);
+    expect(execs[0]).toContain(`-name '.agent-env-*'`);
+    expect(execs[0]).toContain(`-name 'agentbox.agent-env-*'`);
+    expect(execs[0]).toContain('-delete');
+  });
+
+  it('still removes both staging paths when every upload throws', async () => {
+    const targets: string[] = [];
+    const execs: string[] = [];
+    const execOpts: unknown[] = [];
+    const backend = {
+      async uploadFile(_h: CloudHandle, _l: string, remote: string) {
+        targets.push(remote);
+        throw new Error(`upload to ${remote} failed`);
+      },
+      async exec(_h: CloudHandle, cmd: string, opts?: unknown) {
+        execs.push(cmd);
+        execOpts.push(opts);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    } as unknown as CloudBackend;
+    await expect(writeCloudAgentEnvFile(backend, {} as CloudHandle, { A: 'b' })).rejects.toThrow(
+      /upload to \/tmp/,
+    );
+    expect(execs).toHaveLength(1);
+    expect(execs[0]).toContain(`rm -f ${targets[0]} ${targets[1]}`);
+    expect(execs[0]).not.toContain('install');
+    // an unreachable box must not delay the upload error behind exec retries
+    expect(execOpts[0]).toEqual({ noRetry: true, attemptTimeoutMs: 15_000 });
+  });
+
+  it('surfaces the upload error, not a failing cleanup exec', async () => {
+    const backend = {
+      async uploadFile() {
+        throw new Error('upload broke');
+      },
+      async exec() {
+        throw new Error('exec broke');
+      },
+    } as unknown as CloudBackend;
+    await expect(writeCloudAgentEnvFile(backend, {} as CloudHandle, {})).rejects.toThrow(
+      /upload broke/,
+    );
+  });
+
+  // zsh is daytona's exec shell, and it does not word-split an unquoted variable.
+  const shells = ['bash', 'sh', 'zsh'].filter((sh) => {
+    try {
+      execFileSync('sh', ['-c', `command -v ${sh}`], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  it.each(shells)(
+    'runs under %s: no staging copy survives, old leftovers are swept, agent.env is 0600',
+    async (shell) => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-env-shell-'));
+      try {
+        const run = join(root, 'run/agentbox');
+        const tmp = join(root, 'tmp');
+        mkdirSync(run, { recursive: true });
+        mkdirSync(tmp);
+        const old = new Date(Date.now() - 10 * 60_000);
+        for (const f of [
+          `${run}/.agent-env-old1`,
+          `${tmp}/.agent-env-old2`,
+          `${tmp}/agentbox.agent-env-old3`,
+        ]) {
+          writeFileSync(f, 'stale');
+          utimesSync(f, old, old);
+        }
+        // A concurrent write's staging copy: too young for the sweep.
+        writeFileSync(`${tmp}/.agent-env-fresh`, 'x');
+        const sub = (c: string) =>
+          c
+            .replaceAll(' /tmp', ' @TMP')
+            .replaceAll('/run/agentbox', run)
+            .replaceAll('@TMP', tmp)
+            .replaceAll('sudo -n "$@"', '"$@"');
+        const backend = {
+          async uploadFile(_h: CloudHandle, local: string, remote: string) {
+            copyFileSync(local, sub(` ${remote}`).trim());
+            chmodSync(sub(` ${remote}`).trim(), 0o644);
+            if (remote.startsWith('/run/')) throw new Error('wrote, then failed');
+          },
+          async exec(_h: CloudHandle, cmd: string) {
+            execFileSync(shell, ['-c', sub(cmd)]);
+            return { exitCode: 0, stdout: '', stderr: '' };
+          },
+        } as unknown as CloudBackend;
+        await writeCloudAgentEnvFile(backend, {} as CloudHandle, { GEMINI_API_KEY: SECRET });
+        expect(readdirSync(run)).toEqual(['agent.env']);
+        expect(readdirSync(tmp)).toEqual(['.agent-env-fresh']);
+        expect(statSync(join(run, 'agent.env')).mode & 0o777).toBe(0o600);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('removeCloudAgentEnvFile deletes the file and never throws', async () => {
     const execs: string[] = [];

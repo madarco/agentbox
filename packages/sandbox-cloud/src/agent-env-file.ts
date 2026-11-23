@@ -6,8 +6,10 @@ import type { CloudBackend, CloudHandle } from '@agentbox/core';
 
 /**
  * The agent env a cloud box's launcher sources (`buildCloudAttachInnerCommand`).
- * `/run` is tmpfs, so a VPS power-off empties it; the host rewrites it on every
- * create and wake.
+ * The host rewrites it on every create and wake: on a VPS `/run` is tmpfs and
+ * a power-off empties it. On other providers (daytona) `/run` is not tmpfs, so
+ * a checkpoint can carry the file; the write never leaves a staging copy
+ * beside it.
  */
 export const CLOUD_AGENT_ENV_FILE = '/run/agentbox/agent.env';
 
@@ -31,7 +33,33 @@ export function renderAgentEnvFile(env: Readonly<Record<string, string>>): strin
   return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
 
-const SUDO_PREFIX = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi; `;
+/**
+ * Defines `asroot`, which runs its arguments under `sudo -n` when sudo exists.
+ * A function, not a `$SUDO` variable: daytona's exec shell is zsh, which does
+ * not word-split an unquoted `$SUDO`, so `$SUDO rm` looked up a command named
+ * `sudo -n` and every privileged step failed silently.
+ */
+const SUDO_PREFIX = `asroot() { if command -v sudo >/dev/null 2>&1; then sudo -n "$@"; else "$@"; fi; }; `;
+
+const STAGING_PREFIX = '.agent-env-';
+const STAGING_DIRS = ['/run/agentbox', '/tmp'] as const;
+
+/**
+ * Remove both staging paths of this write, plus any staging copy an earlier
+ * failed write left behind (`/tmp/agentbox.agent-env-*` is the pre-fix /tmp
+ * name). The sweep skips files younger than a minute so it cannot pull the
+ * staging copy out from under a concurrent write to the same box. asroot: an SDK
+ * upload may land a copy as another user, which sticky /tmp would not let the
+ * box user delete.
+ */
+function stagingCleanup(staged: readonly string[]): string {
+  return (
+    `asroot rm -f ${staged.join(' ')}; ` +
+    `asroot find ${STAGING_DIRS.join(' ')} -maxdepth 1 -type f ` +
+    `\\( -name '${STAGING_PREFIX}*' -o -name 'agentbox${STAGING_PREFIX}*' \\) ` +
+    `-mmin +1 -delete 2>/dev/null`
+  );
+}
 
 /**
  * Write the box's agent env into {@link CLOUD_AGENT_ENV_FILE}, 0600, owned by the
@@ -39,13 +67,13 @@ const SUDO_PREFIX = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; el
  * is readable by any process in the box, and cloud-init user_data or box.env would
  * expose them to the metadata service or every user.
  *
- * Staged as a 0600 local file (scp keeps the mode) and uploaded straight into
- * /run/agentbox, which is tmpfs, so a copy left by a failed move never reaches
- * the disk a snapshot captures. An SDK upload that cannot write there (it runs
- * as another user) falls back to /tmp; those providers already hold the same
- * values in their sandbox env. Moved into place with `install -m 600` as the
- * exec user (the box user on every cloud backend). Always written, even empty,
- * so a wake drops a key the host no longer has.
+ * Staged as a 0600 local file and uploaded into /run/agentbox, falling back to
+ * /tmp when the upload cannot write there. An SDK upload does not keep the
+ * mode, and /run is not tmpfs on every provider (daytona), so the staging copy
+ * is chmod 600 first thing and both staging paths are removed whatever
+ * happens: an upload can write the file and still throw. Moved into place with
+ * `install -m 600` as the exec user (the box user on every cloud backend).
+ * Always written, even empty, so a wake drops a key the host no longer has.
  */
 export async function writeCloudAgentEnvFile(
   backend: CloudBackend,
@@ -54,28 +82,33 @@ export async function writeCloudAgentEnvFile(
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'agentbox-agent-env-'));
   const local = join(dir, 'agent.env');
-  const name = `.agent-env-${randomBytes(6).toString('hex')}`;
+  const name = `${STAGING_PREFIX}${randomBytes(6).toString('hex')}`;
+  const staged = STAGING_DIRS.map((d) => `${d}/${name}`);
+  let cleaned = false;
   try {
     await writeFile(local, renderAgentEnvFile(env), { mode: 0o600 });
     await chmod(local, 0o600);
-    let remote = `/run/agentbox/${name}`;
+    let remote = staged[0]!;
     try {
       await backend.uploadFile(handle, local, remote);
     } catch {
-      remote = `/tmp/agentbox${name}`;
+      remote = staged[1]!;
       await backend.uploadFile(handle, local, remote);
     }
     const r = await backend.exec(
       handle,
       `umask 077; ${SUDO_PREFIX}` +
+        // chown before the chmod: an upload whose best-effort chown failed is
+        // still owned by the SDK user, and a 0600 file it owns is one the box
+        // user's `install` below cannot read.
+        `asroot chown "$(id -un):$(id -gn)" ${remote}; asroot chmod 600 ${remote}; ` +
         // The same mkdir + chown the in-box bootstrap does, so a /run/agentbox
         // recreated by root does not make `install` fail.
-        `$SUDO mkdir -p /run/agentbox && $SUDO chown "$(id -un):$(id -gn)" /run/agentbox; ` +
+        `asroot mkdir -p /run/agentbox && asroot chown "$(id -un):$(id -gn)" /run/agentbox; ` +
         `install -m 600 ${remote} ${CLOUD_AGENT_ENV_FILE}.new && mv -f ${CLOUD_AGENT_ENV_FILE}.new ${CLOUD_AGENT_ENV_FILE}; ` +
-        // sudo: an SDK upload may land the staging copy as another user, which
-        // sticky /tmp would not let the box user delete.
-        `rc=$?; $SUDO rm -f ${remote}; exit $rc`,
+        `rc=$?; ${stagingCleanup(staged)}; exit $rc`,
     );
+    cleaned = true;
     if (r.exitCode !== 0) {
       throw new Error(
         `writing ${CLOUD_AGENT_ENV_FILE} failed (exit ${String(r.exitCode)}): ${(r.stderr || r.stdout).slice(-300)}`,
@@ -83,6 +116,18 @@ export async function writeCloudAgentEnvFile(
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
+    if (!cleaned) {
+      try {
+        // No retries and a short cap: on an unreachable box the default retries
+        // would hold back the real error for minutes.
+        await backend.exec(handle, `${SUDO_PREFIX}${stagingCleanup(staged)}; true`, {
+          noRetry: true,
+          attemptTimeoutMs: 15_000,
+        });
+      } catch {
+        // best-effort: the write already failed and its error is what surfaces
+      }
+    }
   }
 }
 
@@ -95,7 +140,7 @@ export async function removeCloudAgentEnvFile(
   handle: CloudHandle,
 ): Promise<void> {
   try {
-    await backend.exec(handle, `${SUDO_PREFIX}$SUDO rm -f ${CLOUD_AGENT_ENV_FILE}`);
+    await backend.exec(handle, `${SUDO_PREFIX}asroot rm -f ${CLOUD_AGENT_ENV_FILE}`);
   } catch {
     // best-effort: the box is already in trouble if this exec fails too
   }
