@@ -2,6 +2,7 @@
 // watcher, as `/api/v1/history/host` serves it to the tray and the web UI. The
 // watcher runs in this hub's relay and reads this machine's config, so the
 // toggle writes this machine's `history.hostSessions` (global, or one project).
+import type { HostSessionsPatch } from './history-host-patch';
 import {
   hostProjectDecisions,
   knownProjectFolders,
@@ -9,7 +10,6 @@ import {
   setHostSessionsEnabled,
   setHostSessionsProject,
   type HostProjectDecision,
-  type HostProjectMode,
   type HostSessionsStatus,
 } from '@agentbox/relay';
 
@@ -22,14 +22,11 @@ export interface HostSessionsView {
   status: HostSessionsStatus | null;
 }
 
-export interface HostSessionsPatch {
-  enabled?: boolean;
-  project?: { folder: string; mode: HostProjectMode };
-}
+export type { HostSessionsPatch } from './history-host-patch';
 
 export interface HostSessionsBackend {
-  view(): Promise<HostSessionsView>;
-  update(patch: HostSessionsPatch): Promise<HostSessionsView>;
+  hostSessionsView(): Promise<HostSessionsView>;
+  updateHostSessions(patch: HostSessionsPatch): Promise<HostSessionsView>;
 }
 
 export function createHostSessionsBackend(
@@ -49,8 +46,8 @@ export function createHostSessionsBackend(
     return { enabled: d.enabled, projects: d.projects, status: await status() };
   };
   return {
-    view,
-    async update(patch) {
+    hostSessionsView: view,
+    async updateHostSessions(patch) {
       if (patch.enabled !== undefined) await (deps.setEnabled ?? setHostSessionsEnabled)(patch.enabled);
       if (patch.project) {
         await (deps.setProject ?? setHostSessionsProject)(patch.project.folder, patch.project.mode);
@@ -58,36 +55,4 @@ export function createHostSessionsBackend(
       return view();
     },
   };
-}
-
-/** Validate a `PUT /history/host` body. */
-export function parseHostSessionsPatch(
-  body: unknown,
-): { ok: true; value: HostSessionsPatch } | { ok: false; message: string } {
-  if (!body || typeof body !== 'object') return { ok: false, message: 'body must be an object' };
-  const b = body as Record<string, unknown>;
-  const out: HostSessionsPatch = {};
-  if (b.enabled !== undefined) {
-    if (typeof b.enabled !== 'boolean') return { ok: false, message: 'enabled must be a boolean' };
-    out.enabled = b.enabled;
-  }
-  if (b.project !== undefined) {
-    const p = b.project as Record<string, unknown> | null;
-    if (
-      !p ||
-      typeof p.folder !== 'string' ||
-      !p.folder.startsWith('/') ||
-      (p.mode !== 'allow' && p.mode !== 'deny' && p.mode !== 'inherit')
-    ) {
-      return {
-        ok: false,
-        message: 'project must be {folder: <absolute path>, mode: allow|deny|inherit}',
-      };
-    }
-    out.project = { folder: p.folder, mode: p.mode };
-  }
-  if (out.enabled === undefined && !out.project) {
-    return { ok: false, message: 'expected enabled and/or project' };
-  }
-  return { ok: true, value: out };
 }

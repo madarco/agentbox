@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createHostSessionsBackend, parseHostSessionsPatch } from '../lib/backend/history-host';
+import { createHostSessionsBackend } from '../lib/backend/history-host';
+import { parseHostSessionsPatch } from '../lib/backend/history-host-patch';
 
 describe('PUT /history/host body', () => {
   it('accepts enabled and/or one project', () => {
@@ -43,7 +44,7 @@ describe('host sessions backend', () => {
         return f;
       },
     });
-    const v = await backend.update({ enabled: true, project: { folder: '/p', mode: 'deny' } });
+    const v = await backend.updateHostSessions({ enabled: true, project: { folder: '/p', mode: 'deny' } });
     expect(calls).toEqual(['enabled=true', '/p=deny']);
     expect(v).toMatchObject({ enabled: true, projects: [{ folder: '/p', allowed: true }], status: null });
   });

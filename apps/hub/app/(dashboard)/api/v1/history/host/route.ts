@@ -3,15 +3,22 @@
 // its own allow/deny and the outcome, and the watcher's last pass.
 // PUT body: `{enabled?: boolean, project?: {folder, mode: allow|deny|inherit}}`;
 // answers the updated view. The watcher picks a change up on its next pass.
-import { createHostSessionsBackend, parseHostSessionsPatch } from '@/lib/backend/history-host';
+import { parseHostSessionsPatch } from '@/lib/backend/history-host-patch';
+import { backendOrNull } from '../../lib/backend';
 import { fail, ok } from '../../lib/envelope';
 import { readJson } from '../../lib/validate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+function unavailable(): Response {
+  return fail('backend_unavailable', 'host sessions need the in-process hub backend');
+}
+
 export async function GET(): Promise<Response> {
-  return ok(await createHostSessionsBackend().view());
+  const backend = backendOrNull();
+  if (!backend) return unavailable();
+  return ok(await backend.hostSessionsView());
 }
 
 export async function PUT(req: Request): Promise<Response> {
@@ -19,8 +26,10 @@ export async function PUT(req: Request): Promise<Response> {
   if (!body.ok) return fail('invalid_request', body.message);
   const patch = parseHostSessionsPatch(body.value);
   if (!patch.ok) return fail('invalid_request', patch.message);
+  const backend = backendOrNull();
+  if (!backend) return unavailable();
   try {
-    return ok(await createHostSessionsBackend().update(patch.value));
+    return ok(await backend.updateHostSessions(patch.value));
   } catch (e) {
     return fail('invalid_request', e instanceof Error ? e.message : String(e));
   }

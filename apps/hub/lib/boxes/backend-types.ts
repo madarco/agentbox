@@ -1,3 +1,4 @@
+import type { HostSessionsBackend } from '../backend/history-host';
 import type { AddBoxAgentResult } from '../backend/box-agents';
 import type {
   HubState,
@@ -551,7 +552,12 @@ export type BoxLogAttachSpec =
 // packages never enter Next's bundle. This is a pure-type module (no runtime
 // imports) so both the implementation and the ambient global can share it.
 export interface HubBackend
-  extends WorkspaceBackend, ManagerBackend, TimelineBackend, CheckoutBackend, AccountBackend {
+  extends WorkspaceBackend,
+    ManagerBackend,
+    TimelineBackend,
+    CheckoutBackend,
+    AccountBackend,
+    HostSessionsBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
   // backend — so the backend produces everything else. `live` (opt-in, expensive
   // — mirrors providers' `?freshness=1`) refreshes each cloud box's `state` with
