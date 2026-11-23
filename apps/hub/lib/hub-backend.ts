@@ -3584,11 +3584,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: `provider '${provider.name}' does not support log streaming` };
         }
         const spec = opts.daemon
-          ? await provider.buildAttach(box, 'shell', {
-              sessionName: 'daemon-logs',
+          ? // `logs`, not `shell`: a non-TTY stream. Vercel runs it on the SDK
+            // helper instead of `sbx exec -i`, and SSH backends skip the PTY hop.
+            await provider.buildAttach(box, 'logs', {
               user: 'vscode',
               command: `tail -n ${opts.tail} -F ${DAEMON_LOG_PATH}`,
-              noTmux: true,
             })
           : await provider.buildAttach(box, 'logs', {
               service: opts.service ?? '',

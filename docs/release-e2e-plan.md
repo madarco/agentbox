@@ -202,6 +202,20 @@ All seven phases are built (2026-09-21):
 
 ## Fixes for bugs the suite found
 
+### Vercel: the detached agent start fails on Node 26 (fix/vercel-sdk-detached-start)
+
+Cause: the detached start and `logs` shelled out to the host's `sbx`. `sbx` 3.x bundles undici 7.26, and under Node 26 a userland undici < 7.27 dispatcher makes the built-in `fetch` skip content decoding, so `sbx exec` fails on a compressed 200 ("Sandbox API request failed").
+
+Plan:
+
+1. `packages/sandbox-vercel/src/exec-helper.ts`, a CJS bundle like E2B's `attach-helper.cjs`: connects with the in-process `@vercel/sandbox` SDK, runs one command as `vscode`, streams stdout/stderr, exits with its code. Credentials ride the child env, never argv.
+2. `buildVercelAttach` returns the helper argv for `detached` and `logs`. `sbx exec -i` stays only for the interactive PTY.
+3. `detectSbx` parses the version and flags anything below major 4 as outdated. The interactive attach refuses an outdated `sbx` only when it runs on Node 26+ (it still works on older Node, so there it warns), naming the resolved binary and its package manager in the update command; `agentbox vercel login` offers to update it, like it offers the install. `installSbx` installs `sandbox@latest`.
+4. Raise the `undici` floor to 7.30 so the in-process SDK is safe on Node 26 in the workspace lock as well as in npm installs.
+5. Stage the helper in the CLI runtime (`runtime/vercel/exec-helper.cjs`) and the hub standalone.
+
+Done when a `vercel` create with `-i` starts the claude session on Node 26 with `sbx` 3.x on PATH. Unit tests cover the version gate and the attach argv.
+
 ### Fix: opencode `-i` launch (`fix/opencode-prompt-launch`)
 
 `agentbox opencode -i "<prompt>"` died on every cloud and silently on docker: the shared launcher passed the prompt as the first positional, which opencode reads as its project directory.

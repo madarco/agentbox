@@ -292,10 +292,12 @@ for (const [srcRel, destRel, exec] of daytonaFiles) {
 // runtime/vercel/<...>). The vercel package is bundled into dist/index.js, so
 // unlike the monorepo its dist/ isn't shipped — stage these explicitly.
 // provision.sh lands at runtime/vercel/scripts/provision.sh because
-// findStagedCliRuntimeRoot() anchors on that path. (Interactive attach uses the
-// external `sbx` CLI now, so there's no attach-helper bundle to stage.)
+// findStagedCliRuntimeRoot() anchors on that path. Interactive attach uses the
+// external `sbx` CLI; the detached agent start and `logs` spawn exec-helper.cjs
+// (in-process SDK, resolved by build-attach.ts under runtime/vercel/).
 const vercelFiles = [
   ['packages/sandbox-vercel/scripts/provision.sh', 'scripts/provision.sh', true],
+  ['packages/sandbox-vercel/dist/exec-helper.cjs', 'exec-helper.cjs', false],
   ['packages/ctl/dist/bin.cjs', 'ctl.cjs', true],
   ['packages/sandbox-docker/scripts/agentbox-vnc-start', 'agentbox-vnc-start', true],
   ['packages/sandbox-docker/scripts/agentbox-dockerd-start', 'agentbox-dockerd-start', true],

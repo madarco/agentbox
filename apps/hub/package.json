@@ -49,7 +49,7 @@
     "react": "^19",
     "react-dom": "^19",
     "tailwind-merge": "^3.2.0",
-    "undici": "^7.26.0"
+    "undici": "^7.30.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.14",

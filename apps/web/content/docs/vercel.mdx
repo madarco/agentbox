@@ -173,6 +173,7 @@ agentbox create --provider vercel --checkpoint setup
 - **No live stats** — `agentbox top` / `dashboard` render `—` for cloud boxes, and `list` reports them optimistically as `running`.
 - **Privileged ports are rejected** — the WebProxy runs on 8080 (not 80); `agentbox url` resolves the 8080 domain.
 - **Push through the relay** — use `agentbox-ctl git push` from a box; the relay holds the credentials. See [sync-and-git](/docs/sync-and-git).
+- **Interactive attach on Node 26 needs the Vercel `sandbox` CLI 4.x or newer.** `agentbox shell|claude|codex|opencode` on a Vercel box opens its terminal through `sbx exec -i`. Older builds (3.x) fail on Node 26 with "Sandbox API request failed … 200 OK", so attach refuses that pairing and only warns on older Node. The message names the `sbx` it found; `agentbox vercel login` offers to update it with the package manager that owns it (`npm install -g sandbox@latest`, or `pnpm add -g sandbox@latest` for a pnpm global install). Starting an agent in the background (`-i`) and `logs` do not use the CLI; they run on AgentBox's own SDK.
 - **`--size` on Vercel means vCPUs** — `1`/`2`/`4`/`8` only; other counts (or a size spec meant for another provider) fail fast before create.
 
 ## Related
