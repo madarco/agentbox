@@ -154,3 +154,57 @@ export async function previewSkillSet(
     skills: decided.map((d) => ({ ...d, description: desc.get(d.name) ?? '' })),
   };
 }
+
+/**
+ * Give box `to` the box-scope bindings box `from` has (a clone keeps the skills
+ * its source was bound to). A no-op when `from` has none. Returns how many.
+ */
+export function copyBoxBindings(store: SkillsStore, from: string, to: string): Promise<number> {
+  return serialized(async () => {
+    const doc = await readBindings(store, { strict: true });
+    const source = bindingsAt(doc, 'box', from);
+    const names = Object.keys(source);
+    if (names.length === 0) return 0;
+    await writeBindings(store, applyBindingChanges(doc, 'box', to, { ...source }));
+    return names.length;
+  });
+}
+
+/**
+ * Wait for a clone's create job to name its box, then copy the source box's
+ * box-scope bindings to it. The box id only exists once the worker has built
+ * the box, so this runs after the route answered. Best-effort: a failed or
+ * timed-out create copies nothing, and an error is logged, never thrown.
+ */
+export async function copyBoxBindingsWhenCreated(args: {
+  store: SkillsStore;
+  fromBoxId: string;
+  getJob: (id: string) => Promise<{ status: string; boxId?: string } | null>;
+  jobId: string;
+  log?: (line: string) => void;
+  pollMs?: number;
+  timeoutMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<number> {
+  const pollMs = args.pollMs ?? 2_000;
+  const deadline = Date.now() + (args.timeoutMs ?? 60 * 60_000);
+  const sleep = args.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  try {
+    // Nothing to wait for when the source has no box bindings.
+    const doc = await readBindings(args.store);
+    if (Object.keys(bindingsAt(doc, 'box', args.fromBoxId)).length === 0) return 0;
+    while (Date.now() < deadline) {
+      const job = await args.getJob(args.jobId).catch(() => null);
+      if (job?.boxId) return await copyBoxBindings(args.store, args.fromBoxId, job.boxId);
+      if (!job || ['done', 'failed', 'cancelled'].includes(job.status)) return 0;
+      await sleep(pollMs);
+    }
+    args.log?.(`skills: clone job ${args.jobId} never named its box; box bindings not copied`);
+    return 0;
+  } catch (err) {
+    args.log?.(
+      `skills: copying box bindings from ${args.fromBoxId} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 0;
+  }
+}

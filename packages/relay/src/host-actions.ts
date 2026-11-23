@@ -93,7 +93,7 @@ import {
   runGrantedTool,
   toolRequestsEnabled,
 } from './host-tools.js';
-import { canAutoApproveTransfer } from './safe-transfer.js';
+import { canAutoApproveTransfer, workspaceDownloadWarning } from './safe-transfer.js';
 import { recordAgents } from './registration-to-record.js';
 import { offerBrowserOpen } from './open-link.js';
 import type {
@@ -1263,30 +1263,14 @@ async function runDownloadRpc(
     typeof params.hostPath === 'string' && params.hostPath.length > 0
       ? resolveHostPath(lookup.workspacePath, params.hostPath)
       : lookup.workspacePath;
-  // Auto-approve when the destination stays inside the box project folder
-  // (the default does); an escaping override still prompts.
-  const dlAuto = await canAutoApproveTransfer({
-    enabled: deps.autoApproveSafeHostActions !== false,
-    workspacePath: lookup.workspacePath,
-    hostPaths: [hostDst],
-    checkSecret: false,
-  });
-  if (dlAuto) {
-    deps.prompts?.noteAutoApprove(
-      deps.boxId,
-      {
-        kind: 'confirm',
-        message: `download (${kind}) from ${deps.boxName ?? deps.boxId}`,
-        detail: params.hostPath ?? '(default host location)',
-        context: { command: action.method, argv: params.hostPath ? [params.hostPath] : [] },
-      },
-      'safe: contained download',
-    );
-  } else if (deps.prompts && deps.subscribers) {
+  // Always asked, even under `box.autoApproveSafeHostActions`: the landing is
+  // the user's own project, and the box decides what overwrites it. Being
+  // "contained in the project folder" is exactly what makes it destructive.
+  if (deps.prompts && deps.subscribers) {
     const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
       kind: 'confirm',
       message: `Allow download (${kind}) from ${deps.boxName ?? deps.boxId}?`,
-      detail: params.hostPath ?? '(default host location)',
+      detail: workspaceDownloadWarning(hostDst),
       defaultAnswer: 'n',
       context: {
         command: action.method,
@@ -1296,6 +1280,12 @@ async function runDownloadRpc(
     if (verdict.answer !== 'y') {
       return { exitCode: 10, stdout: '', stderr: 'denied by user\n' };
     }
+  } else {
+    return {
+      exitCode: 10,
+      stdout: '',
+      stderr: 'download needs an approval and this relay has no one to ask\n',
+    };
   }
   if (deps.prepareBox) {
     const stop = await deps.prepareBox();

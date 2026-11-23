@@ -231,6 +231,38 @@ export function credentialFreshness(agent: CredentialAgentKind, text: string): n
   return path ? jsonNumberAt(text, path) : null;
 }
 
+/** The `exp` claim of a JWT, in ms epoch, or null. Decoded, never verified. */
+function jwtExpMs(token: unknown): number | null {
+  if (typeof token !== 'string') return null;
+  const payload = token.split('.')[1];
+  if (!payload) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown;
+    const exp = (claims as { exp?: unknown } | null)?.exp;
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * When a credential blob's access token expires (ms epoch), or null when it
+ * can't be told: the agent's declared freshness field, else the `exp` of an
+ * OAuth access-token JWT stored as `tokens.access_token` (the auth.json shape
+ * that declares no freshness field). Ordering only — two copies of a login
+ * compare by it, the later one is the one a refresh produced.
+ */
+export function credentialExpiry(agent: CredentialAgentKind, text: string): number | null {
+  const declared = credentialFreshness(agent, text);
+  if (declared !== null) return declared;
+  try {
+    const parsed = JSON.parse(text) as { tokens?: { access_token?: unknown } } | null;
+    return jwtExpMs(parsed?.tokens?.access_token);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * `claudeAiOauth.refreshTokenExpiresAt` (ms epoch) of a claude blob, or null.
  * The refresh token's own life (~30 days from the original sign-in) — the field

@@ -35,15 +35,12 @@ export function cloneCreateInput(prepared: StagedClone): CreateBoxInput {
     // neither the request nor the source box said anything, and sending `false`
     // there would override the hub's own `box.persistent`.
     opts: {
+      // What the source box was (skills, LLM proxy, accounts, borrowed logins,
+      // limits, size…), decided field by field in `clone-carry.ts`. Logins are
+      // re-read from the host, never copied from the source box.
+      ...prepared.carried,
+      // The resolved always-on flag wins over the source's (explicit input).
       ...(prepared.persistent !== undefined ? { persistent: prepared.persistent } : {}),
-      // A bot on the user's Codex account stays on it when spawned: the
-      // seed is re-read from the host, never copied from the source box.
-      ...(prepared.borrowedCredentials?.length
-        ? { borrowCredentials: [...prepared.borrowedCredentials] }
-        : {}),
-      ...(prepared.accounts && Object.keys(prepared.accounts).length > 0
-        ? { accounts: { ...prepared.accounts } }
-        : {}),
       // A clone has no human to ask, and `carry:` is a `required` prompt — so
       // without this every clone of a project that declares one is refused. The
       // grant is inherited rather than invented: the source box was approved for
