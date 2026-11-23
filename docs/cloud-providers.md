@@ -1067,11 +1067,19 @@ snapshots and `sandbox.domain(port)` public preview URLs. The shape in brief:
   box, so (like Daytona) the Portless in-box mirror is skipped. Max 4 exposed
   ports; we declare 8080 (WebProxy), 6080 (noVNC), 8788 (relay/ctl bridge), and
   fill the fourth slot from `agentbox.yaml`'s `expose:` ports.
-- **No SSH → custom attach.** `@vercel/sandbox` exposes no stdin/PTY channel, so
-  `buildAttach` is overridden to spawn `attach-helper.js`, which bridges the
-  local terminal to a box-side tmux session via `send-keys`/`capture-pane` over
-  the SDK. (A ttyd/WebSocket terminal is the planned latency upgrade — see the
-  backlog.)
+- **No SSH → two attach transports** (`build-attach.ts`). The interactive PTY
+  drives the host's Vercel `sandbox` CLI (`sbx exec -i`), gated on `sbx` >= 4
+  (`MIN_SBX_MAJOR`) only when that `sbx` runs on Node >= 26 (`BROKEN_NODE_MAJOR`,
+  read from its shebang or PATH `node`); on older Node an outdated `sbx` only
+  warns. sbx 3.x bundles undici 7.26, and under Node 26 that dispatcher makes
+  `fetch` skip content decoding, so every compressed response fails with
+  "Sandbox API request failed … 200 OK". The update hint names the resolved
+  binary and uses `pnpm add -g` for a pnpm global install. The detached `-i` pre-start
+  and `logs` spawn `exec-helper.cjs` instead, which runs the command on the
+  in-process `@vercel/sandbox` SDK (staged at `runtime/vercel/exec-helper.cjs`
+  in the CLI and as `vercel-exec-helper.cjs` in the hub standalone), so a
+  background agent start never depends on the host CLI. The `undici` floor
+  (>= 7.30) keeps the in-process SDK clear of the same Node 26 bug.
 - **Checkpoints store the snapshot id.** Vercel snapshots are id-addressed, so
   the provider overrides `checkpoint` to write the Vercel snapshot id into the
   cloud-checkpoint manifest's `snapshotName` field; restore boots from it.

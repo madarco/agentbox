@@ -122,9 +122,7 @@ const EXTERNAL_NOT_A_DEP = new Set(['pg-native']);
 
 // esbuild is a transitive workspace dep; resolve it via tsup's tree.
 const require = createRequire(import.meta.url);
-const esbuild = require(
-  createRequire(require.resolve('tsup')).resolve('esbuild'),
-);
+const esbuild = require(createRequire(require.resolve('tsup')).resolve('esbuild'));
 
 console.log('[build-standalone] esbuild-bundling server.ts …');
 await esbuild.build({
@@ -176,10 +174,37 @@ await rm(serverOut, { recursive: true, force: true });
 // to start the agent detached (E2B has no SSH). `resolveAttachHelperPath` looks for
 // it next to the running bundle, so a hub-created e2b box would come up but its
 // `-i` agent-start fails ("e2b attach helper not found") without this copy.
-const e2bHelperSrc = path.join(hubDir, '..', '..', 'packages', 'sandbox-e2b', 'dist', 'attach-helper.cjs');
+const e2bHelperSrc = path.join(
+  hubDir,
+  '..',
+  '..',
+  'packages',
+  'sandbox-e2b',
+  'dist',
+  'attach-helper.cjs',
+);
 if (existsSync(e2bHelperSrc)) {
   await cp(e2bHelperSrc, path.join(outApp, 'attach-helper.cjs'));
   console.log('[build-standalone] staged e2b attach-helper.cjs');
 }
 
-console.log(`[build-standalone] done → ${path.relative(process.cwd(), path.join(outApp, 'server.js'))}`);
+// Same for the Vercel provider's SDK exec helper: the worker spawns it for the
+// detached `-i` agent start (the host's `sbx` is only used for interactive PTYs).
+// Staged under its own name so it can't collide with the e2b helper.
+const vercelHelperSrc = path.join(
+  hubDir,
+  '..',
+  '..',
+  'packages',
+  'sandbox-vercel',
+  'dist',
+  'exec-helper.cjs',
+);
+if (existsSync(vercelHelperSrc)) {
+  await cp(vercelHelperSrc, path.join(outApp, 'vercel-exec-helper.cjs'));
+  console.log('[build-standalone] staged vercel exec-helper.cjs');
+}
+
+console.log(
+  `[build-standalone] done → ${path.relative(process.cwd(), path.join(outApp, 'server.js'))}`,
+);
