@@ -2,7 +2,7 @@
 
 **Status:** Phases 1, 2 done (store, archive, ingest, read API + CLI for claude
 in boxes); Phase 3 implemented (codex, pi, opencode transcripts, re-parse job;
-openclaw deferred); Phase 4 (memory, claude) implemented; Phases 5-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
+openclaw in Phase 3b); Phase 4 (memory, claude) implemented; Phases 5-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -379,9 +379,7 @@ Re-parse job (raw → normalized) for parser version bumps.
   `parser_version` is below its module's: clear the projection, stream the raw
   through `parse`, store the end parse state, stamp the version. It runs at hub
   start and in the hourly sweep, inside the ingest queue.
-- **openclaw** is not in this phase (see the backlog): its 2026.11 store is a
-  large schema (`transcript_events` with zstd-compressed event blobs, plus
-  navigation rows) that Phase 0 did not measure.
+- **openclaw** was deferred from this phase and is done in Phase 3b below.
 - **As built:** ctl runs the row cursor in every box; the relay's final docker
   read no longer triggers it itself: the hub's destroy flush runs the box's
   `agentbox-ctl history flush` first and the relay read after it, or after a

@@ -154,12 +154,25 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
 
 ## Phase 3 (other agents)
 
-- **openclaw.** Not captured. Its 2026.11 store is a per-agent sqlite with a
-  large schema; transcripts look like `transcript_events(session_id, seq,
-  event_json | event_zstd, created_at, …)`, with compressed events the row
-  cursor cannot read as JSON. Its volume is always isolated per box, so it
-  would also need a "every session in the db" mode instead of bindings.
-  Measure it in a live openclaw box first.
+- **openclaw: only the `main` agent.** The row cursor reads
+  `agents/main/agent/openclaw-agent.sqlite`; sessions of any other openclaw agent
+  id (`openclaw agents add`) are not captured. Fix: a `*` in the `sqlite.db`
+  path, one cursor per matching db.
+- **openclaw: an event rewritten in place is not re-copied.** `transcript_events`
+  has no updated column, so the cursor keys a row on `created_at`; the 20 s
+  settle covers a rewrite during a turn, not a later one
+  (`transcript_rewrite_watermarks` suggests rewrites exist). Rewind / reset make
+  a new window instead, which is captured.
+- **openclaw: cold archives.** Old windows can move out of the db into
+  `agents/<id>/sessions/cold/<sha256>.jsonl.zst`. Anything copied before that is
+  kept; a box whose history predates capture (a restored bot) has those events
+  only in the cold files, which are not read.
+- **openclaw: a shared volume or a clone attributes to the wrong box.** Every
+  session in the db is bound to the box that reads it. That is right for the
+  default per-box volume, but an explicit `isolate: false` override (warned at
+  create) or a `bot clone` / `--restore` copy makes a second box bind and ship
+  the same sessions under its own origin (the hub merges by session id, so the
+  later box wins the attribution).
 - **codex `.jsonl` → `.jsonl.zst`.** Codex compresses cold rollouts and the
   shipper does not follow the rename. A rollout compressed before its tail was
   shipped loses that tail (the hub keeps what it has). Boxes ship every 30 s,
