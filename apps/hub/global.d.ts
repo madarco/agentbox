@@ -3,6 +3,7 @@ import type { HubBackend } from './lib/boxes/backend-types';
 import type { DeviceService } from './lib/backend/devices';
 import type { HistoryService } from './lib/backend/history';
 import type { MemoryService } from './lib/backend/history-memory';
+import type { SkillProposals } from './lib/backend/skill-proposals';
 
 declare global {
   // Set by the custom server (server.ts) after the relay daemon is constructed,
@@ -29,6 +30,11 @@ declare global {
   // custom server; boxes reach the same server through the relay.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_MCP: { handle(message: unknown): Promise<unknown> } | undefined;
+
+  // Skill proposals from boxes (docs/hub-skills-plan.md, Phase 7), set by the
+  // custom server: it holds the relay's prompt mailbox the approval waits in.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_SKILL_PROPOSALS: SkillProposals | undefined;
 
   // Host-facing backend (box list + lifecycle). Set by the custom server; Next's
   // source.ts / actions.ts reach the Node/docker toolchain only through this, so

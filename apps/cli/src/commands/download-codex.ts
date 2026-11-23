@@ -5,11 +5,13 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { pullTransportForBox } from './_agent-pull-transport.js';
 import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
+import { PROPOSE_FLAG_HELP, runSkillProposeStep } from './_skill-propose-step.js';
 import { codexStagedItems } from '@agentbox/agent-codex';
 
 interface DownloadCodexOpts {
   yes?: boolean;
   dryRun?: boolean;
+  propose?: boolean;
   propagate?: string;
 }
 
@@ -23,6 +25,7 @@ export const downloadCodexCommand = new Command('codex')
   )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--dry-run', "list new items and exit; don't write")
+  .option('--no-propose', PROPOSE_FLAG_HELP)
   .option(
     '--propagate <scope>',
     'also copy the pulled items into other boxes: project|all|none (default: ask)',
@@ -36,49 +39,59 @@ export const downloadCodexCommand = new Command('codex')
       // agent's docker config VOLUME mounted at its box path (so the box can be
       // stopped — no unpause/start dance).
       const { transport } = await pullTransportForBox(box, 'codex');
-      const pull = (dryRun: boolean): Promise<{ newItems: string[] }> =>
-        agentPull('codex', transport, { dryRun });
+      // The agent's own pull first; its early returns end only this part.
+      await (async () => {
+        const pull = (dryRun: boolean): Promise<{ newItems: string[] }> =>
+          agentPull('codex', transport, { dryRun });
 
-      const preview = await pull(true);
+        const preview = await pull(true);
 
-      if (preview.newItems.length === 0) {
-        process.stdout.write('no new Codex config to download into ~/.codex\n');
-        return;
-      }
+        if (preview.newItems.length === 0) {
+          process.stdout.write('no new Codex config to download into ~/.codex\n');
+          return;
+        }
 
-      for (const item of preview.newItems) process.stdout.write(`  ${item} (new)\n`);
+        for (const item of preview.newItems) process.stdout.write(`  ${item} (new)\n`);
 
-      if (opts.dryRun) {
-        process.stdout.write(
-          `\n[dry-run] ${preview.newItems.length} item(s) would be downloaded into ~/.codex\n`,
-        );
-        return;
-      }
+        if (opts.dryRun) {
+          process.stdout.write(
+            `\n[dry-run] ${preview.newItems.length} item(s) would be downloaded into ~/.codex\n`,
+          );
+          return;
+        }
 
-      const applyToHost =
-        opts.yes ||
-        (await confirm({
-          message: `Download ${preview.newItems.length} Codex item(s) into ~/.codex? (existing items are never overwritten)`,
-          initialValue: false,
-        }));
-      if (applyToHost) {
-        const result = await pull(false);
-        process.stdout.write(`downloaded ${result.newItems.length} item(s) into ~/.codex\n`);
-      } else {
-        log.info('skipped the host ~/.codex write');
-      }
+        const applyToHost =
+          opts.yes ||
+          (await confirm({
+            message: `Download ${preview.newItems.length} Codex item(s) into ~/.codex? (existing items are never overwritten)`,
+            initialValue: false,
+          }));
+        if (applyToHost) {
+          const result = await pull(false);
+          process.stdout.write(`downloaded ${result.newItems.length} item(s) into ~/.codex\n`);
+        } else {
+          log.info('skipped the host ~/.codex write');
+        }
 
-      // Propagation stages from the source (volume or live box), so it works
-      // whether or not the host write above was accepted.
-      const items = codexStagedItems(preview.newItems);
-      await runPropagateStep({
+        // Propagation stages from the source (volume or live box), so it works
+        // whether or not the host write above was accepted.
+        const items = codexStagedItems(preview.newItems);
+        await runPropagateStep({
+          agent: 'codex',
+          sourceBox: box,
+          items,
+          stage: (stagingDir) =>
+            stageItemsViaTransport(transport, agentBoxConfigDir('codex'), items, stagingDir),
+          scopeFlag,
+          yes: opts.yes,
+        });
+      })();
+      await runSkillProposeStep({
+        box,
         agent: 'codex',
-        sourceBox: box,
-        items,
-        stage: (stagingDir) =>
-          stageItemsViaTransport(transport, agentBoxConfigDir('codex'), items, stagingDir),
-        scopeFlag,
-        yes: opts.yes,
+        transport,
+        propose: opts.propose,
+        dryRun: opts.dryRun,
       });
     } catch (err) {
       handleLifecycleError(err);

@@ -778,6 +778,49 @@ proxy (depends on the history plan's Phase 6 MCP server existing).
 **Done:** a skill written by an agent inside a box lands in the library after
 one approval and appears in the next box.
 
+**Implementation plan (2026-11-23):**
+
+1. **Proposals, hub side** (`apps/hub/lib/backend/skill-proposals.ts`). `POST
+   /api/v1/skills/{name}/propose`: the same tarball body + meta header as the
+   `PUT`, plus the box it came from. Unlike the `PUT`, the hub reads the tarball
+   itself (the sandbox-core tar reader, in the hub server process): it
+   re-derives the tree hash, reads `SKILL.md` frontmatter (name must match,
+   description required), refuses reserved names, and runs the secret scan, so
+   the approver sees the hub's own findings and a `SKILL.md` preview rather than
+   what the uploader claims. A version equal to the library's current is
+   answered `unchanged` with no prompt. Otherwise it parks one approval in the
+   relay's prompt mailbox (`askMcpApproval`, default no, 24 h), under the box's
+   id, and answers `pending` at once. The tarball waits in hub memory until the
+   answer (bounded count); approval imports it as a new version through
+   `importSkill`, unless the library's current moved meanwhile (then nothing is
+   written, as with `memory_propose`). The route reaches the handler through
+   `globalThis`, like the MCP route, so the relay stays out of Next's bundle.
+2. **`agentbox download <agent>`** (claude, codex, pi, openclaw): after its
+   existing pull, it reads the agent's in-box skill dirs (the agent's
+   `skills.dirs` that sit under its box config dir, so the docker volume
+   transport reaches them on a stopped box too), skipping symlinked entries
+   (carried copies), reserved names, skills this PC has with the same tree hash
+   and skills the library already has at that version. Each remaining skill is
+   proposed. `--no-propose` skips the step. No local confirm: the hub approval
+   is the one gate. `agentbox-ctl download <agent>` in a docker box runs the
+   same command on the host, so an in-box agent reaches it too.
+3. **MCP skills tool set** (`apps/hub/lib/backend/mcp-skills.ts`), appended to
+   the Phase 6 core: `skills_list` (name, description, version, size,
+   `installed`), `skill_get` (`SKILL.md` plus the file list; `path` reads one
+   more text file, paged), `skills_propose_install`. A box sees only the
+   skills its bindings resolve to (box > project > workspace > global); a hub
+   caller sees the whole library. The relay adds the box's skill context to
+   `McpBoxScope` (`skills: {boxId, projectKey, workspaceId(), selection}`, from
+   the registration only, the same context `skills.get` uses).
+4. **Install = a box binding.** `skills_propose_install` takes a visible skill
+   the box's create flags left out, asks one approval, and on yes writes a
+   box-scope `include` binding. For that to win, a box binding now outranks the
+   create flags (box binding > flags > project > workspace > global): a later,
+   explicit per-box decision beats the create-time one. The agent then runs
+   `agentbox-ctl skills sync` (Phase 5 owns pushing syncs).
+5. **Docs:** public skills page (proposals, MCP tools), CLI reference
+   (`--no-propose`), OpenAPI, backlog.
+
 Stage 2 (team libraries) is not a phase here. It follows the multi-user work
 and only adds `team_id` scope plus admin publishing to this schema.
 

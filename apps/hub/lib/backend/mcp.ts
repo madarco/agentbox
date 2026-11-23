@@ -38,7 +38,9 @@ export class McpToolError extends Error {}
 export const MCP_INSTRUCTIONS =
   "AgentBox keeps the transcripts of past coding-agent sessions (from every box) and the agents' shared memory. " +
   'Use sessions_search to find earlier work by keywords, session_get to read a session, ' +
-  'and memory_list / memory_get for the memory files. In a box, results are limited to this repository.';
+  'and memory_list / memory_get for the memory files. In a box, results are limited to this repository. ' +
+  "It also holds the user's skills library: skills_list and skill_get read the skills this box may use, " +
+  'and skills_propose_install asks a human to add one this box lacks.';
 
 export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 

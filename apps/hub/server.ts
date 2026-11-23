@@ -61,6 +61,8 @@ import { createHistoryService, type HistoryService } from './lib/backend/history
 import { createMemoryService, type MemoryService } from './lib/backend/history-memory';
 import { createMcpServer, MCP_INSTRUCTIONS, type McpHubScope } from './lib/backend/mcp';
 import { historyMcpTools } from './lib/backend/mcp-history';
+import { skillsMcpTools } from './lib/backend/mcp-skills';
+import { createSkillProposals } from './lib/backend/skill-proposals';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -304,6 +306,13 @@ async function main(): Promise<void> {
         });
         return () => tools;
       })(),
+      (() => {
+        const tools = skillsMcpTools({
+          store: () => custody,
+          log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+        });
+        return () => tools;
+      })(),
     ],
   });
   const hubMcpScope: McpHubScope = {
@@ -316,6 +325,16 @@ async function main(): Promise<void> {
     redact: (bytes) => Promise.resolve(bytes),
   };
   globalThis.__AGENTBOX_HUB_MCP = { handle: (message) => mcpServer.handle(message, hubMcpScope) };
+  // Skill proposals from boxes (hub-skills Phase 7): one approval each, in the
+  // same prompt mailbox, under the box that wrote the skill.
+  globalThis.__AGENTBOX_HUB_SKILL_PROPOSALS = createSkillProposals({
+    store: custody,
+    approve: (boxId, req) =>
+      relayForMcp
+        ? askMcpApproval(relayForMcp.prompts, relayForMcp.subscribers, boxId, req)
+        : Promise.resolve(false),
+    log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+  });
 
   const daemon = await startRelayDaemon({
     port,
