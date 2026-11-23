@@ -215,6 +215,13 @@ export interface VerifySessionOpts {
    * runs.
    */
   seedText?: string;
+  /**
+   * Scan the pane for auth-failure markers (default true). Off where the login
+   * was already checked before create (docker): the scan also matches the
+   * agent's own output (`throw new Unauthorized()`), so it can only add false
+   * failures there.
+   */
+  scanAuth?: boolean;
 }
 
 export async function verifyAgentSessionStaysUp(
@@ -224,7 +231,7 @@ export async function verifyAgentSessionStaysUp(
   binary: string,
   opts: VerifySessionOpts = {},
 ): Promise<void> {
-  const scanAuth = !AGENT_AUTH_FAILURE.test(opts.seedText ?? '');
+  const scanAuth = opts.scanAuth !== false && !AGENT_AUTH_FAILURE.test(opts.seedText ?? '');
   const windowMs = opts.windowMs ?? 10_000;
   const pollMs = opts.pollMs ?? 2_000;
   const q = tmuxTarget(sessionName);

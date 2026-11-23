@@ -298,4 +298,18 @@ describe('verifyAgentSessionStaysUp (the docker path runs it over docker exec)',
       verifyAgentSessionStaysUp(exec, 'b1', 'claude', 'claude', { windowMs: 0 }),
     ).rejects.toThrow(/credentials were rejected/);
   });
+
+  it('scanAuth: false keeps only the stay-up check', async () => {
+    const exec = vi.fn<SessionProbeExec>(async () => ({
+      exitCode: 0,
+      stdout: 'throw new Unauthorized()',
+    }));
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'claude', 'claude', { windowMs: 0, scanAuth: false }),
+    ).resolves.toBeUndefined();
+    const dead = vi.fn<SessionProbeExec>(async () => ({ exitCode: 7, stdout: '' }));
+    await expect(
+      verifyAgentSessionStaysUp(dead, 'b1', 'claude', 'claude', { windowMs: 0, scanAuth: false }),
+    ).rejects.toThrow(/exited immediately/);
+  });
 });

@@ -36,10 +36,17 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 - **Daytona leaves the secret-bearing agent-env staging copy behind** (`/run/agentbox/.agent-env-<hex>`, mode 0644) when the first upload throws and the fallback to `/tmp` runs; the `install`/`rm` only touch the `/tmp` copy (`packages/sandbox-cloud/src/agent-env-file.ts`). Found in the same investigation; separate fix.
 - **docker@linux: claude sits on its first-run theme picker** when the host has no `~/.claude`, because `ensureClaudeVolume` returns before writing a pre-onboarded `_claude.json` (the cloud path has `buildBoxClaudeJsonFromHost`'s fallback). The new docker stay-up probe does not catch it: the session is alive.
 
-- **A queued cloud `-i` create never ingests `--model-auth`.** `runCloudJob` (`apps/cli/src/commands/_run-queued-job.ts`) and the hub worker's detached start skip `runModelAuthIngest`, which the docker runner and the foreground attaches run. Live on Daytona (2026-11-23): `agentbox opencode --provider daytona --model-auth codex -i …` copied the codex login into the box but opencode kept its own expired `openai` entry and answered `Token refresh failed: 401`; the same command on docker logged "imported the Codex login as openai" and the turn ran.
 - **The stay-up probe misses opencode's auth dead-end.** `AGENT_AUTH_FAILURE` (`packages/sandbox-cloud/src/detached-agent.ts`) has no marker for opencode's `Token refresh failed: 401`, so a box whose opencode login expired reports `done`.
 
 - **A user `--prompt` after `--` overrides the `-i` seed for opencode.** `agentbox opencode -i "a" -- --prompt "b"` launches `opencode --prompt a --prompt b` and yargs keeps the last value, so the seed (or a prepended resync warning) is dropped. Edge case; the launcher could refuse or merge a duplicate flag.
+
+- **LATER: every docker `-i` job waits the full 10 s stay-up window** (about 6 `docker exec` round-trips) before it reports done and opens the terminal, holding a queue slot that long. It could stop early once the agent's TUI has painted.
+- **LATER: `-- -p` (claude print mode) fails a docker `-i` job as "exited immediately"**, because a print-mode session exits by design. Cloud already did this; the docker stay-up check now matches it.
+- **LATER: the JSDoc for `verifyAgentSessionStaysUp` sits on `VerifySessionOpts`** (`packages/sandbox-cloud/src/detached-agent.ts`), the interface placed between them.
+- **LATER: claude, codex and pi drop a positional `-i` prompt that starts with `-`** (pre-existing): their parsers read it as flags. opencode's `--prompt=<msg>` form does not have the problem.
+
+- **A codex api-key stub can replace a real ChatGPT login backup.** In the 2026-11-23 live check, the scratch home's `~/.agentbox/codex-credentials.json` (a ChatGPT OAuth login) was replaced during docker opencode `--model-auth codex` runs by the shared `agentbox-codex-config` volume's `auth.json`: a 101-byte `{"auth_mode":"apikey",...,"tokens":null}` stub from an earlier box, with its mtime kept. `realShape: 'nonempty-json'` accepts the stub. Which path wrote it back (destroy extract, fan-out) is not pinned down yet. Later borrows then fail with "not a usable Codex ChatGPT login".
+- **The cloud model-auth ingest logs nothing.** `startDetachedCloudAgent` runs `runModelAuthIngest` with no `onLog`, so a failed import ("not a usable Codex ChatGPT login") never reaches the create log, unlike docker's.
 
 ## Harness gaps
 

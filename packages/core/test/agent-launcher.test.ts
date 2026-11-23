@@ -9,7 +9,18 @@ describe('resolveAgentLauncher', () => {
 
   it('puts the prompt behind the declared seedPromptFlag', () => {
     const l = resolveAgentLauncher('opencode', { seedPromptFlag: '--prompt' });
-    expect(l.buildArgs('say hi', ['--model', 'm'])).toEqual(['--prompt', 'say hi', '--model', 'm']);
+    expect(l.buildArgs('say hi', ['--model', 'm'])).toEqual(['--prompt=say hi', '--model', 'm']);
+  });
+
+  // As a separate token, yargs reads a leading-dash prompt as flags and drops it.
+  it('keeps a prompt that starts with a dash attached to a long flag', () => {
+    const l = resolveAgentLauncher('opencode', { seedPromptFlag: '--prompt' });
+    expect(l.buildArgs('-fix the bug', [])).toEqual(['--prompt=-fix the bug']);
+  });
+
+  it('passes a short flag and the prompt as two tokens', () => {
+    const l = resolveAgentLauncher('x', { seedPromptFlag: '-p' });
+    expect(l.buildArgs('hi', [])).toEqual(['-p', 'hi']);
   });
 
   it('returns the user args untouched for an empty prompt', () => {

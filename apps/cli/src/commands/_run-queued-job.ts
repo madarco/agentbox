@@ -33,7 +33,6 @@ import {
   recordLastAgent,
   volumeClaudeCredentials,
 } from '@agentbox/sandbox-docker';
-import { verifyAgentSessionStaysUp } from '@agentbox/sandbox-cloud';
 import {
   rebuildPluginNativeDeps,
   SHARED_CLAUDE_VOLUME,
@@ -59,6 +58,7 @@ import { cloudSizingProviderOptions } from '../lib/cloud-sizing.js';
 import { resolveLimits } from '../limits.js';
 import { openCommandLog } from '@agentbox/cli-kit';
 import { buildPromptArgs } from '../lib/queue/build-prompt-args.js';
+import { verifyDockerAgentSession } from '../lib/queue/verify-docker-session.js';
 import { planJobAgent } from '../lib/queue/job-agent.js';
 import { applyQueuedRestore, requireRestoreSpec } from '../lib/queue/apply-restore.js';
 import { loadAgentModuleOrNull } from '../agents/index.js';
@@ -556,16 +556,14 @@ async function runDockerJob(
     });
   }
 
-  // `tmux new-session -d` succeeds even when the agent exits at once, so without
-  // this an agent that dies at launch left a `done` job and a box with no
-  // session. Same probe the cloud start runs.
-  await verifyAgentSessionStaysUp(
-    (argv) => execInBox(result.record.container, argv, { user: 'vscode' }),
-    result.record.name,
+  // Without this an agent that dies at launch left a `done` job and a box with
+  // no session.
+  await verifyDockerAgentSession({
+    container: result.record.container,
+    boxName: result.record.name,
     sessionName,
-    plan.spec.binary,
-    { seedText: prompt },
-  );
+    binary: plan.spec.binary,
+  });
 
   await maybeOpenQueuedTerminal(job, plan.spec.id, result.record.name, log);
 }

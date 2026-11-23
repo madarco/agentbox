@@ -22,10 +22,9 @@ describe('buildPromptArgs', () => {
 
   // opencode's positional is `[project]`: a positional prompt made it `cd` into
   // `/workspace/<prompt>` and exit.
-  it('puts the prompt behind --prompt for opencode', () => {
+  it('puts the prompt behind --prompt= for opencode', () => {
     expect(buildPromptArgs('opencode', 'say hi', ['--model', 'openai/gpt-5'])).toEqual([
-      '--prompt',
-      'say hi',
+      '--prompt=say hi',
       '--model',
       'openai/gpt-5',
     ]);

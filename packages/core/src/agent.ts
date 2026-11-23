@@ -24,7 +24,12 @@ export function resolveAgentLauncher(
     kind,
     buildArgs(initialMessage, userArgs) {
       if (!initialMessage) return [...userArgs];
-      return flag ? [flag, initialMessage, ...userArgs] : [initialMessage, ...userArgs];
+      if (!flag) return [initialMessage, ...userArgs];
+      // `--prompt=<msg>` for a long flag: as a separate token, a prompt that
+      // starts with `-` is parsed as flags and lost.
+      return flag.startsWith('--')
+        ? [`${flag}=${initialMessage}`, ...userArgs]
+        : [flag, initialMessage, ...userArgs];
     },
   };
 }
