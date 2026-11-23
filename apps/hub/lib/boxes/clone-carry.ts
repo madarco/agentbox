@@ -96,13 +96,6 @@ export const CLONE_RECORD_POLICY = {
   accounts: 'carry',
   llmProxy: 'carry',
   createdAt: 'n/a',
-  // The source's repo identity and origin-machine stamp: the clone is its own
-  // project (the exported dir is registered fresh) and gets its own at create.
-  originUrl: 'n/a',
-  repoKey: 'n/a',
-  originMachineId: 'n/a',
-  originMachineLabel: 'n/a',
-  originFolder: 'n/a',
 } as const satisfies Record<keyof BoxRecord, ClonePolicy>;
 
 export const CLONE_CLOUD_POLICY = {
