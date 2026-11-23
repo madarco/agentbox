@@ -1524,6 +1524,8 @@ export class HubApiClient {
         timeoutMs: 180_000,
       },
     );
+  }
+
   // ── agent memory ──
 
   private memoryQs(q: HubApiMemoryQuery, extra: Record<string, string> = {}): string {

@@ -4,9 +4,9 @@
 [Phase 0 results](#phase-0-results): **go** on box-local delivery for all five
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
-from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b and 2
+from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3 and 5
 implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
-they left open); Phases 3+ not started.
+they left open); Phase 4 in progress; Phases 6+ not started.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -758,6 +758,15 @@ only after approval.
    each linked folder and, debounced, runs `agentbox skills import <path>
    --linked`, which uploads a new version; the hub's auto policy then syncs the
    running boxes that have it.
+
+**Status: implemented 2026-11-23**, live-checked on a docker box (isolated hub,
+image built from this branch). A git skill's new commit showed as `update
+pending` with its diff, and the running box kept the old text until `agentbox
+skills update` applied it. A linked-folder edit was uploaded by the relay and
+reached the running box, with no restart in either case. A discard removed the
+skill from the running box. The cloud leg was not run (no base reachable from the
+test box carries Phase 2's ctl); it rides the same `Provider.exec` path. Open
+items are in [`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 ### Phase 6 — web + tray
 
