@@ -99,6 +99,27 @@ id is in that list.
 Endpoints are grouped by topic — the same sections you'll see in the sidebar of
 the interactive reference at `GET /docs`.
 
+### Skills library
+
+| Method + path                         | Description                                                                                                                                                                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /skills`                         | The library: `{ seeded, skills: [{ name, description, current, size, files, updatedAt, source, versions, origin, policy, pending? }] }`. Metadata only.                                                                                            |
+| `POST /skills`                        | Add skills the hub fetches: `{ git: { url, ref?, path? } }` or `{ marketplace: { url, plugin, ref? } }`, plus `skills?`, `policy?`, `allowFindings?`, `dryRun?` (list what the source holds). Answers `{ commit, candidates, imported, skipped }`. |
+| `PUT /skills/{name}`                  | Store a version from a PC: gzip tarball body, `X-AgentBox-Skill-Meta` header.                                                                                                                                                                      |
+| `PATCH /skills/{name}`                | `{ policy: 'auto' \| 'manual' }`.                                                                                                                                                                                                                  |
+| `DELETE /skills/{name}`               | Discard the skill and every version.                                                                                                                                                                                                               |
+| `POST /skills/{name}/refresh`         | Re-fetch a git or marketplace skill (`{ allowFindings? }`): `{ status: up-to-date \| pending \| applied \| blocked \| failed, from?, to?, reason? }`.                                                                                              |
+| `POST /skills/{name}/approve`         | Make the pending version current; running boxes that hold it sync.                                                                                                                                                                                 |
+| `GET /skills/{name}/diff?from&to`     | File-by-file changes between two versions (default: current to pending) plus `findings`, the hub's secret scan of the `to` version. Elevated read.                                                                                                 |
+| `GET /skills/{name}/skill-md?version` | A version's `SKILL.md` and file list. Elevated read.                                                                                                                                                                                               |
+| `PUT /skills/{name}/skill-md`         | `{ content, base?, allowFindings? }`: save `SKILL.md` as a new upload version (other files kept), or create a new skill without `base`. A `base` other than current is refused.                                                                    |
+| `GET /skills/{name}/tarball?version`  | A version's tarball. Elevated read.                                                                                                                                                                                                                |
+| `GET /skill-status`                   | `{ pending: [{ name, version }], boxes: [{ boxId, behind: [name] }] }`: updates waiting for approval and the live boxes behind the library, in one call (for a badge).                                                                             |
+| `GET /boxes/{id}/skills`              | What a box was last served: `{ boxId, recordedAt?, skills: [{ name, version, current?, pending?, behind }] }`.                                                                                                                                     |
+| `POST /boxes/{id}/skills/sync`        | Run the box's skills sync now: `{ boxId, status: synced \| failed \| not-running, detail? }`.                                                                                                                                                      |
+
+"Elevated read" means the admin token (`X-Agentbox-Admin-Token`), an enrolled device's token, or a same-machine request on a local hub: these routes return skill content, and the plain API key is not enough.
+
 ### Skill bindings
 
 | Method + path                                                    | Description                                                                                                                                                                                                                                                                                                                                                                                                             |

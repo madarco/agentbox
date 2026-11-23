@@ -5,8 +5,8 @@
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
 from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3, 4, 5 and 7
-implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
-they left open); Phase 6 not started.
+implemented, and Phase 6's web part (see [`hub-skills-backlog.md`](./hub-skills-backlog.md)
+for what they left open); Phase 6's tray part is the coordinator's.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -867,6 +867,18 @@ coordinator's, against the routes below.
    approved.
 8. **Public docs**: a sweep of `apps/web/content/docs` so the skills pages
    cover Phases 1-7 and the web UI as built.
+
+**Status (web part): implemented 2026-11-23**, live-checked on an isolated hub
+(scratch HOME, port 18796) with a docker box: a skill added in the web UI from a
+`file://` git repo (dry-run picker, then Add) was linked into a new box's
+`/etc/claude-code/.claude/skills` at boot; a new commit, fetched with the row's
+Refresh, showed as "update waiting" with its line diff and a clean scan in Review
+update, and Approve reached the running box in about 3 seconds. Also checked: New
+skill and Edit (an edit to the git skill became an upload and synced to the box),
+the box page's Sync now, and a box-scope "off" removing a skill on sync.
+Deviations: the box detail page has sections, not tabs, so it is a Skills
+section; scan findings come from the diff route (not stored per version). Open
+items are in [`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 ### Phase 7 — box → library and MCP
 

@@ -272,6 +272,49 @@ approval was for that exact version), and syncs running boxes.
   doesn't exist; refresh is per skill (`POST /skills/{name}/refresh`), and the
   CLI loops over names.
 
+## Phase 6 (web) — implementation plan (2026-11-23)
+
+In the plan doc's Phase 6 section. Built: the Skills page (add from git /
+marketplace with a dry-run picker, refresh, policy, pending-update review with
+diff + scan and Approve, SKILL.md editor, box proposals), the box-detail Skills
+section, `GET|PUT /skills/{name}/skill-md`, `GET /skill-status`, and
+`SkillDiff.findings`. The tray part is the coordinator's.
+
+## From Phase 6 (2026-11-23)
+
+- **The diff and the editor don't work in the web UI of a password (control-box)
+  hub.** Both read skill content, so they take custody's elevated read (admin
+  token, device token, or loopback on a token hub). A browser session on a
+  password hub has none of these, so Review update shows `unauthorized` and the
+  editor can't load. Owner decision: should a better-auth session count as the
+  elevated credential for skill content (it is a person who logged in, unlike
+  the API key the tray holds)? Until then the public docs send control-box users
+  to `agentbox skills diff` / `update`. Approve itself works (it isn't a read).
+- **Version history isn't in the API.** `GET /skills` carries only the version
+  count and the current version's source, so the page can't list older versions
+  or roll back to one (`approveSkillUpdate` already takes any stored version).
+  A `GET /skills/{name}` with the version list (+ each one's source, so a
+  version proposed by a box shows `box <name>`) would cover both.
+- **The web editor edits SKILL.md only.** Other files are kept as they are;
+  adding or editing a script needs a PC upload. Also no zip / folder upload from
+  the browser (plan: "upload a zip or folder").
+- **Scan findings aren't recorded on a version.** The pending view gets them by
+  re-scanning the tree in `/diff`; the list can't flag a stored version that was
+  added with `allowFindings`. Recording `scan` on `SkillVersionMeta` at import
+  would let the row show it.
+- **`/skill-status` reads each live box's record and each skill's meta per
+  call** (boxes x skills custody reads). Fine at a handful of boxes; a tray
+  polling it with many boxes wants a cached overview.
+- **The box Skills section hides on a hub without custody** by matching the
+  error text; a typed `custody_disabled` error code would be cleaner.
+- **No skills picker change in the create modal** beyond Phase 4's.
+- **A brand-new skill doesn't reach running boxes on its own.** The fan-out syncs
+  only boxes behind on a skill they already hold, so a skill created in the web
+  editor (or uploaded from a PC) lands in a running box at its next sync or
+  restart, or with Sync now. Same as Phase 5; the UI doesn't promise otherwise.
+- **The box Skills section's on/off doesn't sync by itself**: it saves the box
+  binding and says to sync; one click more than needed.
+
 ## Phase 4 — implementation plan (2026-11-23)
 
 See the plan doc's Phase 4 section. Deviations from the plan text: bindings live
