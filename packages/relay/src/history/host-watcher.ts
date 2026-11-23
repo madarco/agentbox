@@ -168,11 +168,11 @@ export function httpHistorySink(hubUrl: string, bearer: () => string): HistoryIn
         body: JSON.stringify(frame),
         signal: AbortSignal.timeout(60_000),
       });
-      const body = (await res.json().catch(() => null)) as {
-        data?: HistoryIngestResult;
-        error?: { code?: string; message?: string };
-      } | null;
-      if (res.ok && body?.data) return body.data;
+      // `/api/v1` answers the result itself on 200 and `{error}` otherwise.
+      const body = (await res.json().catch(() => null)) as
+        | (HistoryIngestResult & { error?: { message?: string } })
+        | null;
+      if (res.ok && body && typeof body.ok === 'boolean') return body;
       const msg = body?.error?.message ?? `HTTP ${String(res.status)}`;
       // 401/403: not this PC's to write (or not enrolled). Not a transient error.
       return { ok: false, code: 'unavailable', message: `${url}: ${msg}` };

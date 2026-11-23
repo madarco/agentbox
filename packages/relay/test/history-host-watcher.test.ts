@@ -145,3 +145,43 @@ describe('host session watcher', () => {
     expect(st.errors).toEqual(['no credential for https://hub']);
   });
 });
+
+describe('httpHistorySink', () => {
+  it('posts the frame with the Bearer and returns the bare /api/v1 result', async () => {
+    const { createServer } = await import('node:http');
+    const { httpHistorySink } = await import('../src/history/host-watcher.js');
+    let auth = '';
+    const srv = createServer((req, res) => {
+      auth = req.headers.authorization ?? '';
+      const ok = req.url === '/api/v1/history/chunks';
+      res.writeHead(ok ? 200 : 401, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify(ok ? { ok: true, offset: 3, sha256: 'h' } : { error: { message: 'no' } }),
+      );
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const port = (srv.address() as { port: number }).port;
+    try {
+      const frame = {
+        origin: { kind: 'host' as const, boxId: '', hostId: 'pc' },
+        agent: 'claude',
+        path: 'p/x.jsonl',
+        offset: 0,
+        sha256Prefix: '',
+        sha256: 'h',
+        data: 'YWJj',
+      };
+      const r = await httpHistorySink(`http://127.0.0.1:${String(port)}/`, () => 'tok').ingest(
+        frame,
+      );
+      expect(r).toEqual({ ok: true, offset: 3, sha256: 'h' });
+      expect(auth).toBe('Bearer tok');
+      const bad = await httpHistorySink(`http://127.0.0.1:${String(port)}/x`, () => 'tok').ingest(
+        frame,
+      );
+      expect(bad).toMatchObject({ ok: false, code: 'unavailable' });
+    } finally {
+      srv.close();
+    }
+  });
+});
