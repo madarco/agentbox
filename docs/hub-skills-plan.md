@@ -4,9 +4,9 @@
 [Phase 0 results](#phase-0-results): **go** on box-local delivery for all five
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
-from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b and 2
+from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3 and 4
 implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
-they left open); Phases 3+ not started.
+they left open); Phases 5+ not started.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -734,6 +734,20 @@ a workspace-scoped skill appears only in that workspace's boxes.
    from `/skill-bindings/resolve` for the chosen project; sent as
    `opts.skills.include` (or `none`) only when the user changed it.
 7. **Docs**: public skills page + CLI reference; backlog.
+
+**Status: implemented 2026-11-23**, live-checked on an isolated hub (scratch
+HOME, port 18797) with a second scratch-HOME PC pointed at it: with `alpha`
+disabled globally and enabled for workspace `ws1`, and `beta` disabled for
+`github.com/acme/app` from PC B (its `git@github.com:Acme/App.git` checkout),
+`skills.get` answered `[alpha, gamma]` for that repo's box from PC A (`https`
+remote, folder in `ws1`) and from PC B (folder outside any workspace, joined by
+repo); `[beta, gamma]` for another repo's box; a box with `--skip-skills gamma`
+got `[alpha]`; `skills.blob` refused `alpha` to the other repo's box; the web
+create form listed the three skills ticked per the bindings. Boxes were
+registered with the hub as a create does, not built: delivery itself is
+unchanged since Phase 3. Deviations: bindings are one custody file, the resolver
+lives in `@agentbox/core`, discard keeps bindings, box scope is API-only. See
+[`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 ### Phase 5 — git + marketplace sources, updates
 
