@@ -51,6 +51,11 @@ function ensureNotes(
   if (r.aliasedProjectKey && hostWorkspace) {
     notes.push(`aliased project state for ${hostWorkspace} -> /workspace in synced .claude.json`);
   }
+  if (r.onboardingSeeded) {
+    notes.push(
+      'seeded a pre-onboarded _claude.json (no host ~/.claude; skips the first-run screens)',
+    );
+  }
   if (r.workspaceTrusted) {
     notes.push('pre-trusted /workspace in synced .claude.json (skips the trust dialog)');
   }

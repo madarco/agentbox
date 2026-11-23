@@ -27,6 +27,7 @@ import {
 import { hubSecretsOnHost, accountStateJqDelete } from './hooks-filter.js';
 import { referencedPluginVersionKeys } from '@agentbox/sandbox-core';
 import { maybeFilterTo } from './claude-json-filter.js';
+import { defaultBoxClaudeJson } from './claude-json-defaults.js';
 export type { PullClaudeResult } from '@agentbox/sandbox-core';
 import {
   detectEngine,
@@ -115,6 +116,11 @@ export interface EnsureClaudeVolumeResult {
   /** True when the rsync helper actually ran (syncFromHost was true AND host ~/.claude existed). */
   synced: boolean;
   /**
+   * True when the host had no `~/.claude` and the volume got the pre-onboarded
+   * default `_claude.json` ({@link defaultBoxClaudeJson}).
+   */
+  onboardingSeeded?: boolean;
+  /**
    * Number of hook entries dropped during sync because their `command` pointed
    * at a host path (under `$HOME/`) that wouldn't exist inside the container.
    * 0 when nothing was filtered or no sync ran.
@@ -171,6 +177,42 @@ async function volumeHasClaudeJson(volume: string, image: string): Promise<boole
 }
 
 /**
+ * Write {@link defaultBoxClaudeJson} as the volume's `_claude.json` unless one
+ * is already there (write-once, see {@link volumeHasClaudeJson}). The test and
+ * the write run in one helper container, so a concurrent box seeding the shared
+ * volume can't be clobbered between them. Returns true when it wrote the file.
+ */
+async function seedDefaultClaudeJson(volume: string, image: string): Promise<boolean> {
+  const json = JSON.stringify(defaultBoxClaudeJson(CONTAINER_WORKSPACE), null, 2);
+  const res = await execa(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '-i',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst`,
+      image,
+      'sh',
+      '-c',
+      '[ -e /dst/_claude.json ] && exit 3; ' +
+        'cat > /dst/_claude.json.tmp && chown 1000:1000 /dst /dst/_claude.json.tmp && ' +
+        'mv /dst/_claude.json.tmp /dst/_claude.json',
+    ],
+    { input: json, reject: false },
+  );
+  if (res.exitCode === 3) return false;
+  if (res.exitCode !== 0) {
+    throw new Error(
+      `seeding the default _claude.json into ${volume} failed (exit ${String(res.exitCode)}): ${res.stderr}`,
+    );
+  }
+  return true;
+}
+
+/**
  * Ensure the named volume exists, then (when {@link EnsureClaudeVolumeOptions.syncFromHost}
  * is true and the host has a `~/.claude` directory) rsync host -> volume via a throwaway
  * helper container. The host is treated as the authoritative source for config:
@@ -198,7 +240,13 @@ export async function ensureClaudeVolume(
   if (!opts.syncFromHost) return { created, synced: false };
 
   const hostClaude = join(homedir(), '.claude');
-  if (!(await pathExists(hostClaude))) return { created, synced: false };
+  if (!(await pathExists(hostClaude))) {
+    // Nothing to sync, but claude must still not boot into its first-run
+    // theme picker (an `-i` turn would never start). Credentials keep coming
+    // from their own paths; this only seeds the onboarding state, write-once.
+    const onboardingSeeded = await seedDefaultClaudeJson(spec.volume, opts.image);
+    return { created, synced: false, onboardingSeeded };
+  }
 
   // rsync (not cp -a) so repeat syncs skip unchanged files. rsync is installed in
   // the box image (Dockerfile.box). Trailing slash on /src-claude/ means
@@ -305,23 +353,11 @@ export async function ensureClaudeVolume(
       aliasedProjectKey = jsonResult.aliasedProjectKey;
       workspaceTrusted = jsonResult.workspaceTrusted;
     } else {
-      // Host has no ~/.claude.json. Write a minimal _claude.json directly to
-      // the filter dir so the in-box claude still gets installMethod=native
-      // (skips the integrity warning) and a pre-trusted /workspace (skips the
-      // trust dialog — and avoids the Claude Code bug where an untrusted
-      // workspace yields `400 role 'system' is not supported on this model`).
+      // Host has no ~/.claude.json: the same pre-onboarded default the cloud
+      // path writes.
       await writeFile(
         join(filterDir, '_claude.json'),
-        JSON.stringify(
-          {
-            installMethod: 'native',
-            autoUpdates: false,
-            autoUpdatesProtectedForNative: true,
-            projects: { [CONTAINER_WORKSPACE]: { hasTrustDialogAccepted: true } },
-          },
-          null,
-          2,
-        ),
+        JSON.stringify(defaultBoxClaudeJson(CONTAINER_WORKSPACE), null, 2),
       );
       installMethodFixed = true;
       workspaceTrusted = true;

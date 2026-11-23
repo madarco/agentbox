@@ -27,6 +27,14 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 - **Bare `agentbox` exits 1.** It prints the short help; the old checklist (BOOT-002) expected exit 0.
 - **Tray: the menu rebuilt 3–10 times a second against a quiet hub.** The tray branch `feat/e2e-testability` adds a fingerprint that skips unchanged rebuilds; why a quiet hub triggers that many refreshes is still open.
 
+- **claude on docker sits on its first-run theme picker when the host has no `~/.claude`** (docker@linux S2, every run). `ensureClaudeVolume` returned before writing any `_claude.json`, so claude showed "Choose the text style" and the `-i` turn never ran. The cloud path (`buildBoxClaudeJsonFromHost`) already wrote a pre-onboarded default. Fixed on `fix/docker-claude-onboarding`, plan:
+  1. One helper, `defaultBoxClaudeJson(workspace)` in `packages/agent-claude/src/claude-json-defaults.ts`: `hasCompletedOnboarding: true`, `installMethod: native`, the workspace trusted. The cloud default calls it.
+  2. Docker, host has no `~/.claude`: write that default into the volume as `_claude.json`, write-once (skipped when `volumeHasClaudeJson`), chowned to the box user. Credentials are untouched.
+  3. Docker, host has `~/.claude` but no `~/.claude.json`: the hand-written minimal file (which lacked `hasCompletedOnboarding`) becomes the same helper's output.
+  4. remote-docker needs nothing: it runs through `createCloudProvider`, so it already stages the cloud overlay.
+  5. Unit test for the helper; live check on a scratch `HOME` with no `~/.claude`.
+- **A host `~/.claude.json` without `hasCompletedOnboarding` still reaches a docker box as is.** The cloud path forces the flag to `true`; the docker filter chain (`maybeFilterTo`) doesn't. Rare (a host that has a `~/.claude.json` but never finished onboarding), not seen in the suite.
+
 ## Harness gaps
 
 - **remote-docker needs the VM in the user's real `~/.ssh/config`** (OpenSSH reads the passwd home, not `$HOME`). Done on Marco's Mac: a `Host e2e-linux` block pointing at the test VM with its key. Recreating the VM can reuse its IP for a new host key and leaves this block pointing at the old IP: update `HostName` and drop the stale `known_hosts` line. `hub-test-vm.sh up` now installs `git-lfs` (so `docker@linux` gets past the LFS test repo) and reuses an SSH key a VM destroyed outside `down` left behind (Hetzner 409s a second upload).
