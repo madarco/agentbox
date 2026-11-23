@@ -586,6 +586,20 @@ Fixed (plan, "Backlog fixes"): the late memory seed, an added agent lost on
 re-registration, and a box losing its repo (`originUrl`/`repoKey`) on every
 re-registration. Left open:
 
+- **From the review of this pass, deferred:**
+  - *Past the file-count cap the merge cannot read a box file.* A box holding
+    more than `MEMORY_MAX_FILES` memory files has files that are present but
+    unread; the merge treats them as the box's own (like an over-size file),
+    so the hub's version is not placed and the file never converges.
+  - *A time order is not a write order.* The hub's `updatedAt` is when the
+    version was stored, not written: an edit made in a box before another
+    box's older edit reached the hub loses the late-seed comparison.
+- **From the live check: a hub that is DOWN parks the seed for 10 minutes.**
+  The in-box forwarder answers an `ECONNREFUSED` upstream with a non-zero
+  exit that `relayNotReady` does not recognise, so ctl reads it as
+  `unsupported` and backs off (same family as the #454 "bodyless 401 only"
+  note). The merge then lands when the backoff ends; nothing is lost, it is
+  just late. Treat a forwarder upstream error as `unreachable`.
 - **Clock skew decides a late-seed tie.** The merge compares a box file's
   mtime (box clock) with the hub version's `updatedAt` (hub clock). Docker
   shares the clock; a cloud box with a skewed clock can keep an older file
