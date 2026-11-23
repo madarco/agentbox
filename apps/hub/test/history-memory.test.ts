@@ -63,8 +63,11 @@ describe('memory service', () => {
       m.memorySeed({ ...key, hostFiles: [{ path: 'f.md', bytes: b(content) }], origin: host });
     await seed('fact');
     await m.memoryPut({ ...key, path: 'f.md', bytes: null, origin: box('a') });
-    expect(await seed('fact')).toEqual([]);
-    expect((await seed('fact, edited')).map((f) => f.path)).toEqual(['f.md']);
+    expect(await seed('fact')).toEqual([
+      { path: 'f.md', bytes: new Uint8Array(), sha256: '', deleted: true, updatedAt: 1001 },
+    ]);
+    const back = await seed('fact, edited');
+    expect(back.map((f) => [f.path, f.deleted])).toEqual([['f.md', undefined]]);
   });
 
   it('keeps every version, last writer wins, identical content is a no-op', async () => {
@@ -93,7 +96,11 @@ describe('memory service', () => {
     await m.memoryPut({ ...key, path: 'x.md', bytes: null, origin: box('a') });
     expect(await m.list(key)).toEqual([]);
     expect(await m.file(key, 'x.md')).toBeNull();
-    expect(await m.memorySeed({ ...key, hostFiles: [], origin: host })).toEqual([]);
+    // The seed carries the tombstone (with its time) so a box can order it
+    // against a file it holds; it carries no bytes.
+    expect(await m.memorySeed({ ...key, hostFiles: [], origin: host })).toEqual([
+      { path: 'x.md', bytes: new Uint8Array(), sha256: '', deleted: true, updatedAt: 1001 },
+    ]);
     expect((await m.sets())[0]).toMatchObject({ ...key, files: 0, versions: 2 });
   });
 

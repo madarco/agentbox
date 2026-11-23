@@ -17,6 +17,7 @@ import {
   accountEnvPolicy,
   applyAccountEnv,
   resolveAgentSpec,
+  type RegistrationOrigin,
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
 import { loadEffectiveConfig } from '@agentbox/config';
@@ -896,9 +897,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   })
     .then((r) => (r.exitCode === 0 ? r.stdout.trim() || undefined : undefined))
     .catch(() => undefined);
+  let registered: RegistrationOrigin = {};
   if (relayUp) {
     try {
-      await registerBoxWithRelay({
+      registered = await registerBoxWithRelay({
         boxId: id,
         token: relayToken,
         name,
@@ -912,6 +914,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         originUrl,
         workspacePath: originRepo,
         agent: opts.agents?.[0],
+        ...(opts.agents && opts.agents.length > 1 ? { agents: [...opts.agents] } : {}),
         ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
       });
       log(`registered box token with relay`);
@@ -1027,6 +1030,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       : {}),
     ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
     ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
+    // What the registration above was keyed and stamped with, so every
+    // re-registration (start, rehydrate) sends the same repo and origin.
+    ...(originUrl ? { originUrl } : {}),
+    ...registered,
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,

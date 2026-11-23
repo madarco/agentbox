@@ -38,6 +38,7 @@ export type {
 export {
   registrationToBoxRecord,
   normalizeRegistrationAgent,
+  registrationAgents,
   buildSshTarget,
   type RegistrationToRecordOptions,
 } from './registration-to-record.js';

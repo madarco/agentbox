@@ -850,6 +850,47 @@ against in-box mocks, no account used.
 
 Each phase updates `apps/web/content/docs/` for any new command, flag or key.
 
+### Backlog fixes: late memory seed, re-registration (2026-11-23)
+
+Three verified backlog bugs, one PR (`fix/backlog-history-registration`).
+
+1. **A late memory seed no longer wipes what the box wrote.** Before, the seed
+   replaced the memory dir (`placeSet`): files claude wrote while the relay was
+   unreachable were deleted, edited ones overwritten. Now the seed is merged
+   per file, last writer wins, the same order #443 uses for host edits
+   (`mergeSeed` in `packages/ctl/src/memory-sync.ts`). The hub's seed carries
+   each version's `updatedAt` and also its tombstones, also with a time. A box
+   file the seed does not name, or one that differs and is newer than the hub
+   version, is kept and left out of the baseline, so the next pass ships it as
+   a new version. An older one is overwritten. A tombstone deletes a box file
+   only when the tombstone is newer. A seed version with no time (a host-only
+   seed from a relay with no hub) still wins, as before.
+2. **An added agent survives re-registration.** A registration names only one
+   `agent`, and every re-register sent `primaryAgent(record)`, so a claude box
+   given openclaw (`agentbox openclaw <box>`) lost the gateway on its next
+   start or hub restart. The registration now carries `agents` (every agent
+   the box runs). `registrationAgents` reads it, the relay keeps it when a
+   re-register omits it, and `addBoxAgent` appends to it instead of replacing
+   the primary.
+3. **A box keeps its repo across re-registration.** `BoxRecord` never stored
+   `originUrl`/`repoKey`, so no re-register could send them (root cause and
+   effects in the PR). The record now stores them, plus the origin-machine
+   stamp, at create. One helper, `registrationFromRecord` (core), builds every
+   re-register from the record: docker start, rehydrate, cloud start, resume
+   and failed pause, and the hub's branch sanction. It carries agents, repo,
+   origin stamp, skills, accounts and llmProxy. The relay keeps a stored
+   `originUrl` when a re-register omits it. `rehydrateRelayRegistry` now takes
+   records as stored, which also fixes the docker create's rehydrate dropping
+   cloud boxes' backend, preview URL and bridge token. Nothing re-reads
+   `git remote` for a docker box. A box created before this fix has no
+   recorded origin and stays without one until it is recreated.
+
+**Done when:** in an isolated hub, a docker box shows the repo in its MCP
+scope after a hub restart, and keeps an added openclaw's gateway across a
+start. Unit tests cover the late-seed race (unknown file, newer/older box file,
+newer/older tombstone, host-only seed), the agents list through register and
+rehydrate, and originUrl/repoKey kept across a re-register.
+
 ## Phase 0 results (2026-11-22)
 
 Measured on the owner's Mac (host: claude 2.1.x CLI + desktop app, codex

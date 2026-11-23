@@ -15,7 +15,7 @@ import {
   refreshCloudPreviewUrl,
   resolveHostPath,
 } from './host-actions.js';
-import { canAutoApproveTransfer } from './safe-transfer.js';
+import { canAutoApproveTransfer, workspaceDownloadWarning } from './safe-transfer.js';
 import { offerBrowserOpen } from './open-link.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { HostReachQueue, type HostReachTried, type HostReachUnreachable } from './host-reach.js';
@@ -1571,6 +1571,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                     ...(reg.backend ? { backend: reg.backend } : {}),
                     ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
                     ...(reg.agent ? { agent: reg.agent } : {}),
+                    ...(reg.agents ? { agents: reg.agents } : {}),
                     ...(reg.autoApproveSafeHostActions === false
                       ? { autoApproveSafeHostActions: false }
                       : {}),
@@ -1807,45 +1808,25 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       ) {
         const params = body.params as DownloadRpcParams | undefined;
         const kind = parseDownloadKind(body.method);
-        // `download.workspace` lands under the box's project folder (contained by
-        // construction), so it auto-approves under the safe flag. The env/config/
-        // claude kinds land in ~/.agentbox / ~/.claude (outside the project) and
-        // keep prompting.
-        const dlWorkspace = await boxWorkspacePath(reg.boxId);
-        const dlAuto =
-          kind === 'workspace' &&
-          (await canAutoApproveTransfer({
-            enabled: reg.autoApproveSafeHostActions !== false,
-            workspacePath: dlWorkspace,
-            hostPaths: dlWorkspace ? [dlWorkspace] : [],
-            checkSecret: false,
-          }));
-        if (dlAuto) {
-          prompts.noteAutoApprove(
-            reg.boxId,
-            {
-              kind: 'confirm',
-              message: `download (${kind}) from ${reg.name}`,
-              detail: params?.hostPath ?? '(default host location)',
-              context: { command: body.method, argv: params?.hostPath ? [params.hostPath] : [] },
-            },
-            'safe: contained download',
-          );
-        } else {
-          const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-            kind: 'confirm',
-            message: `Allow download (${kind}) from ${reg.name}?`,
-            detail: params?.hostPath ?? '(default host location)',
-            defaultAnswer: 'n',
-            context: {
-              command: body.method,
-              argv: params?.hostPath ? [params.hostPath] : [],
-            },
-          });
-          if (verdict.answer !== 'y') {
-            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
-            return;
-          }
+        // Always asked, even `download.workspace` under
+        // `box.autoApproveSafeHostActions`: it lands in the user's own project and
+        // the box decides what overwrites it. The prompt says so, and where.
+        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+          kind: 'confirm',
+          message: `Allow download (${kind}) from ${reg.name}?`,
+          detail:
+            kind === 'workspace'
+              ? workspaceDownloadWarning(await boxWorkspacePath(reg.boxId))
+              : (params?.hostPath ?? '(default host location)'),
+          defaultAnswer: 'n',
+          context: {
+            command: body.method,
+            argv: params?.hostPath ? [params.hostPath] : [],
+          },
+        });
+        if (verdict.answer !== 'y') {
+          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+          return;
         }
         const result = await handleDownloadRpc(reg, kind);
         const status = result.exitCode === 0 ? 200 : 500;
@@ -2024,10 +2005,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // older wire body without the field stays relaxed.
         autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
         ...(skillSelection ? { skills: skillSelection } : {}),
+        // Kept from the stored registration when a re-register omits it (like
+        // `repoKey` in `mergeRegistrationOrigin`): the box's MCP history scope
+        // and skill bindings are keyed by it.
         originUrl:
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl
-            : undefined,
+            : existingReg?.originUrl,
         publicHost:
           typeof body.publicHost === 'string' && body.publicHost.length > 0
             ? body.publicHost
@@ -2045,6 +2029,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.agent === 'string' && body.agent.length > 0
             ? body.agent
             : (existingReg?.agent ?? undefined),
+        // Every agent the box runs. Merged with the stored list, never
+        // replaced: agents are only ever added to a box, and a re-register from
+        // another PC's older record must not drop one the hub added since.
+        agents: mergeAgents(
+          existingReg ? registrationAgents(existingReg) : undefined,
+          sanitizeAgents(body.agents),
+        ),
         accounts: sanitizeAccounts(body.accounts),
         // Kept from the stored registration when a re-register omits it, like
         // `agent`: a relaunch from a record that predates it must not strip it.
@@ -3458,4 +3449,22 @@ function sanitizeAccounts(raw: unknown): Record<string, string> | undefined {
     if (typeof id === 'string' && accountIdProblem(id) === null) out[agent] = id;
   }
   return namedAccounts(out);
+}
+
+/** A registration's `agents`: non-empty ids, `'none'` dropped; undefined when none. */
+function sanitizeAgents(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter(
+    (a): a is string => typeof a === 'string' && a.length > 0 && a.length <= 214 && a !== 'none',
+  );
+  return out.length > 0 ? [...new Set(out)] : undefined;
+}
+
+/** The stored list plus any new ids from the body, stored order first. */
+function mergeAgents(
+  stored: readonly string[] | undefined,
+  incoming: readonly string[] | undefined,
+): string[] | undefined {
+  const out = [...new Set([...(stored ?? []), ...(incoming ?? [])])];
+  return out.length > 0 ? out : undefined;
 }

@@ -8,6 +8,8 @@ const staged: StagedClone = {
   name: 'svc_clone',
   provider: 'docker',
   files: 12,
+  sourceBoxId: 'src-1',
+  carried: {},
 };
 
 describe('cloneCreateInput', () => {
@@ -50,5 +52,14 @@ describe('cloneCreateInput', () => {
     // box.persistent. (`opts` itself is always present now — it carries
     // `carryYes` — so this asserts the KEY, not the object.)
     expect(cloneCreateInput(staged).opts).not.toHaveProperty('persistent');
+  });
+
+  it('passes what the source box carried, with an explicit persistent winning', () => {
+    const opts = cloneCreateInput({
+      ...staged,
+      persistent: false,
+      carried: { skills: { none: true }, llmProxy: 'forward', persistent: true },
+    }).opts;
+    expect(opts).toMatchObject({ skills: { none: true }, llmProxy: 'forward', persistent: false });
   });
 });

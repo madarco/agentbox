@@ -46,6 +46,12 @@ describe('addBoxAgent', () => {
     expect(registered[0]?.agent).toBe('openclaw');
   });
 
+  it('a claude box gaining openclaw registers both, claude still primary', async () => {
+    const { deps, registered } = fakeDeps({ box, reg: { ...reg, agent: 'claude' } });
+    await addBoxAgent(deps, 'b1', 'openclaw');
+    expect(registered[0]).toMatchObject({ agent: 'claude', agents: ['claude', 'openclaw'] });
+  });
+
   it('does not re-register when the registration already names the agent', async () => {
     const { deps, registered } = fakeDeps({ box, reg: { ...reg, agent: 'openclaw' } });
     await addBoxAgent(deps, 'b1', 'openclaw');

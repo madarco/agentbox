@@ -49,6 +49,8 @@ export interface GateInput {
   hubTokenOk: boolean;
   /** token profile: the match came from the URL, so the cookie still has to be set. */
   hubTokenFromQuery: boolean;
+  /** token profile: where the matching token came from (bearer wins over cookie). */
+  hubTokenVia?: 'bearer' | 'query' | 'cookie';
   evidence: CookieEvidence;
   probe: ProbeResult;
   now: number;
@@ -120,6 +122,99 @@ export function gateOutcome(i: GateInput): GateOutcome {
   // without touching the session store; anything else escalates.
   if (i.evidence.kind === 'cached' && i.evidence.sessionExpiresAt > i.now) return { kind: 'allow' };
   return { kind: 'probe' };
+}
+
+/**
+ * Which credential authorized an allowed request. Only `cookie` is ambient — the
+ * browser attaches it to a request another page started — so only `cookie` is
+ * subject to {@link csrfOutcome}. `bearer` and `query` both need the secret in
+ * the request itself, which a foreign page does not have.
+ */
+export type GateCredential = 'none' | 'bearer' | 'query' | 'cookie';
+
+/** The credential {@link gateOutcome} allowed `i` on. Same precedence as the gate. */
+export function gateCredential(i: GateInput): GateCredential {
+  if (i.mode === 'off') return 'none';
+  if (i.mode === 'token') return i.hubTokenOk ? (i.hubTokenVia ?? 'cookie') : 'none';
+  if (i.surface === 'api' && (i.bearerApiKeyOk || i.deviceId)) return 'bearer';
+  if (i.evidence.kind !== 'absent') return 'cookie';
+  return 'none';
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Cross-site request refusal for a cookie-authorized request.
+ *
+ * The hub cookie is `SameSite=Lax`, and "site" ignores the port: a docker box's
+ * web URL `http://127.0.0.1:<port>` is the SAME site as a local hub on
+ * `127.0.0.1:8787`, so a page the box serves gets the cookie attached to a POST
+ * it sends the hub. A `text/plain` POST needs no CORS preflight either, so
+ * without this check that page could create, prune or push boxes.
+ *
+ * A state-changing method on the cookie therefore has to prove it came from the
+ * hub's own pages: `Sec-Fetch-Site: same-origin`, or an `Origin` whose host is
+ * the request's own host. Neither header present is refused too: every browser
+ * sends at least one on a POST, and nothing but a browser holds the cookie.
+ * Bearer and `?token=` callers never reach the check. On the API surface a
+ * body on such a write must also be JSON (`not-json`). With no credential at all (auth off), a
+ * request that says it came from a browser page must still be same-origin.
+ */
+export function csrfOutcome(a: {
+  credential: GateCredential;
+  method: string;
+  origin: string | null;
+  secFetchSite: string | null;
+  host: string | null;
+  contentType: string | null;
+  hasBody: boolean;
+  /** `api` (`/api/v1`, `/api/mcp`, …) or a page route (Next server actions). */
+  surface: GateSurface;
+}): 'ok' | 'cross-site' | 'not-json' {
+  if (a.credential === 'bearer' || a.credential === 'query') return 'ok';
+  if (SAFE_METHODS.has(a.method.toUpperCase())) return 'ok';
+  if (a.credential === 'none') {
+    // No credential at all (auth off, a public path): anyone may call, so there
+    // is nothing to forge — except a browser page riding the user's network
+    // position. A browser always says where it came from; refuse it when that
+    // is not the hub. Non-browser clients send neither header and pass.
+    if (a.secFetchSite === null && a.origin === null) return 'ok';
+    return sameOrigin(a) ? 'ok' : 'cross-site';
+  }
+  if (!sameOrigin(a)) return 'cross-site';
+  // Belt and braces on the API surface: its browser callers send every body as
+  // JSON, and a JSON content type is exactly what a no-preflight ("simple")
+  // cross-site request cannot set. NOT on page routes: a Next server action
+  // posts a string body with no content type (text/plain), and Next checks an
+  // action's Origin itself.
+  if (a.surface === 'api' && a.hasBody && !isJsonContentType(a.contentType)) return 'not-json';
+  return 'ok';
+}
+
+function sameOrigin(a: {
+  origin: string | null;
+  secFetchSite: string | null;
+  host: string | null;
+}): boolean {
+  if (a.secFetchSite !== null) return a.secFetchSite === 'same-origin';
+  if (!a.origin || !a.host) return false;
+  try {
+    const o = new URL(a.origin);
+    // A proxy chain sends `X-Forwarded-Host: a, b`: the first is the client's.
+    const host = a.host.split(',')[0]!.trim().toLowerCase();
+    const defaultPort = o.protocol === 'https:' ? ':443' : o.protocol === 'http:' ? ':80' : '';
+    const bare =
+      defaultPort && host.endsWith(defaultPort) ? host.slice(0, -defaultPort.length) : host;
+    return o.host.toLowerCase() === bare;
+  } catch {
+    // `Origin: null` (a sandboxed frame, a file: page) lands here.
+    return false;
+  }
+}
+
+function isJsonContentType(raw: string | null): boolean {
+  const type = (raw ?? '').split(';')[0]!.trim().toLowerCase();
+  return type === 'application/json' || (type.startsWith('application/') && type.endsWith('+json'));
 }
 
 /**

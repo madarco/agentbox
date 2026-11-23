@@ -4,8 +4,9 @@
  * box's own disk (claude: `autoMemoryDirectory` in the baked managed settings).
  *
  *  - Seed once per box: `history.memory.seed` returns the hub's latest set for
- *    the box's repo (plus the host copy for paths the hub never saw); it
- *    replaces the dir and becomes the baseline.
+ *    the box's repo (plus the host copy for paths the hub never saw); it is
+ *    merged into the dir last-writer-wins (`mergeSeed`) and becomes the
+ *    baseline. What the box wrote before the seed survives and ships.
  *  - Write-back: every pass, a file whose sha differs from the baseline ships as
  *    `history.memory.put` (or a tombstone when it is gone), and becomes the new
  *    baseline once the hub stored it.
@@ -30,6 +31,7 @@ import {
   createRedactor,
   safeMemoryPath,
   secretValuesFromEnv,
+  type MemoryFileWire,
   type MemoryPutResult,
   type MemorySeedReply,
   type Redactor,
@@ -110,12 +112,15 @@ export interface MemoryScan {
    * this is a deletion: a file over the cap or briefly unreadable still exists.
    */
   present: Set<string>;
+  /** mtime (epoch ms) of every file in `present`. */
+  mtimes: Map<string, number>;
 }
 
 /** Regular files under `dir` (no symlinks followed). */
 export async function scanMemoryDir(dir: string): Promise<MemoryScan> {
   const out = new Map<string, Buffer>();
   const present = new Set<string>();
+  const mtimes = new Map<string, number>();
   const walk = async (abs: string, rel: string): Promise<void> => {
     let names: string[];
     try {
@@ -131,6 +136,7 @@ export async function scanMemoryDir(dir: string): Promise<MemoryScan> {
       if (st.isDirectory()) await walk(p, r);
       else if (st.isFile() && safeMemoryPath(r)) {
         present.add(r);
+        mtimes.set(r, st.mtimeMs);
         if (st.size > MEMORY_FILE_MAX_BYTES || out.size >= MEMORY_MAX_FILES) continue;
         const bytes = await readFile(p).catch(() => null);
         if (bytes) out.set(r, bytes);
@@ -138,7 +144,7 @@ export async function scanMemoryDir(dir: string): Promise<MemoryScan> {
     }
   };
   await walk(dir, '');
-  return { files: out, present };
+  return { files: out, present, mtimes };
 }
 
 /** ctl may run as root; the files belong to the box user (owner of the home dir). */
@@ -151,14 +157,15 @@ async function ownerOf(dir: string): Promise<{ uid: number; gid: number } | null
   return null;
 }
 
-/** Make `dir` hold exactly `files`. */
-async function placeSet(dir: string, files: Array<{ path: string; bytes: Buffer }>): Promise<void> {
+/** Write `files` into `dir` and remove `remove`; every other file is left alone. */
+async function placeFiles(
+  dir: string,
+  files: Array<{ path: string; bytes: Buffer }>,
+  remove: string[],
+): Promise<void> {
   await mkdir(dir, { recursive: true });
   const owner = await ownerOf(dir);
-  const keep = new Set(files.map((f) => f.path));
-  for (const path of (await scanMemoryDir(dir)).present) {
-    if (!keep.has(path)) await rm(join(dir, path), { force: true });
-  }
+  for (const path of remove) await rm(join(dir, path), { force: true });
   for (const f of files) {
     const p = join(dir, f.path);
     const made = await mkdir(dirname(p), { recursive: true });
@@ -178,6 +185,51 @@ async function placeSet(dir: string, files: Array<{ path: string; bytes: Buffer 
       await chown(d, owner.uid, owner.gid).catch(() => undefined);
     }
   }
+}
+
+/**
+ * Merge a seed into what the box already holds, last writer wins per file.
+ * The box can hold files before its seed lands (the agent ran while the relay
+ * was unreachable, or a checkpoint carried them), so the seed never wipes it:
+ *
+ *  - a box file the seed does not know is kept and left out of the baseline,
+ *    so the next pass ships it as a new version;
+ *  - a box file that differs from the hub's version and is newer than it is
+ *    kept the same way (the baseline is the hub's sha, so it ships);
+ *  - an older one is overwritten by the hub's version;
+ *  - a hub tombstone newer than the box file deletes it; an older one does not.
+ *
+ * A seed version with no `updatedAt` (a host-only seed, an older hub) has no
+ * time to compare against, so it wins over a differing box file as before.
+ */
+export async function mergeSeed(
+  dir: string,
+  seed: MemoryFileWire[],
+): Promise<{ baseline: Record<string, string>; placed: number }> {
+  const local = await scanMemoryDir(dir);
+  const write: Array<{ path: string; bytes: Buffer }> = [];
+  const remove: string[] = [];
+  const baseline: Record<string, string> = {};
+  for (const f of seed) {
+    const p = safeMemoryPath(f.path);
+    if (!p) continue;
+    const mtime = local.mtimes.get(p);
+    const boxNewer = mtime !== undefined && f.updatedAt !== undefined && mtime > f.updatedAt;
+    if (f.deleted || f.content === undefined) {
+      if (local.present.has(p) && !boxNewer) remove.push(p);
+      continue;
+    }
+    const bytes = Buffer.from(f.content, 'base64');
+    const digest = sha(bytes);
+    baseline[p] = digest;
+    const mine = local.files.get(p);
+    if (mine && sha(mine) === digest) continue;
+    // Present but unread (over the size cap): it is the box's, leave it.
+    if (local.present.has(p) && (boxNewer || !mine)) continue;
+    write.push({ path: p, bytes });
+  }
+  await placeFiles(dir, write, remove);
+  return { baseline, placed: write.length };
 }
 
 export interface MemoryPassStats {
@@ -282,18 +334,9 @@ export class MemorySync {
             };
             continue;
           }
-          const files = a.files.flatMap((f) => {
-            const p = safeMemoryPath(f.path);
-            return p && f.content !== undefined
-              ? [{ path: p, bytes: Buffer.from(f.content, 'base64') }]
-              : [];
-          });
-          await placeSet(a.boxDir, files);
-          next.agents[a.agent] = {
-            boxDir: a.boxDir,
-            files: Object.fromEntries(files.map((f) => [f.path, sha(f.bytes)])),
-          };
-          stats.seeded.push(`${a.agent}:${String(files.length)}`);
+          const { baseline } = await mergeSeed(a.boxDir, a.files);
+          next.agents[a.agent] = { boxDir: a.boxDir, files: baseline };
+          stats.seeded.push(`${a.agent}:${String(Object.keys(baseline).length)}`);
         }
         this.state = next;
         this.writeBack = reply.writeBack;

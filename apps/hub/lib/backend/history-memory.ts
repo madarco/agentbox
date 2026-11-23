@@ -12,6 +12,7 @@ import {
   safeMemoryPath,
   type HistoryMemorySink,
   type MemoryOrigin,
+  type MemorySeedFile,
 } from '@agentbox/core';
 
 export type MemoryScope = 'project' | 'global';
@@ -171,11 +172,22 @@ export function createMemoryService(deps: { repo: MemoryRepo; now?: () => number
           await append(key, p, f.bytes, input.origin);
           known.add(p);
         }
-        const out: Array<{ path: string; bytes: Uint8Array; sha256: string }> = [];
+        // Tombstones ride along with their time: a box decides from them whether
+        // a file it holds was deleted after it wrote it, or written after.
+        const out: MemorySeedFile[] = [];
         for (const r of await repo.latest(key)) {
-          if (r.deleted) continue;
+          if (r.deleted) {
+            out.push({
+              path: r.path,
+              bytes: new Uint8Array(),
+              sha256: '',
+              deleted: true,
+              updatedAt: r.createdAt,
+            });
+            continue;
+          }
           const bytes = await repo.content(r.id);
-          if (bytes) out.push({ path: r.path, bytes, sha256: r.sha256 });
+          if (bytes) out.push({ path: r.path, bytes, sha256: r.sha256, updatedAt: r.createdAt });
         }
         return out;
       });

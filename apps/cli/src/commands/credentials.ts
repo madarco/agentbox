@@ -218,7 +218,8 @@ async function pushCredentialToCustody(
     const { resolveCustodyApiTarget } = await import('./control-plane.js');
     const target = await resolveCustodyApiTarget(undefined, { quiet: true, remoteOnly: true });
     if (!target) return;
-    const { CustodyClient, planPush } = await import('../control-plane/custody-client.js');
+    const { CustodyClient, planCredentialPush } =
+      await import('../control-plane/custody-client.js');
     const client = new CustodyClient(target);
     const path = accountCustodyPath(
       agent,
@@ -229,7 +230,13 @@ async function pushCredentialToCustody(
     );
     const item = { path, data: Buffer.from(content, 'utf8') };
     const manifest = await client.list('agents');
-    if (planPush([item], manifest)[0]!.action === 'skip') return;
+    const [decision] = await planCredentialPush([item], manifest, (p) => client.get(p));
+    if (decision!.action === 'skip') {
+      if (decision!.reason !== 'hash match') {
+        process.stdout.write(`control box custody kept its ${agent} login (${decision!.reason})\n`);
+      }
+      return;
+    }
     await client.put(path, item.data);
     process.stdout.write(`pushed ${agent} credential to control box custody\n`);
   } catch (err) {

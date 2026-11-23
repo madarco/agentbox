@@ -1010,10 +1010,13 @@ export type PrepareCloneResult =
        * hub's config layers. Explicit input wins; else the source box's.
        */
       persistent?: boolean;
-      /** The source box's borrowed model logins, so the clone borrows the same. */
-      borrowedCredentials?: string[];
-      /** The source box's named LLM accounts, so the clone runs on the same. */
-      accounts?: Record<string, string>;
+      /** The source box's id (its box-scope skill bindings follow the clone). */
+      sourceBoxId: string;
+      /**
+       * Everything else the clone inherits from its source — skills, LLM proxy,
+       * accounts, limits, size… — from `cloneCarryOpts` (`clone-carry.ts`).
+       */
+      carried: CreateBoxOpts;
     }
   | { ok: false; error: string };
 

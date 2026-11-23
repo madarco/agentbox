@@ -299,7 +299,15 @@ describe('executeHostReachAction', () => {
 
   it('an origin PC with no record adopts the box once a download is approved (follow-up 2)', async () => {
     const adopted: string[] = [];
-    const r = await executeHostReachAction(
+    const d = deps({
+      machineId: () => 'pc-a',
+      repoKeyOf: () => Promise.resolve('github.com/acme/app'),
+      adopt: (boxId) => {
+        adopted.push(boxId);
+        return Promise.resolve({ ok: false, error: 'stubbed' });
+      },
+    });
+    const p = executeHostReachAction(
       action({
         method: 'download.workspace',
         params: { kind: 'workspace' },
@@ -310,18 +318,32 @@ describe('executeHostReachAction', () => {
           box: { name: 'b1', backend: 'hetzner', originMachineId: 'pc-a' },
         },
       }),
-      deps({
-        machineId: () => 'pc-a',
-        repoKeyOf: () => Promise.resolve('github.com/acme/app'),
-        adopt: (boxId) => {
-          adopted.push(boxId);
-          return Promise.resolve({ ok: false, error: 'stubbed' });
-        },
-      }),
+      d,
     );
-    // A download into the project auto-approves (contained), then adopts.
+    // A download overwrites the project, so it ALWAYS asks — even contained in
+    // the project folder, even under autoApproveSafeHostActions.
+    for (let i = 0; i < 50 && d.prompts.size() === 0; i++)
+      await new Promise((r) => setTimeout(r, 10));
+    expect(d.prompts.size()).toBe(1);
+    // The prompt says it overwrites, where, and that .git is left alone.
+    const detail = String((d.prompts.all()[0]!.ev as { detail?: string }).detail);
+    expect(detail).toContain('OVERWRITES');
+    expect(detail).toContain(dir);
+    expect(detail).toContain('.git is never touched');
+    expect(adopted).toEqual([]);
+    d.prompts.resolve(d.prompts.all()[0]!.id, 'y');
+    const r = await p;
     expect(adopted).toEqual(['box-1']);
     expect(r).toMatchObject({ exitCode: 69, stderr: 'could not adopt box box-1 here: stubbed\n' });
+  });
+
+  it('a download with no one to ask is refused, not run', async () => {
+    await writeState([record(dir)]);
+    const out = await executeCloudAction(
+      action({ method: 'download.workspace', params: { kind: 'workspace' } }),
+      { backendName: 'hetzner', boxId: 'box-1', log: () => {} },
+    );
+    expect(out).toMatchObject({ exitCode: 10 });
   });
 
   it('a plain download (not host-reach) does not refuse a moved project folder', async () => {

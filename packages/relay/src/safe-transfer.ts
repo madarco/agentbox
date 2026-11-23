@@ -47,3 +47,16 @@ export async function canAutoApproveTransfer(input: TransferApproveInput): Promi
   }
   return true;
 }
+
+/**
+ * The approval detail for a box's `download.workspace`: it lands on the user's
+ * own project, overwriting it with the box's copies and keeping no backup, so
+ * the prompt has to say exactly that, and where.
+ */
+export function workspaceDownloadWarning(projectPath: string | undefined): string {
+  const where = projectPath && projectPath.length > 0 ? projectPath : '(the host project)';
+  return (
+    `OVERWRITES files in ${where} with the box's copies; nothing is backed up. ` +
+    `Files only the host has are left alone, and .git is never touched.`
+  );
+}
