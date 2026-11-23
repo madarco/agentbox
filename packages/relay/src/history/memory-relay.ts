@@ -122,7 +122,9 @@ export class MemoryRelay {
   }
 
   /** The repo key and origin a box's MCP scope is built from (Phase 6). */
-  async boxIdentity(reg: BoxRegistration): Promise<{ repoKey: string | null; origin: MemoryOrigin }> {
+  async boxIdentity(
+    reg: BoxRegistration,
+  ): Promise<{ repoKey: string | null; origin: MemoryOrigin }> {
     return { repoKey: (await this.keyOf(reg)).key, origin: this.origin(reg) };
   }
 

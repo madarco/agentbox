@@ -26,7 +26,14 @@ const mod: AgentHistoryModule = {
       if (!raw) continue;
       const l = JSON.parse(raw) as { role: 'user' | 'assistant'; text?: string; tool?: string };
       if (l.tool) records.push({ kind: 'tool', name: l.tool, at });
-      else records.push({ kind: 'turn', role: l.role, text: l.text ?? '', at, ts: '2026-11-23T10:00:00Z' });
+      else
+        records.push({
+          kind: 'turn',
+          role: l.role,
+          text: l.text ?? '',
+          at,
+          ts: '2026-11-23T10:00:00Z',
+        });
       at += Buffer.byteLength(raw) + 1;
     }
     return { records, state: {} };
@@ -97,7 +104,12 @@ function boxScope(repoKey: string | null, approvals: McpApprovalRequest[] = []):
       approvals.push(req);
       return true;
     },
-    redact: async (b) => Buffer.from(Buffer.from(b).toString().replace(/s3cr3t/g, '******')),
+    redact: async (b) =>
+      Buffer.from(
+        Buffer.from(b)
+          .toString()
+          .replace(/s3cr3t/g, '******'),
+      ),
   };
 }
 
@@ -151,10 +163,9 @@ describe('MCP protocol', () => {
       id: 3,
       result: {},
     });
-    const unknown = (await server.handle(
-      { jsonrpc: '2.0', id: 4, method: 'nope' },
-      hubScope,
-    )) as { error: { code: number } };
+    const unknown = (await server.handle({ jsonrpc: '2.0', id: 4, method: 'nope' }, hubScope)) as {
+      error: { code: number };
+    };
     expect(unknown.error.code).toBe(-32601);
     const badTool = (await server.handle(
       { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'nope' } },
@@ -169,9 +180,9 @@ describe('history tools', () => {
     const { server } = await setup();
     const scope = boxScope('github.com/owner/repo');
     const list = await call(server, scope, 'sessions_list', {});
-    expect((list.structuredContent.sessions as Array<{ id: string }>).map((s) => s.id).sort()).toEqual(
-      [A, B],
-    );
+    expect(
+      (list.structuredContent.sessions as Array<{ id: string }>).map((s) => s.id).sort(),
+    ).toEqual([A, B]);
     const hits = await call(server, scope, 'sessions_search', { query: 'pineapple' });
     const ids = (hits.structuredContent.hits as Array<{ session: { id: string } }>).map(
       (h) => h.session.id,
@@ -243,14 +254,22 @@ describe('history tools', () => {
     const got = await call(server, scope, 'memory_get', { path: 'feedback-tests.md' });
     expect(got.structuredContent.content).toBe('run the tests first; token ******');
     // A rejected proposal writes nothing; an unsafe path is refused outright.
-    const rejected = await call(server, { ...scope, approve: async () => false }, 'memory_propose', {
-      path: 'other.md',
-      content: 'x',
-    });
+    const rejected = await call(
+      server,
+      { ...scope, approve: async () => false },
+      'memory_propose',
+      {
+        path: 'other.md',
+        content: 'x',
+      },
+    );
     expect(rejected.structuredContent.status).toBe('pending');
     await new Promise((res) => setTimeout(res, 20));
     expect(await memory.file(key, 'other.md')).toBeNull();
-    const bad = await call(server, scope, 'memory_propose', { path: '../etc/passwd', content: 'x' });
+    const bad = await call(server, scope, 'memory_propose', {
+      path: '../etc/passwd',
+      content: 'x',
+    });
     expect(bad.isError).toBe(true);
     // The hub must name a repo; a box with no repo cannot propose.
     expect((await call(server, hubScope, 'memory_list', {})).isError).toBe(true);

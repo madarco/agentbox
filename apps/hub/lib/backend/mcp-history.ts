@@ -30,7 +30,9 @@ function int(v: unknown, fallback: number, min: number, max: number): number {
 
 function clip(text: string | null, max: number): string | null {
   if (text === null) return null;
-  return text.length > max ? `${text.slice(0, max)}… [${String(text.length - max)} more chars]` : text;
+  return text.length > max
+    ? `${text.slice(0, max)}… [${String(text.length - max)} more chars]`
+    : text;
 }
 
 function historyOf(deps: HistoryMcpDeps): HistoryService {
@@ -245,7 +247,8 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
       const s = await resolveVisible(history, scope, ref);
       const full = args.detail === 'full';
       const from = int(args.from, 0, 0, Number.MAX_SAFE_INTEGER);
-      const toArg = args.to === undefined ? undefined : int(args.to, from, from, Number.MAX_SAFE_INTEGER);
+      const toArg =
+        args.to === undefined ? undefined : int(args.to, from, from, Number.MAX_SAFE_INTEGER);
       const span = Math.min((toArg ?? from + 199) - from + 1, 200);
       const rows = await history.sessionTurns(s.key, from, span);
       const items: Array<Record<string, unknown>> = [];
@@ -276,15 +279,18 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
       }
       flushTools();
       const total = await history.repo.countTurns(s.key);
-      if (nextFrom === undefined && rows.length === span && from + span < total && toArg === undefined) {
+      if (
+        nextFrom === undefined &&
+        rows.length === span &&
+        from + span < total &&
+        toArg === undefined
+      ) {
         nextFrom = from + span;
       }
       return {
         data: {
           session: sessionSummary(s),
-          ...(from === 0 && !full
-            ? { toolCounts: await history.repo.toolCounts(s.key) }
-            : {}),
+          ...(from === 0 && !full ? { toolCounts: await history.repo.toolCounts(s.key) } : {}),
           totalTurns: total,
           from,
           items,
@@ -298,7 +304,7 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
     name: 'memory_list',
     title: 'List agent memory files',
     description:
-      "The agent memory files the hub holds for this repository (latest version of each path). Use memory_get to read one. agent defaults to claude.",
+      'The agent memory files the hub holds for this repository (latest version of each path). Use memory_get to read one. agent defaults to claude.',
     inputSchema: {
       type: 'object',
       properties: { agent: { type: 'string', default: 'claude' }, ...repoProp },

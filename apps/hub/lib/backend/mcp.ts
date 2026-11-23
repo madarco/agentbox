@@ -36,7 +36,7 @@ export class McpToolError extends Error {}
 
 /** Sent at `initialize`: what the server is for, so an agent knows when to reach for it. */
 export const MCP_INSTRUCTIONS =
-  'AgentBox keeps the transcripts of past coding-agent sessions (from every box) and the agents\' shared memory. ' +
+  "AgentBox keeps the transcripts of past coding-agent sessions (from every box) and the agents' shared memory. " +
   'Use sessions_search to find earlier work by keywords, session_get to read a session, ' +
   'and memory_list / memory_get for the memory files. In a box, results are limited to this repository.';
 

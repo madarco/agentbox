@@ -81,7 +81,12 @@ describe('cloud executor', () => {
     const r = await executeCloudAction(action, {
       ...base,
       mcp: (method, params) =>
-        runMcpRpc(async (_s, m) => ({ echo: m }), async () => scope, method, params),
+        runMcpRpc(
+          async (_s, m) => ({ echo: m }),
+          async () => scope,
+          method,
+          params,
+        ),
     });
     expect(parse(r.stdout).message).toEqual({ echo: action.params.message });
     expect((await executeCloudAction(action, base)).exitCode).toBe(64);

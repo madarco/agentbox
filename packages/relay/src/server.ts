@@ -473,18 +473,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
   const historyRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
     runHistoryRpc(historyRelay, memoryRelay, reg, method, params);
   // `prompts`/`subscribers` are read when a proposal is made, long after setup.
-  const mcpScope =
-    (reg: BoxRegistration) =>
-    async (): Promise<McpBoxScope> => ({
-      kind: 'box',
-      boxId: reg.boxId,
-      boxName: reg.name,
-      ...(memoryRelay
-        ? await memoryRelay.boxIdentity(reg)
-        : { repoKey: null, origin: { boxId: reg.boxId, boxName: reg.name } }),
-      approve: (req) => askMcpApproval(prompts, subscribers, reg.boxId, req),
-      redact: (bytes) => (historyRelay ? historyRelay.redact(bytes) : Promise.resolve(bytes)),
-    });
+  const mcpScope = (reg: BoxRegistration) => async (): Promise<McpBoxScope> => ({
+    kind: 'box',
+    boxId: reg.boxId,
+    boxName: reg.name,
+    ...(memoryRelay
+      ? await memoryRelay.boxIdentity(reg)
+      : { repoKey: null, origin: { boxId: reg.boxId, boxName: reg.name } }),
+    approve: (req) => askMcpApproval(prompts, subscribers, reg.boxId, req),
+    redact: (bytes) => (historyRelay ? historyRelay.redact(bytes) : Promise.resolve(bytes)),
+  });
   const mcpRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
     runMcpRpc(opts.mcp ?? null, mcpScope(reg), method, params);
   const events = new EventBuffer();

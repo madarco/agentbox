@@ -53,7 +53,12 @@ describe('applyMcpRegistration', () => {
 
 describe('parseAgentMcpSpec', () => {
   it('accepts the built-in shapes and drops malformed or unsafe ones', () => {
-    const ok = { file: '~/.claude.json', format: 'json', serversPath: ['mcpServers'], entry: 'stdio' };
+    const ok = {
+      file: '~/.claude.json',
+      format: 'json',
+      serversPath: ['mcpServers'],
+      entry: 'stdio',
+    };
     expect(parseAgentMcpSpec(ok)).toEqual(ok);
     expect(parseAgentMcpSpec({ ...ok, file: 'rel/path.json' })).toBeNull();
     expect(parseAgentMcpSpec({ ...ok, file: '~/../etc/x' })).toBeNull();

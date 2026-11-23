@@ -10,7 +10,7 @@ import { registerBoxMcp } from '../mcp-register.js';
  * only, so diagnostics go to stderr.
  */
 export const mcpCommand = new Command('mcp')
-  .description("AgentBox MCP server over stdio (session history and memory from the hub)")
+  .description('AgentBox MCP server over stdio (session history and memory from the hub)')
   .action(async () => {
     await runMcpBridge({
       input: process.stdin,

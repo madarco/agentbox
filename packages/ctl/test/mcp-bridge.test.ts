@@ -68,8 +68,20 @@ describe('registerBoxMcp', () => {
     await writeFile(join(home, '.claude', '_claude.json'), JSON.stringify({ theme: 'dark' }));
     await symlink(join(home, '.claude', '_claude.json'), join(home, '.claude.json'));
     const targets = [
-      { agent: 'claude', file: '~/.claude.json', format: 'json', serversPath: ['mcpServers'], entry: 'stdio' },
-      { agent: 'codex', file: '~/.codex/config.toml', format: 'toml', serversPath: ['mcp_servers'], entry: 'stdio' },
+      {
+        agent: 'claude',
+        file: '~/.claude.json',
+        format: 'json',
+        serversPath: ['mcpServers'],
+        entry: 'stdio',
+      },
+      {
+        agent: 'codex',
+        file: '~/.codex/config.toml',
+        format: 'toml',
+        serversPath: ['mcp_servers'],
+        entry: 'stdio',
+      },
     ] as const;
     const first = await registerBoxMcp(targets, { home });
     expect(first.map((r) => r.outcome)).toEqual(['added', 'added']);
@@ -89,7 +101,15 @@ describe('registerBoxMcp', () => {
     const home = await mkdtemp(join(tmpdir(), 'mcp-reg-'));
     await writeFile(join(home, '.claude.json'), '{ broken');
     const [r] = await registerBoxMcp(
-      [{ agent: 'claude', file: '~/.claude.json', format: 'json', serversPath: ['mcpServers'], entry: 'stdio' }],
+      [
+        {
+          agent: 'claude',
+          file: '~/.claude.json',
+          format: 'json',
+          serversPath: ['mcpServers'],
+          entry: 'stdio',
+        },
+      ],
       { home },
     );
     expect(r!.outcome).toBe('skipped');
