@@ -89,6 +89,13 @@ export const CLONE_RECORD_POLICY = {
   borrowedCredentials: 'carry',
   accounts: 'carry',
   llmProxy: 'carry',
+  // Registration identity: the clone registers its own origin and origin
+  // machine at create, from its export.
+  originUrl: 'n/a',
+  repoKey: 'n/a',
+  originMachineId: 'n/a',
+  originMachineLabel: 'n/a',
+  originFolder: 'n/a',
   createdAt: 'n/a',
 } as const satisfies Record<keyof BoxRecord, ClonePolicy>;
 
