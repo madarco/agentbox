@@ -49,6 +49,8 @@ export interface GateInput {
   hubTokenOk: boolean;
   /** token profile: the match came from the URL, so the cookie still has to be set. */
   hubTokenFromQuery: boolean;
+  /** token profile: where the matching token came from (bearer wins over cookie). */
+  hubTokenVia?: 'bearer' | 'query' | 'cookie';
   evidence: CookieEvidence;
   probe: ProbeResult;
   now: number;
@@ -120,6 +122,79 @@ export function gateOutcome(i: GateInput): GateOutcome {
   // without touching the session store; anything else escalates.
   if (i.evidence.kind === 'cached' && i.evidence.sessionExpiresAt > i.now) return { kind: 'allow' };
   return { kind: 'probe' };
+}
+
+/**
+ * Which credential authorized an allowed request. Only `cookie` is ambient — the
+ * browser attaches it to a request another page started — so only `cookie` is
+ * subject to {@link csrfOutcome}. `bearer` and `query` both need the secret in
+ * the request itself, which a foreign page does not have.
+ */
+export type GateCredential = 'none' | 'bearer' | 'query' | 'cookie';
+
+/** The credential {@link gateOutcome} allowed `i` on. Same precedence as the gate. */
+export function gateCredential(i: GateInput): GateCredential {
+  if (i.mode === 'off') return 'none';
+  if (i.mode === 'token') return i.hubTokenOk ? (i.hubTokenVia ?? 'cookie') : 'none';
+  if (i.surface === 'api' && (i.bearerApiKeyOk || i.deviceId)) return 'bearer';
+  if (i.evidence.kind !== 'absent') return 'cookie';
+  return 'none';
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Cross-site request refusal for a cookie-authorized request.
+ *
+ * The hub cookie is `SameSite=Lax`, and "site" ignores the port: a docker box's
+ * web URL `http://127.0.0.1:<port>` is the SAME site as a local hub on
+ * `127.0.0.1:8787`, so a page the box serves gets the cookie attached to a POST
+ * it sends the hub. A `text/plain` POST needs no CORS preflight either, so
+ * without this check that page could create, prune or push boxes.
+ *
+ * A state-changing method on the cookie therefore has to prove it came from the
+ * hub's own pages: `Sec-Fetch-Site: same-origin`, or an `Origin` whose host is
+ * the request's own host. Neither header present is refused too: every browser
+ * sends at least one on a POST, and nothing but a browser holds the cookie.
+ * Bearer and `?token=` callers never reach the check. A body on such a write
+ * must also be JSON (`not-json`).
+ */
+export function csrfOutcome(a: {
+  credential: GateCredential;
+  method: string;
+  origin: string | null;
+  secFetchSite: string | null;
+  host: string | null;
+  contentType: string | null;
+  hasBody: boolean;
+}): 'ok' | 'cross-site' | 'not-json' {
+  if (a.credential !== 'cookie') return 'ok';
+  if (SAFE_METHODS.has(a.method.toUpperCase())) return 'ok';
+  if (!sameOrigin(a)) return 'cross-site';
+  // Belt and braces: the hub's pages send every body as JSON, and a JSON content
+  // type is exactly what a no-preflight ("simple") cross-site request cannot set.
+  if (a.hasBody && !isJsonContentType(a.contentType)) return 'not-json';
+  return 'ok';
+}
+
+function sameOrigin(a: {
+  origin: string | null;
+  secFetchSite: string | null;
+  host: string | null;
+}): boolean {
+  if (a.secFetchSite !== null) return a.secFetchSite === 'same-origin';
+  if (!a.origin || !a.host) return false;
+  try {
+    return new URL(a.origin).host.toLowerCase() === a.host.toLowerCase();
+  } catch {
+    // `Origin: null` (a sandboxed frame, a file: page) lands here.
+    return false;
+  }
+}
+
+function isJsonContentType(raw: string | null): boolean {
+  const type = (raw ?? '').split(';')[0]!.trim().toLowerCase();
+  return type === 'application/json' || (type.startsWith('application/') && type.endsWith('+json'));
 }
 
 /**

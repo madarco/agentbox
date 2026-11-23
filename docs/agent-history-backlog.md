@@ -458,6 +458,14 @@ folder). Still open:
 - **`local:` repos.** A repo with no `origin` keys as `local:<machine>:<root>`
   for memory, but its sessions carry no URL, so such a box sees no sessions.
 - **`usage_query`.** In the plan's tool list; it waits for Phase 7's usage API.
+- **Repo URLs with embedded userinfo are kept raw.** An origin like
+  `https://user:<token>@host/owner/repo` is stored as the session's
+  `projectRepoUrl` as written (host watcher, `HistoryRelay`, plane registration),
+  and MCP `sessions_list` returns it as `repo` to any box of the same repo. Kept
+  as-is on purpose (the owner's decision, 2026-11-23): the user chose that URL.
+  Revisit if it becomes a problem; the fix would be one strip-userinfo helper
+  applied where the URL is stored, registered or returned, plus sanitize-on-read
+  for rows already stored.
 - **Registration timing on a fresh cloud box.** ctl writes the MCP entries when
   `agents.list` first answers (retried with backoff). An agent launched before
   that starts without the server until its next launch. Docker is unaffected
