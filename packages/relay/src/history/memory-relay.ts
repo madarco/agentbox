@@ -11,6 +11,7 @@ import {
   type HistoryMemorySink,
   type MemoryOrigin,
   type MemoryPutResult,
+  type MemorySeedFile,
   type MemorySeedReply,
 } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
@@ -154,7 +155,7 @@ export class MemoryRelay {
     const agents: MemorySeedReply['agents'] = [];
     for (const a of this.agents()) {
       const host = root ? await readMemoryDir(hostMemoryDir(a.hostConfigDir, a.mem, root)) : [];
-      let files: Array<{ path: string; bytes: Uint8Array; sha256: string }> | null;
+      let files: MemorySeedFile[] | null;
       if (store && key) {
         try {
           files = await store.memorySeed({
@@ -179,11 +180,16 @@ export class MemoryRelay {
         files:
           files.length === 0 && !store
             ? null
-            : files.map((f) => ({
-                path: f.path,
-                content: Buffer.from(f.bytes).toString('base64'),
-                sha256: f.sha256,
-              })),
+            : files.map((f) =>
+                f.deleted
+                  ? { path: f.path, sha256: '', deleted: true, updatedAt: f.updatedAt }
+                  : {
+                      path: f.path,
+                      content: Buffer.from(f.bytes).toString('base64'),
+                      sha256: f.sha256,
+                      ...(f.updatedAt !== undefined ? { updatedAt: f.updatedAt } : {}),
+                    },
+              ),
       });
     }
     const reason = !this.deps.sink

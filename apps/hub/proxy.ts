@@ -5,7 +5,9 @@ import { DEVICE_ID_HEADER } from '@/lib/peer';
 import { ACTOR_HEADER } from '@/lib/request-actor';
 import { readCookieEvidence } from '@/lib/session-cookie';
 import {
+  csrfOutcome,
   gateActor,
+  gateCredential,
   gateOutcome,
   sessionProbeOrigin,
   signinRedirectPath,
@@ -108,6 +110,15 @@ function readGateInput(request: NextRequest): GateInput {
       Boolean(expectedToken) &&
       (tokenEq(bearer, expectedToken) || tokenEq(cookieToken, expectedToken) || queryTokenOk),
     hubTokenFromQuery: queryTokenOk,
+    ...(expectedToken
+      ? tokenEq(bearer, expectedToken)
+        ? { hubTokenVia: 'bearer' as const }
+        : queryTokenOk
+          ? { hubTokenVia: 'query' as const }
+          : tokenEq(cookieToken, expectedToken)
+            ? { hubTokenVia: 'cookie' as const }
+            : {}
+      : {}),
     evidence: { kind: 'absent' },
     probe: 'skipped',
     now: Date.now(),
@@ -160,6 +171,29 @@ async function probeSession(
   }
 }
 
+function csrfRefusal(kind: 'cross-site' | 'not-json'): NextResponse {
+  return kind === 'cross-site'
+    ? NextResponse.json(
+        {
+          error: {
+            code: 'csrf_rejected',
+            message:
+              "Cross-site request refused: a cookie-authenticated write must come from the hub's own pages. API clients send Authorization: Bearer <token>.",
+          },
+        },
+        { status: 403 },
+      )
+    : NextResponse.json(
+        {
+          error: {
+            code: 'unsupported_media_type',
+            message: 'A cookie-authenticated request body must be application/json.',
+          },
+        },
+        { status: 415 },
+      );
+}
+
 function render(
   request: NextRequest,
   input: GateInput,
@@ -168,6 +202,19 @@ function render(
 ): NextResponse {
   switch (outcome.kind) {
     case 'allow': {
+      const csrf = csrfOutcome({
+        credential: gateCredential(input),
+        method: request.method,
+        origin: request.headers.get('origin'),
+        secFetchSite: request.headers.get('sec-fetch-site'),
+        host: request.headers.get('x-forwarded-host') ?? request.headers.get('host'),
+        contentType: request.headers.get('content-type'),
+        hasBody:
+          request.headers.has('transfer-encoding') ||
+          Number(request.headers.get('content-length') ?? '0') > 0,
+        surface: input.surface,
+      });
+      if (csrf !== 'ok') return csrfRefusal(csrf);
       // Tell the route who is calling. Always set, so a client-sent copy of the
       // header is overwritten rather than trusted.
       const headers = new Headers(request.headers);

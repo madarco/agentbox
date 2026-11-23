@@ -4,6 +4,7 @@
 // Two steps, one route: `prepareClone` exports the workspace into a new host
 // project dir, then the normal create enqueues the box. Returns the create job
 // so the CLI, the web UI and the tray all stream the same progress.
+import { copyBoxBindingsWhenCreated } from '@/lib/backend/skill-bindings';
 import { cloneCreateInput } from '@/lib/boxes/clone-create';
 import { backendOrNull } from '../../../lib/backend';
 import { fail, failFromAction, ok } from '../../../lib/envelope';
@@ -33,6 +34,18 @@ export async function POST(
 
   const created = await backend.create(cloneCreateInput(prepared));
   if (!created.ok) return failFromAction(created.error);
+  // The source's box-scope skill bindings follow the clone once its id exists.
+  // Not awaited: the caller streams the create job meanwhile.
+  const custody = globalThis.__AGENTBOX_HUB_CUSTODY;
+  if (custody) {
+    void copyBoxBindingsWhenCreated({
+      store: custody,
+      fromBoxId: prepared.sourceBoxId,
+      getJob: (jobId) => backend.getJob(jobId),
+      jobId: created.jobId,
+      log: (line) => console.warn(`[hub] ${line}`),
+    });
+  }
   return ok({
     jobId: created.jobId,
     name: prepared.name,

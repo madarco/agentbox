@@ -92,6 +92,8 @@ export interface HostReachBox {
   autoApproveSafeHostActions?: boolean;
   /** The agent the box was created for (its registration's), for `agents.list`. */
   agent?: string;
+  /** Every agent the box runs (its registration's), for `agents.list`. */
+  agents?: string[];
 }
 
 /**
