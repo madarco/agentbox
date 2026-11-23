@@ -171,6 +171,14 @@ clean URL is what the box's desktop sees (the redirect also sends
 **password-profile** hub — a deployed control box — page routes require a real
 login instead, so the first such click of a session lands on `/signin`.
 
+The **Accounts** page lists the machine's named LLM accounts (logins, setup
+tokens, API keys per agent), with the boxes using each one. Add a setup token or
+an API key there, relabel or remove an account; a login runs on the machine
+with `agentbox <agent> login --account <name>`. The create dialog offers an
+**Account** picker for an agent that has named accounts, and the box table and
+detail page show the account a box runs on. See
+[several accounts per agent](/docs/run-an-agent#several-accounts-per-agent).
+
 A password-profile hub also has a **Devices** page: the computers enrolled with
 `agentbox hub login`, each with its own token, plus the codes waiting for your
 approval. A local hub needs no login and shows none. See

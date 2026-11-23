@@ -66,6 +66,9 @@ export interface EffectiveAgentBlock {
  *   (`relay.controlPlaneUrl`), else relay. Today's behavior.
  * Docker boxes ignore this (always `relay` — they bind-mount the host `.git`).
  */
+/** `llm.proxy`: how a box's LLM traffic leaves (Phase 7 ships `forward`). */
+export type LlmProxyMode = 'off' | 'forward';
+
 export type GitPushMode = 'auto' | 'relay' | 'lease' | 'direct';
 /**
  * Which git credential a deployed hub (control box) uses on your behalf.
@@ -304,6 +307,12 @@ export interface UserConfig {
   git?: {
     pushMode?: GitPushMode;
   };
+  /** The hub egress proxy (docs/llm-accounts-plan.md, Phase 7). */
+  llm?: {
+    proxy?: LlmProxyMode;
+    proxyPort?: number;
+    proxyUrl?: string;
+  };
   hub?: {
     gitAuth?: HubGitAuthMode;
     mode?: HubMode;
@@ -504,6 +513,11 @@ export interface EffectiveConfig {
   };
   git: {
     pushMode: GitPushMode;
+  };
+  llm: {
+    proxy: LlmProxyMode;
+    proxyPort: number;
+    proxyUrl: string;
   };
   hub: {
     gitAuth: HubGitAuthMode;
@@ -710,6 +724,11 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   git: {
     pushMode: 'auto',
+  },
+  llm: {
+    proxy: 'off',
+    proxyPort: 8790,
+    proxyUrl: '',
   },
   hub: {
     gitAuth: 'gh',
@@ -1340,6 +1359,26 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     enumValues: ['auto', 'relay', 'lease', 'direct'] as const,
     description:
       "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time, and is REFUSED when a control box is configured (`relay.controlPlaneUrl`) — use leasing (the `auto` default) instead.",
+  },
+  {
+    key: 'llm.proxy',
+    type: 'enum',
+    enumValues: ['off', 'forward'] as const,
+    description:
+      "Route new boxes' LLM traffic through the hub's egress proxy: `forward` sends each agent's model hosts (inference, OAuth refresh, account calls - `llmHosts` on the agent) through an HTTP CONNECT proxy on the hub, so they leave from the hub's IP; telemetry and tool traffic still go direct. `off` (default) leaves everything direct. Recorded on the box at create; `--llm-proxy` overrides it. Fails closed: if the hub is unreachable the agent's call fails with a clear error rather than going direct. The hub only runs the proxy once THIS machine opted in (`forward` in the GLOBAL config, or `llm.proxyUrl` set) - a create asking for `forward` without that is refused. Only agents that declare model hosts (claude, codex) are proxied.",
+  },
+  {
+    key: 'llm.proxyPort',
+    type: 'int',
+    description:
+      "Port of the hub relay's CONNECT proxy for `llm.proxy: forward` (default 8790). Docker boxes reach it at `host.docker.internal:<port>`. Read from the GLOBAL config only (it is this machine's port, never a project's), when the relay or hub starts - restart it after changing it.",
+    advanced: true,
+  },
+  {
+    key: 'llm.proxyUrl',
+    type: 'string',
+    description:
+      "`host:port` a CLOUD box dials to reach the hub's CONNECT proxy (`llm.proxyPort` published on an address the internet can reach). Required for `llm.proxy: forward` on a cloud box - a laptop relay is not reachable from a cloud sandbox by itself, and a Cloudflare tunnel carries no raw TCP. Docker boxes ignore it. Read from the GLOBAL config only; setting it also turns the hub's proxy listener on.",
   },
   {
     key: 'hub.mode',

@@ -1,4 +1,5 @@
 import { intro, log, outro } from '@clack/prompts';
+import { LLM_PROXY_FLAG_HELP, edgeLlmProxyMode, parseLlmProxyFlag } from '../lib/llm-proxy-flag.js';
 import {
   bumpProjectGcCounter,
   findProjectRoot,
@@ -12,7 +13,7 @@ import {
   resolveDefaultCheckpoint,
   type UserConfig,
 } from '@agentbox/config';
-import { persistentRefusal } from '@agentbox/core';
+import { persistentRefusal, type SkillSelection } from '@agentbox/core';
 import { detectEngine, listBoxes, type BoxRecord } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
@@ -52,6 +53,11 @@ import {
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { reportCheckoutInBackground } from '../lib/checkouts-report.js';
+import {
+  collectSkillNames,
+  SKILL_FLAG_HELP,
+  skillSelectionFromFlags,
+} from '../lib/skills/selection.js';
 import { autoSeedSkills } from '../lib/skills/auto-seed.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import { readCurrentBranch } from '@agentbox/relay';
@@ -99,6 +105,8 @@ interface CreateOptions {
   vnc?: boolean; // commander: --no-vnc => false; default true (undefined treated as true)
   /** --persistent / --no-persistent: always-on box (config box.persistent). */
   persistent?: boolean;
+  /** `--llm-proxy <off|forward>` (llm-accounts Phase 7). */
+  llmProxy?: string;
   resync?: boolean; // commander: --no-resync => false; default true (config box.resyncOnStart)
   sharedDockerCache?: boolean;
   portless?: boolean; // commander: --portless / --no-portless => true / false / undefined
@@ -137,6 +145,9 @@ interface CreateOptions {
   dangerouslyWithCredentials?: boolean;
   /** --model-auth <source...>: host model-provider logins to seed into the box. */
   modelAuth?: string[];
+  /** `--skills <names>` (or false for `--no-skills`) and `--skip-skills <names>`. */
+  skills?: string[] | false;
+  skipSkills?: string[];
   /** --account <agent=name...>: the named LLM account per agent. */
   account?: string[];
   /** --via-hub: force enqueue the create on the control box instead of building locally. */
@@ -296,7 +307,11 @@ async function runCreateViaHubApi(
     resolved: {
       ...(opts.persistent !== undefined ? { persistent: opts.persistent } : {}),
       ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+      ...skillsOpt(opts),
       ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+      ...(edgeLlmProxyMode(opts.llmProxy, cfg)
+        ? { llmProxy: edgeLlmProxyMode(opts.llmProxy, cfg) }
+        : {}),
     },
   });
   for (const w of warnings) log.warn(w);
@@ -439,6 +454,10 @@ export const createCommand = new Command('create')
     'always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.',
   )
   .option('--no-persistent', 'create an expendable box even when box.persistent is set')
+  .option('--llm-proxy <mode>', LLM_PROXY_FLAG_HELP)
+  .option('--skills <names>', SKILL_FLAG_HELP.skills, collectSkillNames)
+  .option('--no-skills', SKILL_FLAG_HELP.noSkills)
+  .option('--skip-skills <names>', SKILL_FLAG_HELP.skipSkills, collectSkillNames)
   .option(
     '--no-resync',
     "when starting from a checkpoint, do not merge the host's current branch + overlay its uncommitted/untracked changes (default: do, keeping the box's version on conflict)",
@@ -685,6 +704,8 @@ export const createCommand = new Command('create')
     let borrowCredentials: string[] = [];
     let accounts: Record<string, string> = {};
     try {
+      // A typo in `--llm-proxy` fails here, before anything is built.
+      parseLlmProxyFlag(opts.llmProxy);
       borrowCredentials = resolveBoxModelAuth(opts.modelAuth);
       // Named LLM accounts. An agentless box carries no agent but its borrowed
       // lenders, so only a lender can be given one: docker cannot mount an
@@ -1016,6 +1037,7 @@ export const createCommand = new Command('create')
           envFiles: wiz.envFilesToImport,
           vnc: cfg.effective.box.vnc,
           persistent: cfg.effective.box.persistent,
+          ...skillsOpt(opts),
           resync: opts.resync,
           sharedDockerCache: cfg.effective.box.dockerCacheShared,
           portless: portlessEnabled,
@@ -1035,6 +1057,9 @@ export const createCommand = new Command('create')
           remoteHost,
           ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
           ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+          ...(edgeLlmProxyMode(opts.llmProxy, cfg.effective)
+            ? { llmProxy: edgeLlmProxyMode(opts.llmProxy, cfg.effective) }
+            : {}),
           // The resolved list, for a worker on THIS machine to read the approved
           // host files with. NOTE: the hub re-resolves `agentbox.yaml`'s block
           // server-side and its answer wins over this echo, so entries that only
@@ -1166,3 +1191,9 @@ export const createCommand = new Command('create')
     }
     cmdLog.close();
   });
+
+/** `{ skills }` for a create request when a skill flag was given, else `{}`. */
+function skillsOpt(opts: CreateOptions): { skills?: SkillSelection } {
+  const skills = skillSelectionFromFlags(opts);
+  return skills ? { skills } : {};
+}

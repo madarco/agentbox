@@ -26,7 +26,7 @@ import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from './cp-ca
 import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from './cp-outbox.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
-import { buildAgentDescriptors } from '@agentbox/sandbox-core';
+import { buildAgentDescriptors, isValidLlmProxyUpstream } from '@agentbox/sandbox-core';
 import { registrationAgents } from './registration-to-record.js';
 import { mergeRegistrationOrigin } from './registration-origin.js';
 import {
@@ -70,6 +70,7 @@ import {
 import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import { readCreateJobLog } from './job-log-tail.js';
 import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
+import { parseSkillSelection, runSkillsRpc } from './skills-rpc.js';
 import type { CustodyStore } from './custody/store.js';
 import {
   custodySlugCandidates,
@@ -105,7 +106,7 @@ import {
   CredentialsFanout,
   stateBoxAccount,
 } from './credentials-fanout.js';
-import type { HistoryIngestSink, HistoryMemorySink } from '@agentbox/core';
+import type { HistoryIngestSink, HistoryMemorySink, LlmProxyRecord } from '@agentbox/core';
 import { HistoryRelay } from './history/history-relay.js';
 import { runHistoryRpc } from './history/rpc.js';
 import { MemoryRelay } from './history/memory-relay.js';
@@ -566,6 +567,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           // The registration first: it exists before the box's first credential
           // post (state.json is written later on a cloud create), and it is the
           // only record a Store-only box has. Then the PC's own record.
+          originMachineFor: async (boxId) =>
+            (await store.getBox(boxId).catch(() => undefined))?.originMachineId,
           boxAccountFor: async (boxId, agent) =>
             namedAccounts((await store.getBox(boxId).catch(() => undefined))?.accounts)?.[agent] ??
             (await stateBoxAccount(boxId, agent)),
@@ -1224,6 +1227,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 200, await historyRpc(reg)(body.method, body.params));
         return;
       }
+      // The box's share of the skills library: unprompted, box-scoped by its
+      // registration's selection, not worktree-scoped.
+      if (body.method.startsWith('skills.')) {
+        send(res, 200, await runSkillsRpc(custody, reg.skills, body.method, body.params));
+        return;
+      }
       if (body.method === 'agents.list') {
         send(res, 200, {
           exitCode: 0,
@@ -1279,6 +1288,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             originUrl: reg.originUrl,
             boxAgents: registrationAgents(reg),
             history: historyRpc(reg),
+            skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -1501,6 +1511,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                     name: reg.name,
                     ...(reg.backend ? { backend: reg.backend } : {}),
                     ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
+                    ...(reg.agent ? { agent: reg.agent } : {}),
                     ...(reg.autoApproveSafeHostActions === false
                       ? { autoApproveSafeHostActions: false }
                       : {}),
@@ -1913,6 +1924,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           ? Math.trunc(body.projectIndex)
           : undefined;
       const kind = body.kind === 'cloud' ? 'cloud' : 'docker';
+      const existingReg = await store.getBox(body.boxId).catch(() => undefined);
+      const skillSelection = parseSkillSelection(body.skills);
       const reg: BoxRegistration = {
         boxId: body.boxId,
         token: body.token,
@@ -1951,6 +1964,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // Default on: only an explicit `false` disables the safe subset, so an
         // older wire body without the field stays relaxed.
         autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
+        ...(skillSelection ? { skills: skillSelection } : {}),
         originUrl:
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl
@@ -1964,13 +1978,23 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.webPort === 'number' && Number.isFinite(body.webPort) && body.webPort > 0
             ? Math.trunc(body.webPort)
             : undefined,
-        agent: typeof body.agent === 'string' && body.agent.length > 0 ? body.agent : undefined,
+        // Kept from the stored registration when a re-register omits it (a
+        // start, resume or rehydrate from a record that never learned the
+        // agent): a registration REPLACES the entry, and an agentless one would
+        // strip a service agent's gateway (`agents.list`).
+        agent:
+          typeof body.agent === 'string' && body.agent.length > 0
+            ? body.agent
+            : (existingReg?.agent ?? undefined),
         accounts: sanitizeAccounts(body.accounts),
+        // Kept from the stored registration when a re-register omits it, like
+        // `agent`: a relaunch from a record that predates it must not strip it.
+        llmProxy: sanitizeLlmProxy(body.llmProxy) ?? existingReg?.llmProxy,
         projectSlug:
           typeof body.projectSlug === 'string' && body.projectSlug.length > 0
             ? body.projectSlug
             : undefined,
-        ...mergeRegistrationOrigin(body, await store.getBox(body.boxId).catch(() => undefined)),
+        ...mergeRegistrationOrigin(body, existingReg),
       };
       await store.registerBox(reg);
       log(
@@ -2035,8 +2059,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       autoApproveSafeHostActions: reg.autoApproveSafeHostActions,
                       controlPlane: opts.controlPlane === true,
                       originUrl: reg.originUrl,
-                      boxAgents: registrationAgents(reg),
+                      // The CURRENT registration, not the one this poller was
+                      // started with: an agent added to a running box
+                      // (`agentbox openclaw <box>`) is a store write, and the
+                      // box's next `agents.list` must already see it.
+                      boxAgents: registrationAgents(
+                        (await store.getBox(reg.boxId).catch(() => undefined)) ?? reg,
+                      ),
                       history: historyRpc(reg),
+                      skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
                       log,
                     });
                     await respond(result);
@@ -3342,6 +3373,17 @@ function parseReachPrompt(raw: unknown): Omit<PromptAskEvent, 'id'> | null {
 }
 
 /** A registration's `accounts`, kept only when it is `{ agent: account-id }`. */
+/** A registration's `llmProxy`, kept only when it is `{ mode: 'forward', upstream: host:port }`. */
+function sanitizeLlmProxy(raw: unknown): LlmProxyRecord | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  return r.mode === 'forward' &&
+    typeof r.upstream === 'string' &&
+    isValidLlmProxyUpstream(r.upstream)
+    ? { mode: 'forward', upstream: r.upstream }
+    : undefined;
+}
+
 function sanitizeAccounts(raw: unknown): Record<string, string> | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, string> = {};

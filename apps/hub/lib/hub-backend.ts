@@ -37,8 +37,10 @@ import {
   type BoxRecord,
   type CloudSandboxSummary,
   type ExecResult,
+  type LlmProxyRecord,
   type PromptAnswer,
   type Provider,
+  primaryAgent,
   providerWarning,
 } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
@@ -50,6 +52,7 @@ import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
 import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
+import { addBoxAgent } from './backend/box-agents';
 import type { BackendDeps } from './backend/deps';
 import {
   configureBoxPushStat,
@@ -119,6 +122,7 @@ import {
   resolvePerBoxCarry,
   serviceSignInUrl,
   mutateState,
+  recordAgentAdded,
   readPreparedStateRaw,
   readState,
   recordBox,
@@ -131,6 +135,8 @@ import {
   diffFileManifests,
   listProviderDescriptors,
   resolveProviderDescriptor,
+  readAccounts,
+  resolveLlmProxyRecord,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
@@ -202,7 +208,12 @@ import type {
 } from './boxes/backend-types';
 import { vncUnavailableReason } from './boxes/vnc-link';
 import { hubProfile } from './auth-config';
-import { resolveCreateAccounts, setDefaultCheckpointRefusal } from './backend/accounts';
+import {
+  accountsInfoOf,
+  createAccountBackend,
+  resolveCreateAccounts,
+  setDefaultCheckpointRefusal,
+} from './backend/accounts';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import { createProjectDir } from './boxes/create-project';
@@ -386,6 +397,16 @@ interface ProjectRegrouping {
   reg: BoxRegistration;
 }
 
+/**
+ * A box whose record never learned its agents (a hub-built box from before
+ * the hub worker passed them) still reports the registration's agent, so `hub
+ * adopt` on another PC keeps it and a service agent's gateway survives.
+ */
+function withRegisteredAgent(box: Box, reg: { agent?: string } | undefined): Box {
+  if ((box.agents && box.agents.length > 0) || !reg?.agent || reg.agent === 'none') return box;
+  return { ...box, agents: [reg.agent] };
+}
+
 /** The origin-machine fields of the Box payload, from a registration. */
 function originOfRegistration(
   reg: { originMachineId?: string; originMachineLabel?: string } | undefined,
@@ -488,8 +509,10 @@ function mapBox(
     webPort: b.cloud?.webPort,
     previewUrls: b.cloud?.previewUrls,
     lastAgent: b.lastAgent,
+    ...(b.agents && b.agents.length > 0 ? { agents: [...b.agents] } : {}),
     borrowedCredentials: b.borrowedCredentials,
     ...(b.accounts ? { accounts: { ...b.accounts } } : {}),
+    ...(b.llmProxy ? { llmProxy: { ...b.llmProxy } } : {}),
     topology: b.cloud?.topology,
   };
 }
@@ -617,7 +640,12 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     image: reg.image,
     webPort: reg.webPort,
     lastAgent: normalizeLastAgent(reg.agent as BoxRecord['lastAgent']),
+    // Every agent, service agents included (this normalised `lastAgent` keeps only TUI ones),
+    // so a PC adopting the box keeps it: without it an adopted openclaw box
+    // looked agentless and its gateway was never started.
+    ...(reg.agent && reg.agent !== 'none' ? { agents: [reg.agent] } : {}),
     ...(reg.accounts ? { accounts: { ...reg.accounts } } : {}),
+    ...(reg.llmProxy ? { llmProxy: { ...reg.llmProxy } } : {}),
     // A control box only knows a registered box through the plane, so it is by
     // definition a control-plane-topology box.
     topology: 'control-plane',
@@ -1650,7 +1678,11 @@ async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
         worktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-        agent: box.agents?.[0] ?? box.lastAgent,
+        agent: primaryAgent(box),
+        // A register REPLACES the registration: without this a branch switch
+        // would widen a `--no-skills` / `--skip-skills` box to the whole library.
+        ...(box.skills ? { skills: box.skills } : {}),
+        ...(box.accounts ? { accounts: box.accounts } : {}),
       });
     } catch (err) {
       // Persisted to state.json, but the running relay still holds the old
@@ -2148,6 +2180,17 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
   const checkouts = createCheckoutBackend(backendDeps);
+  // A box records its account in state.json AND in its relay registration;
+  // a Store-only box has only the latter, and must still block `accounts rm`.
+  const accounts = createAccountBackend({
+    boxes: async () => [
+      ...(await readState()).boxes,
+      ...(await handle.store.listBoxes().catch(() => [])).map((r) => ({
+        name: r.name,
+        ...(r.accounts ? { accounts: r.accounts } : {}),
+      })),
+    ],
+  });
   const workspaces = createWorkspaceBackend(backendDeps);
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
@@ -2208,6 +2251,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     }
     const mapped = controlPlaneCreateRequest(input, repoUrl);
     if (!mapped.ok) return { ok: false, error: mapped.error };
+    // The hub egress proxy: the client sends a mode, the upstream is THIS
+    // hub's address (llm-accounts Phase 7). No project config here: the mode
+    // falls back to this hub's own global `llm.proxy`.
+    try {
+      const llmProxy = resolveLlmProxyRecord(
+        mapped.request.provider ?? 'docker',
+        (await loadEffectiveConfig(os.homedir())).effective.llm,
+        input.opts?.llmProxy,
+      );
+      if (llmProxy) mapped.request.opts = { ...mapped.request.opts, llmProxy };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
     if (mapped.dropped.length > 0) {
       // Says so out loud rather than building a box that quietly is not what was
       // asked for. Reaches a CLI as a job-log warning; a client that shows no
@@ -2230,6 +2286,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   }
   const hub: HubBackend = {
     ...checkouts,
+    ...accounts,
     ...workspaces,
     ...managers,
     ...timeline,
@@ -2343,23 +2400,37 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // filesystem probe; the resolver caches per project root, so a fleet of
       // boxes over three projects costs three stats, not one per box.
       const hasGitOf = boxHasGitResolver();
+      // One store read per listing: label + kind for every box's named accounts.
+      const accountFile = await readAccounts().catch(() => null);
       const withTasks = (box: Box): Box => {
         const summary = taskSummaries.byBox.get(box.id);
         const managerId = managerByBox.get(box.id);
         const pr = prOf(box);
+        const accountsInfo = accountsInfoOf(box.accounts, accountFile);
         return {
           ...box,
           ...(summary ? { tasks: summary } : {}),
           ...(managerId ? { managerId } : {}),
           ...(pr ? { pr } : {}),
+          ...(accountsInfo ? { accountsInfo } : {}),
         };
       };
       const listedBoxes = await Promise.all(
         listed.map(async (b) =>
-          withTasks({
-            ...mapBox(b, repoGrouped.get(b.id), regByBoxId.get(b.id)?.originUrl, await hasGitOf(b)),
-            ...originOfRegistration(regByBoxId.get(b.id)),
-          }),
+          withTasks(
+            withRegisteredAgent(
+              {
+                ...mapBox(
+                  b,
+                  repoGrouped.get(b.id),
+                  regByBoxId.get(b.id)?.originUrl,
+                  await hasGitOf(b),
+                ),
+                ...originOfRegistration(regByBoxId.get(b.id)),
+              },
+              regByBoxId.get(b.id),
+            ),
+          ),
         ),
       );
       return {
@@ -2694,6 +2765,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
+        // The hub egress proxy (llm-accounts Phase 7): the mode is the client's
+        // or the project's; port and URL are THIS hub's (global config only).
+        let llmProxy: LlmProxyRecord | undefined;
+        try {
+          llmProxy = resolveLlmProxyRecord(
+            provider,
+            (await loadEffectiveConfig(os.homedir())).effective.llm,
+            o.llmProxy ?? (await loadEffectiveConfig(workspace)).effective.llm.proxy,
+          );
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
         // Declined after a re-review: withdraw the standing approval, or the
         // next create would silently copy what the user just refused.
         if (gated.carryDeclined && !isHubWorkerClone(workspace)) {
@@ -2748,6 +2831,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             envFiles: o.envFiles,
             vnc: o.vnc,
             persistent,
+            ...(o.skills ? { skills: o.skills } : {}),
             resync: o.resync,
             sharedDockerCache: o.sharedDockerCache,
             portless: o.portless,
@@ -2774,6 +2858,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             carry: gated.carry as QueueJobCreateOpts['carry'],
             borrowCredentials: gated.borrowCredentials,
             ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+            ...(llmProxy ? { llmProxy } : {}),
             // Restore only. Not reachable from the wire — `parseCreateBox` does
             // not accept it — so a plain create cannot ask the worker to push an
             // arbitrary directory into a box's agent config dir.
@@ -3399,6 +3484,22 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       } catch (err) {
         return { kind: 'error', error: errMsg(err) };
       }
+    },
+
+    async addBoxAgent(id, agent) {
+      const res = await addBoxAgent(
+        {
+          findBox: (ref) => findOrHydrateBox(ref, hydrate).catch(() => null),
+          recordAgent: (boxId, a) => recordAgentAdded(boxId, a),
+          getRegistration: (boxId) => handle.store.getBox(boxId).catch(() => undefined),
+          register: (reg) => handle.store.registerBox(reg),
+          agentId: (name) => findAgentSpec(name)?.id,
+        },
+        id,
+        agent,
+      );
+      if (res.kind === 'ok') handle.hubNotifier.notify();
+      return res;
     },
 
     // ── agent state ──

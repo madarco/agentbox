@@ -12,11 +12,11 @@
  */
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { readdir, rm } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { parseProviderSpec } from '@agentbox/config';
+import { parseProviderSpec, tryGetMachineId } from '@agentbox/config';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -39,16 +39,26 @@ import {
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
+  decodePastedSecret,
   readCredentialBackup,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
+  STATE_DIR,
 } from '@agentbox/sandbox-core';
 import {
   applyProjectSeedForRepo,
   startDetachedCloudAgent,
   type MaterializedCarryEntry,
 } from '@agentbox/sandbox-cloud';
-import { resolveAgentLauncher, toQueueKind, type ResolvedCarryEntry } from '@agentbox/core';
+import {
+  ACCOUNTS_CUSTODY_SEGMENT,
+  accountIdProblem,
+  accountSecretPath,
+  isDefaultAccount,
+  resolveAgentLauncher,
+  toQueueKind,
+  type ResolvedCarryEntry,
+} from '@agentbox/core';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
 import { createStartsSession, resolveCreateAgentSpec } from './boxes/create-agent.js';
@@ -76,9 +86,14 @@ async function runGit(
  * path, no second credential list.
  */
 export async function seedHostBackupsFromCustody(
-  custody: Pick<FsCustodyStore, 'get'>,
+  custody: Pick<FsCustodyStore, 'get' | 'list'>,
   log: (l: string) => void,
+  /** Override the account secrets' root (tests); default `~/.agentbox`. */
+  stateDir: string = STATE_DIR,
+  /** This hub's machine id (tests); default: the machine-id file. */
+  machine: string | undefined = tryGetMachineId(),
 ): Promise<void> {
+  await seedAccountSecretsFromCustody(custody, log, stateDir, machine);
   for (const spec of AGENT_SYNC_SPECS) {
     // Nothing was ever uploaded for an agent that declares no credential.
     if (!spec.credential) continue;
@@ -105,6 +120,70 @@ export async function seedHostBackupsFromCustody(
       log(
         `seed ${spec.id} from custody failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+  }
+}
+
+/**
+ * The NAMED accounts' secrets, from custody `agents/<agent>/accounts/<id>/<file>`
+ * into the account store's `credentials/<agent>/<id>.json` (llm-accounts
+ * Phase 4) — newest-wins, exactly like the default login above, so a box's
+ * refreshed account login is never replaced by an older pushed copy. Rows
+ * (`accounts.json`) do not travel yet; until Phase 5 this seeds the secret a
+ * box on that account (created with the row present) reads.
+ */
+async function seedAccountSecretsFromCustody(
+  custody: Pick<FsCustodyStore, 'get' | 'list'>,
+  log: (l: string) => void,
+  stateDir: string,
+  machine: string | undefined,
+): Promise<void> {
+  for (const spec of AGENT_SYNC_SPECS) {
+    const cred = spec.credential;
+    if (!cred) continue;
+    // Only THIS machine's accounts: the store is per machine, and another PC's
+    // `work` is not this one's (Phase 5 custody design).
+    if (!machine) continue;
+    let entries: { path: string }[];
+    try {
+      entries = await custody.list(`agents/${spec.id}/${ACCOUNTS_CUSTODY_SEGMENT}/${machine}`);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const parts = entry.path.split('/');
+      // agents / <agent> / accounts / <machine> / <id> / <file>
+      const id = parts[4];
+      if (parts.length !== 6 || parts[3] !== machine || parts[5] !== cred.boxRelPath || !id) {
+        continue;
+      }
+      if (accountIdProblem(id) !== null || isDefaultAccount(id)) continue;
+      const label = `${spec.id} account '${id}'`;
+      try {
+        const found = await custody.get(entry.path);
+        if (!found) continue;
+        const incoming = found.data.toString('utf8');
+        const backupPath = accountSecretPath(spec, id, stateDir)!;
+        const existing = await readCredentialBackup(spec.id, { backupPath });
+        // A pasted token has no expiry to order by: the latest push wins. A
+        // login gets the same newest-wins gate as the default above.
+        const verdict = decodePastedSecret(incoming)
+          ? existing === incoming
+            ? { accept: false, reason: 'unchanged' }
+            : { accept: true, reason: 'pasted secret changed' }
+          : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        if (!verdict.accept) {
+          log(`kept the local ${label} credentials (custody copy ${verdict.reason})`);
+          continue;
+        }
+        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+        await writeCredentialBackup(spec.id, incoming, { backupPath });
+        log(`seeded ${label} credentials from custody (${verdict.reason})`);
+      } catch (err) {
+        log(
+          `seed ${label} from custody failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 }
@@ -343,6 +422,11 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         projectRoot: workspacePath,
         // Registered on the plane so an adopting PC relaunches the right agent.
         agent: agentSpec?.id,
+        // `agents` too, as every other create path passes it: the record's
+        // `agents` is what the hub re-registers the box with (rehydrate,
+        // start) and what its Box payload hands `hub adopt`. Without it a
+        // hub-built openclaw box lost its gateway on the first hub restart.
+        agents: agentSpec ? [agentSpec.id] : [],
         // Register the box on THIS hub (control-plane topology) so the phone UI
         // sees it and approvals route back here.
         controlPlaneUrl: opts.publicUrl,
@@ -363,6 +447,10 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.withEnv !== undefined ? { withEnv: createOpts.withEnv } : {}),
         ...(createOpts?.vnc !== undefined ? { vnc: { enabled: createOpts.vnc } } : {}),
         ...(createOpts?.persistent !== undefined ? { persistent: createOpts.persistent } : {}),
+        // `--skills` / `--skip-skills` / `--no-skills`: portable, so it travelled
+        // here; without this the box registers with no selection and gets the
+        // whole library.
+        ...(createOpts?.skills ? { skills: createOpts.skills } : {}),
         ...(createOpts?.bundleDepth !== undefined ? { bundleDepth: createOpts.bundleDepth } : {}),
         ...(createOpts?.build ? { allowPull: false } : {}),
         ...(createOpts?.credentialSync !== undefined
@@ -379,6 +467,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.accounts && Object.keys(createOpts.accounts).length > 0
           ? { accounts: createOpts.accounts }
           : {}),
+        // Resolved at enqueue against this hub's own address.
+        ...(createOpts?.llmProxy ? { llmProxy: createOpts.llmProxy } : {}),
         // Everything provider-shaped comes from the machine that HAS the project
         // config; this box has neither the checkout nor
         // `~/.agentbox/projects/<hash>`, so resolving any of it here would only

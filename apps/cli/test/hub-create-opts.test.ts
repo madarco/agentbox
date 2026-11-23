@@ -1,6 +1,7 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import { describe, expect, it } from 'vitest';
 import { buildHubCreateOpts } from '../src/lib/hub-create-opts.js';
+import { edgeLlmProxyMode } from '../src/lib/llm-proxy-flag.js';
 
 // Only the `box` slice is read; cast a minimal shape through unknown.
 function makeCfg(box: Record<string, unknown> = {}): EffectiveConfig {
@@ -106,5 +107,25 @@ describe('what it refuses to pretend about', () => {
   it('warns that a host clone and a local alias stay home', () => {
     expect(hetzner({}, { hostSnapshot: true }).warnings[0]).toContain('--local');
     expect(hetzner({}, { portless: true }).warnings[0]).toContain('public URL');
+  });
+});
+
+describe('--llm-proxy on a hub-routed create (llm-accounts Phase 7)', () => {
+  it('sends the mode, never an upstream; absent when not asked', () => {
+    const base = { providerName: 'hetzner', cfg: makeCfg(), flags: {} };
+    expect(buildHubCreateOpts({ ...base, resolved: { llmProxy: 'forward' } }).opts.llmProxy).toBe(
+      'forward',
+    );
+    expect(buildHubCreateOpts({ ...base, resolved: { llmProxy: 'off' } }).opts.llmProxy).toBe(
+      'off',
+    );
+    expect('llmProxy' in buildHubCreateOpts(base).opts).toBe(false);
+  });
+  it('edgeLlmProxyMode: the flag, else the project key when on; a typo throws', () => {
+    const cfg = (proxy: 'off' | 'forward') => ({ llm: { proxy } }) as unknown as EffectiveConfig;
+    expect(edgeLlmProxyMode(undefined, cfg('off'))).toBeUndefined();
+    expect(edgeLlmProxyMode(undefined, cfg('forward'))).toBe('forward');
+    expect(edgeLlmProxyMode('off', cfg('forward'))).toBe('off');
+    expect(() => edgeLlmProxyMode('fwd', cfg('off'))).toThrow(/--llm-proxy/);
   });
 });

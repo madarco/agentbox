@@ -12,7 +12,7 @@ import { resetTempAgentboxHome } from '../../../scripts/test-home.js';
 const TEST_HOME = mkdtempSync(join(tmpdir(), 'agentbox-hub-adopt-home-'));
 process.env['HOME'] = TEST_HOME;
 
-const { adoptHubBox } = await import('../src/control-plane/hub-adopt.js');
+const { adoptHubBox, hubBoxToRegistration } = await import('../src/control-plane/hub-adopt.js');
 const { CustodyClient } = await import('../src/control-plane/custody-client.js');
 const { readState } = await import('@agentbox/sandbox-core');
 
@@ -367,5 +367,39 @@ describe('adoptHubBox', () => {
     expect(docker?.cloud).toBeUndefined();
     // Both records coexist.
     expect(state.boxes).toHaveLength(2);
+  });
+});
+
+describe('hubBoxToRegistration keeps a service agent (agentless-start fix)', () => {
+  // The hub's `lastAgent` only ever holds a TUI agent, so an openclaw box was
+  // adopted with no agent and lost its gateway on the next start from this PC.
+  const box = {
+    id: 'b1',
+    name: 'claw',
+    provider: 'hetzner',
+    sandboxId: 's1',
+  } as unknown as Parameters<typeof hubBoxToRegistration>[0];
+  it('takes the agent from `agents` when the box runs a service agent', () => {
+    expect(hubBoxToRegistration({ ...box, agents: ['openclaw'] }, () => 't').agent).toBe(
+      'openclaw',
+    );
+  });
+  it('falls back to lastAgent, and to nothing for an agentless box', () => {
+    expect(hubBoxToRegistration({ ...box, lastAgent: 'claude' }, () => 't').agent).toBe('claude');
+    expect(hubBoxToRegistration(box, () => 't').agent).toBeUndefined();
+  });
+});
+
+describe('hubBoxToRegistration keeps the LLM proxy (#446 review B1)', () => {
+  const box = {
+    id: 'b1',
+    name: 'p',
+    provider: 'hetzner',
+    sandboxId: 's1',
+  } as unknown as Parameters<typeof hubBoxToRegistration>[0];
+  it('carries llmProxy, so the adopted record starts its agent behind the proxy', () => {
+    const llmProxy = { mode: 'forward' as const, upstream: 'hub.example.com:8790' };
+    expect(hubBoxToRegistration({ ...box, llmProxy }, () => 't').llmProxy).toEqual(llmProxy);
+    expect('llmProxy' in hubBoxToRegistration(box, () => 't')).toBe(false);
   });
 });

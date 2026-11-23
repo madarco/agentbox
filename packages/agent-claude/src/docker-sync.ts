@@ -43,6 +43,7 @@ import {
   orbstackVolumePath,
   boxAccountForContainer,
   sessionAccountPolicy,
+  withSessionLlmProxy,
 } from '@agentbox/sandbox-docker';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 // The host-side unsyncable-symlink pre-scan moved to the shared sync layer
@@ -1107,7 +1108,11 @@ function shQuote(arg: string): string {
  */
 export async function startClaudeSession(opts: StartClaudeSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CLAUDE_SESSION;
-  const cmd = ['claude', ...opts.claudeArgs].map(shQuote).join(' ');
+  const cmd = await withSessionLlmProxy(
+    'claude',
+    opts.container,
+    ['claude', ...opts.claudeArgs].map(shQuote).join(' '),
+  );
   const envFlags = claudeSessionEnvFlags(
     await resolveClaudeSettings(opts.agentSettings, opts.workspacePath),
     process.env,

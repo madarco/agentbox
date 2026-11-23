@@ -27,9 +27,13 @@
  */
 
 import { createHash } from 'node:crypto';
+import { getMachineId } from '@agentbox/config';
+import { accountCustodyPath, isDefaultAccount } from '@agentbox/core';
 import {
   AGENT_SYNC_SPECS,
   isRealAgentCredential,
+  readAccounts,
+  readAccountSecret,
   readCredentialBackup,
   type AgentId,
 } from '@agentbox/sandbox-core';
@@ -297,6 +301,23 @@ export async function collectAgentCredentialUploads(only?: AgentId): Promise<Upl
     if (text === null || !isRealAgentCredential(spec.id, text)) continue;
     items.push({
       path: `agents/${spec.id}/${spec.credential.boxRelPath}`,
+      data: Buffer.from(text, 'utf8'),
+    });
+  }
+  // Every named LOGIN too, keyed by THIS machine (account ids are local to a
+  // machine: two PCs' `claude/work` can be two subscriptions). Pasted secrets
+  // (API keys, setup tokens) do not travel: nothing on a hub reads them, and
+  // they never refresh (Phase 5 custody design).
+  const machine = getMachineId();
+  for (const account of (await readAccounts()).accounts) {
+    if (isDefaultAccount(account.id) || account.kind !== 'login') continue;
+    if (only && account.agent !== only) continue;
+    const spec = AGENT_SYNC_SPECS.find((s) => s.id === account.agent);
+    if (!spec?.credential) continue;
+    const text = await readAccountSecret(account.agent, account.id);
+    if (text === null || !isRealAgentCredential(spec.id, text)) continue;
+    items.push({
+      path: accountCustodyPath(spec.id, account.id, spec.credential.boxRelPath, machine),
       data: Buffer.from(text, 'utf8'),
     });
   }

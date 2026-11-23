@@ -169,6 +169,9 @@ export const claudeSpec: AgentSyncSpec = {
   // holders of the account the way a login refresh does.
   accountKinds: ['login', 'setup-token', 'api-key'],
   accountEnv: { 'api-key': 'ANTHROPIC_API_KEY', 'setup-token': 'CLAUDE_CODE_OAUTH_TOKEN' },
+  // Inference + account calls, OAuth refresh, claude.ai MCP connectors, login
+  // (measured in llm-accounts Phase 0 (c); `claude.ai` from code).
+  llmHosts: ['api.anthropic.com', 'platform.claude.com', 'mcp-proxy.anthropic.com', 'claude.ai'],
   forwardedEnvKeys: [
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',
@@ -238,6 +241,14 @@ export const claudeSpec: AgentSyncSpec = {
       label: 'the /agentbox-setup skill',
     },
   ],
+  // The hub's skills library: claude reads `<managed>/.claude/skills` from its
+  // managed-settings dir with no flag and no name prefix (measured, Phase 0), and
+  // `/etc/claude-code` is in the container layer / VM disk, never the shared
+  // config volume, so each box gets only its own selection.
+  skills: {
+    dirs: ['.claude/skills'],
+    inject: { kind: 'dir', path: '/etc/claude-code/.claude/skills' },
+  },
   caps: { resume: true, teleport: 'full', activitySource: ['hooks', 'scraper'] },
   // Box->host. Claude's unit is a CHILD of a category dir, plus a 2-level
   // plugin cache, plus two registry JSONs merged additively with a

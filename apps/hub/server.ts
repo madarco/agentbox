@@ -32,6 +32,7 @@ import {
   AGENT_SYNC_SPECS,
   visibleAgentSpecs,
   BOX_IMAGE_REGISTRY,
+  llmProxyListenerEnabled,
   registryRefForSha,
 } from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
@@ -248,6 +249,13 @@ async function main(): Promise<void> {
   const hubGitAuthMode = await loadEffectiveConfig(homedir())
     .then((c) => c.effective.hub.gitAuth)
     .catch(() => undefined);
+  // The LLM egress proxy (llm-accounts Phase 7): listening only once this
+  // machine opted in (global `llm.proxy: forward` or `llm.proxyUrl`), so a hub
+  // that never uses it opens no extra port. A create asking for `forward`
+  // without that is refused by the resolver with the same rule.
+  const llmProxyPort = await loadEffectiveConfig(homedir())
+    .then((c) => (llmProxyListenerEnabled(c.effective.llm) ? c.effective.llm.proxyPort : undefined))
+    .catch(() => undefined);
 
   // Session history (docs/agent-history-plan.md). Built before the relay, which
   // ships docker boxes into it in-process and forwards in-box shippers' frames.
@@ -280,6 +288,7 @@ async function main(): Promise<void> {
     store,
     custody,
     adminToken,
+    ...(llmProxyPort !== undefined ? { llmProxyPort } : {}),
     ...(history ? { history } : {}),
     ...(memory ? { memory } : {}),
     // A device token is accepted wherever a PC used the shared admin token.

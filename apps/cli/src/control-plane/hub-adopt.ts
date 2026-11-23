@@ -147,7 +147,11 @@ export function hubBoxToRegistration(box: HubApiBox, freshToken: () => string): 
     publicHost: box.publicHost,
     image: box.image,
     webPort: box.webPort,
-    agent: box.lastAgent,
+    // `agents` first: the hub's `lastAgent` keeps only TUI agents (openclaw is normalised away), and a
+    // box adopted without it looks agentless here (no gateway on start).
+    agent: box.agents?.find((a) => a !== 'none') ?? box.lastAgent ?? undefined,
+    // Without it an adopted forward box's agent would start unproxied.
+    ...(box.llmProxy ? { llmProxy: { ...box.llmProxy } } : {}),
   };
 }
 

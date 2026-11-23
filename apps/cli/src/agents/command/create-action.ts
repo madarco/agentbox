@@ -7,6 +7,10 @@
  * this through {@link AgentCliSpec} — its runtime bindings for the docker calls,
  * and at most five hooks for the code an agent runs itself.
  */
+import { homedir } from 'node:os';
+import type { LlmProxyRecord } from '@agentbox/core';
+import { resolveLlmProxyRecord } from '@agentbox/sandbox-core';
+import { edgeLlmProxyMode, parseLlmProxyFlag } from '../../lib/llm-proxy-flag.js';
 import {
   findProjectRoot,
   agentSettings,
@@ -93,6 +97,7 @@ import { detectHostSession, registerHostManager } from '../../lib/host-session.j
 import { workspaceHub } from '../../lib/workspace-ref.js';
 import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 import { reportCheckoutInBackground } from '../../lib/checkouts-report.js';
+import { skillSelectionFromFlags } from '../../lib/skills/selection.js';
 import { autoSeedSkills } from '../../lib/skills/auto-seed.js';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
@@ -229,6 +234,22 @@ export async function runAgentCreate(
     cliOverrides: buildCliOverrides(a, opts),
   });
   const cfg = cfgLoaded.effective;
+  // `--llm-proxy` (llm-accounts Phase 7). A hub-bound create sends the MODE and
+  // the hub resolves its own upstream; a create that runs on this machine
+  // resolves the record here. Validated up front so a typo costs no box.
+  const llmProxyMode = edgeLlmProxyMode(opts.llmProxy, cfg);
+  // Port and URL are this machine's (global config), the mode the project's.
+  // Memoized: resolved once, before the first prompt of a local branch.
+  let localLlmProxyP: Promise<{ llmProxy?: LlmProxyRecord }> | undefined;
+  const localLlmProxy = (): Promise<{ llmProxy?: LlmProxyRecord }> =>
+    (localLlmProxyP ??= loadEffectiveConfig(homedir()).then((g) => {
+      const rec = resolveLlmProxyRecord(
+        providerName,
+        g.effective.llm,
+        parseLlmProxyFlag(opts.llmProxy) ?? cfg.llm.proxy,
+      );
+      return rec ? { llmProxy: rec } : {};
+    }));
   const projectRoot = (await findProjectRoot(opts.workspace)).root;
   // `--tasks`: validated against the hub BEFORE any box work, so a typo costs
   // nothing. `assignTasks` is called with whichever handle the chosen create
@@ -245,6 +266,9 @@ export async function runAgentCreate(
   // Inside a claude/codex session, whatever this create produces groups under
   // that session. Detected once, up front: the env it reads does not change.
   const sessionHint = detectHostSession();
+  // `--skills` / `--skip-skills` / `--no-skills`: recorded on the box, resolved
+  // by the hub's relay each time the box asks for its skills.
+  const skillSelection = skillSelectionFromFlags(opts);
   /**
    * Record what the create produced: under the current session's manager, then
    * against `--tasks` (in that order, so the tasks inherit the manager). Never
@@ -514,7 +538,9 @@ export async function runAgentCreate(
         resolved: {
           ...(persistent !== undefined ? { persistent } : {}),
           ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+          ...(skillSelection ? { skills: skillSelection } : {}),
           ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+          ...(llmProxyMode ? { llmProxy: llmProxyMode } : {}),
         },
       });
       for (const w of hubOpts.warnings) log.warn(w);
@@ -591,6 +617,8 @@ export async function runAgentCreate(
     const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
     // Carry gate runs here on the host (same gate as the foreground path); the
     // approved entries ride the queue job and the worker applies them.
+    // A missing llm.proxyUrl fails here, before the carry prompts.
+    await localLlmProxy();
     const carryForQueue = await runQueuedCarryGate({
       projectRoot,
       opts,
@@ -615,7 +643,10 @@ export async function runAgentCreate(
         ...(remoteHost ? { remoteHost } : {}),
         persistent,
         ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
+        ...(skillSelection ? { skills: skillSelection } : {}),
         ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+        ...(await localLlmProxy()),
+        ...(await localLlmProxy()),
         carry: carryForQueue,
         ...(queueRepoUrl ? { repoUrl: queueRepoUrl } : {}),
       },
@@ -813,7 +844,9 @@ export async function runAgentCreate(
           ...(persistent !== undefined ? { persistent } : {}),
           ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
           ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+          ...(llmProxyMode ? { llmProxy: llmProxyMode } : {}),
           ...(sessionName ? { sessionName } : {}),
+          ...(skillSelection ? { skills: skillSelection } : {}),
         },
       });
       for (const w of hubOpts.warnings) log.warn(w);
@@ -846,6 +879,15 @@ export async function runAgentCreate(
       for (const w of cmdLog.warnings()) log.warn(w);
       if (adopted) {
         await recordCreate({ boxId: adopted.id });
+        // Asked for the LLM proxy but the box came back without it (a control
+        // box that predates it dropped the option): starting the agent now would
+        // run it direct, the one outcome `forward` promises never happens.
+        if (llmProxyMode === 'forward' && !adopted.llmProxy) {
+          cmdLog.close();
+          throw new Error(
+            `box ${adopted.name} was created without the LLM proxy (the control box did not apply --llm-proxy forward; upgrade it), so the agent was not started. Destroy it with \`agentbox destroy ${adopted.name}\`, or attach anyway with \`agentbox ${a.id} attach ${adopted.name}\` to run it direct.`,
+          );
+        }
         await cloudAgentAttach({
           box: adopted,
           binary: a.spec.binary,
@@ -867,6 +909,8 @@ export async function runAgentCreate(
     // Cloud sign-in offer: capture a host login to ~/.agentbox so the per-box
     // push seeds it (the docker offer only seeds via the shared volume). Placed
     // after the hub route on purpose — see `offerSignIn`.
+    // A missing llm.proxyUrl fails before the sign-in offer.
+    await localLlmProxy();
     if (a.signInOfferTiming === 'before-create') await offerSignIn();
     // browser.default = 'playwright' | 'both' implies installing playwright even
     // if box.withPlaywright wasn't explicitly set.
@@ -886,6 +930,7 @@ export async function runAgentCreate(
         ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
         carry: carryEntries,
         ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+        ...(skillSelection ? { skills: skillSelection } : {}),
         ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
         vnc: { enabled: cfg.box.vnc },
         ...(persistent !== undefined ? { persistent } : {}),
@@ -972,7 +1017,9 @@ export async function runAgentCreate(
       ...(adjust.envFilesToImport ? { envFilesToImport: adjust.envFilesToImport } : {}),
       carry: carryEntries,
       ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
+      ...(skillSelection ? { skills: skillSelection } : {}),
       ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+      ...(await localLlmProxy()),
       vnc: { enabled: cfg.box.vnc },
       ...(persistent !== undefined ? { persistent } : {}),
       docker: { sharedCache: cfg.box.dockerCacheShared },

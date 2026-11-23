@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { primaryAgent, type LlmProxyRecord } from '@agentbox/core';
 import { randomBytes } from 'node:crypto';
 import { existsSync, openSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
@@ -14,6 +15,7 @@ import {
   RELAY_IMAGE_REF,
   RELAY_NETWORK_NAME,
   type BoxWorktree,
+  type SkillSelection,
 } from '@agentbox/relay';
 import {
   ensureHub,
@@ -678,6 +680,8 @@ export interface RegisterBoxArgs {
    * enabled; only an explicit `false` restores the always-prompt behavior.
    */
   autoApproveSafeHostActions?: boolean;
+  /** Library skill selection from the create flags (`BoxRecord.skills`). */
+  skills?: SkillSelection;
   /**
    * The box repo's origin remote URL. The hosted control plane resolves
    * owner/repo from this when leasing a GitHub-App push token. Absent for
@@ -697,11 +701,14 @@ export interface RegisterBoxArgs {
   /**
    * The agent the box was created for. The relay's `agents.list` hands a
    * `surface: 'service'` agent's units only to a box that runs it; a
-   * registration without this gets every agent's (the pre-field answer).
+   * registration without this gets none. An existing box re-registers with
+   * `primaryAgent(record)`, or it loses its service agent.
    */
   agent?: string;
   /** Named LLM account per agent (`BoxRecord.accounts`). */
   accounts?: Record<string, string>;
+  /** The hub egress proxy (`BoxRecord.llmProxy`). */
+  llmProxy?: LlmProxyRecord;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -737,9 +744,11 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     bridgeToken: args.bridgeToken,
     autoApproveHostActions: args.autoApproveHostActions,
     autoApproveSafeHostActions: args.autoApproveSafeHostActions,
+    ...(args.skills ? { skills: args.skills } : {}),
     originUrl: args.originUrl,
     agent: args.agent,
     ...(args.accounts && Object.keys(args.accounts).length > 0 ? { accounts: args.accounts } : {}),
+    ...(args.llmProxy ? { llmProxy: args.llmProxy } : {}),
   });
 }
 
@@ -935,6 +944,8 @@ export interface BoxWithToken {
   name: string;
   /** Named LLM account per agent — kept across a relay restart's re-registration. */
   accounts?: Record<string, string>;
+  /** The hub egress proxy — kept across a relay restart's re-registration. */
+  llmProxy?: LlmProxyRecord;
   /** Sandbox backend the box runs on. Defaults to 'docker' when absent. */
   provider?: 'docker' | 'cloud' | string;
   container?: string;
@@ -952,6 +963,11 @@ export interface BoxWithToken {
   autoApproveHostActions?: boolean;
   /** Mirrors `BoxRecord.autoApproveSafeHostActions`; re-registered on rehydrate. */
   autoApproveSafeHostActions?: boolean;
+  /** `BoxRecord.agents` / `lastAgent`: re-registered (via `primaryAgent`) on rehydrate. */
+  agents?: readonly string[];
+  lastAgent?: string;
+  /** Mirrors `BoxRecord.skills`; re-registered on rehydrate. */
+  skills?: SkillSelection;
 }
 
 /**
@@ -980,7 +996,13 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         bridgeToken: b.bridgeToken,
         autoApproveHostActions: b.autoApproveHostActions,
         autoApproveSafeHostActions: b.autoApproveSafeHostActions,
+        // Without it a rehydrate (relay restart, any docker create) replaced
+        // every registration with an agentless one, and an openclaw box lost
+        // its gateway on the next ctl start.
+        agent: primaryAgent(b),
+        ...(b.skills ? { skills: b.skills } : {}),
         ...(b.accounts ? { accounts: b.accounts } : {}),
+        ...(b.llmProxy ? { llmProxy: b.llmProxy } : {}),
       });
     } catch {
       // best-effort

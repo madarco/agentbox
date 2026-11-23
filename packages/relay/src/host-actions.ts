@@ -111,6 +111,12 @@ export interface CloudActionExecutorDeps {
    * Absent on a path that cannot ingest (the multi-PC host-reach executor).
    */
   history?: (method: string, params: unknown) => Promise<HostActionResult>;
+  /**
+   * The box's share of the skills library (`skills.*`), bound to its
+   * registration's selection. Absent on a path with no library: the box then
+   * keeps whatever skills it already has.
+   */
+  skills?: (method: string, params: unknown) => Promise<HostActionResult>;
   /** From BoxRegistration.backend (e.g. 'daytona'). */
   backendName: string;
   /**
@@ -153,7 +159,7 @@ export interface CloudActionExecutorDeps {
   /**
    * The agents the box was created for (`BoxRegistration.agent` / the
    * BoxRecord's `agents`). Gates which `surface: 'service'` agents' units
-   * `agents.list` hands the box; undefined ships every agent's (legacy rows).
+   * `agents.list` hands the box; undefined means none (an agentless box).
    */
   boxAgents?: readonly string[];
   /**
@@ -424,6 +430,10 @@ export async function executeCloudAction(
       ),
       stderr: '',
     };
+  }
+  if (action.method.startsWith('skills.')) {
+    if (deps.skills) return deps.skills(action.method, action.params);
+    return { exitCode: 0, stdout: JSON.stringify({ library: false, skills: [] }), stderr: '' };
   }
   if (action.method === 'git.push' || action.method === 'git.fetch') {
     const push: GitPushTrace = { hostInitiated: false };

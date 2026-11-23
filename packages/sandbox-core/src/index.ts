@@ -9,6 +9,7 @@ export {
   recordBox,
   clearBoxPortlessWebAlias,
   recordBoxSsh,
+  recordAgentAdded,
   recordLastAgent,
   removeBoxRecord,
   reserveProjectIndex,
@@ -262,6 +263,18 @@ export {
   resolveModelAuthIngest,
   resolveModelAuthSources,
 } from './borrowed-credentials.js';
+export {
+  LLM_SPLIT_PROXY_PORT,
+  LLM_SPLIT_PROXY_SCRIPT,
+  isValidLlmProxyUpstream,
+  llmProxyLaunchPreamble,
+  resolveLlmProxyRecord,
+  allAgentLlmHosts,
+  llmProxyCredential,
+  llmProxyListenerEnabled,
+  LLM_PROXY_HMAC_LABEL,
+  type LlmProxyConfig,
+} from './llm-split-proxy.js';
 export * from './sync/index.js';
 export * from './sync/agent-pull-module.js';
 export {
@@ -399,6 +412,8 @@ export type { SkillFrontmatter } from './skills/frontmatter.js';
 export { isSecretFileName, scanSkillFiles, shannonEntropy } from './skills/scan.js';
 export type { SecretFinding } from './skills/scan.js';
 export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
+export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.js';
+export type { TarFile } from './skills/tar.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {
   authoredTreeHash,
@@ -415,6 +430,7 @@ export {
   accountEnvPolicy,
   applyAccountEnv,
   boxAccount,
+  boxesOnAccount,
   NO_ACCOUNT_ENV,
   parseAccountFlags,
   resolveBoxAccounts,

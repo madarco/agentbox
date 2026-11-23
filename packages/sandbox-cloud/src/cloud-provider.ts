@@ -17,6 +17,7 @@ import {
   generateBoxId,
   namedAccounts,
   persistentRefusal,
+  primaryAgent,
   resolveSyncTopology,
   UserFacingError,
 } from '@agentbox/core';
@@ -36,6 +37,7 @@ import type {
   GitWorktreeRecord,
   InboundPolicy,
   InspectedBox,
+  LlmProxyRecord,
   Provider,
   ProviderCheckpoint,
   ProviderSync,
@@ -78,6 +80,7 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   cloudVolumesUsable,
+  accountReconcilePlan,
   clearPastedAccountCredentials,
   ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
@@ -411,8 +414,10 @@ export function createCloudProvider(
       projectIndex: box.projectIndex,
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-      agent: box.agents?.[0] ?? box.lastAgent,
+      agent: primaryAgent(box),
+      ...(box.skills ? { skills: box.skills } : {}),
       ...(box.accounts ? { accounts: box.accounts } : {}),
+      ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
     });
   }
 
@@ -658,13 +663,16 @@ export function createCloudProvider(
             projectIndex: box.projectIndex,
             autoApproveHostActions: box.autoApproveHostActions,
             autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+            ...(box.skills ? { skills: box.skills } : {}),
             // Keep the adoption material fresh across resumes. The VM's public
             // IP can change on a stop/start, so prefer the live handle's value
             // over the persisted one.
             publicHost: h.publicHost ?? box.cloud.publicHost,
             image: box.cloud.image,
             webPort: box.cloud.webPort,
-            agent: box.lastAgent,
+            agent: primaryAgent(box),
+            ...(box.accounts ? { accounts: box.accounts } : {}),
+            ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
           });
         } catch {
@@ -686,11 +694,13 @@ export function createCloudProvider(
           projectIndex: box.projectIndex,
           autoApproveHostActions: box.autoApproveHostActions,
           autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+          ...(box.skills ? { skills: box.skills } : {}),
           // Repo identity so a thin client can map this box to a local project
           // by origin (Step 4 adoption); best-effort.
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
-          agent: box.agents?.[0] ?? box.lastAgent,
+          agent: primaryAgent(box),
           ...(box.accounts ? { accounts: box.accounts } : {}),
+          ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
         });
       } catch {
         // best-effort
@@ -707,14 +717,15 @@ export function createCloudProvider(
       const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
         .credentialSync;
       if (credentialSync) {
-        // An agent on a named account is left out: reconcile is newest-wins
-        // against the DEFAULT login's backup, both directions.
-        const named = namedAccountAgents(box.accounts);
-        const agents = (box.agents ?? agentIds()).filter((a) => !named.includes(a));
+        // Per account: a named login reconciles against its own secret; a
+        // pasted-kind account (a token, no login file) is left out.
+        const plan = await accountReconcilePlan(box.accounts);
+        const agents = (box.agents ?? agentIds()).filter((a) => !plan.skip.includes(a));
         await reconcileAgentCredentials(backend, h, {
           onLog: () => {},
+          backups: plan.backups,
           // Absent on pre-selection boxes, which correctly means "all".
-          ...(box.agents || named.length > 0 ? { agents } : {}),
+          ...(box.agents || plan.skip.length > 0 ? { agents } : {}),
         });
       }
     } catch {
@@ -764,10 +775,12 @@ export function createCloudProvider(
       const timeoutMs =
         typeof timeoutOverride === 'number' && timeoutOverride >= 0 ? timeoutOverride : undefined;
       const networkPolicyOpt = req.providerOptions?.['networkPolicy'];
-      const networkPolicy =
+      const networkPolicy = withLlmProxyHost(
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
           ? networkPolicyOpt.trim()
-          : undefined;
+          : undefined,
+        req.llmProxy,
+      );
       // Generic VM-size string, resolved per-provider by the call site
       // (`resolveBoxSize` + `--size` flag). Each backend interprets it natively
       // (hetzner: server type; daytona: cpu-mem-disk GB; vercel: vCPUs);
@@ -1339,12 +1352,18 @@ export function createCloudProvider(
                 projectIndex,
                 autoApproveHostActions,
                 autoApproveSafeHostActions,
+                ...(req.skills ? { skills: req.skills } : {}),
                 // Adoption material: everything a PC needs to rebuild this
                 // box's BoxRecord from the registration alone (`hub adopt`).
                 publicHost: handle.publicHost,
                 image,
                 webPort: wp,
-                agent: req.agent,
+                // The same agent the host-relay branch below registers: a
+                // queued create passes `agents` and no `agent`, and without it
+                // the box's first boot got no service units (no gateway).
+                agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
+                ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+                ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
                 projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
@@ -1427,6 +1446,7 @@ export function createCloudProvider(
               createdAt: new Date().toISOString(),
               autoApproveHostActions,
               autoApproveSafeHostActions,
+              ...(req.skills ? { skills: req.skills } : {}),
               // Repo identity so a thin client can map this box to a local
               // project by origin (Step 4 adoption); best-effort.
               originUrl: req.inBoxClone
@@ -1436,8 +1456,9 @@ export function createCloudProvider(
               ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
               ...(req.repoKey ? { repoKey: req.repoKey } : {}),
               ...(req.requester ? { requester: req.requester } : {}),
-              agent: req.agents?.[0] ?? req.agent,
+              agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
               ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+              ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
             });
           } catch (err) {
             log(
@@ -1475,11 +1496,13 @@ export function createCloudProvider(
                 ),
               }
             : {}),
+          ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
           autoApproveHostActions: autoApproveHostActions ? true : undefined,
           autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
+          ...(req.skills ? { skills: req.skills } : {}),
           persistent: persistent ? true : undefined,
           carry: carrySummary,
           portlessAlias: portlessAliasName,
@@ -2231,4 +2254,20 @@ export function emptyCloudStats(provider: string): BoxResourceStats {
     limits: { memoryBytes: null, cpus: null, pidsLimit: null, disk: null },
     warnings: [],
   };
+}
+
+/**
+ * A sandbox network allowlist (vercel's `networkPolicy`) must let the box reach
+ * the hub's LLM proxy, or a `forward` box could reach nothing that matters.
+ * Unset / `allow-all` already does; `deny-all` is left as asked (the box was
+ * meant to be offline). Exported for tests.
+ */
+export function withLlmProxyHost(
+  policy: string | undefined,
+  llmProxy: LlmProxyRecord | undefined,
+): string | undefined {
+  if (!policy || !llmProxy || policy === 'allow-all' || policy === 'deny-all') return policy;
+  const host = llmProxy.upstream.slice(0, llmProxy.upstream.lastIndexOf(':'));
+  const entries = policy.split(',').map((s) => s.trim());
+  return entries.includes(host) ? policy : [...entries, host].join(',');
 }

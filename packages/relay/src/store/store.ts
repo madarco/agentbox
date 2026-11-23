@@ -1,3 +1,4 @@
+import type { LlmProxyRecord, SkillSelection } from '@agentbox/core';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, PromptAskEvent, RelayEvent } from '../types.js';
 
@@ -104,6 +105,7 @@ export const PORTABLE_CREATE_OPT_KEYS = [
   'build',
   'credentialSync',
   'borrowCredentials',
+  'skills',
   'accounts',
   'size',
   'location',
@@ -140,11 +142,19 @@ export interface CreateJobRequestOpts {
    * rather than whatever the VPS happens to hold.
    */
   borrowCredentials?: string[];
+  /** Library skill selection (`--skills`, `--skip-skills`, `--no-skills`). Portable. */
+  skills?: SkillSelection;
   /**
    * Named LLM account per agent, resolved by the hub at enqueue against its own
    * account store (llm-accounts Phase 3). Becomes `CreateBoxRequest.accounts`.
    */
   accounts?: Record<string, string>;
+  /**
+   * The hub egress proxy, resolved by the hub at enqueue against its own
+   * address (llm-accounts Phase 7). Becomes `CreateBoxRequest.llmProxy`. Not a
+   * portable key: a client sends a mode, never an upstream.
+   */
+  llmProxy?: LlmProxyRecord;
   /**
    * VM size and location for a cloud box (`--size`/`--location`, or the
    * project's `box.size<Provider>` / `box.<provider>Location`).

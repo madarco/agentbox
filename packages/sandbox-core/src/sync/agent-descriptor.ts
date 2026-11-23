@@ -51,6 +51,11 @@ export interface AgentWatchDescriptor {
 /** What ctl needs to know about one agent. */
 export interface AgentDescriptor {
   id: string;
+  /**
+   * Where ctl links the box's library skills for this agent (`AgentSyncSpec.skills`).
+   * Absent = this agent gets none.
+   */
+  skills?: { inject: { kind: 'dir'; path: string } };
   /** Files to watch in-box, with their intent. */
   watch: readonly AgentWatchDescriptor[];
   /**
@@ -166,11 +171,17 @@ export interface BuildAgentDescriptorsOptions {
    * A `surface: 'service'` agent contributes its units and config render ONLY
    * to a box that runs it: every box asks `agents.list` at daemon start, and
    * without this gate a claude box also ran `openclaw onboard` (exit 127 — not
-   * installed) and showed a permanently `waiting` openclaw service. Undefined
-   * — a registration that predates the field — keeps the old ship-everything
-   * answer, so an openclaw box registered by an older host still gets its
-   * daemon. The credential/activity fields are unaffected: they are what
-   * makes a TUI agent's login fan out, and every box wants those.
+   * installed) and showed a permanently `waiting` openclaw service.
+   *
+   * Undefined (the box never said) means NO service agent. It used to mean
+   * "ship everything", for an openclaw box registered before the field — but
+   * every create registers the agent a box is made for, a box re-registers
+   * with its record's agent on start and rehydrate, and adoption carries the
+   * agent into the record. What "everything" did in practice was start the
+   * openclaw gateway (~1 GB) in an AGENTLESS box, and drop its onboarding files
+   * in /workspace, the moment another PC started it (seen in the #426 sign-off).
+   * The credential/activity fields are unaffected: they are what makes a TUI
+   * agent's login fan out, and every box wants those.
    */
   boxAgents?: readonly string[];
 }
@@ -178,8 +189,7 @@ export interface BuildAgentDescriptorsOptions {
 export function buildAgentDescriptors(
   opts: BuildAgentDescriptorsOptions = {},
 ): AgentDescriptorPayload {
-  const runsHere = (id: string): boolean =>
-    opts.boxAgents === undefined || opts.boxAgents.includes(id);
+  const runsHere = (id: string): boolean => opts.boxAgents?.includes(id) ?? false;
   return {
     schema: 2,
     agents: AGENT_SYNC_SPECS.map((spec) => ({
@@ -191,6 +201,7 @@ export function buildAgentDescriptors(
         ? { service: serviceWithRunEnv(spec.service, spec.boxRunEnv) }
         : {}),
       ...(spec.configRender && runsHere(spec.id) ? { configRender: spec.configRender } : {}),
+      ...(spec.skills ? { skills: { inject: spec.skills.inject } } : {}),
       watch: [
         ...(spec.credential
           ? [

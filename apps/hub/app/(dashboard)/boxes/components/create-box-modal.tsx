@@ -146,6 +146,14 @@ function CreateBoxModal({
   // The agent catalog (GET /api/v1/agents). Null until it lands — the built-ins
   // paint meanwhile so the form doesn't flash an empty picker.
   const [fetchedAgents, setFetchedAgents] = useState<AgentOption[] | null>(null);
+  // Named LLM accounts of this hub's machine (GET /api/v1/accounts), for the
+  // per-agent account picker. Empty until it lands — and on a hub without the
+  // endpoint, where the picker simply never shows.
+  const [namedAccounts, setNamedAccounts] = useState<
+    Array<{ agent: string; id: string; label?: string; kind: string; hasSecret: boolean }>
+  >([]);
+  // '' = no opinion: the hub resolves `<agent>.account`, else the default login.
+  const [accountChoice, setAccountChoice] = useState('');
   const agents = fetchedAgents ?? BUILTIN_AGENTS;
   // May hold a bare provider id or a `docker:<alias>` remote-docker host spec.
   const [provider, setProvider] = useState<string>('docker');
@@ -311,6 +319,26 @@ function CreateBoxModal({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/v1/accounts', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const j = (await res.json()) as { accounts?: typeof namedAccounts };
+        if (!cancelled) setNamedAccounts((j.accounts ?? []).filter((a) => a.id !== 'default'));
+      } catch {
+        // Best-effort: without it the box runs on the configured account.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  // A choice belongs to one agent: switching agents forgets it.
+  useEffect(() => setAccountChoice(''), [agent]);
+  const agentAccounts = namedAccounts.filter((a) => a.agent === agent && a.hasSecret);
 
   const selected = projects.find((p) => p.id === projectId) ?? project;
   // The backup Start-from names, or null for a plain create. Everything a
@@ -675,7 +703,13 @@ function CreateBoxModal({
           persistent?: boolean;
           size?: string;
           promptAnswers?: PromptAnswer[];
+          accounts?: Record<string, string>;
         } = {};
+        // Only an explicit pick: silence lets the hub apply `<agent>.account`.
+        // Never with a restore, which hides the picker: the bundle decides.
+        if (accountChoice && agent !== 'none' && !restoring) {
+          opts.accounts = { [agent]: accountChoice };
+        }
         // The user's answers to the preflight questions. Each id is matched
         // against the question the create actually asks, so a stale one is
         // refused rather than applied to a different question.
@@ -958,6 +992,18 @@ function CreateBoxModal({
                 </Select>
               </Field>
             )}
+            {!restoring && agent !== 'none' && agentAccounts.length > 0 ? (
+              <Field label="Account">
+                <Select value={accountChoice} onChange={(e) => setAccountChoice(e.target.value)}>
+                  <option value="">Default (or this project&apos;s {agent}.account)</option>
+                  {agentAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label ? `${a.id} — ${a.label}` : a.id} ({a.kind})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
             <Field label="Name (optional)">
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="auto" />
             </Field>

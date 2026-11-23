@@ -766,6 +766,21 @@ export function modelAuthEnvKey(id: string): string | undefined {
   return id.startsWith('env:') ? id.slice(4) : undefined;
 }
 
+/**
+ * Where an agent reads skills, and how the box-local library is handed to it.
+ * Every injection is per box: none touches a shared docker volume.
+ */
+export interface AgentSkillsSpec {
+  /** User skill dirs on a PC, relative to the home dir (discovery). */
+  dirs: readonly string[];
+  /**
+   * `dir`: ctl symlinks each library skill into this absolute box-local
+   * directory (created with `sudo -n` when root-owned). Phase 3 adds the other
+   * shapes measured in Phase 0 (a launch flag, an env var, a config key).
+   */
+  inject: { kind: 'dir'; path: string };
+}
+
 export interface AgentSyncSpec {
   id: AgentId;
   /** Alternate spellings that resolve to this spec (reconciles the wire `'claude-code'`). */
@@ -851,6 +866,14 @@ export interface AgentSyncSpec {
    * pasted kind in `accountKinds`.
    */
   accountEnv?: Readonly<Partial<Record<Exclude<LlmAccountKind, 'login'>, string>>>;
+  /**
+   * The hosts this agent's model traffic goes to — inference, OAuth refresh,
+   * the account calls (llm-accounts Phase 7). With `llm.proxy: forward` these,
+   * and only these, leave through the hub's CONNECT proxy; telemetry and tool
+   * traffic go direct. Plain hostnames (port 443 is implied), measured live in
+   * Phase 0 (c). Absent = the agent's traffic is never proxied.
+   */
+  llmHosts?: readonly string[];
   /** Host env keys forwarded into the box so an env-authed agent finds its creds. */
   forwardedEnvKeys: readonly string[];
   /**
@@ -866,6 +889,13 @@ export interface AgentSyncSpec {
    * See {@link AgentSeedSpec}. Absent means the agent needs no seeding.
    */
   seeds?: readonly AgentSeedSpec[];
+  /**
+   * How the hub's skills library reaches this agent in a box
+   * (docs/hub-skills-plan.md, Phase 2). Data, so ctl links per agent from the
+   * `agents.list` descriptor and no shared code names an agent. Absent = the
+   * agent gets no library skills (its host-carried ones are unaffected).
+   */
+  skills?: AgentSkillsSpec;
   /**
    * Extra argv prepended to every launch of this agent's binary, for flags it
    * needs in order to LOAD what `seeds` placed (codex will not read a

@@ -1,6 +1,6 @@
 # LLM accounts and the hub egress proxy — plan
 
-Status: **Phase 0 partly done, Phases 1-3 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-5 and 7 done (2026-11-22)** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -701,6 +701,156 @@ Implementation notes:
    used the isolate branch for any non-shared volume, which would have seeded
    the default login into a named volume whenever the default's token was
    newer; `start`'s host re-sync passes `account` too.
+
+## Phase 4 as built (fan-out per account)
+
+Replace the Phase 3 guards ("drop / skip anything on a named account") with
+real routing, keyed by `(agent, account)`. ctl is unchanged — it posts
+`{agent, content}` as before; the RELAY decides the account from the source
+box, so old images route correctly.
+
+1. **Relay ingest** (`CredentialsFanout.handle`): account = the box's
+   registration (then `state.json`). `default` → the legacy backup + custody
+   `agents/<agent>/<file>`, as today. A named account → its own secret
+   (`accountSecretPath`) + custody `agents/<agent>/accounts/<id>/<file>`, same
+   newest-wins gate. An unverifiable source (registry unreadable) is still
+   dropped — it cannot be routed. Debounce and propagate are keyed per
+   `(agent, account)`; the spawned `credentials propagate` gets `--account`.
+2. **Propagate** (`credentials propagate --account`): reads that account's
+   secret and targets only boxes whose record names the same account for that
+   agent (`default` ↔ no record), running it or borrowing it. The account filter
+   applies only when the caller names an account, so SETTINGS propagate (same
+   planner) reaches named boxes again (#437 review, finding 8). Docker boxes on
+   one account share its volume, so the source's volume is the only docker
+   target and is excluded; cloud and borrowing boxes are pushed.
+3. **Cloud resume reconcile** runs per account: a named agent reconciles
+   against its account's secret instead of being skipped. (The checkpoint
+   `--set-default` extract stays refused for named boxes.)
+4. **Custody, both directions**: `hub credentials push` also uploads every named
+   account's secret under its account path, and the relay mirrors accepted
+   named updates there; `seedHostBackupsFromCustody` materializes them per
+   account, newest-wins. Rows (`accounts.json`) do not travel yet — a remote
+   hub still refuses a named create until Phase 5 gives it the account list.
+5. **Settings propagate** (`agentbox download <agent>`'s push to other boxes)
+   stays within the source box's account: a pulled item set can carry the
+   agent's login (codex's `auth.json`), which must never cross accounts.
+
+## Phase 5 as built (surfaces)
+
+**Where accounts live.** An account is a fact about ONE machine: its logins
+are interactive and land in that machine's store (`~/.agentbox/accounts.json`
++ `credentials/`). The hub that serves `/api/v1/accounts` is therefore the
+hub of the machine that owns the store — the laptop hub, or an exposed one.
+A remote control box lists its own store (empty unless someone signed in on
+it) and still refuses a named create (it cannot use a PC's account; see the
+custody design below).
+
+1. **`/api/v1/accounts`** (backend slice `apps/hub/lib/backend/accounts.ts`):
+   `GET` → `{ accounts: [{agent, id, label?, kind, identity?, hasSecret,
+   boxes: string[]}], agents: [{id, name, kinds}] }` (no secrets, ever);
+   `POST` `{agent, id, kind: 'api-key'|'setup-token', token, label?}` for the
+   pasteable kinds (a `login` is interactive: `agentbox <agent> login
+   --account`); `PATCH /accounts/{agent}/{id}` `{label}`; `DELETE
+   /accounts/{agent}/{id}` (409 while a box records it; removes the secret and
+   the docker volume).
+2. **`Box.accountsInfo`**: `[{agent, account, label?, kind?}]` next to the raw
+   `Box.accounts` map (#437), resolved from the hub machine's store. Both
+   optional, so a shipped tray keeps decoding.
+3. **CLI through the hub**: `agentbox accounts` list / label / rm call the
+   LOCAL hub's `/api/v1/accounts` (the machine's own store, even when a remote
+   control box is configured); `agentbox list` shows the account in the AGENT
+   cell (`claude:working@work`); `agentbox status` gets an ACCOUNTS section.
+   Logins stay CLI-local (interactive container on this machine).
+4. **Web** (pure REST client, client-side fetch): Settings → Model accounts
+   (list, add a key / setup token, relabel, remove); an account picker per
+   agent in the create modal (sends `opts.accounts`); the account in the box
+   table and detail page. The page is its own sidebar entry (**Accounts**,
+   next to Devices) rather than a Settings section: Settings is one page.
+5. **Custody design (the #442 must-design item).**
+   - Named-account custody objects are keyed by the ORIGIN MACHINE:
+     `agents/<agent>/accounts/<machineId>/<id>/<file>`. Two PCs' `claude/work`
+     never collide. The relay mirrors a box's named refresh under the box's
+     registration `originMachineId` (else the hub's own machine).
+   - Pasted secrets (API keys, setup tokens) are NOT pushed: nothing on a hub
+     reads them, and they never refresh. Only named logins travel.
+   - A hub seeds named accounts from custody only for its OWN machine id —
+     its store is per machine. Making a PC's named account usable by a remote
+     control box needs that box to keep a per-machine account list (rows
+     travel next to the secret, a create resolves accounts against the
+     REQUESTER's machine); that is the next step after this phase, not in it.
+
+## Phase 7 as built (hub egress proxy, `forward`)
+
+Phase 0 (c) measured the CONNECT path for both agents (refreshes included), so
+`forward` shipped first; `reverse` stays Phase 8.
+
+1. **Registry data.** `AgentSyncSpec.llmHosts` (validated for plugin agents by
+   `llmHostsProblem`: exact lowercase hostnames, since the hub allowlist is
+   built from them). claude: `api.anthropic.com`, `platform.claude.com`,
+   `mcp-proxy.anthropic.com`, `claude.ai`. codex: `chatgpt.com`,
+   `ab.chatgpt.com`, `auth.openai.com`, `api.openai.com`. Telemetry and
+   `github.com` go direct. Agents without the field are never proxied.
+2. **Config.** `llm.proxy: off | forward` (default `off`), `llm.proxyPort`
+   (default 8790), `llm.proxyUrl`. `--llm-proxy off|forward` on `create` and
+   the agent commands; `opts.llmProxy` on `POST /api/v1/boxes`. One resolver,
+   `resolveLlmProxyRecord` (sandbox-core): docker →
+   `host.docker.internal:<proxyPort>`; every other provider (remote-docker
+   included) needs `llm.proxyUrl` and is refused without it. **A hub-bound
+   create sends the mode and the hub resolves the upstream from its own
+   config** (the upstream is the hub's address); a create run on this machine
+   resolves it locally. Recorded as `BoxRecord.llmProxy = { mode, upstream }`
+   and carried on the queue job (`QueueJobCreateOpts.llmProxy`) and the
+   control-box job (`CreateJobRequestOpts.llmProxy`, not a portable key).
+3. **Relay listener** (`packages/relay/src/llm-proxy.ts`), started by the hub
+   server and `agentbox-relay serve` on `llm.proxyPort` (a taken port is
+   logged, never fatal). **Auth is a proxy-only credential**
+   (`Proxy-Authorization: Basic <boxId>:<HMAC-SHA256(relayToken,
+   "agentbox-llm-proxy")>`, `llmProxyCredential`), which the hub recomputes from
+   the registration's token (`store.getBox`) and compares in constant time. The
+   hub leg to `llm.proxyUrl` is unencrypted TCP, and the relay token is the
+   box's whole hub identity (git push over `/rpc`, host tools, `cp`, events,
+   credential posts), so it never travels there (#446 review B2). The box reads
+   its token from `relay.env` (or the container env) and its id from
+   `AGENTBOX_BOX_ID` / `/etc/agentbox/box.env`. Destination must be an
+   `llmHosts` entry on 443. 407 / 403 / 502 carry the reason in the body. Never
+   decrypts.
+4. **Split proxy** (`LLM_SPLIT_PROXY_SCRIPT`, sandbox-core). A CommonJS script
+   shipped base64 on the launch command (about 7 KB of preamble, under tmux's
+   16 KB message cap), so any image on any provider gets it with no bake.
+   `--ensure` is idempotent (probes its own `/__agentbox` marker, which carries
+   its upstream and host list, and a version). It reads the token per
+   connection (`relay.env`, then env), so a re-registered box keeps working. A failed start stops
+   the launch with the reason instead of running the agent unproxied.
+5. **Launch seams.** `llmProxyLaunchPreamble` (no single quote, so it is safe
+   in a `sh -c` string and inside the cloud launcher's `bash -lc '…'`).
+   Docker: `withSessionLlmProxy` in `startClaudeSession` / `startCodexSession`.
+   Cloud: `boxLlmProxyPreamble` passed to `buildCloudAttachInnerCommand` by the
+   attach, the detached start and the dashboard. A box without `llmProxy` gets
+   a byte-identical command.
+6. **Vercel.** `withLlmProxyHost` appends the proxy host to an allowlist
+   `networkPolicy`; unset / `allow-all` / `deny-all` are left alone.
+7. **Payload.** `Box.llmProxy` (`{ mode, upstream }`) on `/api/v1/boxes`. It
+   rides the relay registration too (`BoxRegistration.llmProxy`, kept across a
+   re-register that omits it), so `hub adopt`, an adopted foreground create,
+   the dashboard and a PC relaunch start the agent behind the proxy; a
+   foreground create that asked for `forward` refuses to attach a box that came
+   back without it (#446 review B1).
+   **Review changes.** The listener runs only once this machine opted in
+   (`llmProxyListenerEnabled`: global `llm.proxy: forward` or `llm.proxyUrl`),
+   and a `forward` create is refused without it. `llm.proxyPort` / `llm.proxyUrl`
+   are read from the GLOBAL config (the mode follows the project). The split
+   proxy carries every agent's hosts, so a second agent in the box reuses it,
+   and `--ensure` replaces a stale instance of itself. It reads the token from
+   `relay.env` first, answers 502 when the hub closes without replying, and the
+   preamble keeps an existing `NO_PROXY`.
+8. **Verified live** against an isolated hub (relay 18799, proxy 18790) with a
+   registered fake box and the real split-proxy script: Anthropic answered 401
+   (no key) and chatgpt.com 200 through the hub; example.com went direct; the
+   hub refused a non-LLM host (403), port 80 (403), a wrong token and no
+   credential (407); the split proxy passed the hub's 407 through; with the hub
+   stopped, a model host got `502 … hub proxy 127.0.0.1:18790 unreachable`
+   while other hosts still worked. An egress-IP check from a real cloud box
+   needs a public `llm.proxyUrl` and is left to the coordinator (PR body).
 
 ## Backlog (not in these phases)
 

@@ -6,7 +6,8 @@
  * `provider` discriminator (or, for `create`, from config/flags) and calls it.
  */
 
-import type { BoxRecord, ProviderName, SshTargetRecord } from './box-record.js';
+import type { LlmProxyRecord } from './box-record.js';
+import type { BoxRecord, ProviderName, SkillSelection, SshTargetRecord } from './box-record.js';
 import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxEndpoints } from './endpoints.js';
 import type { ReplaceRule } from './replace.js';
@@ -169,6 +170,11 @@ export interface CreateBoxRequest {
    * that agent's `default` account. Recorded as `BoxRecord.accounts`.
    */
   accounts?: Record<string, string>;
+  /**
+   * Route the box's LLM traffic through the hub's CONNECT proxy (Phase 7),
+   * resolved by the caller. Recorded as `BoxRecord.llmProxy`.
+   */
+  llmProxy?: LlmProxyRecord;
   /** Override the base image / snapshot. */
   image?: string;
   /**
@@ -189,6 +195,11 @@ export interface CreateBoxRequest {
    * (the queue worker's config-override path) still gets the right answer.
    */
   persistent?: boolean;
+  /**
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
+   * `--no-skills`). Absent = all. Recorded on the box and its registration.
+   */
+  skills?: SkillSelection;
   withPlaywright?: boolean;
   withEnv?: boolean;
   /** Workspace-relative host file paths to seed into /workspace at create. */

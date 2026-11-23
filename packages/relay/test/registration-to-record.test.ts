@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { registrationToBoxRecord } from '../src/registration-to-record.js';
+import { buildAgentDescriptors } from '@agentbox/sandbox-core';
+import { primaryAgent } from '@agentbox/core';
+import {
+  recordAgents,
+  registrationAgents,
+  registrationToBoxRecord,
+} from '../src/registration-to-record.js';
 import type { BoxRegistration } from '../src/types.js';
 
 // A stable, non-random token so assertions are deterministic.
@@ -111,6 +117,57 @@ describe('registrationToBoxRecord', () => {
   });
 });
 
+/**
+ * The decision path behind "an agentless hub box started from another PC runs
+ * the OpenClaw gateway" (#426 sign-off): hub registration -> PC B adopts it
+ * (`hub adopt`) -> PC B's start re-registers it with the record's agent ->
+ * the box's `agents.list` asks PC B's relay -> descriptors.
+ */
+describe('agents.list for a box adopted on another PC', () => {
+  /** PC B adopts the registration, then its start re-registers with `primaryAgent`. */
+  function servicesAfterAdoptAndStart(agent: string | undefined): string[] {
+    const rec = registrationToBoxRecord(reg({ agent }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    const boxAgents = registrationAgents({ agent: primaryAgent(rec) });
+    expect(boxAgents).toEqual(recordAgents(rec));
+    return buildAgentDescriptors({ boxAgents })
+      .agents.filter((a) => a.service)
+      .map((a) => a.id);
+  }
+
+  it('starts no service agent in an agentless box', () => {
+    expect(servicesAfterAdoptAndStart(undefined)).toEqual([]);
+    expect(servicesAfterAdoptAndStart('none')).toEqual([]);
+  });
+
+  it('still starts the gateway of an adopted openclaw box', () => {
+    expect(servicesAfterAdoptAndStart('openclaw')).toEqual(['openclaw']);
+  });
+
+  it('a claude box gets no service agent either', () => {
+    expect(servicesAfterAdoptAndStart('claude')).toEqual([]);
+  });
+
+  it('a re-adopt keeps the agents a record already lists', () => {
+    const existing = registrationToBoxRecord(reg({ agent: 'claude' }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    const rec = registrationToBoxRecord(reg({ agent: 'codex' }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+      existing: { ...existing, agents: ['claude', 'codex'] },
+    });
+    expect(rec.agents).toEqual(['claude', 'codex']);
+  });
+
+  it("treats 'none' as agentless in both helpers", () => {
+    expect(registrationAgents({ agent: 'none' })).toBeUndefined();
+  });
+});
+
 describe('accounts travel with an adopted box (llm-accounts #437-4)', () => {
   const freshToken = () => 'tok';
   it('copies the registration accounts onto the record', () => {
@@ -126,5 +183,29 @@ describe('accounts travel with an adopted box (llm-accounts #437-4)', () => {
       freshToken,
     });
     expect(rec.accounts).toBeUndefined();
+  });
+});
+
+describe('the LLM proxy travels with an adopted box (#446 review B1)', () => {
+  const freshToken = () => 'tok';
+  const llmProxy = { mode: 'forward' as const, upstream: 'hub.example.com:8790' };
+  it('copies the registration llmProxy onto the record', () => {
+    const rec = registrationToBoxRecord(reg({ llmProxy }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    expect(rec.llmProxy).toEqual(llmProxy);
+  });
+  it('keeps an existing record llmProxy when the registration has none', () => {
+    const existing = registrationToBoxRecord(reg({ llmProxy }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    const rec = registrationToBoxRecord(reg(), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+      existing,
+    });
+    expect(rec.llmProxy).toEqual(llmProxy);
   });
 });

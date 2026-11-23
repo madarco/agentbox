@@ -210,8 +210,11 @@ function agentSummary(b: HubApiBox): string {
   if (effectiveState(b) !== 'running') return '-';
   const agents: string[] = [];
   for (const [agent, entry] of sortedAgentStatus(b)) {
-    if (entry.state !== 'unknown') agents.push(`${agent}:${entry.state}`);
-    else if (entry.sessionTitle) agents.push(agent);
+    // `@<account>` when the agent runs on a named LLM account (Phase 5).
+    const acct = b.accounts?.[agent];
+    const at = acct && acct !== 'default' ? `@${acct}` : '';
+    if (entry.state !== 'unknown') agents.push(`${agent}:${entry.state}${at}`);
+    else if (entry.sessionTitle) agents.push(`${agent}${at}`);
   }
   return agents.length > 0 ? agents.join(', ') : '-';
 }

@@ -81,8 +81,10 @@ import {
   generateBoxId,
   isDefaultAccount,
   namedAccounts,
+  type LlmProxyRecord,
   type ResolvedCarryEntry,
   type ResyncResult,
+  type SkillSelection,
 } from '@agentbox/core';
 import { createSnapshot, snapshotPathFor } from './snapshot.js';
 import { resolveCheckpoint } from './checkpoint.js';
@@ -116,6 +118,11 @@ export interface CreateBoxOptions {
    * Undefined → fall back to the local config load below.
    */
   credentialSync?: boolean;
+  /**
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
+   * `--no-skills`). Absent = all. Recorded on the box and its relay registration.
+   */
+  skills?: SkillSelection;
   workspacePath: string;
   name?: string;
   /**
@@ -193,6 +200,8 @@ export interface CreateBoxOptions {
    * shared (or isolated) one, and its launch env follows the account.
    */
   accounts?: Record<string, string>;
+  /** The hub egress proxy, resolved by the caller (llm-accounts Phase 7). */
+  llmProxy?: LlmProxyRecord;
   /**
    * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
    * every box mounts the shared `agentbox-claude-config` volume at
@@ -899,6 +908,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
         worktrees: gitWorktreeRecords,
         autoApproveHostActions,
         autoApproveSafeHostActions,
+        ...(opts.skills ? { skills: opts.skills } : {}),
         originUrl,
         workspacePath: originRepo,
         agent: opts.agents?.[0],
@@ -1016,12 +1026,14 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ? { borrowedCredentials: [...opts.borrowCredentials] }
       : {}),
     ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
+    ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,
     // Default on: persist only when explicitly disabled (mirrors the relay's
     // `!== false` read); an absent field on an older record stays relaxed.
     autoApproveSafeHostActions: autoApproveSafeHostActions === false ? false : undefined,
+    ...(opts.skills ? { skills: opts.skills } : {}),
     persistent: persistent ? true : undefined,
     vncEnabled: vncEnabled ? true : undefined,
     vncContainerPort: vncEnabled ? VNC_CONTAINER_PORT : undefined,

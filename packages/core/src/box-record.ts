@@ -294,6 +294,16 @@ export interface GitWorktreeRecord {
   relPathFromWorkspace: string;
 }
 
+/** A box's choice of the hub's library skills, from its create flags. */
+export interface SkillSelection {
+  /** `--no-skills`: none at all. */
+  none?: boolean;
+  /** `--skills`: only these (names). */
+  include?: string[];
+  /** `--skip-skills`: all but these (names). */
+  exclude?: string[];
+}
+
 export interface BoxRecord {
   id: string;
   name: string;
@@ -377,6 +387,12 @@ export interface BoxRecord {
    * `relay` rehydrate re-registers with the same policy.
    */
   autoApproveSafeHostActions?: boolean;
+  /**
+   * Which of the hub's library skills this box gets (`--skills`, `--skip-skills`,
+   * `--no-skills` at create). Absent = every library skill. Forwarded to the
+   * relay's registration, which resolves it on each `skills.get`.
+   */
+  skills?: SkillSelection;
   /**
    * Resolved `box.persistent` at create time (`--persistent`). A persistent box
    * is always-on: autopause never pauses it, the cloud keepalive never lets it
@@ -500,6 +516,12 @@ export interface BoxRecord {
    * credential fan-out — reads this, never current config.
    */
   accounts?: Record<string, string>;
+  /**
+   * The hub egress proxy this box's agents use (llm-accounts Phase 7),
+   * resolved at create: `upstream` is the `host:port` of the hub's CONNECT
+   * proxy as the box dials it. Absent = LLM traffic goes direct.
+   */
+  llmProxy?: LlmProxyRecord;
   createdAt: string; // ISO-8601
 }
 
@@ -540,6 +562,13 @@ export function agentConfigVolume(box: BoxRecord, agent: string): string | undef
   return undefined;
 }
 
+/** `BoxRecord.llmProxy`. */
+export interface LlmProxyRecord {
+  mode: 'forward';
+  /** `host:port` of the hub's CONNECT proxy, as the box reaches it. */
+  upstream: string;
+}
+
 export interface StateFile {
   version: 1;
   boxes: BoxRecord[];
@@ -549,3 +578,19 @@ export type FindBoxResult =
   | { kind: 'ok'; box: BoxRecord }
   | { kind: 'none' }
   | { kind: 'ambiguous'; matches: BoxRecord[] };
+
+/**
+ * The agent a box is registered under: the first agent it was created for,
+ * else the last one that ran. EVERY registration of an existing box (start,
+ * resume, rehydrate, branch sanction) must send this, because the relay hands
+ * a `surface: 'service'` agent's units (openclaw's gateway) only to a box whose
+ * registration names that agent, and a re-registration without one replaces
+ * the entry: the box then looks agentless and its service is never started.
+ */
+export function primaryAgent(box: {
+  agents?: readonly string[];
+  lastAgent?: string;
+}): string | undefined {
+  const first = box.agents?.find((a) => a.length > 0 && a !== 'none');
+  return first ?? box.lastAgent;
+}

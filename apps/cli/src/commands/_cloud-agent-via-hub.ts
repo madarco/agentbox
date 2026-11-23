@@ -16,7 +16,7 @@
  *     submit on. No adopt/attach here; it's fire-and-forget.
  */
 import type { BoxRecord } from '@agentbox/sandbox-docker';
-import type { CreateJobRequestOpts } from '@agentbox/relay';
+import type { HubWireCreateOpts } from '../lib/hub-create-opts.js';
 import { readGitOriginUrl, type CarrySeedSource } from '@agentbox/sandbox-cloud';
 import {
   resolveCustodyTarget,
@@ -108,7 +108,7 @@ export interface CloudAgentViaHubArgs {
    * option left out is not "use the project's", it is "use the provider's
    * default". A project pinned to `cx33` silently got the default size.
    */
-  opts?: CreateJobRequestOpts;
+  opts?: HubWireCreateOpts;
   /**
    * Model-auth sources the caller's gate already resolved (`--model-auth`).
    *
@@ -158,12 +158,12 @@ function withoutTimestamp(line: string): string {
  * the right answer for what the caller never asked about.
  */
 function hubOpts(
-  opts: CreateJobRequestOpts | undefined,
+  opts: HubWireCreateOpts | undefined,
   persistent: boolean | undefined,
   borrowCredentials: readonly string[] | undefined,
   accounts?: Readonly<Record<string, string>>,
-): { opts?: CreateJobRequestOpts } {
-  const merged: CreateJobRequestOpts = {
+): { opts?: HubWireCreateOpts } {
+  const merged: HubWireCreateOpts = {
     ...(opts ?? {}),
     ...(persistent !== undefined ? { persistent } : {}),
     ...(borrowCredentials?.length ? { borrowCredentials: [...borrowCredentials] } : {}),

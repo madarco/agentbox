@@ -77,9 +77,13 @@ export const dockerProvider: Provider = {
       // The CLI's docker paths call `createBox` directly with a literal, but a
       // hub / control-plane create only ever arrives as a CreateBoxRequest —
       // so without this those boxes silently keep the all-agents behaviour.
-      ...(req.agents ? { agents: req.agents } : {}),
+      ...(req.agents ? { agents: req.agents } : req.agent ? { agents: [req.agent] } : {}),
       ...(req.borrowCredentials ? { borrowCredentials: req.borrowCredentials } : {}),
+      // The library skill selection: same lesson as `agents` above — a hub or
+      // control-plane create arrives only as a CreateBoxRequest.
+      ...(req.skills ? { skills: req.skills } : {}),
       ...(req.accounts ? { accounts: req.accounts } : {}),
+      ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
       claudeConfig: po.claudeConfig,
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,
