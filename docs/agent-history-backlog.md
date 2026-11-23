@@ -526,3 +526,55 @@ folder). Still open:
   time), and staging `_claude.json` for a box (docker seed and cloud overlay)
   drops any MCP server carrying the hub token or pointing at a hub `/api/mcp`.
   The box scope no longer falls back to a live `git remote get-url`.
+
+## Cloud sign-off (2026-11-23)
+
+Fixed in this pass: a cloud box's first RPCs got `401 unknown box token`
+(ctl starts before the hub registers the box) and ctl parked memory and history
+for 10 minutes as if the relay lacked the methods; the late memory seed then
+deleted what the agent had written (plan, "Cloud sign-off"). Still open:
+
+- **The seed still replaces a dir the agent already wrote.** The fix closes the
+  401 window, but a box whose hub is unreachable at boot for longer (tunnel
+  down, hub restarting) seeds whenever the relay first answers, and
+  `placeSet` replaces the dir: memory written before that is lost. Merging
+  (keep local paths the seed set does not name, ship them as new versions)
+  would close it without losing the "a checkpoint's carried dir is replaced"
+  property only if the carried dir is told apart, e.g. by the state's box id.
+- **From the review of this pass, not fixed:**
+  - A 401 on a stale-config refresh (or any unreachable answer) drops a
+    working history shipper and row cursor until the next tick rebuilds them
+    (pre-existing for transport errors).
+  - Only a bodyless 401 is recognised; a 401 behind a proxy that returns an
+    `{exitCode}` body, or on the parked `/rpc/status` poll, still reads as
+    `unsupported`.
+  - Other ctl callers (skills sync, tool links, the MCP bridge) log the boot
+    401 as a failure and wait for their next pass; `agents.list` has its own
+    retry schedule. One shared "not registered yet" retry in `relay-rpc.ts`
+    would serve them all.
+  - `memory-sync.ts` `call` and `history-shipper.ts` `rpc` are two timeout
+    wrappers around `postRpcAwait` with different timeout behavior (exit 126
+    vs a thrown `RpcTimeout`).
+- **Not checked live on vercel or daytona.** vercel's auth here is a Vercel CLI
+  session in the owner's HOME (not copied into a scratch HOME). The daytona
+  bake from a scratch HOME failed after ~25 min at the seed layer's
+  `chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex
+  /home/vscode/.local` (`packages/sandbox-daytona/src/prepare.ts`, exit 1,
+  likely a seed path missing on a sparse host config; not a history change).
+  The fix in this pass is in ctl and shared by every cloud provider.
+- **Phase 7 usage on cloud.** #452 had not merged during the pass.
+- **Found while testing, outside history (for their own backlogs):**
+  - `agentbox codex <box>` takes the box name as the initial prompt and
+    creates a new box, and `agentbox codex start <box>` on a box created for
+    claude does not install codex, though `docs/agents.md` ("Adding an agent
+    to a running box") says both do.
+  - `agentbox prepare --provider e2b` from a scratch HOME rebuilds the shared
+    template by name (`agentbox-base:latest`), the same template id the
+    owner's own `e2b-prepared.json` points at. Harmless for a nightly bake, but
+    a scratch-HOME test is not isolated on e2b.
+  - Under `hub expose --tunnel cloudflare`, `hub restart` gets a new quick-tunnel
+    URL; cloud boxes created before it keep the old, dead URL. Known shape of
+    quick tunnels, worth a line in `hub-testing.md`'s gotchas.
+  - Testing inside an AgentBox box: the exposed hub's own creates clone the repo
+    with `git`, which the box's git shim refuses (`git.clone: not yet
+    implemented`); `--local` sidesteps it.

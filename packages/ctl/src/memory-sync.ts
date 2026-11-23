@@ -34,14 +34,12 @@ import {
   type MemorySeedReply,
   type Redactor,
 } from '@agentbox/core';
-import { postRpcAwait } from './relay-rpc.js';
+import { postRpcAwait, relayNotReady, type RelayRpcResult } from './relay-rpc.js';
 import { resolveRelayEnv } from './relay-env.js';
 import { currentBoxId } from './session-pointer.js';
 
 const RPC_TIMEOUT_MS = 60_000;
 const DISABLED_BACKOFF_MS = 10 * 60_000;
-/** postRpcAwait's own codes for a missing relay env (65) and a transport failure (126). */
-const UNREACHABLE_EXIT = new Set([65, 126]);
 
 export interface MemoryState {
   version: 1;
@@ -60,13 +58,10 @@ export interface MemoryRpc {
   }): Promise<MemoryPutResult>;
 }
 
-async function call(
-  method: string,
-  params: unknown,
-): Promise<{ exitCode: number; stdout: string }> {
+async function call(method: string, params: unknown): Promise<RelayRpcResult> {
   let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<{ exitCode: number; stdout: string }>((resolve) => {
-    timer = setTimeout(() => resolve({ exitCode: 126, stdout: '' }), RPC_TIMEOUT_MS);
+  const timeout = new Promise<RelayRpcResult>((resolve) => {
+    timer = setTimeout(() => resolve({ exitCode: 126, stdout: '', stderr: '' }), RPC_TIMEOUT_MS);
   });
   try {
     return await Promise.race([postRpcAwait(method, params, { quiet: true }), timeout]);
@@ -78,7 +73,7 @@ async function call(
 export const relayMemoryRpc: MemoryRpc = {
   async seed() {
     const r = await call('history.memory.seed', {});
-    if (UNREACHABLE_EXIT.has(r.exitCode)) return 'unreachable';
+    if (relayNotReady(r)) return 'unreachable';
     if (r.exitCode !== 0) return 'unsupported';
     try {
       const v = JSON.parse(r.stdout) as Partial<MemorySeedReply>;
