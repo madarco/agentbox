@@ -3470,7 +3470,8 @@ function sanitizeAccounts(raw: unknown): Record<string, string> | undefined {
 function sanitizeAgents(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const out = raw.filter(
-    (a): a is string => typeof a === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(a) && a !== 'none',
+    (a): a is string =>
+      typeof a === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(a) && a !== 'none',
   );
   return out.length > 0 ? [...new Set(out)] : undefined;
 }
