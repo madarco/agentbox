@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  applyMcpRegistration,
-  parseAgentMcpSpec,
-  removeMcpRegistration,
-} from '../src/index.js';
+import { applyMcpRegistration, parseAgentMcpSpec, removeMcpRegistration } from '../src/index.js';
 
 const claude = { format: 'json', serversPath: ['mcpServers'], entry: 'stdio' } as const;
 const codex = { format: 'toml', serversPath: ['mcp_servers'], entry: 'stdio' } as const;

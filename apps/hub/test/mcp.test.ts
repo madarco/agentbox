@@ -286,7 +286,12 @@ describe('history tools', () => {
     const key = { repoKey: 'github.com/owner/repo', agent: 'claude', scope: 'project' as const };
     const r = await call(server, scope, 'memory_propose', { path: 'x.md', content: 'mine' });
     expect(r.structuredContent.baseVersion).toBe(0);
-    await memory.memoryPut({ ...key, path: 'x.md', bytes: Buffer.from('newer'), origin: { boxId: 'b2' } });
+    await memory.memoryPut({
+      ...key,
+      path: 'x.md',
+      bytes: Buffer.from('newer'),
+      origin: { boxId: 'b2' },
+    });
     approve(true);
     await new Promise((res) => setTimeout(res, 20));
     expect((await memory.file(key, 'x.md'))?.bytes.toString()).toBe('newer');
@@ -296,7 +301,12 @@ describe('history tools', () => {
     const { server } = await setup();
     const big = await call(server, hubScope, 'sessions_list', { offset: 490, limit: 20 });
     expect(big.isError).toBe(true);
-    const got = await call(server, hubScope, 'session_get', { id: A, detail: 'full', from: 0, to: 1 });
+    const got = await call(server, hubScope, 'session_get', {
+      id: A,
+      detail: 'full',
+      from: 0,
+      to: 1,
+    });
     expect(got.structuredContent.nextFrom).toBeUndefined();
   });
 });

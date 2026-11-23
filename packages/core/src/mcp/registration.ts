@@ -115,7 +115,9 @@ function tomlDefinesServer(text: string, serversPath: readonly string[]): boolea
   const path = serversPath.map((k) => `(?:${k}|"${k}"|'${k}')`).join('\\s*\\.\\s*');
   if (new RegExp(`^\\s*\\[\\s*${path}\\s*\\.\\s*${name}\\s*[\\].]`, 'm').test(text)) return true;
   if (new RegExp(`^\\s*${path}\\s*\\.\\s*${name}\\s*[.=]`, 'm').test(text)) return true;
-  if (new RegExp(`^\\s*${path}\\s*=\\s*\\{[^\\n]*\\b${AGENTBOX_MCP_SERVER_NAME}\\b`, 'm').test(text)) {
+  if (
+    new RegExp(`^\\s*${path}\\s*=\\s*\\{[^\\n]*\\b${AGENTBOX_MCP_SERVER_NAME}\\b`, 'm').test(text)
+  ) {
     return true;
   }
   // `agentbox = …` as a key of the `[serversPath]` table itself.
