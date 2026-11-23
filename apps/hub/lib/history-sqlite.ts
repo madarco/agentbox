@@ -478,6 +478,21 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         return keys;
       });
     },
+    async staleParserSessions(agent, version, limit) {
+      return (
+        db
+          .prepare(
+            'SELECT key FROM history_sessions WHERE agent = ? AND parser_version < ? ORDER BY updated_at DESC LIMIT ?',
+          )
+          .all(agent, version, limit) as Row[]
+      ).map((r) => String(r.key));
+    },
+    async clearSessionTitle(key) {
+      db.prepare('UPDATE history_sessions SET title = NULL WHERE key = ?').run(key);
+    },
+    async setSessionParserVersion(key, version) {
+      db.prepare('UPDATE history_sessions SET parser_version = ? WHERE key = ?').run(version, key);
+    },
     async gcBlobs() {
       const r = db
         .prepare(

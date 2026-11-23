@@ -28,6 +28,12 @@
 //   idle      — ready for input: `agent_end`, `agent_settled`, and
 //               `session_start` as the baseline when a session opens.
 //
+// Session history: `session_start` also hands the session's id and file to
+// `agentbox-ctl agent-state pi idle --capture-session` on stdin (the hook-JSON
+// shape the other agents' hooks use), which appends it to the box's binding
+// log. Sessions on Pi's shared docker volume are attributed to a box only
+// through that log.
+//
 // Pi has NO permission prompts by design, so there is no `waiting` state to
 // report — unlike the other three, nothing in Pi ever blocks on human approval
 // of a tool call.
@@ -54,11 +60,38 @@ function pushState(state) {
   }
 }
 
+// One binding per session id per process (a reload re-fires session_start).
+const bound = new Set();
+
+function bindSession(ctx) {
+  try {
+    const sm = ctx && ctx.sessionManager;
+    const id = sm && typeof sm.getSessionId === 'function' ? sm.getSessionId() : null;
+    const file = sm && typeof sm.getSessionFile === 'function' ? sm.getSessionFile() : null;
+    // An ephemeral (--no-session) run has no file and nothing to ship.
+    if (typeof id !== 'string' || !id || typeof file !== 'string' || !file || bound.has(id)) return;
+    bound.add(id);
+    const p = spawn('agentbox-ctl', ['agent-state', 'pi', 'idle', '--capture-session'], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+      detached: true,
+    });
+    p.on('error', () => {});
+    p.stdin.on('error', () => {});
+    p.stdin.end(JSON.stringify({ session_id: id, transcript_path: file }));
+    p.unref();
+  } catch {
+    // Fire-and-forget, like pushState.
+  }
+}
+
 export default function (pi) {
   // Pi AWAITS extension handlers, so every one of these must return
   // immediately. `pushState` spawns detached + unref'd and never awaits, so a
   // slow or absent ctl can never stall a turn.
-  pi.on('session_start', () => pushState('idle'));
+  pi.on('session_start', (_event, ctx) => {
+    pushState('idle');
+    bindSession(ctx);
+  });
   pi.on('agent_start', () => pushState('working'));
   pi.on('tool_execution_start', () => pushState('working'));
   pi.on('message_end', () => pushState('working'));

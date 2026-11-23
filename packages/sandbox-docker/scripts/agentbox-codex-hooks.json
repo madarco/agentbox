@@ -1,10 +1,10 @@
 {
-  "description": "AgentBox activity-state hooks (defense-in-depth seed; production state comes from the tmux-pane scraper in packages/ctl/src/codex-scraper.ts). Codex's strict parser allows only `description` and `hooks` at the top level. Loading needs `codex --enable hooks --dangerously-bypass-hook-trust` (both supplied by startCodexSession()).",
+  "description": "AgentBox activity-state hooks (defense-in-depth seed; production state comes from the tmux-pane scraper in packages/ctl/src/codex-scraper.ts). Codex's strict parser allows only `description` and `hooks` at the top level. Loading needs `codex --enable hooks --dangerously-bypass-hook-trust` (both supplied by startCodexSession()). SessionStart and Stop run synchronously (no &) with --capture-session: they read the hook's stdin session_id and append it to the box's session-history binding log, which is how a session on the shared codex volume is attributed to this box. A backgrounded hook would detach stdin.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "agentbox-ctl codex-state idle --capture-session >/dev/null 2>&1", "timeout": 3 }
         ]
       }
     ],
@@ -60,7 +60,7 @@
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "agentbox-ctl codex-state idle --capture-session >/dev/null 2>&1", "timeout": 3 }
         ]
       }
     ]

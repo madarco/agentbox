@@ -9,11 +9,13 @@
 import { zstdCompressSync, zstdDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
 import {
   agentHistoryModule,
+  agentHistoryModules,
   extractLargeStrings,
   restoreLargeStrings,
   type HistoryFrame,
   type HistoryIngestResult,
   type HistoryIngestSink,
+  type AgentHistoryModule,
   type HistoryRecord,
   type ParseState,
 } from '@agentbox/core';
@@ -153,6 +155,11 @@ export interface HistoryRepo {
   deleteSession(key: string): Promise<string[]>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
+  /** Keys of `agent`'s sessions projected by a parser older than `version`. */
+  staleParserSessions(agent: string, version: number, limit: number): Promise<string[]>;
+  /** Forget a session's title (a re-parse derives it again). */
+  clearSessionTitle(key: string): Promise<void>;
+  setSessionParserVersion(key: string, version: number): Promise<void>;
 
   // ---- reads (Phase 2) ----
   querySessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
@@ -228,6 +235,11 @@ export interface HistoryService extends HistoryIngestSink {
   /** The file to download: `path` when it belongs to the session, else its main file. */
   sessionFile(key: string, path?: string): Promise<HistoryFileRow | null>;
   search(q: string, limit: number): Promise<HistorySearchHit[]>;
+  /**
+   * Re-derive the projection of every session whose parser is older than its
+   * agent module's, from the raw archive. Returns how many sessions it redid.
+   */
+  reparse(): Promise<number>;
   /** Seal idle files and apply retention. */
   sweep(opts?: {
     retention?: boolean;
@@ -428,6 +440,33 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
     return { ok: true, offset, sha256: frame.sha256 };
   }
 
+  /** One session's projection, from raw. Runs inside the ingest queue. */
+  async function reparseSession(key: string, mod: AgentHistoryModule): Promise<void> {
+    const files = await repo.filesOfSession(key);
+    for (const f of files) await repo.clearFileRecords(f.id);
+    await repo.clearSessionTitle(key);
+    for (const f of files) {
+      let state: ParseState = {};
+      let pos = 0;
+      try {
+        for await (const bytes of service.rawStream(f.id, f.offset)) {
+          const r = mod.parse({ path: f.path, offset: pos, bytes }, state);
+          state = r.state;
+          pos += bytes.length;
+          if (r.records.length > 0) await repo.insertRecords(key, f.id, r.records);
+        }
+      } catch (e) {
+        // As on ingest: a parser bug costs the projection, never the raw.
+        log(`history: re-parse ${f.path}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      await repo.updateFile(f.id, { parseState: state });
+    }
+    await repo.refreshSessionTotals(key, now());
+    await repo.setSessionParserVersion(key, mod.parserVersion);
+  }
+
+  let reparsing: Promise<number> | null = null;
+
   const service: HistoryService = {
     repo,
     ingest: (frame) =>
@@ -538,6 +577,31 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return repo.search(fts, Math.min(Math.max(limit, 1), 200));
     },
 
+    reparse() {
+      // One job at a time; each session is its own turn in the ingest queue,
+      // so frames keep landing between sessions.
+      reparsing ??= (async () => {
+        let done = 0;
+        try {
+          for (const mod of agentHistoryModules()) {
+            for (;;) {
+              const keys = await repo.staleParserSessions(mod.id, mod.parserVersion, 50);
+              if (keys.length === 0) break;
+              for (const key of keys) {
+                await serialized(() => reparseSession(key, mod));
+                done++;
+              }
+            }
+          }
+        } finally {
+          reparsing = null;
+        }
+        if (done > 0) log(`history: re-parsed ${String(done)} session(s)`);
+        return done;
+      })();
+      return reparsing;
+    },
+
     sweep: (opts = {}) =>
       serialized(async () => {
         let sealed = 0;
@@ -574,8 +638,20 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
             log(`history: sweep failed: ${e instanceof Error ? e.message : String(e)}`),
         );
       };
+      const redo = (): void => {
+        service
+          .reparse()
+          .catch((e: unknown) =>
+            log(`history: re-parse failed: ${e instanceof Error ? e.message : String(e)}`),
+          );
+      };
+      // A parser bump takes effect at the first start that carries it.
+      redo();
       const a = setInterval(() => run(false), 60_000);
-      const b = setInterval(() => run(true), 60 * 60_000);
+      const b = setInterval(() => {
+        run(true);
+        redo();
+      }, 60 * 60_000);
       a.unref();
       b.unref();
       timers.push(a, b);

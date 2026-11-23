@@ -107,6 +107,18 @@ export const piSpec: AgentSyncSpec = {
       exclude: ['sessions', 'bin', 'models-store.json', 'trust.json'],
     },
   ],
+  // Session history (docs/agent-history-plan.md): one JSONL tree per session,
+  // under a folder named after the session's cwd.
+  history: {
+    transcripts: [
+      {
+        root: 'sessions',
+        format: 'json-tree',
+        mode: 'append',
+        sessionFiles: ['*/*_<sessionId>.jsonl'],
+      },
+    ],
+  },
   credential: {
     boxRelPath: 'auth.json',
     boxAbsPath: `${PI_BOX_DIR}/auth.json`,

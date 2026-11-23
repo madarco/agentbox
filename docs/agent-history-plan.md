@@ -336,6 +336,51 @@ Re-parse job (raw → normalized) for parser version bumps.
 
 **Done:** one session per agent searchable; a parser bump re-derives cleanly.
 
+#### Phase 3 implementation plan (2026-11-23)
+
+- **Bindings for every agent.** The shipper keeps shipping bound sessions only
+  (shared docker volumes pool every box's sessions for codex, pi and opencode
+  too). codex: the seeded `SessionStart`/`Stop` hooks run synchronously with
+  `--capture-session`, as claude's do. pi: the extension's `session_start`
+  handler pipes `{session_id, transcript_path}` from `ctx.sessionManager` into
+  `agentbox-ctl agent-state pi idle --capture-session`. opencode: the plugin
+  does the same with the `sessionID` of `session.created` / `session.idle`. All
+  three reuse the existing flag, so a newer seeded file works with any ctl that
+  has it.
+- **Globs in any segment.** `sessionFiles` may use `*` in a directory segment
+  (codex: `*/*/*/rollout-*-<sessionId>.jsonl` under `sessions`). The ctl path
+  expands it with `list`, the docker `scan` lists 5 levels deep.
+- **Spec blocks.** codex `sessions` + the rollout pattern (`thread_history_1.sqlite`
+  and `state_5.sqlite` are not shipped); pi `sessions` + `*/*_<sessionId>.jsonl`;
+  opencode `format: 'sqlite', mode: 'snapshot'` with a `sqlite` block naming the
+  db and its `session`/`message`/`part` tables (id, session column, updated
+  column, parent table, settle time).
+- **Row cursor (snapshot mode).** Generic and data-driven, in `@agentbox/core`
+  with a row-source seam; ctl binds it to `node:sqlite` (read-only). For each
+  bound session it appends every new or changed row as one JSON line
+  (`{t, id, u, row}`) to `<root>/<sessionId>.jsonl` next to the db, with a
+  `<sessionId>.cursor.json` beside it. A row is written once it has been quiet
+  for `settleMs` (a final flush writes everything), and a row with a `parent`
+  only after its parent row. The output file is then byte-tailed like any
+  append transcript, so the hub cursor, archive and parser path are unchanged.
+  ctl runs it in every box: `history.config` gains `materialize` (the snapshot
+  agents) and returns it to docker boxes too, whose files the relay then ships;
+  the relay's final docker flush runs `agentbox-ctl history flush` in the box
+  first.
+- **Parsers** (`AgentHistoryModule` in each agent package, registered with its
+  sync module): codex (`session_meta` id + `thread_spawn` parent, `response_item`
+  messages minus injected context, tool calls, `token_usage_record` usage keyed
+  by response id), pi (header id + `parentSession`, message text, `toolCall`
+  blocks, `message.usage`, `session_info` title), opencode (materialized rows;
+  per-part dedupe in the parse state, usage once a message has completed).
+- **Re-parse job.** The history service re-derives every session whose
+  `parser_version` is below its module's: clear the projection, stream the raw
+  through `parse`, store the end parse state, stamp the version. It runs at hub
+  start and in the hourly sweep, inside the ingest queue.
+- **openclaw** is not in this phase (see the backlog): its 2026.11 store is a
+  large schema (`transcript_events` with zstd-compressed event blobs, plus
+  navigation rows) that Phase 0 did not measure.
+
 ### Phase 4 — memory in the hub
 
 `memory_entries`, seed-from-hub with host fallback, write-back, `agentbox

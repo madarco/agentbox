@@ -11,13 +11,43 @@ export interface AgentHistoryTranscripts {
    */
   root: string;
   format: 'jsonl' | 'json-tree' | 'sqlite';
-  /** `append` files are byte-tailed; `snapshot` ones (sqlite) need Phase 3's row cursor. */
+  /**
+   * `append` files are byte-tailed. A `snapshot` source (a live sqlite db) is
+   * first copied row by row into an append-only file per session by the edge's
+   * row cursor (`sqlite` below), and that file is byte-tailed.
+   */
   mode: 'append' | 'snapshot';
   /**
    * The files that make up one session, relative to `root`. `<sessionId>` is
-   * the bound id; `*` may appear in the LAST segment only.
+   * the bound id; `*` matches within one path segment and may appear in any
+   * segment. For a `snapshot` source, exactly one entry: the file the row
+   * cursor writes.
    */
   sessionFiles: string[];
+  /** The db a `snapshot` source reads. */
+  sqlite?: AgentHistorySqliteSource;
+}
+
+/** One table the row cursor copies. All names are plain sql identifiers. */
+export interface AgentHistorySqliteTable {
+  name: string;
+  /** Primary key column. */
+  id: string;
+  /** Column holding the session id (the `id` column itself for the session table). */
+  session: string;
+  /** A column that changes whenever the row does (epoch ms). */
+  updated: string;
+  /** Write a row only after the row its `column` names in `table` was written. */
+  parent?: { column: string; table: string };
+  /** Write a row only once `updated` is this old (default 0); a final flush ignores it. */
+  settleMs?: number;
+}
+
+export interface AgentHistorySqliteSource {
+  /** The db, relative to the agent's config dir. */
+  db: string;
+  /** In write order: a parent table before its children. */
+  tables: AgentHistorySqliteTable[];
 }
 
 /** Data-only `history` block on `AgentSyncSpec`. */
@@ -77,6 +107,17 @@ export interface HistoryConfigReply {
   enabled: boolean;
   reason?: string;
   agents: Array<{ agent: string; configDir: string; projectKey: string; spec: AgentHistorySpec }>;
+  /**
+   * Agents with a `snapshot` source whose row cursor this box must run even
+   * when `enabled` is false: a docker box, whose output files the host relay
+   * ships. Absent from relays that predate it.
+   */
+  materialize?: Array<{
+    agent: string;
+    configDir: string;
+    projectKey: string;
+    spec: AgentHistorySpec;
+  }>;
   /** Box paths of agent credential files: their values seed the exact redaction list. */
   credentialFiles: string[];
 }

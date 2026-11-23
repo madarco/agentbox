@@ -161,7 +161,18 @@ export class HistoryRelay {
       s.credential?.boxAbsPath ? [s.credential.boxAbsPath] : [],
     );
     if (isDockerBox(reg)) {
-      return { enabled: false, reason: 'shipped by the host relay', agents: [], credentialFiles };
+      // The relay ships a docker box's files, but only the box can read its
+      // live sqlite stores: its ctl runs the row cursor for these.
+      const materialize = (await this.captureEnabled(reg))
+        ? agents.filter((a) => a.spec.transcripts.some((t) => t.mode === 'snapshot'))
+        : [];
+      return {
+        enabled: false,
+        reason: 'shipped by the host relay',
+        agents: [],
+        materialize,
+        credentialFiles,
+      };
     }
     if (!(await this.captureEnabled(reg))) {
       return {
@@ -275,6 +286,9 @@ export class HistoryRelay {
     // A paused/stopped box writes nothing new; reading it costs a helper
     // container per file op, so only a destroy's final flush does that.
     if (!final && !entry.source.isRunning()) return null;
+    // A destroy: let the box's row cursor write its last sqlite rows (it
+    // otherwise waits for rows to settle) before the final read.
+    if (final && entry.source.isRunning()) await entry.source.flushInBox().catch(() => undefined);
     const stats = await entry.shipper.pass({ final });
     if (stats.frames > 0 || stats.errors.length > 0) {
       this.deps.log(

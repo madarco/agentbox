@@ -83,6 +83,8 @@ export interface DockerHistorySource extends HistoryFileSource {
    * `docker volume rm`, which fails (silently) while a helper mounts them.
    */
   settle(): Promise<void>;
+  /** Run the box's own `agentbox-ctl history flush` (its row cursor). Running boxes only. */
+  flushInBox(): Promise<void>;
 }
 
 /** Remove helper containers left for `container` (e.g. by a crashed relay). */
@@ -155,6 +157,9 @@ export function dockerHistorySource(opts: DockerSourceOptions): DockerHistorySou
       running = status === 'running';
     },
     readBindings,
+    async flushInBox() {
+      if (running) await sh('agentbox-ctl history flush >/dev/null 2>&1; true');
+    },
     async size(path) {
       const out = (await sh(`stat -c %s ${shQuote(path)} 2>/dev/null || true`))
         .toString('utf8')
@@ -168,7 +173,7 @@ export function dockerHistorySource(opts: DockerSourceOptions): DockerHistorySou
     async scan(roots) {
       const path = `${BOX_HOME}/${HISTORY_BINDINGS_FILE}`;
       const finds = roots
-        .map((r) => `find ${shQuote(r)} -maxdepth 3 -type f -printf '%s %p\\n' 2>/dev/null`)
+        .map((r) => `find ${shQuote(r)} -maxdepth 5 -type f -printf '%s %p\\n' 2>/dev/null`)
         .join('; ');
       if (running) {
         // One exec: the log, a separator, then every file's size.
