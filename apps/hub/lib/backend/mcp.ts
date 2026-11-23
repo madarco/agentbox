@@ -8,6 +8,13 @@ import type { McpApprovalRequest, McpBoxScope, MemoryOrigin } from '@agentbox/co
 /** A hub-credential caller: sees every repo; a write still asks a human. */
 export interface McpHubScope {
   kind: 'hub';
+  /**
+   * The caller passed custody's elevated byte read (admin token, an enrolled
+   * device's token, or loopback on a local hub), as `GET /skills/{name}/tarball`
+   * requires. Without it `skill_get` refuses: the plain API key travels to the
+   * tray and every thin client.
+   */
+  skillBytes?: boolean;
   origin: MemoryOrigin;
   approve(req: McpApprovalRequest): Promise<boolean>;
   redact(bytes: Uint8Array): Promise<Uint8Array>;

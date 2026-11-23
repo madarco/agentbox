@@ -8,6 +8,7 @@ import {
   computeClaudePullPlan,
   flatInventoryScript,
   makeRecordingTransport,
+  isSafePullName,
   parseClaudeInventory,
   parseFlatInventory,
   pullClaudeExtrasViaTransport,
@@ -294,5 +295,32 @@ describe('the pull default covers an agent with only a registry row', () => {
     // through the script builders it gates: both empty means no script.
     expect(flatInventoryScript({})).toBe('true');
     expect(categoryInventoryScript({})).toBe('true');
+  });
+});
+
+describe('inventory names from the box', () => {
+  it('drops names that would leave the host config dir', () => {
+    const inv = parseClaudeInventory(
+      [
+        'DIR skills ok-skill',
+        'DIR skills ../../../../home/u/.ssh',
+        'DIR skills ..',
+        'DIR agents a/b',
+        'PLUGIN market/plugin',
+        'PLUGIN ../x',
+        'PLUGIN m/p/q',
+        'PLUGIN m/..',
+      ].join('\n'),
+    );
+    expect(inv.dirs.skills).toEqual(['ok-skill']);
+    expect(inv.dirs.agents).toEqual([]);
+    expect(inv.plugins).toEqual(['market/plugin']);
+    expect(
+      parseFlatInventory('data FILE auth.json\ndata DIR ../../etc\ndata FILE ..\n').map(
+        (e) => e.name,
+      ),
+    ).toEqual(['auth.json']);
+    expect(isSafePullName('a\\b')).toBe(false);
+    expect(isSafePullName('name with space')).toBe(true);
   });
 });

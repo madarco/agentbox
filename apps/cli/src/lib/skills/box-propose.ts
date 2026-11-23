@@ -11,7 +11,7 @@
  */
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, posix } from 'node:path';
+import { join, posix, resolve, sep } from 'node:path';
 import { tryGetMachineId } from '@agentbox/config';
 import type { AgentId, BoxRecord, SyncTransport } from '@agentbox/core';
 import {
@@ -42,6 +42,18 @@ export function boxSkillDirs(agent: AgentId): string[] {
     }
   }
   return out;
+}
+
+/** The Agent Skills name rule (the library's): also a safe single path segment. */
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** Where one box skill is staged; throws unless it stays inside `stage`. */
+export function stagedSkillDir(stage: string, n: number, name: string): string {
+  if (!SKILL_NAME_RE.test(name)) throw new Error(`not a valid skill name: ${name.slice(0, 80)}`);
+  const root = resolve(stage);
+  const dest = resolve(root, String(n), name);
+  if (!dest.startsWith(`${root}${sep}`)) throw new Error(`skill path escapes staging: ${name}`);
+  return dest;
 }
 
 /** Names of real skill dirs (not links: those are carried copies) with a SKILL.md. */
@@ -89,10 +101,20 @@ export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<B
         .map((l) => l.trim())
         .filter(Boolean);
       for (const name of names) {
+        // The names come from the box's stdout, which an agent in the box
+        // controls: check them before any host path is built from one.
+        if (!SKILL_NAME_RE.test(name)) {
+          out.push({
+            name: name.slice(0, 80),
+            status: 'skipped',
+            reason: 'not a valid skill name',
+          });
+          continue;
+        }
         if (seen.has(name)) continue;
         seen.add(name);
         if (name === 'agentbox' || name.startsWith('agentbox-')) continue;
-        const dest = join(stage, String(seen.size), name);
+        const dest = stagedSkillDir(stage, seen.size, name);
         await mkdir(dest, { recursive: true });
         let skill: LocalSkill;
         try {

@@ -244,13 +244,36 @@ dedupe; `download opencode` lacked the step; a proposal in the hub's startup
 window answered `pending` with no prompt ever shown (the handler is published
 only once the prompt mailbox exists). Still open:
 
+- **From the PR #453 review (fixed there):** a box with `autoApproveHostActions`
+  approved its own proposals and installs (now `noAutoApprove` on both asks); box
+  stdout names reached host paths before any check, in the propose step and in
+  the shared agent-pull inventory parsers (now one safe segment each); the
+  approval showed no file list or diff (now added/modified/removed paths and a
+  `SKILL.md` diff vs the current version); hub-scope MCP `skill_get` bypassed the
+  custody byte-read gate (now required, carried on `McpHubScope.skillBytes`).
+- **From the PR #453 review, open:**
+  - one box can fill all 20 global pending proposal slots (~2 GB of hub memory);
+    cap per box;
+  - the CLI's hub calls in the propose step have no timeout and run before the
+    pull, so a hung hub delays the download;
+  - on docker the transport reads the SHARED claude config volume, so a skill
+    written by one box is attributed to whichever box the download names;
+  - a box can fill host disk through the staged pull, and a `/dev/zero`-style
+    SKILL.md makes the CLI read until the size cap (stream with a cap per file);
+  - `skill_get` runs `gunzipSync` on the hub event loop per call (cache or
+    stream);
+  - a proposal with secret-scan findings can still be approved (shown, not
+    blocked, as for uploads);
+  - a late install approval can re-enable a skill the user excluded for that box
+    after the request (the binding write doesn't re-check);
+  - skills excluded by the box's create flags are still readable through MCP
+    (visible = bindings only, by design of `skills_propose_install`);
+  - a PC that holds the admin token sends only its API key from `agentbox mcp`,
+    so `skill_get` from a host agent on a remote hub needs an enrolled device.
 - **Two proposals of different versions of one skill are both parked.**
   Approving the second after the first lands logs "not applied: the library's
   version changed" and the approver sees nothing. Replace the earlier pending
   proposal per name, or surface the outcome as a notice.
-- **A proposal from a box with `autoApproveHostActions` is auto-approved**, like
-  `memory_propose` (the prompt mailbox's policy applies to every ask under that
-  box id). Decide whether library writes should be exempt.
 - **Pending proposals live in hub memory** (up to 20, each up to the custody blob
   cap compressed). A hub restart drops them along with the prompt mailbox.
 - **The CLI's library skip compares raw tree hashes** (the library stores raw

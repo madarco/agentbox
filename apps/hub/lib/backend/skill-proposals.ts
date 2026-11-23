@@ -15,10 +15,12 @@ import {
   SkillTarError,
   treeHash,
   type SecretFinding,
+  type TarFile,
 } from '@agentbox/sandbox-core';
 import {
   importSkill,
   readSkillMeta,
+  SKILLS_SCOPE,
   skillNameProblem,
   SkillsError,
   type SkillSource,
@@ -65,6 +67,87 @@ function fmtBytes(n: number): string {
   if (n < 1024) return `${String(n)} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const LISTING_CHARS = 2_000;
+/** Lines per side past which SKILL.md is shown whole instead of diffed. */
+const DIFF_MAX_LINES = 400;
+
+function clip(text: string, max: number): string {
+  return text.length > max
+    ? `${text.slice(0, max)}… [${String(text.length - max)} more chars]`
+    : text;
+}
+
+/** A version's files by path, or null when its tarball is missing or unreadable. */
+async function readVersionFiles(
+  store: SkillsStore,
+  name: string,
+  version: string,
+  maxBytes: number | undefined,
+): Promise<Map<string, Buffer> | null> {
+  const found = await store.get(`${SKILLS_SCOPE}/${name}/${version}.tar.gz`).catch(() => null);
+  if (!found) return null;
+  try {
+    const files = readTar(found.data, maxBytes !== undefined ? { maxBytes } : {});
+    return new Map(files.map((f) => [f.path, f.data]));
+  } catch {
+    return null;
+  }
+}
+
+/** Paths added, modified (content or mode) and removed, each sorted. */
+export function diffFiles(
+  current: Map<string, Buffer>,
+  next: readonly TarFile[],
+): { added: string[]; modified: string[]; removed: string[] } {
+  const added: string[] = [];
+  const modified: string[] = [];
+  const seen = new Set<string>();
+  for (const f of next) {
+    seen.add(f.path);
+    const old = current.get(f.path);
+    if (!old) added.push(f.path);
+    else if (!old.equals(f.data)) modified.push(f.path);
+  }
+  const removed = [...current.keys()].filter((p) => !seen.has(p));
+  const sort = (a: string[]) => a.sort();
+  return { added: sort(added), modified: sort(modified), removed: sort(removed) };
+}
+
+/** A minimal line diff (LCS): `- ` removed, `+ ` added, `  ` kept lines. */
+export function lineDiff(before: string, after: string): string {
+  const a = before.split('\n');
+  const b = after.split('\n');
+  if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) {
+    return `(too long to diff; new content follows)\n${after}`;
+  }
+  const lcs: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  );
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      lcs[i]![j] =
+        a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+    }
+  }
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      out.push(`  ${a[i]!}`);
+      i++;
+      j++;
+    } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) {
+      out.push(`- ${a[i++]!}`);
+    } else {
+      out.push(`+ ${b[j++]!}`);
+    }
+  }
+  while (i < a.length) out.push(`- ${a[i++]!}`);
+  while (j < b.length) out.push(`+ ${b[j++]!}`);
+  return out.join('\n');
 }
 
 export interface SkillProposals {
@@ -134,18 +217,49 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
             .join(', ')}`
         : 'secret scan: clean';
     const text = skillMd.data.toString('utf8');
-    const preview =
-      text.length > PREVIEW_CHARS
-        ? `${text.slice(0, PREVIEW_CHARS)}… [${String(text.length - PREVIEW_CHARS)} more chars]`
-        : text;
     const baseCurrent = prev?.current ?? null;
+    // What the approver needs: every file that differs from the current
+    // version, not just SKILL.md (a changed script under an unchanged SKILL.md
+    // must not look identical).
+    const current = baseCurrent
+      ? await readVersionFiles(deps.store, name, baseCurrent, deps.maxBytes)
+      : null;
+    const changes = current ? diffFiles(current, files) : null;
+    const changeLine = !prev
+      ? `new skill: ${String(files.length)} file(s)`
+      : changes
+        ? `vs current ${baseCurrent!.slice(0, 12)}: ${String(changes.added.length)} added, ${String(changes.modified.length)} modified, ${String(changes.removed.length)} removed`
+        : `vs current ${baseCurrent!.slice(0, 12)}: its files could not be read; every file is listed`;
+    const listing = changes
+      ? [
+          ...changes.added.map((p) => `+ ${p}`),
+          ...changes.modified.map((p) => `~ ${p}`),
+          ...changes.removed.map((p) => `- ${p}`),
+        ]
+      : files.map((f) => `  ${f.path} (${fmtBytes(f.data.length)})`);
+    const oldMd = current?.get('SKILL.md');
+    const mdSection = !prev
+      ? `SKILL.md:\n${clip(text, PREVIEW_CHARS)}`
+      : oldMd === undefined
+        ? `SKILL.md (new file):\n${clip(text, PREVIEW_CHARS)}`
+        : oldMd.equals(skillMd.data)
+          ? 'SKILL.md: unchanged'
+          : `SKILL.md diff:\n${clip(lineDiff(oldMd.toString('utf8'), text), PREVIEW_CHARS)}`;
+    const summary = [
+      scanLine,
+      changeLine,
+      clip(listing.join('\n'), LISTING_CHARS),
+      '',
+      mdSection,
+    ].join('\n');
     // Only these reach the approval callback, so the unpacked files can be freed.
     const fileCount = files.length;
     const approved = deps.approve(input.box.id, {
       message: `Box ${input.box.name} proposes ${prev ? 'a new version of' : 'a new'} library skill ${name}`,
-      detail: `${String(files.length)} file(s), ${fmtBytes(size)}; ${scanLine} — ${description.slice(0, 200)}`,
-      summary: `${scanLine}\n\n${preview}`,
+      detail: `${changeLine}, ${fmtBytes(size)}; ${scanLine} — ${description.slice(0, 200)}`,
+      summary,
       command: 'skills_propose',
+      noAutoApprove: true,
     });
     // Not awaited: the caller learns `pending` now; a human decides later.
     void approved

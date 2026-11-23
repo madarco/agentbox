@@ -29,7 +29,9 @@ declare global {
   // The MCP server for hub-credential callers (`POST /api/mcp`), set by the
   // custom server; boxes reach the same server through the relay.
   // eslint-disable-next-line no-var
-  var __AGENTBOX_HUB_MCP: { handle(message: unknown): Promise<unknown> } | undefined;
+  var __AGENTBOX_HUB_MCP:
+    | { handle(message: unknown, opts?: { skillBytes?: boolean }): Promise<unknown> }
+    | undefined;
 
   // Skill proposals from boxes (docs/hub-skills-plan.md, Phase 7), set by the
   // custom server: it holds the relay's prompt mailbox the approval waits in.

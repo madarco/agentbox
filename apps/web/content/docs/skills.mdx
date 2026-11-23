@@ -166,7 +166,7 @@ agentbox download claude mybox
 agentbox download claude mybox --no-propose   # skip the proposal step
 ```
 
-Each proposal is one approval in the hub's approvals list (the web UI, the menu-bar app, an attached box footer), and the default answer is no. The hub checks the skill itself before asking: the frontmatter `name` must match the folder and a description must be there, `agentbox-*` names are refused, and the secret scan runs, with its findings shown in the approval. Nothing is stored until you approve; then the skill is a new library skill (or a new version of one) and every new box gets it as usual. An unanswered proposal expires after a day. Symlinked entries (skills carried in from your machine) are never proposed. An agent in a Docker box can start the same step itself with `agentbox-ctl download claude`, which asks you to allow the download first.
+Each proposal is one approval in the hub's approvals list (the web UI, the menu-bar app, an attached box footer), and the default answer is no. It is always asked of a person: a box with [`box.autoApproveHostActions`](/docs/configuration) does not approve its own proposals or installs. The approval lists every file added, modified or removed against the library's current version, with a diff of `SKILL.md`, so a changed script under an unchanged `SKILL.md` shows. The hub checks the skill itself before asking: the frontmatter `name` must match the folder and a description must be there, `agentbox-*` names are refused, and the secret scan runs, with its findings shown in the approval. Nothing is stored until you approve; then the skill is a new library skill (or a new version of one) and every new box gets it as usual. An unanswered proposal expires after a day. Symlinked entries (skills carried in from your machine) are never proposed. An agent in a Docker box can start the same step itself with `agentbox-ctl download claude`, which asks you to allow the download first.
 
 ### Library skills for agents (MCP)
 
@@ -178,7 +178,7 @@ The `agentbox` MCP server every box registers (see [past sessions for agents](/d
 | `skill_get`              | One skill's `SKILL.md` and file list; `path` reads another file of it.                       |
 | `skills_propose_install` | Ask for a skill this box was created without. One approval; then `agentbox-ctl skills sync`. |
 
-A box sees only the skills its bindings allow (global, workspace, project and box bindings); a skill disabled for its project is invisible to it. An approved install is recorded as a binding for that box, so it outlasts restarts. Outside a box, `POST /api/mcp` with the hub credential lists the whole library.
+A box sees only the skills its bindings allow (global, workspace, project and box bindings); a skill disabled for its project is invisible to it. An approved install is recorded as a binding for that box, so it outlasts restarts. Outside a box, `POST /api/mcp` with the hub credential lists the whole library; `skill_get` there needs the same access as downloading a skill (the admin token, an enrolled computer's token, or the same machine on a local hub), so the hub API key alone can list skills but not read them.
 
 ### Cloud bases go stale when your skills change
 

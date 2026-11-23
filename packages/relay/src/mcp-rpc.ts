@@ -27,7 +27,7 @@ export function askMcpApproval(
       context: { command: req.command ?? 'memory_propose' },
       ...(req.summary ? { richDetail: { type: 'text', summary: req.summary } } : {}),
     },
-    { ttlMs: MCP_APPROVAL_TTL_MS },
+    { ttlMs: MCP_APPROVAL_TTL_MS, ...(req.noAutoApprove ? { noAutoApprove: true } : {}) },
   ).then((r) => r.answer === 'y' && r.cancelled !== true);
 }
 

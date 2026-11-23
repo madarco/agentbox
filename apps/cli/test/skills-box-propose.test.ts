@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxSkillDirs, describeBoxSkillOutcomes } from '../src/lib/skills/box-propose.js';
+import { boxSkillDirs, describeBoxSkillOutcomes, stagedSkillDir } from '../src/lib/skills/box-propose.js';
 
 describe('box skill proposals', () => {
   it("maps each agent's skill dirs to box paths its config dir holds", () => {
@@ -25,5 +25,12 @@ describe('box skill proposals', () => {
       '  d: not proposed (SKILL.md has no frontmatter)',
       '2 skill proposal(s) wait for approval in the hub (web Approvals, the tray, or a box footer); approved skills reach new boxes.',
     ]);
+  });
+
+  it('refuses a box-supplied name that is not one safe skill segment', () => {
+    expect(stagedSkillDir('/tmp/stage', 1, 'ok-skill')).toBe('/tmp/stage/1/ok-skill');
+    for (const bad of ['../../../home/u/.ssh', '..', 'a/b', 'UPPER', '', '-x']) {
+      expect(() => stagedSkillDir('/tmp/stage', 1, bad)).toThrow(/not a valid skill name/);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { askMcpApproval } from '../src/mcp-rpc.js';
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import {
@@ -277,6 +278,37 @@ describe('askPrompt', () => {
     const ev = JSON.parse(/data: (\{.*\})/.exec(offSink.writes[0]!)![1]!) as { id: string };
     prompts.resolve(ev.id, 'n');
     await expect(pending).resolves.toEqual({ answer: 'n', cancelled: undefined });
+  });
+
+  it('never auto-approves a noAutoApprove ask (a skill entering the library)', async () => {
+    const prompts = new PendingPrompts();
+    const subs = new PromptSubscribers();
+    const audited: string[] = [];
+    prompts.setAutoApprovePolicy({
+      shouldAutoApprove: () => true,
+      audit: (boxId) => audited.push(boxId),
+    });
+    const prev = process.env.AGENTBOX_PROMPT;
+    process.env.AGENTBOX_PROMPT = 'off';
+    try {
+      const pending = askMcpApproval(prompts, subs, 'box-on', {
+        message: 'Box x proposes a new library skill y',
+        command: 'skills_propose',
+        noAutoApprove: true,
+      });
+      expect(prompts.size()).toBe(1);
+      expect(audited).toEqual([]);
+      const [ev] = prompts.all();
+      prompts.resolve(ev!.id, 'n');
+      await expect(pending).resolves.toBe(false);
+      // Without the option the same box is still auto-approved.
+      await expect(
+        askMcpApproval(prompts, subs, 'box-on', { message: 'memory', command: 'memory_propose' }),
+      ).resolves.toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.AGENTBOX_PROMPT;
+      else process.env.AGENTBOX_PROMPT = prev;
+    }
   });
 
   it('auto-expires after ttlMs, resolving to the default answer', async () => {

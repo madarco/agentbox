@@ -11,6 +11,11 @@ export interface McpApprovalRequest {
   summary?: string;
   /** The approval's command label (`memory_propose` when absent). */
   command?: string;
+  /**
+   * A human must answer, even for a box with `autoApproveHostActions`: a skill
+   * proposal or install, which no box may approve for itself.
+   */
+  noAutoApprove?: boolean;
 }
 
 /**

@@ -324,7 +324,10 @@ async function main(): Promise<void> {
         : Promise.resolve(false),
     redact: (bytes) => Promise.resolve(bytes),
   };
-  globalThis.__AGENTBOX_HUB_MCP = { handle: (message) => mcpServer.handle(message, hubMcpScope) };
+  globalThis.__AGENTBOX_HUB_MCP = {
+    handle: (message, opts) =>
+      mcpServer.handle(message, { ...hubMcpScope, skillBytes: opts?.skillBytes === true }),
+  };
 
   const daemon = await startRelayDaemon({
     port,

@@ -162,6 +162,13 @@ export function skillsMcpTools(deps: SkillsMcpDeps): McpTool[] {
     annotations: READ_ONLY,
     async run(args, scope) {
       const store = storeOf(deps);
+      // A box reads only its own visible set; a hub caller needs the same
+      // elevated read the tarball route does.
+      if (scope.kind === 'hub' && !scope.skillBytes) {
+        throw new McpToolError(
+          "reading a skill's files needs the admin token or an enrolled device's token (X-Agentbox-Admin-Token), or loopback on a local hub; the hub API key can list skills but not read them",
+        );
+      }
       const { name, meta, view } = await visibleSkill(store, scope, args.name);
       const found = await store.get(`${SKILLS_SCOPE}/${name}/${meta.current}.tar.gz`);
       if (!found) throw new McpToolError(`skill '${name}' is missing its stored files`);
@@ -240,6 +247,7 @@ export function skillsMcpTools(deps: SkillsMcpDeps): McpTool[] {
         message: `Box ${scope.boxName} asks to install library skill ${name}`,
         detail: `${meta.description.slice(0, 200)}${reason ? ` — ${reason.slice(0, 200)}` : ''}`,
         command: 'skills_propose_install',
+        noAutoApprove: true,
       });
       // Not awaited: the agent goes on while a human decides.
       void approved
