@@ -16,7 +16,20 @@ import {
   type SourceDeps,
 } from './skill-sources';
 import { diffSkillVersions, type SkillDiff } from './skill-diff';
-import { syncSkillBoxes, type SkillBoxesDeps, type SkillSyncOutcome } from './skill-boxes';
+import {
+  skillsStatusOverview,
+  syncSkillBoxes,
+  type SkillBoxesDeps,
+  type SkillsStatusOverview,
+  type SkillSyncOutcome,
+} from './skill-boxes';
+import {
+  readSkillMd,
+  saveSkillMd,
+  type SkillMdRead,
+  type SkillMdSaveInput,
+  type SkillMdSaveResult,
+} from './skill-editor';
 import {
   approveSkillUpdate,
   resolveSkillVersion,
@@ -39,9 +52,17 @@ export interface SkillsBackend {
   /** Apply pending versions and sync the boxes that hold them. */
   approveSkills(
     names: string[],
+    /** Approve only if the pending version is still this one (what the user reviewed). */
+    opts?: { version?: string },
   ): Promise<{ applied: { name: string; from: string; to: string; skill: SkillSummary }[] }>;
   skillDiff(name: string, opts?: { from?: string; to?: string }): Promise<SkillDiff>;
   syncSkillBoxes(opts?: { boxIds?: string[]; names?: string[] }): Promise<SkillSyncOutcome[]>;
+  /** Pending updates and the live boxes behind, for a badge. */
+  skillsStatus(): Promise<SkillsStatusOverview>;
+  /** A version's SKILL.md (default: current), for the web editor. */
+  readSkillMd(name: string, version?: string): Promise<SkillMdRead>;
+  /** Save SKILL.md as a new upload version (or a new skill); running boxes sync. */
+  saveSkillMd(name: string, input: SkillMdSaveInput): Promise<SkillMdSaveResult>;
   /**
    * `current` moved for these skills: sync every running box behind on them.
    * Fire-and-forget; the route has already answered.
@@ -137,10 +158,22 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
       return out;
     },
 
-    async approveSkills(names) {
+    async approveSkills(names, opts = {}) {
       const store = storeOrThrow(deps);
       const applied = [];
-      for (const n of names) applied.push(await approveSkillUpdate(store, n));
+      for (const n of names) {
+        applied.push(
+          opts.version
+            ? await approveSkillUpdate(
+                store,
+                n,
+                await resolveSkillVersion(store, n, opts.version),
+                new Date(),
+                { onlyPending: true },
+              )
+            : await approveSkillUpdate(store, n),
+        );
+      }
       fanOut(applied.filter((a) => a.from !== a.to).map((a) => a.name));
       return { applied };
     },
@@ -156,6 +189,26 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
     },
 
     syncSkillBoxes: (opts = {}) => syncSkillBoxes(boxDeps(), opts),
+
+    skillsStatus: () => skillsStatusOverview(boxDeps()),
+
+    async readSkillMd(name, version) {
+      const store = storeOrThrow(deps);
+      const v = version ? await resolveSkillVersion(store, name, version) : undefined;
+      return readSkillMd(store, name, v);
+    },
+
+    async saveSkillMd(name, input) {
+      const max = deps.maxTarballBytes?.();
+      const res = await saveSkillMd(
+        storeOrThrow(deps),
+        name,
+        input,
+        max !== undefined ? { maxTarballBytes: max } : {},
+      );
+      if (res.currentChanged) fanOut([name]);
+      return res;
+    },
 
     skillsChanged: fanOut,
   };

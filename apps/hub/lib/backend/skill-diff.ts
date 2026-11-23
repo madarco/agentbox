@@ -2,7 +2,7 @@
 // third-party (git, marketplace) update can be read before it is approved
 // (docs/hub-skills-plan.md, Phase 5). Both versions are read back from custody
 // with the same safe tar reader the PC and the box use.
-import { readTar, type TarFile } from '@agentbox/sandbox-core';
+import { readTar, scanSkillFiles, type SecretFinding, type TarFile } from '@agentbox/sandbox-core';
 import { openSkillTarball, readSkillMeta, SkillsError, type SkillsStore } from './skills';
 
 /** Text bodies above this are reported as changed without their content. */
@@ -24,6 +24,8 @@ export interface SkillDiff {
   from: string;
   to: string;
   files: SkillDiffFile[];
+  /** The hub's secret scan of the `to` tree: what approving it would hand the boxes. */
+  findings: SecretFinding[];
 }
 
 async function readVersion(store: SkillsStore, name: string, version: string): Promise<TarFile[]> {
@@ -100,5 +102,5 @@ export async function diffSkillVersions(
     else from = meta.versions.find((v) => v.sha256 !== meta.current)?.sha256 ?? meta.current;
   }
   const [x, y] = await Promise.all([readVersion(store, name, from), readVersion(store, name, to)]);
-  return { name, from, to, files: diffFileSets(x, y) };
+  return { name, from, to, files: diffFileSets(x, y), findings: scanSkillFiles(y) };
 }

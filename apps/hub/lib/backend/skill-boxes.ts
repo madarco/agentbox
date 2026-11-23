@@ -12,7 +12,7 @@
 // docker, the provider's SDK or SSH for every cloud provider and remote-docker.
 // The box then pulls over its own relay channel. A box that isn't running is
 // never woken; ctl runs the same pull at its next boot.
-import { readSkillMeta, type SkillsStore } from './skills';
+import { listSkillMetas, readSkillMeta, type SkillsStore } from './skills';
 
 export const SKILLS_SYNC_TIMEOUT_MS = 120_000;
 /** Boxes synced at once by a fan-out. */
@@ -160,4 +160,29 @@ async function syncOne(deps: SkillBoxesDeps, boxId: string): Promise<SkillSyncOu
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** `GET /api/v1/skill-status`: one call for a badge (the tray, the sidebar). */
+export interface SkillsStatusOverview {
+  /** Skills with a version waiting for approval. */
+  pending: { name: string; version: string }[];
+  /** Live boxes holding something other than the library's current version. */
+  boxes: { boxId: string; behind: string[] }[];
+}
+
+export async function skillsStatusOverview(
+  deps: Pick<SkillBoxesDeps, 'store' | 'boxIds'>,
+): Promise<SkillsStatusOverview> {
+  const pending: SkillsStatusOverview['pending'] = [];
+  for (const m of await listSkillMetas(deps.store)) {
+    if (m.pending) pending.push({ name: m.name, version: m.pending });
+  }
+  const boxes: SkillsStatusOverview['boxes'] = [];
+  const ids = await deps.boxIds().catch(() => [] as string[]);
+  for (const id of [...ids].sort()) {
+    const st = await boxSkillsStatus(deps.store, id).catch(() => null);
+    const behind = st?.skills.filter((s) => s.behind).map((s) => s.name) ?? [];
+    if (behind.length > 0) boxes.push({ boxId: id, behind });
+  }
+  return { pending, boxes };
 }

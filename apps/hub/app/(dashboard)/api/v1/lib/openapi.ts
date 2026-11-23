@@ -4387,7 +4387,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Deny every waiting enrollment code',
           description:
-            'Owner only (signed-in session or API key). The way out of a flood of unsolicited codes; their polls get `access_denied`.',
+            'Owner only: the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403). The way out of a flood of unsolicited codes; their polls get `access_denied`.',
           responses: {
             '200': {
               description: 'Denied',
@@ -4412,7 +4412,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Approve an enrollment code',
           description:
-            'Owner only: a signed-in browser session or the API key. A device token gets 403.',
+            'Owner only: the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403). A device token gets 403: a stolen laptop must not mint a spare, and a device token reads custody, so the API key alone must not mint one either.',
           requestBody: {
             required: true,
             content: {
@@ -4477,7 +4477,8 @@ export function buildOpenApi(): Record<string, unknown> {
         patch: {
           tags: ['Devices'],
           summary: 'Rename a device',
-          description: 'The owner may rename any device; a device token only itself.',
+          description:
+            'The owner may rename any device (the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403)); a device token only itself.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: true,
@@ -4505,7 +4506,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Revoke a device',
           description:
-            "Immediate: the device's next request is a 401, and any stream it holds open is closed. Idempotent. The owner may revoke any device; a device token may revoke only itself (403 otherwise).",
+            "Immediate: the device's next request is a 401, and any stream it holds open is closed. Idempotent. The owner may revoke any device (the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403)); a device token may revoke only itself (403 otherwise).",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Revoked' },
@@ -5298,7 +5299,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Apply a pending update',
           description:
-            'The pending version becomes current and every running box behind on the skill runs `agentbox-ctl skills sync`. Answers `{name, from, to, skill}`. `400` when nothing is pending. Backs `agentbox skills update`.',
+            'The pending version becomes current and every running box behind on the skill runs `agentbox-ctl skills sync`. Answers `{name, from, to, skill}`. `400` when nothing is pending. Optional body `{version}`: the version the caller reviewed; a pending version that moved since answers `409 conflict` instead of approving something unseen. Backs `agentbox skills update` and the web Review update.',
           responses: {
             '200': {
               description: 'Applied',
@@ -5307,6 +5308,7 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+            '409': errorResponse,
           },
         },
       },
@@ -5338,7 +5340,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Diff two versions of a skill',
           description:
-            'Answers `{name, from, to, files: [{path, status: added|removed|modified, modeOnly?, binary?, before?, after?}]}`; text bodies over 256 KiB and binary files are named without content. Backs `agentbox skills diff`.',
+            "Answers `{name, from, to, files: [{path, status: added|removed|modified, modeOnly?, binary?, before?, after?}], findings: [{rule, path, line}]}`; text bodies over 256 KiB and binary files are named without content. `findings` is the hub's secret scan of the `to` tree. Takes the same read as the tarball (a signed-in session may). Backs `agentbox skills diff` and the web pending-update view.",
           responses: {
             '200': {
               description: 'The diff',
@@ -5347,6 +5349,73 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/skill-md': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: "Read a version's SKILL.md",
+          description:
+            'Answers `{name, version, content, files: [{path, size, mode}]}` for `?version=` (default: current). Takes the same read as `/diff` (admin token, an enrolled device token, loopback on a local hub, or a signed-in owner session). Backs the web SKILL.md editor.',
+          parameters: [
+            {
+              name: 'version',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Version (7 to 64 hex; default: current)',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'SKILL.md and the file list',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Skills'],
+          summary: 'Save SKILL.md as a new version',
+          description:
+            "Body `{content, base?, allowFindings?}`. The hub copies the `base` version's other files, swaps SKILL.md, checks the frontmatter (name matches, description present) and the secret scan, and stores the tree as a new `upload` version that becomes current; running boxes holding the skill sync. A `base` other than the current version is refused with `409 conflict` (the skill moved since the editor opened it), checked under the skill's lock. Without `base` the skill must not exist yet: a new skill with SKILL.md only. Answers the import result plus `findings`.",
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object' } } },
+          },
+          responses: {
+            '200': {
+              description: 'Stored',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/skill-status': {
+        get: {
+          tags: ['Skills'],
+          summary: 'Pending skill updates and boxes behind',
+          description:
+            "Answers `{pending: [{name, version}], boxes: [{boxId, behind: [name]}]}`: the skills with a version waiting for approval, and the live boxes holding something other than the library's current version. Metadata only; one call for a badge. Approve with `POST /skills/{name}/approve`, bring a box level with `POST /boxes/{id}/skills/sync`.",
+          responses: {
+            '200': {
+              description: 'The overview',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
           },
         },
       },
@@ -5371,7 +5440,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Download a version of a skill',
           description:
-            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. ELEVATED like custody byte reads: the admin token or an enrolled device token in `X-Agentbox-Admin-Token` (a local hub: loopback); the API key alone gets `401`. Backs `agentbox skills --download`.',
+            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. ELEVATED like custody byte reads: the admin token or an enrolled device token in `X-Agentbox-Admin-Token` (a local hub: loopback), or a signed-in owner session (skill content only; custody itself keeps the stricter rule); the API key alone gets `401`. Backs `agentbox skills --download`.',
           responses: {
             '200': {
               description: 'The tarball',

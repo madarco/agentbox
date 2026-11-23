@@ -880,7 +880,7 @@ agentbox hub unexpose                   # stop; the plain localhost hub returns
 agentbox hub login https://<your-hub-url>   # prints a code; approve it on the hub's Devices page
 agentbox hub logout                         # revoke this computer's token and forget it
 agentbox hub devices                        # list enrolled computers
-agentbox hub devices approve <code>         # approve from the operator's machine (API key)
+agentbox hub devices approve <code>         # approve from the setup machine (API key + admin token)
 agentbox hub devices revoke <id>            # a lost laptop: its next request is refused
 agentbox hub devices rename <id> <name>
 

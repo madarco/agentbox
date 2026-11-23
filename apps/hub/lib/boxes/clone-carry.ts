@@ -76,6 +76,12 @@ export const CLONE_RECORD_POLICY = {
   dockerVolume: 'n/a',
   dockerCacheShared: 'carry',
   projectRoot: 'n/a',
+  // The source's identity at create (#457); the clone's own create stamps its own.
+  originUrl: 'n/a',
+  repoKey: 'n/a',
+  originMachineId: 'n/a',
+  originMachineLabel: 'n/a',
+  originFolder: 'n/a',
   projectIndex: 'n/a',
   checkpointImage: 'drop',
   checkpointSource: 'drop',

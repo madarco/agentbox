@@ -105,7 +105,7 @@ B=$(mktemp -d); mkdir -p "$B/.agentbox"
 printf 'schema: 1\nrelay:\n  port: 8899\n' > "$B/.agentbox/config.yaml"
 cp ~/.agentbox/setup-complete.json "$B/.agentbox/"          # skip the first-run wizard
 HOME=$B agentbox hub login http://127.0.0.1:8787 --no-browser   # prints XXXX-XXXX
-agentbox hub devices approve XXXX-XXXX                       # as the operator (API key)
+agentbox hub devices approve XXXX-XXXX                       # as the operator (API key + admin token)
 TOKEN=$(jq -r .token "$B/.agentbox/control-plane/device.json")
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8787/api/v1/boxes
 curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8787/admin/hostreach/poll?wait=0&poller=t"

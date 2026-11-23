@@ -3,7 +3,8 @@
 // Next's bundle) and the SkillsError → envelope mapping.
 import { authMode } from '@/lib/auth-config';
 import { SkillsError, type SkillsStore } from '@/lib/backend/skills';
-import { custodyByteReadAuthorized } from '@/lib/custody-auth';
+import { requestActor } from '@/lib/request-actor';
+import { skillContentReadAuthorized } from '@/lib/skill-auth';
 import { PEER_LOOPBACK_HEADER } from '@/lib/peer';
 import { fail } from '../lib/envelope';
 
@@ -13,12 +14,13 @@ import { fail } from '../lib/envelope';
  * it (the PC-side scan is a heuristic, and `--allow-findings` overrides it),
  * while the API key travels to the tray and every thin client. Same contract as
  * the custody blob route: the admin token, an enrolled device's own token, or
- * loopback on a local hub. A box never needs this: it reads its skills over the
+ * loopback on a local hub — or a signed-in owner session (lib/skill-auth.ts). A box never needs this: it reads its skills over the
  * relay's `/rpc`, authenticated as that box.
  */
 export function skillBytesReadAllowed(req: Request): boolean {
   const provided = req.headers.get('x-agentbox-admin-token') ?? '';
-  return custodyByteReadAuthorized({
+  return skillContentReadAuthorized({
+    actor: requestActor(req),
     providedTokenIsDevice:
       provided.length > 0 && Boolean(globalThis.__AGENTBOX_HUB_DEVICES?.verifyToken(provided)),
     mode: authMode(),

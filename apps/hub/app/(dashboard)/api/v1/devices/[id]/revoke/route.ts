@@ -1,6 +1,7 @@
 // POST /api/v1/devices/:id/revoke — immediate: the device's next request is a 401
 // and any stream it holds open (/api/events, a box stream, host-reach) is closed.
 // Idempotent. A device may revoke itself (`agentbox hub logout`).
+import { adminTokenPresented } from '@/lib/admin-token';
 import { canManageDevice, requestActor } from '@/lib/request-actor';
 import { fail, ok } from '../../../lib/envelope';
 import { devicesOrFail } from '../../_service';
@@ -15,7 +16,7 @@ export async function POST(
   const devices = devicesOrFail();
   if (devices instanceof Response) return devices;
   const { id } = await ctx.params;
-  if (!canManageDevice(requestActor(req), id)) {
+  if (!canManageDevice(requestActor(req), id, { adminToken: adminTokenPresented(req) })) {
     return fail(
       'forbidden',
       'a device can only revoke itself; the hub owner can revoke any device',
