@@ -185,6 +185,21 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   change to `identify()` needs its own migration.
 - **Re-parse blocks ingest per session.** Each session is re-derived inside the
   ingest queue, so a very large session holds frames back while it runs.
+- **From the Phase 3 review, not fixed:**
+  - *opencode final flush ships unsettled parts.* A destroy's flush ignores
+    `settleMs`, so a part still streaming is written, projected with its
+    partial text, and its complete copy is skipped as seen. Fix: let a later,
+    longer copy of a text part replace the turn (needs a record update path).
+  - *Rows that never become due* (a NULL parent column, a parent from an
+    unbound session, a NULL `updated`) keep the row cursor's stamp cache off,
+    so the db is reopened and scanned every pass. Drop such rows from
+    `pending`.
+  - *Glob expansion cost on clouds.* ctl expands codex's
+    `*/*/*/rollout-*-<id>.jsonl` with a `readdir` per wildcard segment, per
+    bound session, per pass. Cache the resolved path per session id, or list
+    the root once per pass as the docker `scan` does.
+  - *Session-id regex in three places* (`row-cursor.ts`, `shipper.ts`, ctl's
+    `appendHistoryBinding`). Export one constant from `core/history`.
 - **Boxes built before Phase 3** bind claude sessions only. Codex, pi and
   opencode report their session ids from hooks baked into the image (docker)
   or the provider's base snapshot (clouds); rebuild or re-bake to capture them.

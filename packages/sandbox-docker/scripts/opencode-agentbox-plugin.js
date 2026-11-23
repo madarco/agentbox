@@ -30,13 +30,15 @@
 //                AFTER compaction completes, so it maps to `working` (the next
 //                event supersedes) rather than `compacting`.
 //
-// Session history: `session.created` (`properties.info.id`) and `session.idle`
-// (`properties.sessionID`) also hand the session id to `agentbox-ctl opencode-state
+// Session history: `session.idle` (`properties.sessionID`) also hands the
+// session id to `agentbox-ctl opencode-state
 // idle --capture-session` on stdin, which appends it to the box's binding log.
 // Sessions in opencode's shared sqlite db are attributed to a box only through
 // that log; the box's history row cursor copies the bound sessions out. Only
-// these two events bind, because the bind reports `idle` and both already
-// mean idle.
+// `session.idle` binds: the bind reports `idle` from its own process, and any
+// other event (a sub-agent's `session.created` mid-turn) could land that idle
+// after a later `working`. The row cursor copies the whole session at its
+// first idle, so nothing is lost by binding then.
 //
 // The plugin shape comes from https://opencode.ai/docs/plugins/ — `event` is
 // a single handler that receives `{ event }` with a `type` field. Multiple
@@ -82,9 +84,7 @@ const bound = new Set();
 function sessionIdOf(event) {
   const p = event && event.properties;
   if (!p || typeof p !== 'object') return null;
-  if (event.type === 'session.idle' && typeof p.sessionID === 'string') return p.sessionID;
-  if (event.type === 'session.created' && p.info && typeof p.info.id === 'string') return p.info.id;
-  return null;
+  return event.type === 'session.idle' && typeof p.sessionID === 'string' ? p.sessionID : null;
 }
 
 function bindSession(id) {

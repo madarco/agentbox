@@ -345,7 +345,8 @@ Re-parse job (raw → normalized) for parser version bumps.
   `--capture-session`, as claude's do. pi: the extension's `session_start`
   handler pipes `{session_id, transcript_path}` from `ctx.sessionManager` into
   `agentbox-ctl agent-state pi idle --capture-session`. opencode: the plugin
-  does the same with the `sessionID` of `session.created` / `session.idle`. All
+  does the same with the `sessionID` of `session.idle` (only that event: the
+  bind reports `idle` from its own process). All
   three reuse the existing flag, so a newer seeded file works with any ctl that
   has it.
 - **Globs in any segment.** `sessionFiles` may use `*` in a directory segment
@@ -383,7 +384,9 @@ Re-parse job (raw → normalized) for parser version bumps.
   navigation rows) that Phase 0 did not measure.
 - **As built:** ctl runs the row cursor in every box; the relay's final docker
   read no longer triggers it itself: the hub's destroy flush runs the box's
-  `agentbox-ctl history flush` first and the relay read after it.
+  `agentbox-ctl history flush` first and the relay read after it, or after a
+  20 s head start, whichever comes first. A re-parse that cannot read a file's
+  raw leaves the session stale for the next run, and keeps its activity time.
 - **Live check** (docker, isolated hub, a local mock model endpoint so no
   account was used): codex 0.171 (`codex exec` with hooks), pi 1.6 (`pi -p`) and
   opencode 1.19.6 (`opencode run`) each bound their session through the new

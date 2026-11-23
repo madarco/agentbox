@@ -372,7 +372,9 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
           turns: existing?.turns ?? 0,
           inputTokens: existing?.inputTokens ?? 0,
           outputTokens: existing?.outputTokens ?? 0,
-          parserVersion: mod?.parserVersion ?? 0,
+          // An existing session keeps its version: a new file must not mark
+          // the older files' projection current before the re-parse job runs.
+          parserVersion: existing?.parserVersion ?? mod?.parserVersion ?? 0,
           createdAt: existing?.createdAt ?? now(),
           updatedAt: now(),
         });
@@ -441,10 +443,12 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   }
 
   /** One session's projection, from raw. Runs inside the ingest queue. */
-  async function reparseSession(key: string, mod: AgentHistoryModule): Promise<void> {
+  async function reparseSession(key: string, mod: AgentHistoryModule): Promise<boolean> {
+    const session = await repo.getSession(key);
     const files = await repo.filesOfSession(key);
     for (const f of files) await repo.clearFileRecords(f.id);
     await repo.clearSessionTitle(key);
+    let ok = true;
     for (const f of files) {
       let state: ParseState = {};
       let pos = 0;
@@ -456,13 +460,17 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
           if (r.records.length > 0) await repo.insertRecords(key, f.id, r.records);
         }
       } catch (e) {
-        // As on ingest: a parser bug costs the projection, never the raw.
+        // The raw is intact; the session stays stale so a later run redoes it.
+        ok = false;
         log(`history: re-parse ${f.path}: ${e instanceof Error ? e.message : String(e)}`);
       }
       await repo.updateFile(f.id, { parseState: state });
     }
-    await repo.refreshSessionTotals(key, now());
-    await repo.setSessionParserVersion(key, mod.parserVersion);
+    // Keep the session's activity time: a re-parse is not activity (ordering,
+    // retention).
+    await repo.refreshSessionTotals(key, session?.updatedAt ?? now());
+    if (ok) await repo.setSessionParserVersion(key, mod.parserVersion);
+    return ok;
   }
 
   let reparsing: Promise<number> | null = null;
@@ -584,12 +592,16 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         let done = 0;
         try {
           for (const mod of agentHistoryModules()) {
+            // A session that failed stays stale for the next run, not this one.
+            const failed = new Set<string>();
             for (;;) {
-              const keys = await repo.staleParserSessions(mod.id, mod.parserVersion, 50);
+              const keys = (
+                await repo.staleParserSessions(mod.id, mod.parserVersion, 50 + failed.size)
+              ).filter((k) => !failed.has(k));
               if (keys.length === 0) break;
               for (const key of keys) {
-                await serialized(() => reparseSession(key, mod));
-                done++;
+                if (await serialized(() => reparseSession(key, mod))) done++;
+                else failed.add(key);
               }
             }
           }

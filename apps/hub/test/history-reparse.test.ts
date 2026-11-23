@@ -93,4 +93,59 @@ describe('history re-parse job', () => {
     expect(typeof file.parseState?.partial).toBe('string');
     expect(await svc.reparse()).toBe(0);
   });
+
+  it('keeps a stale session stale when a new file arrives, and keeps its activity time', async () => {
+    registerAgentHistoryModule(moduleAt(1));
+    let t = 1_000;
+    const repo = await openSqliteHistoryRepo(':memory:');
+    const svc = createHistoryService({
+      repo,
+      archive: memArchive(),
+      retentionDays: 90,
+      now: () => t,
+    });
+    const frame = (path: string, body: string): HistoryFrame => ({
+      origin: { boxId: 'box1' },
+      agent: AGENT,
+      path,
+      offset: 0,
+      sha256Prefix: '',
+      sha256: createHash('sha256').update(body).digest('hex'),
+      data: Buffer.from(body).toString('base64'),
+    });
+    const body = `${JSON.stringify({ role: 'user', text: 'a' })}\n`;
+    await svc.ingest(frame(PATH, body));
+    registerAgentHistoryModule(moduleAt(2));
+    t = 2_000;
+    await svc.ingest(frame(`sessions/${SID}/child.jsonl`, body));
+    const key = `${AGENT}:${SID}`;
+    expect((await repo.getSession(key))?.parserVersion).toBe(1);
+    const before = (await repo.getSession(key))!.updatedAt;
+    t = 9_000;
+    expect(await svc.reparse()).toBe(1);
+    expect(await repo.getSession(key)).toMatchObject({ parserVersion: 2, updatedAt: before });
+  });
+
+  it('leaves a session stale when its raw cannot be read, and moves on', async () => {
+    registerAgentHistoryModule(moduleAt(1));
+    const repo = await openSqliteHistoryRepo(':memory:');
+    const archive = memArchive();
+    const svc = createHistoryService({ repo, archive, retentionDays: 90 });
+    const body = `${JSON.stringify({ role: 'user', text: 'a' })}\n`;
+    await svc.ingest({
+      origin: { boxId: 'box1' },
+      agent: AGENT,
+      path: PATH,
+      offset: 0,
+      sha256Prefix: '',
+      sha256: createHash('sha256').update(body).digest('hex'),
+      data: Buffer.from(body).toString('base64'),
+    });
+    registerAgentHistoryModule(moduleAt(2));
+    archive.get = async () => {
+      throw new Error('gone');
+    };
+    expect(await svc.reparse()).toBe(0);
+    expect((await repo.getSession(`${AGENT}:${SID}`))?.parserVersion).toBe(1);
+  });
 });

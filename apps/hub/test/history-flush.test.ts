@@ -41,6 +41,22 @@ describe('flushBoxHistory', () => {
     expect(order).toEqual(['in-box flush', 'relay read']);
   });
 
+  it('starts the relay read once the in-box head start is spent, even if the in-box flush hangs', async () => {
+    let read = false;
+    await flushBoxHistory(box('docker'), {
+      relayHistory: {
+        flushBox: async () => void (read = true),
+        settleBox: async () => undefined,
+      },
+      exec: () => new Promise(() => {}), // never answers
+      probeState: async () => 'running',
+      log: () => {},
+      inBoxFirstMs: 10,
+      timeoutMs: 200,
+    });
+    expect(read).toBe(true);
+  });
+
   it('settles after a successful docker flush too', async () => {
     let settled = false;
     await flushBoxHistory(box('docker'), {
