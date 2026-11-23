@@ -189,7 +189,10 @@ describe('request actor', () => {
     expect(canApproveDevices({ kind: 'anonymous' })).toBe(false);
     expect(canApproveDevices({ kind: 'hub-token' })).toBe(false);
     expect(canApproveDevices({ kind: 'session' })).toBe(true);
-    expect(canApproveDevices({ kind: 'api-key' })).toBe(true);
+    // The API key alone can't mint a device token (an elevated credential).
+    expect(canApproveDevices({ kind: 'api-key' })).toBe(false);
+    expect(canApproveDevices({ kind: 'api-key' }, { adminToken: true })).toBe(true);
+    expect(canApproveDevices({ kind: 'device', deviceId: ID }, { adminToken: true })).toBe(false);
   });
 });
 
@@ -199,7 +202,8 @@ describe('review fixes', () => {
     expect(canManageDevice({ kind: 'device', deviceId: ID }, ID)).toBe(true);
     expect(canManageDevice({ kind: 'device', deviceId: ID }, other)).toBe(false);
     expect(canManageDevice({ kind: 'session' }, other)).toBe(true);
-    expect(canManageDevice({ kind: 'api-key' }, other)).toBe(true);
+    expect(canManageDevice({ kind: 'api-key' }, other)).toBe(false);
+    expect(canManageDevice({ kind: 'api-key' }, other, { adminToken: true })).toBe(true);
     expect(canManageDevice({ kind: 'anonymous' }, other)).toBe(false);
   });
 

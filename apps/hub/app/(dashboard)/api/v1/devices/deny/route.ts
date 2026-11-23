@@ -1,6 +1,7 @@
 // POST /api/v1/devices/deny — {userCode}. Owner only: the signed-in browser or
 // the operator's API key, never a device token (a stolen laptop must not be able
 // to enroll a spare before it is revoked).
+import { adminTokenPresented } from '@/lib/admin-token';
 import { canApproveDevices, requestActor } from '@/lib/request-actor';
 import { fail, ok } from '../../lib/envelope';
 import { devicesOrFail, jsonBody } from '../_service';
@@ -11,10 +12,10 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: Request): Promise<Response> {
   const devices = devicesOrFail();
   if (devices instanceof Response) return devices;
-  if (!canApproveDevices(requestActor(req))) {
+  if (!canApproveDevices(requestActor(req), { adminToken: adminTokenPresented(req) })) {
     return fail(
       'forbidden',
-      'only the hub owner (signed in, or with the API key) can deny devices',
+      'only the hub owner (signed in, or the API key with the admin token) can deny devices',
     );
   }
   const body = await jsonBody(req);

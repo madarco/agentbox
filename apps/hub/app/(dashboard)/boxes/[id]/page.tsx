@@ -18,6 +18,7 @@ import { EmptyBox } from '../components/empty-box';
 import { GitActions } from '../components/git-actions';
 import { SectionLabel } from '../components/section-label';
 import { ServicesPanel } from '../components/services-panel';
+import { SkillsPanel } from '../components/skills-panel';
 import { Stat, StatGrid } from '../components/stat-grid';
 
 export default function BoxDetailPage() {
@@ -97,6 +98,8 @@ export default function BoxDetailPage() {
       )}
 
       <ServicesPanel id={box.id} running={box.status === 'running'} />
+
+      <SkillsPanel id={box.id} running={box.status === 'running'} />
 
       <SectionLabel>Details</SectionLabel>
       <Card className="divide-y divide-border/60 overflow-hidden">

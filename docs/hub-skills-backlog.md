@@ -272,6 +272,81 @@ approval was for that exact version), and syncs running boxes.
   doesn't exist; refresh is per skill (`POST /skills/{name}/refresh`), and the
   CLI loops over names.
 
+## Phase 6 (web) — implementation plan (2026-11-23)
+
+In the plan doc's Phase 6 section. Built: the Skills page (add from git /
+marketplace with a dry-run picker, refresh, policy, pending-update review with
+diff + scan and Approve, SKILL.md editor, box proposals), the box-detail Skills
+section, `GET|PUT /skills/{name}/skill-md`, `GET /skill-status`, and
+`SkillDiff.findings`. The tray part is the coordinator's.
+
+## From Phase 6 (2026-11-23)
+
+- **FIXED (#460): the diff and the editor didn't work in the web UI of a
+  password (control-box) hub.** The owner approved a signed-in session as a
+  skill-content reader (`lib/skill-auth.ts`); custody keeps its stricter rule.
+  Original note: Both read skill content, so they take custody's elevated read (admin
+  token, device token, or loopback on a token hub). A browser session on a
+  password hub has none of these, so Review update shows `unauthorized` and the
+  editor can't load. Owner decision: should a better-auth session count as the
+  elevated credential for skill content (it is a person who logged in, unlike
+  the API key the tray holds)? Until then the public docs send control-box users
+  to `agentbox skills diff` / `update`. Approve itself works (it isn't a read).
+- **Version history isn't in the API.** `GET /skills` carries only the version
+  count and the current version's source, so the page can't list older versions
+  or roll back to one (`approveSkillUpdate` already takes any stored version).
+  A `GET /skills/{name}` with the version list (+ each one's source, so a
+  version proposed by a box shows `box <name>`) would cover both.
+- **The web editor edits SKILL.md only.** Other files are kept as they are;
+  adding or editing a script needs a PC upload. Also no zip / folder upload from
+  the browser (plan: "upload a zip or folder").
+- **Scan findings aren't recorded on a version.** The pending view gets them by
+  re-scanning the tree in `/diff`; the list can't flag a stored version that was
+  added with `allowFindings`. Recording `scan` on `SkillVersionMeta` at import
+  would let the row show it.
+- **`/skill-status` reads each live box's record and each skill's meta per
+  call** (boxes x skills custody reads). Fine at a handful of boxes; a tray
+  polling it with many boxes wants a cached overview.
+- **The box Skills section hides on a hub without custody** by matching the
+  error text; a typed `custody_disabled` error code would be cleaner.
+- **No skills picker change in the create modal** beyond Phase 4's.
+- **A brand-new skill doesn't reach running boxes on its own.** The fan-out syncs
+  only boxes behind on a skill they already hold, so a skill created in the web
+  editor (or uploaded from a PC) lands in a running box at its next sync or
+  restart, or with Sync now. Same as Phase 5; the UI doesn't promise otherwise.
+- **Add from git doesn't pin the commit the dry run showed** (review of this
+  phase). The import re-fetches the ref, so a branch that moves between Look up
+  and Add imports content the user didn't see, and a ticked "add anyway" covers
+  that content's findings too. Fix: `POST /skills` takes `expectCommit` and
+  refuses on a mismatch (pinning `ref` to the sha would freeze later refreshes).
+- **On a non-local hub, Review update still offers Approve when the diff
+  couldn't be read** (`unauthorized`). Approve is pinned to the version shown in
+  the header, but the user hasn't seen its content. Mostly moot since #460 (a signed-in session reads the diff); still applies to an API-key-only client.
+- **LATER (independent review of #458):**
+  - Approve is clickable before the diff and scan have loaded
+    (`update-dialog.tsx`); disable it while `!diff`.
+  - An added or removed text file over 256 KiB renders as an empty diff with no
+    "too large" note (`update-dialog.tsx`, `FileDiff`).
+  - `skillLocks` (`skills.ts`) is module-level, so the esbuild server bundle and
+    the Next routes each hold a copy: a PC upload, discard or policy change does
+    not serialize with an editor save, approve or refresh. Move the map to
+    `globalThis`.
+  - A refresh that started before an editor save turns the edited skill back
+    into a git skill, with the fetched version pending.
+  - `skills.mdx` says Fetch anyway leaves the version waiting for approval; under
+    the `auto` policy it applies to running boxes at once.
+  - `skill-status` re-reads every skill's meta per box; reuse what the call
+    already loaded.
+  - The Skills page's box-proposals panel answers through the
+    `answerApprovalAction` server action (via `ApprovalActions`); make it pure
+    REST.
+  - Refresh all is fanned out from the browser; add a backend refresh-all route.
+  - GET `skill-md` and `/diff` inflate the tarball with no cap, and the save path
+    uses the tarball cap as the unpacked limit; OpenAPI is missing the 401, 409
+    and 503 responses.
+- **The box Skills section's on/off doesn't sync by itself**: it saves the box
+  binding and says to sync; one click more than needed.
+
 ## Phase 4 — implementation plan (2026-11-23)
 
 See the plan doc's Phase 4 section. Deviations from the plan text: bindings live
