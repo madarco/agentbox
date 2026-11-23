@@ -758,6 +758,32 @@ export interface HubApiSkillsListing {
   skills: HubApiSkill[];
 }
 
+export type HubApiSkillBindingScope = 'global' | 'workspace' | 'project' | 'box';
+export type HubApiSkillBindingMode = 'include' | 'exclude';
+export interface HubApiSkillBindingTarget {
+  scope: HubApiSkillBindingScope;
+  scopeId?: string;
+}
+/** `GET /api/v1/skill-bindings` (mirrors `SkillBindingsDoc` in @agentbox/core). */
+export interface HubApiSkillBindingsDoc {
+  schema: 1;
+  global: Record<string, HubApiSkillBindingMode>;
+  workspace: Record<string, Record<string, HubApiSkillBindingMode>>;
+  project: Record<string, Record<string, HubApiSkillBindingMode>>;
+  box: Record<string, Record<string, HubApiSkillBindingMode>>;
+}
+/** `GET /api/v1/skill-bindings/resolve`. */
+export interface HubApiSkillSetPreview {
+  library: boolean;
+  projectKey?: string;
+  skills: {
+    name: string;
+    description: string;
+    included: boolean;
+    from: HubApiSkillBindingScope | 'default' | 'flags';
+  }[];
+}
+
 /** What `PUT /api/v1/skills/{name}` is told about the tarball it receives. */
 export interface HubApiSkillUploadMeta {
   sha256: string;
@@ -1376,6 +1402,33 @@ export class HubApiClient {
 
   discardSkill(name: string): Promise<{ name: string; removed: number }> {
     return this.request('DELETE', `/skills/${encodeURIComponent(name)}`);
+  }
+
+  // ── skill bindings (Phase 4) ──
+
+  getSkillBindings(): Promise<HubApiSkillBindingsDoc> {
+    return this.request<HubApiSkillBindingsDoc>('GET', '/skill-bindings');
+  }
+
+  /** Merge into one scope (`null` clears); returns that scope after the write. */
+  putSkillBindings(
+    target: HubApiSkillBindingTarget,
+    bindings: Record<string, HubApiSkillBindingMode | null>,
+  ): Promise<HubApiSkillBindingTarget & { bindings: Record<string, HubApiSkillBindingMode> }> {
+    const q = new URLSearchParams({ scope: target.scope });
+    if (target.scopeId) q.set('scopeId', target.scopeId);
+    return this.request('PUT', `/skill-bindings?${q.toString()}`, { bindings });
+  }
+
+  resolveSkillBindings(input: {
+    repo?: string;
+    projectKey?: string;
+    workspaceId?: string;
+    boxId?: string;
+  }): Promise<HubApiSkillSetPreview> {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(input)) if (v) q.set(k, v);
+    return this.request<HubApiSkillSetPreview>('GET', `/skill-bindings/resolve?${q.toString()}`);
   }
 
   // ── agent memory ──

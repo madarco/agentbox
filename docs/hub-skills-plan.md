@@ -700,6 +700,41 @@ No cloud box was run for this phase. See [`hub-skills-backlog.md`](./hub-skills-
 **Done:** the same repo from two PCs on one remote hub gets the same set;
 a workspace-scoped skill appears only in that workspace's boxes.
 
+**Implementation plan (2026-11-23):**
+
+1. **Store: one custody file, `skills/.bindings.json`**, not a database table.
+   The relay already reads the library from custody to answer `skills.get`, and
+   a local hub has no relational store for this; one file keeps the local and
+   remote hub identical. Shape: `{ schema: 1, global: {name: mode},
+   workspace: {id: {…}}, project: {repoKey: {…}}, box: {boxId: {…}} }`, mode
+   `include | exclude`. Writes are serialized in the hub process.
+2. **Resolver** (`packages/relay/src/skill-bindings.ts`, pure): per library
+   skill, the most specific binding wins (box > project > workspace > global),
+   no binding = included (decision 2). The create flags stay most specific of
+   all: `--no-skills` = none, `--skills` = exactly those (bindings ignored),
+   `--skip-skills` subtracts from the bound set.
+3. **Box context, from the registration only**: the project key is
+   `reg.repoKey` (alias-expanded on the registering PC) or `repoKey(originUrl)`;
+   the workspace is `workspaceForBox` over the hub's own workspace records
+   (origin folder on the origin machine first, then the repo). Both are
+   machine-independent, so two PCs creating boxes of one repo on one hub get
+   one set. `skills.get` / `skills.blob` resolve with it on both relay paths.
+4. **API**: `GET /api/v1/skill-bindings[?scope&scopeId]`, `PUT
+   /api/v1/skill-bindings?scope&scopeId` (merge `{bindings: {name: mode|null}}`,
+   `null` clears), `GET /api/v1/skill-bindings/resolve?repo&workspaceId` (the
+   set a new box would get, with where each decision came from). Hub slice
+   `apps/hub/lib/backend/skill-bindings.ts`. Discarding a skill drops its
+   bindings.
+5. **CLI**: `agentbox skills enable|disable <names…>` with `--project [url]`
+   (default: the cwd repo, keyed on this PC with `repoKeyAtEdge`),
+   `--workspace [ref]` (default: the workspace containing the cwd), no scope =
+   global, `--clear` to remove the binding at that scope; `agentbox skills
+   bindings [--json]`. Box scope is API-only in this phase.
+6. **Web**: a Skills picker in the create modal's Advanced section, prefilled
+   from `/skill-bindings/resolve` for the chosen project; sent as
+   `opts.skills.include` (or `none`) only when the user changed it.
+7. **Docs**: public skills page + CLI reference; backlog.
+
 ### Phase 5 — git + marketplace sources, updates
 
 Hub-side git fetch and refresh, marketplace skill import, the `behind`

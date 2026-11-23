@@ -2,9 +2,11 @@
 //        in the `X-AgentBox-Skill-Meta` header (base64 JSON: sha256 tree hash,
 //        description, size, files, source). Streamed straight into custody,
 //        capped by AGENTBOX_CUSTODY_MAX_BLOB_BYTES.
-// DELETE /api/v1/skills/{name} — discard the skill and every stored version.
+// DELETE /api/v1/skills/{name} — discard the skill and every stored version,
+//        and forget its skill bindings.
 import { Readable } from 'node:stream';
 import { discardSkill, importSkill, parseImportMeta } from '@/lib/backend/skills';
+import { dropSkillBindings } from '@/lib/backend/skill-bindings';
 import { fail, ok } from '../../lib/envelope';
 import { failFromSkills, skillsStoreOrFail } from '../_service';
 
@@ -55,7 +57,11 @@ export async function DELETE(
   if (store instanceof Response) return store;
   const { name } = await ctx.params;
   try {
-    return ok({ name, ...(await discardSkill(store, name)) });
+    const out = await discardSkill(store, name);
+    // A binding naming a skill the library no longer holds selects nothing, so
+    // a failure here is not worth failing the discard over.
+    await dropSkillBindings(store, name).catch(() => undefined);
+    return ok({ name, ...out });
   } catch (err) {
     return failFromSkills(err, 'skill discard failed');
   }

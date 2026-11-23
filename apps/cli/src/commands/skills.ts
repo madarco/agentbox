@@ -14,6 +14,11 @@ import { cancel, confirm, isCancel, log, multiselect, note, select, spinner } fr
 import { loadEffectiveConfig } from '@agentbox/config';
 import { homedir } from 'node:os';
 import { withHubClient } from '../control-plane/with-hub.js';
+import {
+  skillsBindingsCommand,
+  skillsDisableCommand,
+  skillsEnableCommand,
+} from './skills-bindings.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import type { HubApiClient } from '../control-plane/hub-api-client.js';
 import { discoverLocalSkills, type LocalSkill } from '@agentbox/sandbox-core';
@@ -369,6 +374,9 @@ export const skillsCommand = new Command('skills')
   .option('--discard <names>', 'delete these skills (every version) from the hub', collect)
   .option('-y, --yes', 'skip confirms (discard; replacing a different local copy on download)')
   .option('--allow-findings', 'upload skills the secret scan flagged')
+  .addCommand(skillsEnableCommand)
+  .addCommand(skillsDisableCommand)
+  .addCommand(skillsBindingsCommand)
   .action(async (opts: SkillsOpts) => {
     const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
     // Downloads read skill BYTES, which the hub gates like a custody read: the

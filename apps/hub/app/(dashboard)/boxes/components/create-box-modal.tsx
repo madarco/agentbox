@@ -68,6 +68,14 @@ const BUILTIN_AGENTS: AgentOption[] = [
   { id: 'pi', label: 'Pi' },
 ];
 
+/** One row of GET /api/v1/skill-bindings/resolve. */
+interface SkillPreviewRow {
+  name: string;
+  description: string;
+  included: boolean;
+  from: 'box' | 'project' | 'workspace' | 'global' | 'default' | 'flags';
+}
+
 // Button + modal to create a box. Pass `project` to lock it (project page /
 // per-project row); pass `projects` for a picker (no fixed project).
 export function CreateBoxButton({
@@ -341,6 +349,38 @@ function CreateBoxModal({
   const agentAccounts = namedAccounts.filter((a) => a.agent === agent && a.hasSecret);
 
   const selected = projects.find((p) => p.id === projectId) ?? project;
+
+  // The library skills a box of this project gets from the hub's skill bindings
+  // (GET /api/v1/skill-bindings/resolve). `skillPicks` stays null until the user
+  // changes a box, so an untouched picker sends nothing and the bindings decide.
+  const [skillPreview, setSkillPreview] = useState<SkillPreviewRow[] | null>(null);
+  const [skillPicks, setSkillPicks] = useState<Record<string, boolean> | null>(null);
+  const skillRepo = selected?.originUrl ?? '';
+  const skillWorkspace = selected?.workspaceId ?? '';
+  useEffect(() => {
+    let cancelled = false;
+    setSkillPreview(null);
+    setSkillPicks(null);
+    void (async () => {
+      try {
+        const q = new URLSearchParams();
+        if (skillRepo) q.set('repo', skillRepo);
+        if (skillWorkspace) q.set('workspaceId', skillWorkspace);
+        const res = await fetch(`/api/v1/skill-bindings/resolve?${q.toString()}`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return;
+        const j = (await res.json()) as { library?: boolean; skills?: SkillPreviewRow[] };
+        if (!cancelled && j.library && j.skills?.length) setSkillPreview(j.skills);
+      } catch {
+        // Best-effort: without it the box gets what the bindings resolve to.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, skillRepo, skillWorkspace]);
+  const skillChecked = (row: SkillPreviewRow): boolean => skillPicks?.[row.name] ?? row.included;
   // The backup Start-from names, or null for a plain create. Everything a
   // restore decides for you branches on this.
   const restoring = (() => {
@@ -704,6 +744,7 @@ function CreateBoxModal({
           size?: string;
           promptAnswers?: PromptAnswer[];
           accounts?: Record<string, string>;
+          skills?: { none?: boolean; include?: string[] };
         } = {};
         // Only an explicit pick: silence lets the hub apply `<agent>.account`.
         // Never with a restore, which hides the picker: the bundle decides.
@@ -714,6 +755,13 @@ function CreateBoxModal({
         // against the question the create actually asks, so a stale one is
         // refused rather than applied to a different question.
         if (promptAnswers.length > 0) opts.promptAnswers = promptAnswers;
+        // Only a set the user changed: it becomes the box's explicit list,
+        // which wins over every binding. Never with a restore (the bundle decides).
+        if (skillPreview && skillPicks && !restoring) {
+          const chosen = skillPreview.filter(skillChecked).map((r) => r.name);
+          const changed = skillPreview.some((r) => skillChecked(r) !== r.included);
+          if (changed) opts.skills = chosen.length > 0 ? { include: chosen } : { none: true };
+        }
         // Sent only when it differs from what the API would derive on its own.
         // Silence is not `false`: it lets the hub's `box.persistent` decide,
         // and for a service agent it is what keeps the box always-on.
@@ -1097,6 +1145,44 @@ function CreateBoxModal({
                         </p>
                       ) : null}
                     </div>
+                  ) : null}
+                  {/* Library skills, prefilled from the hub's skill bindings for
+                      this project and workspace. */}
+                  {skillPreview && !restoring ? (
+                    <Field label="Skills">
+                      <div className="flex max-h-40 flex-col gap-1.5 overflow-y-auto">
+                        {skillPreview.map((row) => (
+                          <label key={row.name} className="flex items-start gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={skillChecked(row)}
+                              onChange={(e) =>
+                                setSkillPicks((prev) => ({
+                                  ...(prev ?? {}),
+                                  [row.name]: e.target.checked,
+                                }))
+                              }
+                              className="mt-0.5 h-4 w-4 flex-none accent-primary"
+                            />
+                            <span className="flex min-w-0 flex-col gap-0.5">
+                              <span className="text-xs font-medium text-secondary-foreground">
+                                {row.name}
+                                {row.from !== 'default' ? (
+                                  <span className="ml-1.5 font-mono text-muted-foreground">
+                                    ({row.included ? 'on' : 'off'} by {row.from} binding)
+                                  </span>
+                                ) : null}
+                              </span>
+                              {row.description ? (
+                                <span className="truncate font-mono text-xs text-muted-foreground">
+                                  {row.description}
+                                </span>
+                              ) : null}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </Field>
                   ) : null}
                   {agent !== 'none' ? (
                     <Field label="Initial prompt (optional)">

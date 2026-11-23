@@ -18,8 +18,29 @@
  * enumerate or read the rest of the library. Unprompted and not worktree-scoped,
  * like `agents.list` and `history.*`.
  */
+import { repoKey } from '@agentbox/config';
 import type { CustodyStore } from './custody/store.js';
-import type { HostActionResult, SkillSelection } from './types.js';
+import { readWorkspaceForBox } from './workspaces/timeline-store.js';
+import type { BoxWorkspaceKey } from './workspaces/workspace-store.js';
+import {
+  hasWorkspaceBindings,
+  readBindings,
+  resolveSkillNames,
+  type SkillBindingContext,
+} from '@agentbox/core';
+import type { BoxRegistration, HostActionResult, SkillSelection } from './types.js';
+
+/**
+ * Who is asking, for the bindings (Phase 4). Built from the box's REGISTRATION
+ * by the relay, never from the box's own params. The workspace is looked up
+ * lazily: it costs a read of every workspace record, and most libraries bind
+ * nothing per workspace.
+ */
+export interface BoxSkillContext {
+  boxId?: string;
+  projectKey?: string;
+  workspaceId?: () => Promise<string | undefined>;
+}
 
 const SCOPE = 'skills';
 const SEEDED = `${SCOPE}/.seeded`;
@@ -53,6 +74,43 @@ interface MetaVersion {
 interface Meta {
   current?: unknown;
   versions?: unknown;
+}
+
+/**
+ * The bindings context of a registered box. The project is its repo key (the
+ * registering PC's alias-expanded one when it sent it); the workspace is the
+ * one the box's origin folder (on its origin machine) or its repo belongs to,
+ * the same join the timeline uses. All of it is machine-independent, so the
+ * same repo from two PCs resolves to the same bindings.
+ */
+export function skillContextForRegistration(
+  reg: Pick<
+    BoxRegistration,
+    | 'boxId'
+    | 'repoKey'
+    | 'originUrl'
+    | 'originMachineId'
+    | 'originMachineLabel'
+    | 'originFolder'
+    | 'worktrees'
+  >,
+): BoxSkillContext {
+  const projectKey = reg.repoKey ?? repoKey(reg.originUrl);
+  const key: BoxWorkspaceKey = {
+    ...(reg.originUrl ? { originUrl: reg.originUrl } : {}),
+  };
+  if (reg.originFolder && reg.originMachineId) {
+    key.projectRoot = reg.originFolder;
+    key.host = { id: reg.originMachineId, label: reg.originMachineLabel ?? '' };
+  } else if (reg.worktrees?.[0]?.hostMainRepo) {
+    // A docker box: its worktree's main repo is a folder on this relay's machine.
+    key.projectRoot = reg.worktrees[0].hostMainRepo;
+  }
+  return {
+    boxId: reg.boxId,
+    ...(projectKey ? { projectKey } : {}),
+    workspaceId: async () => (await readWorkspaceForBox(key))?.id,
+  };
 }
 
 /** Parse a create-flag selection off an untrusted wire body. Undefined = every skill. */
@@ -101,6 +159,7 @@ async function readMeta(custody: CustodyStore, name: string): Promise<Meta | nul
 export async function resolveBoxSkills(
   custody: CustodyStore | null | undefined,
   selection: SkillSelection | undefined,
+  box: BoxSkillContext = {},
 ): Promise<SkillsGetResult> {
   if (!custody) return { library: false, skills: [] };
   const entries = await custody.list(SCOPE);
@@ -110,8 +169,17 @@ export async function resolveBoxSkills(
     const m = /^skills\/([^/]+)\/meta\.json$/.exec(e.path);
     if (m && NAME_RE.test(m[1]!)) names.add(m[1]!);
   }
+  const bindings = await readBindings(custody);
+  const ctx: SkillBindingContext = {
+    ...(box.boxId ? { boxId: box.boxId } : {}),
+    ...(box.projectKey ? { projectKey: box.projectKey } : {}),
+  };
+  if (box.workspaceId && hasWorkspaceBindings(bindings)) {
+    const ws = await box.workspaceId().catch(() => undefined);
+    if (ws) ctx.workspaceId = ws;
+  }
   const skills: BoxSkill[] = [];
-  for (const name of selectSkills([...names].sort(), selection)) {
+  for (const name of resolveSkillNames([...names].sort(), bindings, ctx, selection)) {
     const meta = await readMeta(custody, name);
     if (!meta || typeof meta.current !== 'string' || !SHA_RE.test(meta.current)) continue;
     const versions = Array.isArray(meta.versions) ? (meta.versions as MetaVersion[]) : [];
@@ -138,9 +206,10 @@ export async function runSkillsRpc(
   selection: SkillSelection | undefined,
   method: string,
   params: unknown,
+  box: BoxSkillContext = {},
 ): Promise<HostActionResult> {
   try {
-    if (method === 'skills.get') return ok(await resolveBoxSkills(custody, selection));
+    if (method === 'skills.get') return ok(await resolveBoxSkills(custody, selection, box));
     if (method === 'skills.blob') {
       const p = (params ?? {}) as { name?: unknown; version?: unknown; offset?: unknown };
       if (typeof p.name !== 'string' || !NAME_RE.test(p.name)) return refuse('bad name');
@@ -148,7 +217,7 @@ export async function runSkillsRpc(
       const offset =
         typeof p.offset === 'number' && Number.isInteger(p.offset) && p.offset >= 0 ? p.offset : -1;
       if (offset < 0) return refuse('bad offset');
-      const set = await resolveBoxSkills(custody, selection);
+      const set = await resolveBoxSkills(custody, selection, box);
       if (!set.skills.some((s) => s.name === p.name && s.version === p.version)) {
         return refuse(`${p.name}@${p.version.slice(0, 12)} is not in this box's skill set`);
       }

@@ -5000,6 +5000,123 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/skill-bindings': {
+        parameters: [
+          {
+            name: 'scope',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', enum: ['global', 'workspace', 'project', 'box'] },
+            description: 'Scope to read or write (GET without it returns every scope)',
+          },
+          {
+            name: 'scopeId',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description:
+              'workspace: 16-hex workspace id; project: repo key (e.g. `github.com/owner/repo`); box: box id; global: none',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Read skill bindings',
+          description:
+            'Which library skills each scope includes or excludes. Without `scope`: the whole document `{schema, global, workspace, project, box}`, each a `{<skill>: include|exclude}` map (keyed by scope id below global). With `scope`: `{scope, scopeId?, bindings}`. Resolution per skill, most specific first: create flags > box > project > workspace > global; a skill bound nowhere is in every box. Backs `agentbox skills bindings`.',
+          responses: {
+            '200': {
+              description: 'Bindings',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Skills'],
+          summary: 'Change skill bindings in one scope',
+          description:
+            "Merges `{bindings: {<skill>: 'include' | 'exclude' | null}}` into the scope named by `?scope&scopeId`; `null` clears a binding so the skill inherits from the next scope down. Returns `{scope, scopeId?, bindings}` after the write. A running box applies the change at its next skills sync. Backs `agentbox skills enable|disable`.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    bindings: {
+                      type: 'object',
+                      additionalProperties: {
+                        type: 'string',
+                        enum: ['include', 'exclude'],
+                        nullable: true,
+                      },
+                    },
+                  },
+                  required: ['bindings'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The scope after the write',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/skill-bindings/resolve': {
+        parameters: [
+          {
+            name: 'repo',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Git remote URL of the project (keyed on the hub)',
+          },
+          {
+            name: 'projectKey',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Repo key computed by the caller (wins over `repo`)',
+          },
+          {
+            name: 'workspaceId',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Workspace id',
+          },
+          {
+            name: 'boxId',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Box id, for box bindings',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Preview the skill set of a box',
+          description:
+            "The library skills a box in this project/workspace would get from the bindings alone (before create flags): `{library, projectKey?, skills: [{name, description, included, from}]}`, `from` = `box | project | workspace | global | default`. `library: false` = never seeded. Backs the create modal's Skills picker.",
+          responses: {
+            '200': {
+              description: 'Preview',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/system': {
         get: {
           tags: ['System'],

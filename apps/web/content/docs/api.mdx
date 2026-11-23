@@ -99,6 +99,14 @@ id is in that list.
 Endpoints are grouped by topic — the same sections you'll see in the sidebar of
 the interactive reference at `GET /docs`.
 
+### Skill bindings
+
+| Method + path                                                    | Description                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /skill-bindings[?scope&scopeId]`                            | The hub's skill bindings: the whole document `{ schema, global, workspace, project, box }` (each a `{ <skill>: include \| exclude }` map, keyed by scope id below `global`), or with `scope` one scope's `{ scope, scopeId?, bindings }`. Backs `agentbox skills bindings`.                                                                                         |
+| `PUT /skill-bindings?scope&scopeId`                              | Merge `{ bindings: { <skill>: 'include' \| 'exclude' \| null } }` into one scope (`null` clears). Scopes: `global` (no id), `workspace` (workspace id), `project` (repo key, e.g. `github.com/owner/repo`), `box` (box id). Most specific wins: box > project > workspace > global; a skill bound nowhere is in every box. Backs `agentbox skills enable\|disable`. |
+| `GET /skill-bindings/resolve?repo\|projectKey&workspaceId&boxId` | The library skills a box there would get from the bindings alone: `{ library, projectKey?, skills: [{ name, description, included, from }] }`. Backs the create form's Skills picker.                                                                                                                                                                               |
+
 ### System
 
 | Method + path       | Description                          |

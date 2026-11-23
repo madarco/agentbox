@@ -143,3 +143,29 @@ export {
   stripJsonComments,
 } from './loopback-endpoints.js';
 export * from './history/index.js';
+
+export {
+  SKILL_BINDINGS_PATH,
+  SKILL_BINDING_SCOPES,
+  applyBindingChanges,
+  bindingsAt,
+  emptyBindings,
+  hasWorkspaceBindings,
+  parseBindings,
+  readBindings,
+  resolveBindings,
+  resolveSkillDecisions,
+  resolveSkillNames,
+  scopeIdProblem,
+  withoutSkill,
+} from './skill-bindings.js';
+export type {
+  BindingsStore,
+  ResolvedSkill,
+  SkillBindingContext,
+  SkillBindingMap,
+  SkillBindingMode,
+  SkillBindingScope,
+  SkillBindingsDoc,
+  SkillDecisionSource,
+} from './skill-bindings.js';
