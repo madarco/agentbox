@@ -1365,20 +1365,20 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'enum',
     enumValues: ['off', 'forward'] as const,
     description:
-      "Route new boxes' LLM traffic through the hub's egress proxy: `forward` sends each agent's model hosts (inference, OAuth refresh, account calls - `llmHosts` on the agent) through an HTTP CONNECT proxy on the hub, so they leave from the hub's IP; telemetry and tool traffic still go direct. `off` (default) leaves everything direct. Recorded on the box at create; `--llm-proxy` overrides it. Fails closed: if the hub is unreachable the agent's call fails with a clear error rather than going direct.",
+      "Route new boxes' LLM traffic through the hub's egress proxy: `forward` sends each agent's model hosts (inference, OAuth refresh, account calls - `llmHosts` on the agent) through an HTTP CONNECT proxy on the hub, so they leave from the hub's IP; telemetry and tool traffic still go direct. `off` (default) leaves everything direct. Recorded on the box at create; `--llm-proxy` overrides it. Fails closed: if the hub is unreachable the agent's call fails with a clear error rather than going direct. The hub only runs the proxy once THIS machine opted in (`forward` in the GLOBAL config, or `llm.proxyUrl` set) - a create asking for `forward` without that is refused. Only agents that declare model hosts (claude, codex) are proxied.",
   },
   {
     key: 'llm.proxyPort',
     type: 'int',
     description:
-      "Port of the hub relay's CONNECT proxy for `llm.proxy: forward` (default 8790). Docker boxes reach it at `host.docker.internal:<port>`. Read by the relay at start - restart it (`agentbox relay restart`) after changing it.",
+      "Port of the hub relay's CONNECT proxy for `llm.proxy: forward` (default 8790). Docker boxes reach it at `host.docker.internal:<port>`. Read from the GLOBAL config only (it is this machine's port, never a project's), when the relay or hub starts - restart it after changing it.",
     advanced: true,
   },
   {
     key: 'llm.proxyUrl',
     type: 'string',
     description:
-      "`host:port` a CLOUD box dials to reach the hub's CONNECT proxy (`llm.proxyPort` published on an address the internet can reach). Required for `llm.proxy: forward` on a cloud box - a laptop relay is not reachable from a cloud sandbox by itself, and a Cloudflare tunnel carries no raw TCP. Docker boxes ignore it.",
+      "`host:port` a CLOUD box dials to reach the hub's CONNECT proxy (`llm.proxyPort` published on an address the internet can reach). Required for `llm.proxy: forward` on a cloud box - a laptop relay is not reachable from a cloud sandbox by itself, and a Cloudflare tunnel carries no raw TCP. Docker boxes ignore it. Read from the GLOBAL config only; setting it also turns the hub's proxy listener on.",
   },
   {
     key: 'hub.mode',

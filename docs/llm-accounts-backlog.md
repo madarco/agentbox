@@ -289,8 +289,15 @@ naming the file, like `GET`, instead of a bare 500.
   silently). A relaunch restarts it. Move it under ctl's supervisor when the
   image next changes.
 - **The hub allowlist is the union of every agent's `llmHosts`**, not the
-  box's own agents: a claude box's token can tunnel to `chatgpt.com`. Narrow it
-  by the registration's agents.
+  box's own agents: a claude box's token can tunnel to `chatgpt.com`, and an
+  installed plugin agent (`agentbox agent add`) can add any syntactically valid
+  host to it (Phase 7 review). The plugin is user-installed, but narrow the
+  allowlist by the registration's agents and keep plugin hosts behind an
+  explicit grant. The list is also read once per process: a plugin added after
+  the hub started is not allowed until a restart.
+- **A failed proxy auth is not throttled** (Phase 7 review). The listener only
+  runs after a global opt-in, but a reachable `llm.proxyPort` allows unlimited
+  token guesses. Rate-limit 407s per peer.
 - **`llmProxy` is not on the relay registration**, so a box rebuilt from its
   registration (`hub adopt`, reverse adoption) or cloned (`clone-create`) comes
   back without it and goes direct. Carry it on the registration and the clone.
@@ -298,11 +305,10 @@ naming the file, like `GET`, instead of a bare 500.
   `llm.proxy`** when the client sends none: it has no project config. The CLI
   sends `forward` when the project says so; a project's explicit `off` against
   a hub whose global is `forward` still lands on `forward`.
-- **Service agents (openclaw) are never proxied**: no `llmHosts`, and their
-  units are not launched through the agent seams.
+- **Agents without `llmHosts` (opencode, pi, plugins, the openclaw service
+  units) are never proxied**, even in a box recorded `forward`, and nothing
+  warns at create (Phase 7 review). Documented; warn, or refuse `forward` for
+  such an agent, once more agents can declare hosts.
 - **No UI for it**: the web create dialog has no LLM-proxy toggle and the
   tray shows nothing; `Box.llmProxy` is in the payload for both.
-- **The hub always listens on `llm.proxyPort`** (same bind address as the
-  relay), even when no box uses it. Gated by box token + allowlist; start it
-  only when a box records `llmProxy` if that ever matters.
 - **Successful tunnels are not logged or counted**; only refusals are.

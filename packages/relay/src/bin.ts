@@ -1,4 +1,5 @@
 import { loadEffectiveConfig } from '@agentbox/config';
+import { llmProxyListenerEnabled } from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
 import { Command } from 'commander';
 import { request as httpRequest } from 'node:http';
@@ -83,14 +84,17 @@ program
       process.stdout.write(`agentbox-relay: ${line}\n`);
     };
     registerCloudBackendsFromEnv(log);
+    // Only once this machine opted in (see llmProxyListenerEnabled).
     const llmProxyPort = await loadEffectiveConfig(homedir())
-      .then((c) => c.effective.llm.proxyPort)
-      .catch(() => 8790);
+      .then((c) =>
+        llmProxyListenerEnabled(c.effective.llm) ? c.effective.llm.proxyPort : undefined,
+      )
+      .catch(() => undefined);
     const daemon = await startRelayDaemon({
       port,
       host: opts.host,
       logger: log,
-      llmProxyPort,
+      ...(llmProxyPort !== undefined ? { llmProxyPort } : {}),
     });
     process.stdout.write(`agentbox-relay: listening on ${opts.host}:${String(port)}\n`);
 

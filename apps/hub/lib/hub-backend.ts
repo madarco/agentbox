@@ -2765,13 +2765,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
         // The hub egress proxy (llm-accounts Phase 7): the mode is the client's
-        // or the project's; the upstream is THIS hub's address.
+        // or the project's; port and URL are THIS hub's (global config only).
         let llmProxy: LlmProxyRecord | undefined;
         try {
           llmProxy = resolveLlmProxyRecord(
             provider,
-            (await loadEffectiveConfig(workspace)).effective.llm,
-            o.llmProxy,
+            (await loadEffectiveConfig(os.homedir())).effective.llm,
+            o.llmProxy ?? (await loadEffectiveConfig(workspace)).effective.llm.proxy,
           );
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };

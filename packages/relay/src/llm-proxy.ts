@@ -15,11 +15,11 @@
  */
 import http from 'node:http';
 import net from 'node:net';
-import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
+import { allAgentLlmHosts } from '@agentbox/sandbox-core';
 
 /** Every agent's declared model hosts (`AgentSyncSpec.llmHosts`): the allowlist. */
 export function llmProxyHosts(): readonly string[] {
-  return [...new Set(AGENT_SYNC_SPECS.flatMap((s) => s.llmHosts ?? []))];
+  return allAgentLlmHosts();
 }
 
 export interface LlmProxyDeps {

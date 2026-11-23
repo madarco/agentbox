@@ -203,17 +203,24 @@ git, telemetry. This is useful when an account should always be seen from one ad
 or when the box's network shouldn't talk to model providers directly.
 
 ```bash
-agentbox claude --llm-proxy forward               # this box
-agentbox config set llm.proxy forward             # every new box (global or per project)
+agentbox config set llm.proxy forward             # turn the hub's proxy on (global), and on for every new box
+agentbox hub restart                              # the proxy listener starts with the hub
+agentbox claude --llm-proxy forward               # or per box (needs the proxy on, above)
 ```
 
 Only the hosts each agent declares are proxied: Claude's `api.anthropic.com`,
 `platform.claude.com`, `mcp-proxy.anthropic.com` and `claude.ai`, and Codex's
 `chatgpt.com`, `ab.chatgpt.com`, `auth.openai.com` and `api.openai.com`. Inside the
 box, a small proxy on `127.0.0.1` sends those hosts to the hub and everything else
-direct. Only the agent process is pointed at it, through `HTTPS_PROXY`.
+direct. Only the agent process is pointed at it, through `HTTPS_PROXY`; an existing
+`NO_PROXY` is kept. Agents that declare no model hosts (`opencode`, `pi`) are not
+proxied, even in a `forward` box.
 
-The hub's side is an HTTP CONNECT proxy on `llm.proxyPort` (default `8790`). It never
+The hub's side is an HTTP CONNECT proxy on `llm.proxyPort` (default `8790`). It runs
+only once this machine opted in, with `llm.proxy: forward` in the **global** config or
+`llm.proxyUrl` set; until then a `forward` create is refused. `llm.proxyPort` and
+`llm.proxyUrl` are read from the global config only, since they are this machine's
+address. It never
 decrypts, accepts only a registered box's relay token, and only tunnels to those model
 hosts on port 443. The box's token never enters the agent's environment.
 

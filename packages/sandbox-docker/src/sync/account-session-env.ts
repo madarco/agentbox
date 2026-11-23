@@ -10,6 +10,7 @@ import { dockerField } from '@agentbox/core';
 import {
   accountEnvPolicy,
   applyAccountEnv,
+  allAgentLlmHosts,
   boxAccount,
   findAgentSpec,
   llmProxyLaunchPreamble,
@@ -76,7 +77,8 @@ export async function withSessionLlmProxy(
   } catch {
     return cmd;
   }
-  if (!box?.llmProxy) return cmd;
-  const preamble = llmProxyLaunchPreamble(box.llmProxy, findAgentSpec(agent)?.llmHosts);
+  if (!box?.llmProxy || !findAgentSpec(agent)?.llmHosts?.length) return cmd;
+  // Every agent's hosts: one split proxy serves the whole box (see the cloud seam).
+  const preamble = llmProxyLaunchPreamble(box.llmProxy, allAgentLlmHosts());
   return preamble ? `${preamble}exec ${cmd}` : cmd;
 }

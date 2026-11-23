@@ -9,7 +9,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   LLM_SPLIT_PROXY_SCRIPT,
   isValidLlmProxyUpstream,
+  allAgentLlmHosts,
   llmProxyLaunchPreamble,
+  llmProxyListenerEnabled,
   resolveLlmProxyRecord,
 } from '../src/llm-split-proxy.js';
 
@@ -107,7 +109,11 @@ describe('the split proxy script', () => {
       process.execPath,
       [file, String(proxyPort), `127.0.0.1:${String(hubPort)}`, 'api.anthropic.com'],
       {
-        env: { ...process.env, AGENTBOX_RELAY_TOKEN: 'tok' },
+        env: {
+          ...process.env,
+          AGENTBOX_RELAY_TOKEN: 'tok',
+          AGENTBOX_RELAY_ENV_FILE: '/nonexistent/relay.env',
+        },
         stdio: 'ignore',
       },
     );
@@ -197,7 +203,11 @@ describe('the split proxy script: hub refusals and outages', () => {
       const port = (probe.address() as AddressInfo).port;
       await new Promise<void>((r) => probe.close(() => r()));
       const child = spawn(process.execPath, [file, String(port), upstream, 'api.anthropic.com'], {
-        env: { ...process.env, AGENTBOX_RELAY_TOKEN: 'wrong' },
+        env: {
+          ...process.env,
+          AGENTBOX_RELAY_TOKEN: 'wrong',
+          AGENTBOX_RELAY_ENV_FILE: '/nonexistent/relay.env',
+        },
         stdio: 'ignore',
       });
       try {
@@ -232,36 +242,181 @@ describe('the split proxy script: hub refusals and outages', () => {
 
 describe('resolveLlmProxyRecord', () => {
   const resolve = resolveLlmProxyRecord;
-  const cfg = { proxy: 'off' as const, proxyPort: 8790, proxyUrl: '' };
+  // `host` is this machine's GLOBAL llm.* config.
+  const on = { proxy: 'forward' as const, proxyPort: 8790, proxyUrl: '' };
+  const off = { proxy: 'off' as const, proxyPort: 8790, proxyUrl: '' };
 
-  it('off (config default, or the flag) records nothing', () => {
-    expect(resolve('docker', cfg)).toBeUndefined();
-    expect(
-      resolve('hetzner', { ...cfg, proxy: 'forward', proxyUrl: 'h:1' }, 'off'),
-    ).toBeUndefined();
+  it('off (the flag, or no mode and a host default of off) records nothing', () => {
+    expect(resolve('docker', off)).toBeUndefined();
+    expect(resolve('hetzner', { ...on, proxyUrl: 'h:1' }, 'off')).toBeUndefined();
+  });
+  it('refuses forward when this machine never enabled the listener', () => {
+    expect(() => resolve('docker', off, 'forward')).toThrow(/does not run the LLM proxy/);
+    expect(llmProxyListenerEnabled(off)).toBe(false);
+    expect(llmProxyListenerEnabled({ ...off, proxyUrl: 'h:1' })).toBe(true);
+    expect(llmProxyListenerEnabled(on)).toBe(true);
   });
   it('a docker box dials the host relay port', () => {
-    expect(resolve('docker', { ...cfg, proxyPort: 18790 }, 'forward')).toEqual({
+    expect(resolve('docker', { ...on, proxyPort: 18790 }, 'forward')).toEqual({
       mode: 'forward',
       upstream: 'host.docker.internal:18790',
     });
   });
   it('a cloud (and remote-docker) box needs llm.proxyUrl, refused without it', () => {
-    expect(() => resolve('hetzner', cfg, 'forward')).toThrow(/needs llm\.proxyUrl/);
-    expect(() => resolve('remote-docker', cfg, 'forward')).toThrow(/needs llm\.proxyUrl/);
-    expect(
-      resolve('vercel', { ...cfg, proxy: 'forward', proxyUrl: 'hub.example.com:8790' }),
-    ).toEqual({
+    expect(() => resolve('hetzner', on, 'forward')).toThrow(/needs llm\.proxyUrl/);
+    expect(() => resolve('remote-docker', on)).toThrow(/needs llm\.proxyUrl/);
+    expect(resolve('vercel', { ...off, proxyUrl: 'hub.example.com:8790' }, 'forward')).toEqual({
       mode: 'forward',
       upstream: 'hub.example.com:8790',
     });
   });
   it('tolerates a scheme / trailing slash, refuses anything not host:port', () => {
     expect(
-      resolve('e2b', { ...cfg, proxyUrl: 'http://hub.example.com:8790/' }, 'forward')?.upstream,
+      resolve('e2b', { ...on, proxyUrl: 'http://hub.example.com:8790/' }, 'forward')?.upstream,
     ).toBe('hub.example.com:8790');
-    expect(() => resolve('e2b', { ...cfg, proxyUrl: 'hub.example.com' }, 'forward')).toThrow(
+    expect(() => resolve('e2b', { ...on, proxyUrl: 'hub.example.com' }, 'forward')).toThrow(
       /host:port/,
     );
+  });
+  it('the host union covers claude and codex', () => {
+    expect(allAgentLlmHosts()).toEqual(
+      expect.arrayContaining(['api.anthropic.com', 'chatgpt.com']),
+    );
+  });
+});
+
+describe('the split proxy script: review fixes', () => {
+  async function freePort(): Promise<number> {
+    const p = net.createServer();
+    await new Promise<void>((r) => p.listen(0, '127.0.0.1', () => r()));
+    const port = (p.address() as AddressInfo).port;
+    await new Promise<void>((r) => p.close(() => r()));
+    return port;
+  }
+  async function waitUp(port: number): Promise<void> {
+    for (let i = 0; i < 60; i++) {
+      const up = await new Promise<boolean>((r) => {
+        const s = net.connect(port, '127.0.0.1', () => (s.end(), r(true)));
+        s.on('error', () => r(false));
+      });
+      if (up) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+  const file = (() => {
+    const dir = mkdtempSync(join(tmpdir(), 'llmsp-'));
+    const f = join(dir, 'sp.cjs');
+    writeFileSync(f, LLM_SPLIT_PROXY_SCRIPT);
+    return f;
+  })();
+  const marker = (port: number) =>
+    new Promise<string>((resolve) => {
+      const s = net.connect(port, '127.0.0.1');
+      let b = '';
+      s.on('data', (d) => (b += d.toString()));
+      s.on('close', () => resolve(b.slice(b.indexOf('\r\n\r\n') + 4)));
+      s.write('GET /__agentbox HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    });
+
+  it('--ensure replaces a stale instance of itself (other config) instead of failing on the port', async () => {
+    const port = await freePort();
+    const home = mkdtempSync(join(tmpdir(), 'llmsp-home-'));
+    const env = { ...process.env, HOME: home };
+    await run(
+      process.execPath,
+      [file, '--ensure', String(port), '127.0.0.1:9', 'api.anthropic.com'],
+      { env },
+    );
+    expect(await marker(port)).toContain('127.0.0.1:9 api.anthropic.com');
+    await run(
+      process.execPath,
+      [file, '--ensure', String(port), '127.0.0.1:9', 'api.anthropic.com,chatgpt.com'],
+      {
+        env,
+      },
+    );
+    expect(await marker(port)).toContain('127.0.0.1:9 api.anthropic.com,chatgpt.com');
+    await run('sh', ['-c', `pkill -f "[s]p.cjs ${String(port)}"; true`]);
+  });
+
+  it('a hub that closes before answering gets a 502, not a hang', async () => {
+    const hub = net.createServer((s) => s.once('data', () => s.destroy()));
+    await new Promise<void>((r) => hub.listen(0, '127.0.0.1', () => r()));
+    const hubPort = (hub.address() as AddressInfo).port;
+    const port = await freePort();
+    const child = spawn(
+      process.execPath,
+      [file, String(port), `127.0.0.1:${String(hubPort)}`, 'api.anthropic.com'],
+      {
+        env: {
+          ...process.env,
+          AGENTBOX_RELAY_TOKEN: 't',
+          AGENTBOX_RELAY_ENV_FILE: '/nonexistent/relay.env',
+        },
+        stdio: 'ignore',
+      },
+    );
+    try {
+      await waitUp(port);
+      const out = await new Promise<string>((resolve) => {
+        const s = net.connect(port, '127.0.0.1');
+        let b = '';
+        s.on('data', (d) => (b += d.toString()));
+        s.on('close', () => resolve(b));
+        s.write('CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n');
+      });
+      expect(out).toContain('502 Bad Gateway');
+      expect(out).toContain('closed the connection without answering');
+    } finally {
+      child.kill();
+      hub.close();
+    }
+  });
+
+  it('reads the token from relay.env before its frozen env (a re-registration rotates it)', async () => {
+    const saw: string[] = [];
+    const hub = net.createServer((s) =>
+      s.once('data', (d) => {
+        saw.push(d.toString());
+        s.destroy();
+      }),
+    );
+    await new Promise<void>((r) => hub.listen(0, '127.0.0.1', () => r()));
+    const hubPort = (hub.address() as AddressInfo).port;
+    const port = await freePort();
+    const envFile = join(mkdtempSync(join(tmpdir(), 'llmsp-env-')), 'relay.env');
+    writeFileSync(envFile, 'AGENTBOX_RELAY_URL=x\nAGENTBOX_RELAY_TOKEN=fresh\n');
+    const child = spawn(
+      process.execPath,
+      [file, String(port), `127.0.0.1:${String(hubPort)}`, 'api.anthropic.com'],
+      {
+        env: { ...process.env, AGENTBOX_RELAY_TOKEN: 'stale', AGENTBOX_RELAY_ENV_FILE: envFile },
+        stdio: 'ignore',
+      },
+    );
+    try {
+      await waitUp(port);
+      await new Promise<void>((resolve) => {
+        const s = net.connect(port, '127.0.0.1');
+        s.on('data', () => {});
+        s.on('close', () => resolve());
+        s.write('CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n');
+      });
+      expect(saw[0]).toContain(`Basic ${Buffer.from('agentbox:fresh').toString('base64')}`);
+    } finally {
+      child.kill();
+      hub.close();
+    }
+  });
+
+  it('the preamble keeps an existing NO_PROXY', async () => {
+    const p = llmProxyLaunchPreamble({ mode: 'forward', upstream: '127.0.0.1:9' }, [
+      'api.anthropic.com',
+    ]);
+    const tail = p.slice(p.indexOf('export HTTPS_PROXY'));
+    const { stdout } = await run('sh', ['-c', `${tail}echo "$NO_PROXY|$no_proxy"`], {
+      env: { ...process.env, NO_PROXY: '.corp', no_proxy: '' },
+    });
+    expect(stdout.trim()).toBe('localhost,127.0.0.1,.corp|localhost,127.0.0.1');
   });
 });

@@ -825,6 +825,14 @@ Phase 0 (c) measured the CONNECT path for both agents (refreshes included), so
 6. **Vercel.** `withLlmProxyHost` appends the proxy host to an allowlist
    `networkPolicy`; unset / `allow-all` / `deny-all` are left alone.
 7. **Payload.** `Box.llmProxy` (`{ mode, upstream }`) on `/api/v1/boxes`.
+   **Review changes.** The listener runs only once this machine opted in
+   (`llmProxyListenerEnabled`: global `llm.proxy: forward` or `llm.proxyUrl`),
+   and a `forward` create is refused without it. `llm.proxyPort` / `llm.proxyUrl`
+   are read from the GLOBAL config (the mode follows the project). The split
+   proxy carries every agent's hosts, so a second agent in the box reuses it,
+   and `--ensure` replaces a stale instance of itself. It reads the token from
+   `relay.env` first, answers 502 when the hub closes without replying, and the
+   preamble keeps an existing `NO_PROXY`.
 8. **Verified live** against an isolated hub (relay 18799, proxy 18790) with a
    registered fake box and the real split-proxy script: Anthropic answered 401
    (no key) and chatgpt.com 200 through the hub; example.com went direct; the

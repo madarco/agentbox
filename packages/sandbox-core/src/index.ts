@@ -269,6 +269,8 @@ export {
   isValidLlmProxyUpstream,
   llmProxyLaunchPreamble,
   resolveLlmProxyRecord,
+  allAgentLlmHosts,
+  llmProxyListenerEnabled,
   type LlmProxyConfig,
 } from './llm-split-proxy.js';
 export * from './sync/index.js';

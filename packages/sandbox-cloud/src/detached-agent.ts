@@ -16,6 +16,7 @@ import type { AgentSettings, BoxRecord, Provider } from '@agentbox/core';
 import { agentSettingsFor } from '@agentbox/config';
 import {
   agentTuiEnv,
+  allAgentLlmHosts,
   findAgentSpec,
   isRuntimeAgent,
   llmProxyLaunchPreamble,
@@ -392,6 +393,8 @@ export async function startDetachedCloudAgent(
  * declares model hosts.
  */
 export function boxLlmProxyPreamble(box: BoxRecord, binary: string): string {
-  if (!box.llmProxy) return '';
-  return llmProxyLaunchPreamble(box.llmProxy, findAgentSpec(binary)?.llmHosts);
+  if (!box.llmProxy || !findAgentSpec(binary)?.llmHosts?.length) return '';
+  // Every agent's hosts, not this one's: one split proxy serves the whole box,
+  // so a second agent finds it already running with the same config.
+  return llmProxyLaunchPreamble(box.llmProxy, allAgentLlmHosts());
 }

@@ -15,6 +15,7 @@
  * silently leaves from the box's own IP.
  */
 import type { LlmProxyRecord } from '@agentbox/core';
+import { AGENT_SYNC_SPECS } from './sync/registry.js';
 
 /** The split proxy's in-box port: unlikely to collide with a project's service. */
 export const LLM_SPLIT_PROXY_PORT = 47290;
@@ -51,19 +52,31 @@ if (!port || !upHost || !upPort) {
   process.exit(2);
 }
 
+// cb(state): 'ours' (same config), 'stale' (our proxy, other config), 'none'.
 function probe(cb) {
+  let done = false;
+  const once = (v) => { if (!done) { done = true; cb(v); } };
   const req = http.get({ host: '127.0.0.1', port, path: '/__agentbox', timeout: 1000 }, (res) => {
     let b = '';
     res.on('data', (d) => (b += d));
-    res.on('end', () => cb(b === MARK + ' ' + upstream + ' ' + hostsCsv));
+    res.on('end', () =>
+      once(b === MARK + ' ' + upstream + ' ' + hostsCsv ? 'ours' : b.startsWith(MARK) ? 'stale' : 'none'));
   });
-  req.on('error', () => cb(false));
-  req.on('timeout', () => { req.destroy(); cb(false); });
+  req.on('error', () => once('none'));
+  req.on('timeout', () => { req.destroy(); once('none'); });
 }
 
-if (ensure) {
-  probe((ours) => {
-    if (ours) process.exit(0);
+function stopStale(cb) {
+  const req = http.request({ host: '127.0.0.1', port, path: '/__agentbox/exit', method: 'POST', timeout: 1000 }, (res) => {
+    res.resume();
+    res.on('end', () => setTimeout(cb, 200));
+  });
+  req.on('error', () => setTimeout(cb, 200));
+  req.on('timeout', () => { req.destroy(); });
+  req.end();
+}
+
+function start() {
     const log = path.join(os.homedir(), '.agentbox', 'llm-split-proxy.log');
     let fd = 'ignore';
     try { fd = fs.openSync(log, 'a'); } catch {}
@@ -73,8 +86,8 @@ if (ensure) {
     });
     child.unref();
     let tries = 0;
-    const again = () => probe((up) => {
-      if (up) process.exit(0);
+    const again = () => probe((state) => {
+      if (state === 'ours') process.exit(0);
       if (++tries >= 30) {
         process.stderr.write('agentbox llm proxy: did not come up on 127.0.0.1:' + port + ' (see ' + log + ')\n');
         process.exit(1);
@@ -82,20 +95,33 @@ if (ensure) {
       setTimeout(again, 100);
     });
     setTimeout(again, 100);
+}
+
+if (ensure) {
+  // A proxy of ours with another config (an upgrade changed the host list):
+  // replace it, or the new one could never bind the port.
+  probe((state) => {
+    if (state === 'ours') process.exit(0);
+    if (state === 'stale') stopStale(start);
+    else start();
   });
   return;
 }
 
+// The relay.env file first: it is rewritten on a re-registration, while this
+// process's env was frozen when it started. The env covers docker boxes.
 function token() {
-  if (process.env.AGENTBOX_RELAY_TOKEN) return process.env.AGENTBOX_RELAY_TOKEN;
   try {
     const f = process.env.AGENTBOX_RELAY_ENV_FILE || '/run/agentbox/relay.env';
     for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
       const i = line.indexOf('=');
-      if (i > 0 && line.slice(0, i).trim() === 'AGENTBOX_RELAY_TOKEN') return line.slice(i + 1).trim();
+      if (i > 0 && line.slice(0, i).trim() === 'AGENTBOX_RELAY_TOKEN') {
+        const v = line.slice(i + 1).trim();
+        if (v) return v;
+      }
     }
   } catch {}
-  return '';
+  return process.env.AGENTBOX_RELAY_TOKEN || '';
 }
 
 function fail(client, status, reason) {
@@ -117,6 +143,7 @@ function splice(client, up, head, rest) {
 
 const server = http.createServer((req, res) => {
   if (req.url === '/__agentbox') { res.end(MARK + ' ' + upstream + ' ' + hostsCsv); return; }
+  if (req.url === '/__agentbox/exit' && req.method === 'POST') { res.end('bye', () => process.exit(0)); return; }
   res.writeHead(405); res.end('CONNECT only');
 });
 server.on('connect', (req, client, head) => {
@@ -154,6 +181,11 @@ server.on('connect', (req, client, head) => {
     s.destroy();
   };
   s.on('data', onData);
+  s.on('close', () => {
+    if (!ok && !client.destroyed && !client.writableEnded) {
+      fail(client, '502 Bad Gateway', 'agentbox LLM proxy: hub proxy ' + upstream + ' closed the connection without answering');
+    }
+  });
   s.on('error', (e) => {
     if (!ok) fail(client, '502 Bad Gateway', 'agentbox LLM proxy: hub proxy ' + upstream + ' unreachable (' + e.message + ')');
     else client.destroy();
@@ -188,11 +220,12 @@ export function llmProxyLaunchPreamble(
     `echo ${b64} | base64 -d > "$F" && ` +
     `node "$F" --ensure ${port} ${record.upstream} ${llmHosts.join(',')} || ` +
     `{ echo "agentbox: the LLM proxy did not start, so the agent was not launched (llm.proxy=forward via ${record.upstream})"; sleep 15; exit 1; }; ` +
-    `export HTTPS_PROXY=${local} https_proxy=${local} NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1; `
+    `export HTTPS_PROXY=${local} https_proxy=${local} ` +
+    `NO_PROXY="localhost,127.0.0.1\${NO_PROXY:+,\$NO_PROXY}" no_proxy="localhost,127.0.0.1\${no_proxy:+,\$no_proxy}"; `
   );
 }
 
-/** The `llm.*` config keys the resolver reads (this machine's effective config). */
+/** The `llm.*` config keys, read from THIS machine's global config. */
 export interface LlmProxyConfig {
   proxy: 'off' | 'forward';
   proxyPort: number;
@@ -200,34 +233,55 @@ export interface LlmProxyConfig {
 }
 
 /**
- * Resolve a create's `llm.proxy` into the record the box carries, or undefined
- * for `off` (llm-accounts Phase 7). `mode` is the caller's override (flag, API
- * `opts.llmProxy`); else the config's. A local docker box reaches the hub at
+ * Whether this machine's hub/relay runs the LLM CONNECT listener: only once
+ * the user opted in here (`llm.proxy: forward` globally, or `llm.proxyUrl`
+ * set), so a machine that never uses the feature opens no extra port.
+ */
+export function llmProxyListenerEnabled(host: LlmProxyConfig): boolean {
+  return host.proxy === 'forward' || host.proxyUrl.trim() !== '';
+}
+
+/** Every agent's declared model hosts: the split proxy's and the hub's allowlist. */
+export function allAgentLlmHosts(): string[] {
+  return [...new Set(AGENT_SYNC_SPECS.flatMap((s) => s.llmHosts ?? []))];
+}
+
+/**
+ * Resolve a create's LLM proxy into the record the box carries, or undefined
+ * for `off` (llm-accounts Phase 7). `mode` is the caller's choice (flag, API
+ * `opts.llmProxy`, else the project's `llm.proxy`); `host` is THIS machine's
+ * GLOBAL `llm.*` (the listener's port and public address are the machine's,
+ * never a project's). A local docker box reaches the hub at
  * `host.docker.internal:<proxyPort>`; every other provider (cloud, and
- * remote-docker on another machine) needs `llm.proxyUrl`, and a create without
- * it is refused rather than silently sent direct.
+ * remote-docker on another machine) needs `llm.proxyUrl`. Refused, rather than
+ * silently sent direct, when the listener is off here or the URL is missing.
  */
 export function resolveLlmProxyRecord(
   providerName: string,
-  cfg: LlmProxyConfig,
+  host: LlmProxyConfig,
   mode: 'off' | 'forward' | undefined = undefined,
 ): LlmProxyRecord | undefined {
-  const effective = mode ?? cfg.proxy;
+  const effective = mode ?? host.proxy;
   if (effective !== 'forward') return undefined;
+  if (!llmProxyListenerEnabled(host)) {
+    throw new Error(
+      "this machine's hub does not run the LLM proxy: enable it with `agentbox config set llm.proxy forward` (global) or set llm.proxyUrl, then restart the hub",
+    );
+  }
   const upstream =
     providerName === 'docker'
-      ? `host.docker.internal:${String(cfg.proxyPort)}`
-      : cfg.proxyUrl
+      ? `host.docker.internal:${String(host.proxyPort)}`
+      : host.proxyUrl
           .trim()
           .replace(/^[a-z]+:\/\//i, '')
           .replace(/\/+$/, '');
   if (!upstream) {
     throw new Error(
-      `llm.proxy=forward on a ${providerName} box needs llm.proxyUrl: the host:port where this hub's LLM proxy (llm.proxyPort ${String(cfg.proxyPort)}) is reachable from the internet. Set it, or create with --llm-proxy off.`,
+      `llm.proxy=forward on a ${providerName} box needs llm.proxyUrl: the host:port where this hub's LLM proxy (llm.proxyPort ${String(host.proxyPort)}) is reachable from the internet. Set it, or create with --llm-proxy off.`,
     );
   }
   if (!isValidLlmProxyUpstream(upstream)) {
-    throw new Error(`llm.proxyUrl must be host:port (got '${cfg.proxyUrl}')`);
+    throw new Error(`llm.proxyUrl must be host:port (got '${host.proxyUrl}')`);
   }
   return { mode: 'forward', upstream };
 }
