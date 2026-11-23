@@ -71,3 +71,23 @@ the ctl credential watcher ran on hetzner/DO even when it was turned off.
   today.
 - An agent added to a live box (`ensureAgentInstalled`) gets no `agent.env` entries
   until the next wake.
+- `agentbox <agent> -i ... --account <name>` still runs the default-login precheck
+  (`assertAgentCredsAvailable`), so with no default login and no host env key it fails
+  with "No Claude credentials on host" even though the named account would
+  authenticate the box. Pre-existing, every provider.
+- Found during the live check, digitalocean provider: `destroy` left the per-box
+  firewall (and its tag) behind for a box whose `-i` session check failed. It finds the
+  firewall from the droplet's tags before deleting the droplet, and that lookup came up
+  empty. Deleted by hand. Pre-existing and unrelated to the agent env.
+
+## Live check (2026-11-23, isolated hub on :8799)
+
+- hetzner, opencode: the agent process has `OPENCODE_CONFIG_DIR`, `XDG_STATE_HOME` and
+  the forwarded keys; opencode loads its config dir (plugins, skills, `opencode.json`)
+  and the box payload reports `opencodeActivity: idle` (was `unknown`).
+- hetzner and digitalocean, claude with a named API-key account (dummy key): the account
+  key is in the claude process env and the host's key is not; the key is in no
+  `/proc/*/cmdline`, not in `box.env`, not in the metadata `user_data`; `agent.env` is
+  0600 vscode and no `/tmp` staging copy is left.
+- hetzner wake (power-off + start): `agent.env` is rewritten, and the ctl daemon has
+  `AGENTBOX_CREDENTIAL_SYNC=0` with `box.credentialSync: false`.
