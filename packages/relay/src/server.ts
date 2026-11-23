@@ -3362,7 +3362,9 @@ function parseReachPrompt(raw: unknown): Omit<PromptAskEvent, 'id'> | null {
 function sanitizeLlmProxy(raw: unknown): LlmProxyRecord | undefined {
   if (raw === null || typeof raw !== 'object') return undefined;
   const r = raw as Record<string, unknown>;
-  return r.mode === 'forward' && typeof r.upstream === 'string' && isValidLlmProxyUpstream(r.upstream)
+  return r.mode === 'forward' &&
+    typeof r.upstream === 'string' &&
+    isValidLlmProxyUpstream(r.upstream)
     ? { mode: 'forward', upstream: r.upstream }
     : undefined;
 }
