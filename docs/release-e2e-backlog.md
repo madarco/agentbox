@@ -34,7 +34,6 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 
 - **pi reads a leading `@word` positional as a file.** `pi [@files...] [messages...]`, so an `-i` prompt that starts with `@` is taken as a file to attach rather than the first turn. Edge case, not fixed with the opencode launcher change.
 - **Daytona leaves the secret-bearing agent-env staging copy behind** (`/run/agentbox/.agent-env-<hex>`, mode 0644) when the first upload throws and the fallback to `/tmp` runs; the `install`/`rm` only touch the `/tmp` copy (`packages/sandbox-cloud/src/agent-env-file.ts`). Found in the same investigation; separate fix.
-- **docker@linux: claude sits on its first-run theme picker** when the host has no `~/.claude`, because `ensureClaudeVolume` returns before writing a pre-onboarded `_claude.json` (the cloud path has `buildBoxClaudeJsonFromHost`'s fallback). The new docker stay-up probe does not catch it: the session is alive.
 
 - **The stay-up probe misses opencode's auth dead-end.** `AGENT_AUTH_FAILURE` (`packages/sandbox-cloud/src/detached-agent.ts`) has no marker for opencode's `Token refresh failed: 401`, so a box whose opencode login expired reports `done`.
 
@@ -47,6 +46,23 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 
 - **A codex api-key stub can replace a real ChatGPT login backup.** In the 2026-11-23 live check, the scratch home's `~/.agentbox/codex-credentials.json` (a ChatGPT OAuth login) was replaced during docker opencode `--model-auth codex` runs by the shared `agentbox-codex-config` volume's `auth.json`: a 101-byte `{"auth_mode":"apikey",...,"tokens":null}` stub from an earlier box, with its mtime kept. `realShape: 'nonempty-json'` accepts the stub. Which path wrote it back (destroy extract, fan-out) is not pinned down yet. Later borrows then fail with "not a usable Codex ChatGPT login".
 - **The cloud model-auth ingest logs nothing.** `startDetachedCloudAgent` runs `runModelAuthIngest` with no `onLog`, so a failed import ("not a usable Codex ChatGPT login") never reaches the create log, unlike docker's.
+
+- **claude on docker sits on its first-run theme picker when the host has no `~/.claude`** (docker@linux S2, every run). `ensureClaudeVolume` returned before writing any `_claude.json`, so claude showed "Choose the text style" and the `-i` turn never ran. The cloud path (`buildBoxClaudeJsonFromHost`) already wrote a pre-onboarded default. Fixed on `fix/docker-claude-onboarding`, plan:
+  1. One helper, `defaultBoxClaudeJson(workspace)` in `packages/agent-claude/src/claude-json-defaults.ts`: `hasCompletedOnboarding: true`, `installMethod: native`, the workspace trusted. The cloud default calls it.
+  2. Docker, host has no `~/.claude`: write that default into the volume as `_claude.json`, write-once (skipped when `volumeHasClaudeJson`), chowned to the box user. Credentials are untouched.
+  3. Docker, host has `~/.claude` but no `~/.claude.json`: the hand-written minimal file (which lacked `hasCompletedOnboarding`) becomes the same helper's output.
+  3b. Docker, any `_claude.json` already in the volume (a host file that never finished onboarding, or one claude wrote while stuck on the picker before this fix): merge `hasCompletedOnboarding: true` in with `jq`, keeping every other key, so existing stuck volumes recover without breaking write-once.
+  4. remote-docker needs nothing: it runs through `createCloudProvider`, so it already stages the cloud overlay.
+  5. Unit test for the helper; live check on a scratch `HOME` with no `~/.claude`. Done 2026-11-23: on a scratch `HOME` with no `~/.claude` (relay on 8811), `agentbox claude -i "Say hi…"` on docker logged "seeded a pre-onboarded _claude.json" and claude answered the turn with no onboarding screen; a second ensure left claude's own `_claude.json` untouched.
+- **Follow-ups from the docker onboarding fix (#463)**, all LATER:
+  - **Repairing an old stuck volume skips workspace trust.** With no host `~/.claude` and a `_claude.json` already in the volume, `ENSURE_ONBOARDED_STEP` (`packages/agent-claude/src/docker-sync.ts:193-197`) sets `hasCompletedOnboarding` but not `projects["/workspace"].hasTrustDialogAccepted`, so the trust dialog can still show there. Merge that key in the same `jq` step.
+  - **"Use this API key?" can still show.** With no host `~/.claude` and `ANTHROPIC_API_KEY` forwarded, the default `_claude.json` approves no keys; only named API-key accounts are pre-approved (`approveAccountApiKey`). Cloud has the same gap. Fix idea: approve the forwarded key's last 20 characters the way `approveAccountApiKey` does.
+  - **The write-once default hides a later host `~/.claude.json`.** Seeding the default into the shared volume keeps a host `~/.claude.json` created later out of it, so its MCP servers and project state never reach docker boxes until the volume is recreated. The throwaway login container already had this effect.
+  - **Lost-update window in the onboarding patch.** `ENSURE_ONBOARDED_STEP` reads `_claude.json`, rewrites it with `jq` and `mv`s it back; a write by another box's claude in between is lost. Small, and only once (the patch runs only while the flag is missing).
+  - Three helpers now edit `/dst/_claude.json` in a volume with their own tmp/chown conventions (`seedDefaultClaudeJson`, `approveAccountApiKey`, the account-state scrub). Fold them into one "edit `_claude.json` in a volume" helper.
+  - The volume helpers chown by uid `1000`, not by name; true for every docker image today.
+
+- **A docker box whose host repo sits under `/tmp/claude-<uid>/` can't start claude.** The `.git` is bind-mounted at its host path, so docker creates `/tmp/claude-1000` in the box as root, and claude refuses it as its temp dir ("owned by uid 0 … Refusing to use it") and exits; the `-i` job still reports `done`. Hit only when the repo lives in a Claude Code scratch dir (e.g. testing from inside a box). Setting `CLAUDE_CODE_TMPDIR` in the box would avoid it.
 
 ## Harness gaps
 

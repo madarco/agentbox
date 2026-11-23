@@ -45,6 +45,7 @@ import {
   setInstallMethodNative,
   trustWorkspace,
 } from './hooks-filter.js';
+import { defaultBoxClaudeJson } from './claude-json-defaults.js';
 
 /** Workspace path inside every cloud sandbox — matches the Docker model. */
 const CLOUD_WORKSPACE = '/workspace';
@@ -103,16 +104,7 @@ async function buildBoxClaudeJsonFromHost(opts: {
     }
   }
   if (working === undefined || working === null) {
-    working = {
-      installMethod: 'native',
-      autoUpdates: false,
-      autoUpdatesProtectedForNative: true,
-      // Pre-accept onboarding so the in-box Claude doesn't show the theme
-      // picker on first run. AgentBox installing implies the user has
-      // already used Claude Code on the host.
-      hasCompletedOnboarding: true,
-      projects: { [CLOUD_WORKSPACE]: { hasTrustDialogAccepted: true } },
-    };
+    working = defaultBoxClaudeJson(CLOUD_WORKSPACE);
   } else {
     working = filterHostHooks(working, hostHome).data;
     working = stripHubMcpServers(working, hubSecretsOnHost(hostHome)).data;

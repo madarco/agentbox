@@ -88,6 +88,8 @@ describe('seeding a named account volume (llm-accounts Phase 2)', () => {
       { syncFromHost: true, image: 'img' },
     );
     expect(seedScript).not.toContain('--exclude=/.credentials.json');
+    // Whatever _claude.json lands in the volume is marked onboarded.
+    expect(seedScript).toContain('jq ".hasCompletedOnboarding = true"');
     // The raw host file is copied; an overlay, if any, keeps oauthAccount.
     if (overlay) expect(overlay).toHaveProperty('oauthAccount');
     // Default volume: settings are unchanged (no overlay written for them).
