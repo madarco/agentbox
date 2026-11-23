@@ -170,6 +170,107 @@ keeps the library copy, pi and openclaw keep the carried one.
    opencode, pi and openclaw skills ONLY from that volume. Retiring it now would
    drop them. Revisit with the carry-exclusion item.
 7. **Docs**: public skills page (every agent), plan status.
+## Phase 5 — implementation plan (2026-11-23)
+
+In the plan doc's Phase 5 section. Built: origin/policy/pending on `meta.json`;
+hub-side git and marketplace fetch (`skill-sources.ts`); per-box served-set
+records written by the relay on `skills.get`; `skills.sync` fan-out over
+`Provider.exec`; the `/api/v1` routes; `agentbox skills add | import [--link] |
+unlink | refresh | update | diff | policy | ls`; the PC relay's linked-folder
+watcher.
+
+## Open items from Phase 5
+
+Fixed in the PR from the `/code-review medium` and the live check: the diff
+route returned skill content on the plain API key (now the tarball's elevated
+read); a discard didn't sync running boxes; a policy set on a pre-Phase-5 skill
+was dropped on the next upload (skipping approval); approval kept the old
+description; marketplace `skills` paths replaced `skills/` instead of adding to
+it; `diff --from/--to` refused the 12-character versions the CLI prints;
+`git@host:repo.git` was split at the user's `@`; the parent `skills` command's
+`--yes` / `--allow-findings` swallowed the subcommands' flags; a loopback
+`file://` source was refused before the allowance applied.
+
+- **No periodic refresh.** A git or marketplace skill is re-fetched only by
+  `agentbox skills refresh` (or `POST /skills/{name}/refresh`). A hub timer
+  (`refreshAllSkills` exists) with a config key is the follow-up.
+- **The box record is written when the relay SERVES the set, not when ctl has
+  installed it.** A box whose sync then fails reads as current. A
+  `skills.report` RPC from ctl after a pass would make it exact (needs a new
+  image).
+- **`boxes/<boxId>/skills.json` is not removed on destroy.** A few hundred bytes
+  per destroyed box; the fan-out skips it (the box no longer resolves).
+- **The fan-out is over `Provider.exec`, not `CloudBoxPoller`** (the poller has
+  no host→box channel). Cost: one provider exec per behind running box; a
+  cloud SDK exec (e2b/vercel/daytona) is slower than a docker exec. Fine at
+  personal scale.
+- **Selecting fan-out targets reads one custody record per live box.** Fine for
+  tens of boxes; cache if a hub grows to hundreds.
+- **Linked uploads from another PC are accepted.** The open question (refuse a
+  folder source from a different `machineId`?) stays open; the hub currently
+  takes the latest upload from any PC, and its origin then names that PC.
+- **Private git repos on a control box** need git credentials in the hub
+  process's environment (a credential helper or `gh auth setup-git`). Errors
+  come back as the git message. Not configured by `hub deploy`.
+- **Codex marketplaces** (`~/.codex/.tmp/marketplaces`) are not looked up by
+  name; pass the marketplace's URL.
+- **No `skills.update` config key.** Policy is per skill (`agentbox skills
+  policy`), defaulting by origin. A global default would need the hub routes to
+  read config.
+- **`Box.skills` is not on the hub Box payload** (Phase 6: tray badge, box tab).
+  `GET /api/v1/boxes/{id}/skills` carries the same facts.
+- **A refresh that finds a secret-scan hit is reported `blocked`** and not
+  stored; `--allow-findings` on refresh/add overrides it. The findings aren't
+  persisted for the web UI (Phase 6).
+- **A brand-new library skill doesn't reach running boxes** (from the Phase 5
+  `/code-review`). The fan-out targets boxes whose served record holds a behind
+  skill, and a new skill is in no record yet; boxes get it at their next start
+  or with `agentbox skills update --box`. Phase 4's bindings decide which boxes
+  should get it, so the push belongs there.
+- **Refresh clones once per skill** (from the review). A marketplace plugin with
+  N skills fetches the marketplace and plugin repos N times, and marketplace
+  refreshes skip the `ls-remote` short-circuit. Group by `(url, ref)`.
+- **Openclaw bots follow the skill's policy** like any box; the plan's open
+  question (always manual for bots) is unanswered.
+
+### From the independent review of PR #455 (2026-11-23)
+
+Fixed in the PR: a skill folder, the `skills/` folder, a `SKILL.md` or
+`.claude-plugin/marketplace.json` symlinked out of a git/marketplace checkout
+was followed, so a third-party repo could make the hub import files from its
+own disk (each is now resolved and skipped or refused when it lands outside the
+checkout). A Phase 7 box proposal over a git/marketplace skill switched it to
+`upload`/`auto` and ended tracking: it is now refused (change it upstream, or
+discard the skill first). An approved proposal over an upload or linked skill
+keeps the skill's origin and policy, becomes current even under `manual` (the
+approval was for that exact version), and syncs running boxes.
+
+- **L2: git LFS smudge runs.** The hub's fetch runs with the global git-lfs
+  filter, and a repo's `.lfsconfig` can point the LFS endpoint anywhere. Fix:
+  `GIT_LFS_SKIP_SMUDGE=1` plus empty `filter.lfs.*` on every hub git call.
+- **L3: no size cap on the fetch.** The temp checkout and the in-memory read of
+  a repo are unbounded; only each skill is capped. Cap the checkout (or
+  `--filter=blob:limit`) and fail early.
+- **L4: credentials in a git URL** are stored on the origin and returned by
+  `GET /skills`. Owner decision: keep as is, the same as repo URLs elsewhere.
+- **L5: a marketplace.json inherits the caller's `file://` allowance**, and a
+  plugin's `url` can make the hub ssh to any host with the hub owner's keys.
+  Restrict plugin sources to https (and the marketplace's own host) unless the
+  caller asked otherwise.
+- **L6: approval is not tied to the reviewed version.** `skills update` shows
+  the diff, then approves whatever is pending at that moment; a refresh in
+  between swaps it. Pass the reviewed version to `POST /approve` and refuse a
+  mismatch.
+- **L7: `add` replaces a same-named local skill without a diff.** A git skill
+  named like an upload makes the new version current (an explicit add is its
+  own approval) with no prompt showing what changes.
+- **L8: sync timeout and paused boxes.** The 120 s timeout stops waiting but
+  not the exec itself; a paused or snapshot-resumed box never re-pulls (ctl
+  pulls at boot only), so it stays `behind` until a restart or
+  `skills update --box`.
+- **L9: the plan's Phase 5 API list names `POST /skills/refresh`**, which
+  doesn't exist; refresh is per skill (`POST /skills/{name}/refresh`), and the
+  CLI loops over names.
 
 ## Phase 4 — implementation plan (2026-11-23)
 

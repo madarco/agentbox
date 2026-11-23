@@ -1,6 +1,7 @@
 import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
 import { tryGetMachineId } from '@agentbox/config';
 import { createLlmProxyServer, llmProxyCredentialMatches, llmProxyHosts } from './llm-proxy.js';
+import { startSkillLinkWatcher } from './skill-link-watch.js';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
@@ -172,6 +173,8 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
   // Sweep answered prompts + finished create jobs on a resident control box
   // (durable store). A no-op when the store lacks the prune methods (localhost).
   const retention = startRetentionLoop({ store: handle.store, log });
+  // Linked skill folders are a PC's authoring loop; a control box has none.
+  const skillLinks = opts.controlPlane === true ? null : startSkillLinkWatcher({ log });
   // `poke` isn't on the declared QueueLoopHandle (only `stop` is); same cast bin.ts used.
   handle.setQueuePoke(() => {
     (queue as { poke?: () => void }).poke?.();
@@ -189,6 +192,7 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
         persistentBoxes.stop(),
         queue.stop(),
         retention.stop(),
+        skillLinks?.stop() ?? Promise.resolve(),
         hostReachPoller?.stop() ?? Promise.resolve(),
       ]);
       await handle.close();

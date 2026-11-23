@@ -391,9 +391,10 @@ export {
 } from './history/host-settings.js';
 export {
   SKILL_BLOB_CHUNK_BYTES,
+  boxSkillsRecordPath,
   parseSkillSelection,
   resolveBoxSkills,
   runSkillsRpc,
   skillContextForRegistration,
 } from './skills-rpc.js';
-export type { BoxSkill, BoxSkillContext, SkillsGetResult } from './skills-rpc.js';
+export type { BoxSkill, BoxSkillContext, BoxSkillsRecord, SkillsGetResult } from './skills-rpc.js';
