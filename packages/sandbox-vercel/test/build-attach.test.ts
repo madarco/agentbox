@@ -7,7 +7,10 @@ const detectSbx = vi.fn();
 vi.mock('../src/sbx-cli.js', () => ({
   detectSbx: (...a: unknown[]) => detectSbx(...a),
   installSbxHint: () => 'npm install -g sandbox@latest',
+  updateSbxHint: (d: { path?: string }) =>
+    `\`pnpm add -g sandbox@latest\` (the CLI on PATH is ${d.path})`,
   MIN_SBX_MAJOR: 4,
+  BROKEN_NODE_MAJOR: 26,
 }));
 // The SDK exec helper is a build output; pretend it exists so the argv is built.
 vi.mock('node:fs', async (orig) => ({
@@ -85,11 +88,38 @@ describe('buildVercelAttach', () => {
     expect(spec.env).toEqual({ VERCEL_AUTH_TOKEN: 'vca_tok' });
   });
 
-  it('refuses an outdated sbx for the interactive attach with the update command', async () => {
-    detectSbx.mockResolvedValue({ installed: true, bin: 'sbx', version: '3.0.1', outdated: true });
+  it('refuses an outdated sbx on Node 26+ and names the resolved binary', async () => {
+    detectSbx.mockResolvedValue({
+      installed: true,
+      bin: 'sbx',
+      path: '/Users/me/Library/pnpm/sbx',
+      version: '3.0.1',
+      nodeMajor: 26,
+      outdated: true,
+      broken: true,
+    });
     await expect(buildVercelAttach(boxWith('box-1'), 'agent', { command: 'x' })).rejects.toThrow(
-      /3\.0\.1.*4\.x.*npm install -g sandbox@latest/s,
+      /3\.0\.1.*Node 26.*4\.x.*pnpm add -g sandbox@latest.*\/Users\/me\/Library\/pnpm\/sbx/s,
     );
+  });
+
+  it('warns but still attaches with an outdated sbx on Node < 26', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    detectSbx.mockResolvedValue({
+      installed: true,
+      bin: 'sbx',
+      path: '/usr/local/bin/sbx',
+      version: '3.0.1',
+      nodeMajor: 24,
+      outdated: true,
+      broken: false,
+    });
+    const spec = await buildVercelAttach(boxWith('box-1'), 'agent', { command: 'x' });
+    expect(spec.argv.slice(0, 4)).toEqual(['sbx', 'exec', '--sudo', '-i']);
+    expect(write).toHaveBeenCalledWith(
+      expect.stringMatching(/warning: .*3\.0\.1.*older than 4\.x/),
+    );
+    write.mockRestore();
   });
 
   it('runs the detached pre-start on the SDK helper, not sbx, even with an outdated sbx', async () => {

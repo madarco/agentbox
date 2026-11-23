@@ -1069,9 +1069,12 @@ snapshots and `sandbox.domain(port)` public preview URLs. The shape in brief:
   fill the fourth slot from `agentbox.yaml`'s `expose:` ports.
 - **No SSH → two attach transports** (`build-attach.ts`). The interactive PTY
   drives the host's Vercel `sandbox` CLI (`sbx exec -i`), gated on `sbx` >= 4
-  (`MIN_SBX_MAJOR`): sbx 3.x bundles undici 7.26, and under Node 26 that
-  dispatcher makes `fetch` skip content decoding, so every compressed response
-  fails with "Sandbox API request failed … 200 OK". The detached `-i` pre-start
+  (`MIN_SBX_MAJOR`) only when that `sbx` runs on Node >= 26 (`BROKEN_NODE_MAJOR`,
+  read from its shebang or PATH `node`); on older Node an outdated `sbx` only
+  warns. sbx 3.x bundles undici 7.26, and under Node 26 that dispatcher makes
+  `fetch` skip content decoding, so every compressed response fails with
+  "Sandbox API request failed … 200 OK". The update hint names the resolved
+  binary and uses `pnpm add -g` for a pnpm global install. The detached `-i` pre-start
   and `logs` spawn `exec-helper.cjs` instead, which runs the command on the
   in-process `@vercel/sandbox` SDK (staged at `runtime/vercel/exec-helper.cjs`
   in the CLI and as `vercel-exec-helper.cjs` in the hub standalone), so a

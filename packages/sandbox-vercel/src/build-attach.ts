@@ -34,10 +34,18 @@ import {
   type BuildAttachOptions,
 } from '@agentbox/core';
 import { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
-import { detectSbx, installSbxHint, MIN_SBX_MAJOR } from './sbx-cli.js';
+import {
+  BROKEN_NODE_MAJOR,
+  detectSbx,
+  installSbxHint,
+  MIN_SBX_MAJOR,
+  updateSbxHint,
+} from './sbx-cli.js';
 import { ensureFreshCredentials, resolveCredentials } from './sdk.js';
 
 const SELF = dirname(fileURLToPath(import.meta.url));
+
+let warnedOutdated = false;
 
 /**
  * Resolve `exec-helper.cjs`. The published CLI stages it at
@@ -111,11 +119,22 @@ export async function buildVercelAttach(
         `\`agentbox vercel login\` (it installs it) or \`${installSbxHint()}\`.`,
     );
   }
-  if (det.outdated) {
+  // An outdated sbx fails only under Node >= 26 (its bundled undici); on older
+  // Node it still works, so refuse only the broken pairing and warn otherwise.
+  if (det.broken) {
     throw new Error(
-      `The Vercel \`sandbox\` CLI on this machine is ${det.version ?? 'too old'}; interactive attach ` +
-        `needs ${MIN_SBX_MAJOR}.x or newer (older builds fail on newer Node with ` +
-        `"Sandbox API request failed"). Update it with \`${installSbxHint()}\` or \`agentbox vercel login\`.`,
+      `The Vercel \`sandbox\` CLI on this machine is ${det.version ?? 'too old'} running on Node ` +
+        `${det.nodeMajor}; that pairing fails with "Sandbox API request failed … 200 OK". ` +
+        `Interactive attach needs ${MIN_SBX_MAJOR}.x or newer — update it with ${updateSbxHint(det)} ` +
+        'or `agentbox vercel login`.',
+    );
+  }
+  if (det.outdated && !warnedOutdated) {
+    // Once per process: the dashboard builds an attach per pane.
+    warnedOutdated = true;
+    process.stderr.write(
+      `warning: the Vercel \`sandbox\` CLI ${det.version ?? ''} is older than ${MIN_SBX_MAJOR}.x and ` +
+        `stops working on Node ${BROKEN_NODE_MAJOR}+; update it with ${updateSbxHint(det)}.\n`,
     );
   }
 

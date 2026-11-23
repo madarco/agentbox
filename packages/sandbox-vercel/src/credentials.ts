@@ -38,7 +38,9 @@ import {
   installSbxHint,
   loginSbx,
   MIN_SBX_MAJOR,
+  BROKEN_NODE_MAJOR,
   resetSbxCache,
+  updateSbxHint,
 } from './sbx-cli.js';
 import { createProject, getUser, listProjects, type VercelProject } from './vercel-rest.js';
 
@@ -303,29 +305,32 @@ async function ensureSbxInstalled(): Promise<{ bin: string } | null> {
     }
     sp.stop(`Installed sandbox CLI${det.version ? ` ${det.version}` : ''}.`);
   } else if (det.outdated) {
-    // An old CLI breaks interactive attach on newer Node (see MIN_SBX_MAJOR).
+    // An old CLI breaks interactive attach on Node 26+ (see MIN_SBX_MAJOR).
     // Login itself still works on it, so a declined update is a warning only.
     const doUpdate = exitOnCancel(
       await confirm({
-        message: `The Vercel sandbox CLI ${det.version ?? ''} is older than ${MIN_SBX_MAJOR}.x and breaks interactive attach on newer Node. Update it now? (${installSbxHint()})`,
+        message: `The Vercel sandbox CLI ${det.version ?? ''}${det.path ? ` at ${det.path}` : ''} is older than ${MIN_SBX_MAJOR}.x and breaks interactive attach on Node ${BROKEN_NODE_MAJOR}+. Update it now? (${installSbxHint(det)})`,
         initialValue: true,
       }),
     );
     if (doUpdate) {
       const sp = spinner();
       sp.start('Updating the Vercel sandbox CLI…');
-      const ok = await installSbx();
+      const before = det;
+      const ok = await installSbx(before);
       resetSbxCache();
       det = await detectSbx();
       if (!ok || det.outdated) {
         sp.stop('Update failed.');
-        log.warn(`Could not update the sandbox CLI — run \`${installSbxHint()}\` manually.`);
+        log.warn(
+          `Could not update the sandbox CLI — run ${updateSbxHint(det.path ? det : before)} manually.`,
+        );
       } else {
         sp.stop(`Updated sandbox CLI${det.version ? ` to ${det.version}` : ''}.`);
       }
     } else {
       log.warn(
-        `Update it with \`${installSbxHint()}\` before using \`agentbox shell|claude|codex|opencode\` on Vercel boxes.`,
+        `Update it with ${updateSbxHint(det)} before using \`agentbox shell|claude|codex|opencode\` on Vercel boxes.`,
       );
     }
   }

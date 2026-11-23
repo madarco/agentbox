@@ -210,7 +210,7 @@ Plan:
 
 1. `packages/sandbox-vercel/src/exec-helper.ts`, a CJS bundle like E2B's `attach-helper.cjs`: connects with the in-process `@vercel/sandbox` SDK, runs one command as `vscode`, streams stdout/stderr, exits with its code. Credentials ride the child env, never argv.
 2. `buildVercelAttach` returns the helper argv for `detached` and `logs`. `sbx exec -i` stays only for the interactive PTY.
-3. `detectSbx` parses the version and flags anything below major 4 as outdated. The interactive attach refuses an outdated `sbx` with the update command; `agentbox vercel login` offers to update it, like it offers the install. `installSbx` installs `sandbox@latest`.
+3. `detectSbx` parses the version and flags anything below major 4 as outdated. The interactive attach refuses an outdated `sbx` only when it runs on Node 26+ (it still works on older Node, so there it warns), naming the resolved binary and its package manager in the update command; `agentbox vercel login` offers to update it, like it offers the install. `installSbx` installs `sandbox@latest`.
 4. Raise the `undici` floor to 7.30 so the in-process SDK is safe on Node 26 in the workspace lock as well as in npm installs.
 5. Stage the helper in the CLI runtime (`runtime/vercel/exec-helper.cjs`) and the hub standalone.
 

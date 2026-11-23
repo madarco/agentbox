@@ -19,7 +19,7 @@ import {
   secretsPath,
 } from './credentials.js';
 import { readPreparedState } from './prepared-state.js';
-import { detectSbx, installSbxHint } from './sbx-cli.js';
+import { detectSbx, installSbxHint, updateSbxHint } from './sbx-cli.js';
 
 interface LoginOpts {
   status?: boolean;
@@ -54,7 +54,7 @@ async function printStatus(): Promise<void> {
     const det = await detectSbx();
     lines.push('  auth:   Vercel CLI (sandbox) login');
     lines.push(
-      `  cli:    ${det.installed ? `installed${det.version ? ` ${det.version}` : ''}${det.outdated ? ` (outdated — run \`${installSbxHint()}\`)` : ''}` : `not installed — run \`${installSbxHint()}\``}`,
+      `  cli:    ${det.installed ? `installed${det.version ? ` ${det.version}` : ''}${det.outdated ? ` (outdated${det.broken ? ', broken on this Node' : ''} — run ${updateSbxHint(det)})` : ''}` : `not installed — run \`${installSbxHint()}\``}`,
     );
     if (s.cli) {
       if (!s.cli.loggedIn) {
