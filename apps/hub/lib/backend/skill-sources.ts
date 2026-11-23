@@ -74,7 +74,9 @@ export function parseGitSpec(
     }
   } else {
     const at = rest.lastIndexOf('@');
-    if (at > rest.lastIndexOf('/') && at > 0) {
+    // `git@host:repo.git` has no `/`; its `@` is the scp user, not a ref.
+    const scpUser = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:/.test(rest) && at === rest.indexOf('@');
+    if (at > rest.lastIndexOf('/') && at > 0 && !scpUser) {
       ref = rest.slice(at + 1) || undefined;
       rest = rest.slice(0, at);
     }
@@ -309,14 +311,15 @@ export function resolvePluginLocation(manifest: unknown, plugin: string): Plugin
       `no plugin '${plugin}' in this marketplace${names.length ? ` (has: ${names.join(', ')})` : ''}`,
     );
   }
+  // Custom `skills` paths supplement the default `skills/` folder, as in Claude Code.
   const skillsField = entry.skills;
-  const skillPaths = (
+  const extra =
     typeof skillsField === 'string'
       ? [skillsField]
       : Array.isArray(skillsField)
         ? skillsField.filter((s): s is string => typeof s === 'string')
-        : ['skills']
-  ).map((s) => cleanRel(s, 'skills path'));
+        : [];
+  const skillPaths = [...new Set(['skills', ...extra].map((s) => cleanRel(s, 'skills path')))];
   const src = entry.source;
   if (typeof src === 'string') {
     const root = typeof m.metadata?.pluginRoot === 'string' ? m.metadata.pluginRoot : '';

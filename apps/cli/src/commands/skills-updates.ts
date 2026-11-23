@@ -33,6 +33,13 @@ function collect(value: string, prev: string[] | undefined): string[] {
   ];
 }
 
+/** Skill content (diff) is an elevated read: send the admin token when this PC holds it. */
+async function adminToken(): Promise<{ adminToken?: string }> {
+  const { resolveCustodyTarget } = await import('./control-plane.js');
+  const t = await resolveCustodyTarget(undefined, { quiet: true }).catch(() => null);
+  return t?.adminToken ? { adminToken: t.adminToken } : {};
+}
+
 function interactive(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
@@ -353,7 +360,7 @@ const updateCommand = new Command('update')
             fail(`${t.name}: refusing to apply without --yes (no terminal to confirm on)`);
             continue;
           }
-          const d = await client.skillDiff(t.name);
+          const d = await client.skillDiff(t.name, await adminToken());
           process.stdout.write(`${renderSkillDiff(d)}\n\n`);
           const ok = await confirm({
             message: `Apply ${t.name} ${short(t.current)} -> ${short(t.pending.version)} (${originLabel(t)})?`,
@@ -384,6 +391,7 @@ const diffCommand = new Command('diff')
     await withHubClient(workspaceHub(), async (client) => {
       try {
         const d = await client.skillDiff(name, {
+          ...(await adminToken()),
           ...(f.from ? { from: f.from } : {}),
           ...(f.to ? { to: f.to } : {}),
         });

@@ -140,6 +140,16 @@ watcher.
 
 ## Open items from Phase 5
 
+Fixed in the PR from the `/code-review medium` and the live check: the diff
+route returned skill content on the plain API key (now the tarball's elevated
+read); a discard didn't sync running boxes; a policy set on a pre-Phase-5 skill
+was dropped on the next upload (skipping approval); approval kept the old
+description; marketplace `skills` paths replaced `skills/` instead of adding to
+it; `diff --from/--to` refused the 12-character versions the CLI prints;
+`git@host:repo.git` was split at the user's `@`; the parent `skills` command's
+`--yes` / `--allow-findings` swallowed the subcommands' flags; a loopback
+`file://` source was refused before the allowance applied.
+
 - **No periodic refresh.** A git or marketplace skill is re-fetched only by
   `agentbox skills refresh` (or `POST /skills/{name}/refresh`). A hub timer
   (`refreshAllSkills` exists) with a config key is the follow-up.
@@ -171,6 +181,14 @@ watcher.
 - **A refresh that finds a secret-scan hit is reported `blocked`** and not
   stored; `--allow-findings` on refresh/add overrides it. The findings aren't
   persisted for the web UI (Phase 6).
+- **A brand-new library skill doesn't reach running boxes** (from the Phase 5
+  `/code-review`). The fan-out targets boxes whose served record holds a behind
+  skill, and a new skill is in no record yet; boxes get it at their next start
+  or with `agentbox skills update --box`. Phase 4's bindings decide which boxes
+  should get it, so the push belongs there.
+- **Refresh clones once per skill** (from the review). A marketplace plugin with
+  N skills fetches the marketplace and plugin repos N times, and marketplace
+  refreshes skip the `ls-remote` short-circuit. Group by `(url, ref)`.
 - **Openclaw bots follow the skill's policy** like any box; the plan's open
   question (always manual for bots) is unanswered.
 

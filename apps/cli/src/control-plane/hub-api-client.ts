@@ -1461,12 +1461,25 @@ export class HubApiClient {
     return this.request('PATCH', `/skills/${encodeURIComponent(name)}`, { policy });
   }
 
-  skillDiff(name: string, opts: { from?: string; to?: string } = {}): Promise<HubApiSkillDiff> {
+  /** File content, so elevated like {@link downloadSkill}. */
+  async skillDiff(
+    name: string,
+    opts: { from?: string; to?: string; adminToken?: string } = {},
+  ): Promise<HubApiSkillDiff> {
     const q = new URLSearchParams();
     if (opts.from) q.set('from', opts.from);
     if (opts.to) q.set('to', opts.to);
     const qs = q.toString();
-    return this.request('GET', `/skills/${encodeURIComponent(name)}/diff${qs ? `?${qs}` : ''}`);
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/skills/${encodeURIComponent(name)}/diff${qs ? `?${qs}` : ''}`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'X-Agentbox-Admin-Token': opts.adminToken ?? this.token,
+        },
+      },
+    );
+    return this.parseRaw(res);
   }
 
   boxSkills(boxId: string): Promise<HubApiBoxSkills> {

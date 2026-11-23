@@ -60,6 +60,8 @@ export interface SkillVersionMeta {
   source: SkillSource;
   /** The git commit it was read at (git and marketplace origins). */
   commit?: string;
+  /** This version's SKILL.md description (absent on versions stored before Phase 5). */
+  description?: string;
 }
 
 /**
@@ -393,6 +395,7 @@ async function importLocked(
     // Re-uploading a version it already has keeps when it first arrived.
     uploadedAt: known && !stored.changed ? known.uploadedAt : now,
     source: meta.source ?? {},
+    description: meta.description,
     ...(input.commit ? { commit: input.commit } : {}),
   };
   const origin: SkillOrigin =
@@ -410,7 +413,7 @@ async function importLocked(
   // different kind of source (a PC upload over a git skill) starts from its own
   // default, because the upload is the user's explicit act.
   const keptPolicy =
-    input.policy ?? (prev?.policy && prev.origin?.kind === origin.kind ? prev.policy : undefined);
+    input.policy ?? (prev?.policy && originOf(prev).kind === origin.kind ? prev.policy : undefined);
   const policy = keptPolicy ?? defaultPolicy(origin);
 
   const prevCurrentOk = Boolean(prev && prev.versions.some((v) => v.sha256 === prev.current));
@@ -474,7 +477,14 @@ export async function approveSkillUpdate(
       throw new SkillsError('not_found', `skill '${name}' has no version ${to.slice(0, 12)}`);
     }
     const from = meta.current;
-    const next: SkillMeta = { ...meta, current: to, updatedAt: now.toISOString() };
+    const desc = meta.versions.find((v) => v.sha256 === to)?.description;
+    const next: SkillMeta = {
+      ...meta,
+      current: to,
+      updatedAt: now.toISOString(),
+      // A held import kept the old description; the approved version brings its own.
+      ...(desc !== undefined ? { description: desc } : {}),
+    };
     delete next.pending;
     if (meta.pending && meta.pending !== to) next.pending = meta.pending;
     await writeMeta(store, next);
@@ -495,6 +505,27 @@ export async function setSkillPolicy(
     await writeMeta(store, next);
     return summarize(next)!;
   });
+}
+
+/** A full version id from a full id or a unique prefix (min 7 hex) the CLI printed. */
+export async function resolveSkillVersion(
+  store: SkillsStore,
+  name: string,
+  ref: string,
+): Promise<string> {
+  const meta = await readMeta(store, name);
+  if (!meta) throw new SkillsError('not_found', `no skill '${name}' on this hub`);
+  if (!/^[0-9a-f]{7,64}$/.test(ref)) {
+    throw new SkillsError('invalid_request', `'${ref}' is not a version (7 to 64 hex characters)`);
+  }
+  const hits = meta.versions.filter((v) => v.sha256.startsWith(ref));
+  if (hits.length === 1) return hits[0]!.sha256;
+  throw new SkillsError(
+    hits.length === 0 ? 'not_found' : 'invalid_request',
+    hits.length === 0
+      ? `skill '${name}' has no version ${ref}`
+      : `version ${ref} is ambiguous for skill '${name}'`,
+  );
 }
 
 /** Every skill's meta (for refresh and box status). */

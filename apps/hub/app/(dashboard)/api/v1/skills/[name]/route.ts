@@ -66,7 +66,10 @@ export async function DELETE(
   if (store instanceof Response) return store;
   const { name } = await ctx.params;
   try {
-    return ok({ name, ...(await discardSkill(store, name)) });
+    const res = await discardSkill(store, name);
+    // Boxes holding it are now behind (the skill is gone): sync removes it.
+    backendOrNull()?.skillsChanged([name]);
+    return ok({ name, ...res });
   } catch (err) {
     return failFromSkills(err, 'skill discard failed');
   }

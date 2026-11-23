@@ -19,6 +19,7 @@ import { diffSkillVersions, type SkillDiff } from './skill-diff';
 import { syncSkillBoxes, type SkillBoxesDeps, type SkillSyncOutcome } from './skill-boxes';
 import {
   approveSkillUpdate,
+  resolveSkillVersion,
   readMeta,
   SkillsError,
   type SkillsStore,
@@ -149,7 +150,9 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
       if (!(await readMeta(store, name))) {
         throw new SkillsError('not_found', `no skill '${name}' on this hub`);
       }
-      return diffSkillVersions(store, name, opts);
+      const from = opts.from ? await resolveSkillVersion(store, name, opts.from) : undefined;
+      const to = opts.to ? await resolveSkillVersion(store, name, opts.to) : undefined;
+      return diffSkillVersions(store, name, { ...(from ? { from } : {}), ...(to ? { to } : {}) });
     },
 
     syncSkillBoxes: (opts = {}) => syncSkillBoxes(boxDeps(), opts),

@@ -435,4 +435,7 @@ export const skillsCommand = new Command('skills')
     });
   });
 
+// The parent's own `--yes` / `--allow-findings` would otherwise swallow the same
+// flags given to a subcommand (`skills update x --yes`).
+skillsCommand.enablePositionalOptions();
 for (const sub of skillsSubcommands) skillsCommand.addCommand(sub);

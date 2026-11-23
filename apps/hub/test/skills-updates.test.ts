@@ -184,7 +184,7 @@ describe('git sources', () => {
       url: 'https://h/x.git',
       ref: 'f'.repeat(40),
       path: 'p/q',
-      skillPaths: ['custom'],
+      skillPaths: ['skills', 'custom'],
     });
     expect(() => resolvePluginLocation(m, 'npm')).toThrow(/can't fetch/);
     expect(() => resolvePluginLocation(m, 'nope')).toThrow(/no plugin 'nope'/);
@@ -420,5 +420,56 @@ describe('skills backend', () => {
     await expect(
       b.addSkills({ git: { url: 'file:///nonexistent-p5' } }, { allowFile: true }),
     ).rejects.toThrow(/git /);
+  });
+});
+
+describe('review fixes', () => {
+  it('keeps a policy set on a pre-Phase-5 skill (no origin) across an upload', async () => {
+    const store = memStore();
+    await importSkill(store, { name: 's', meta: meta(sha('a')), body: body('A') });
+    // A meta written before Phase 5 carries no origin.
+    const m = (await readMeta(store, 's'))!;
+    delete m.origin;
+    await store.put('skills/s/meta.json', Buffer.from(JSON.stringify(m)));
+    await setSkillPolicy(store, 's', 'manual');
+    const r = await importSkill(store, { name: 's', meta: meta(sha('b')), body: body('B') });
+    expect(r.held).toBe(true);
+  });
+
+  it('approval brings the approved version’s description', async () => {
+    const store = memStore();
+    await importSkill(store, {
+      name: 's',
+      meta: meta(sha('a')),
+      body: body('A'),
+      origin: gitOrigin,
+    });
+    await importSkill(store, {
+      name: 's',
+      meta: { ...meta(sha('b')), description: 'New words.' },
+      body: body('B'),
+      origin: gitOrigin,
+    });
+    expect((await readMeta(store, 's'))?.description).toBe('A skill.');
+    await approveSkillUpdate(store, 's');
+    expect((await readMeta(store, 's'))?.description).toBe('New words.');
+  });
+
+  it('resolves a printed version prefix', async () => {
+    const { resolveSkillVersion } = await import('../lib/backend/skills');
+    const store = memStore();
+    await importSkill(store, { name: 's', meta: meta(sha('a')), body: body('A') });
+    expect(await resolveSkillVersion(store, 's', 'aaaaaaaaaaaa')).toBe(sha('a'));
+    await expect(resolveSkillVersion(store, 's', 'bbbbbbb')).rejects.toThrow(/no version/);
+  });
+
+  it('parses an scp URL without a slash, and marketplace skills paths add to skills/', () => {
+    expect(parseGitSpec('git@git.example.com:skills.git')).toEqual({
+      url: 'git@git.example.com:skills.git',
+    });
+    expect(
+      resolvePluginLocation({ plugins: [{ name: 'p', source: './p', skills: ['./extra'] }] }, 'p')
+        .skillPaths,
+    ).toEqual(['skills', 'extra']);
   });
 });
