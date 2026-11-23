@@ -49,7 +49,13 @@ export async function hostProjectDecisions(
       ...(f.originUrl ? { repoUrl: f.originUrl } : {}),
       mode,
       allowed: capture && value,
-      reason: !capture ? 'history.capture off' : mode !== 'inherit' ? 'project' : value ? 'global' : 'off',
+      reason: !capture
+        ? 'history.capture off'
+        : mode !== 'inherit'
+          ? 'project'
+          : value
+            ? 'global'
+            : 'off',
     });
   }
   return { enabled, projects };
@@ -65,7 +71,10 @@ export async function setHostSessionsEnabled(enabled: boolean): Promise<void> {
  * the folder, which is what makes a folder agentbox never created a box for
  * (a desktop-app-only project) known to the watcher.
  */
-export async function setHostSessionsProject(folder: string, mode: HostProjectMode): Promise<string> {
+export async function setHostSessionsProject(
+  folder: string,
+  mode: HostProjectMode,
+): Promise<string> {
   const abs = await realpath(resolve(folder)).catch(() => resolve(folder));
   if (mode === 'inherit') await unsetConfigValue('project', KEY, abs);
   else await setConfigValue('project', KEY, mode === 'allow', abs);

@@ -488,7 +488,11 @@ describe('host sessions (Phase 5)', () => {
 
   it('keys a host session by its PC, with no box', async () => {
     const { svc, repo } = await service();
-    const text = line({ type: 'user', timestamp: '2026-11-23T10:00:00Z', message: { content: 'hi' } });
+    const text = line({
+      type: 'user',
+      timestamp: '2026-11-23T10:00:00Z',
+      message: { content: 'hi' },
+    });
     expect(await svc.ingest(hostFrame('pc-a', text))).toMatchObject({ ok: true });
     const [s] = await repo.listSessions();
     expect(s).toMatchObject({
@@ -501,7 +505,9 @@ describe('host sessions (Phase 5)', () => {
       turns: 1,
     });
     expect(await svc.listSessions({ host: 'pc-a' })).toHaveLength(1);
-    expect(await repo.getFile('host:pc-a', 'claude', `projects/-Users-me-r/${S}.jsonl`)).not.toBeNull();
+    expect(
+      await repo.getFile('host:pc-a', 'claude', `projects/-Users-me-r/${S}.jsonl`),
+    ).not.toBeNull();
   });
 
   it('refuses a host frame with no host id', async () => {

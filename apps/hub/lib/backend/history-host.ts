@@ -48,7 +48,8 @@ export function createHostSessionsBackend(
   return {
     hostSessionsView: view,
     async updateHostSessions(patch) {
-      if (patch.enabled !== undefined) await (deps.setEnabled ?? setHostSessionsEnabled)(patch.enabled);
+      if (patch.enabled !== undefined)
+        await (deps.setEnabled ?? setHostSessionsEnabled)(patch.enabled);
       if (patch.project) {
         await (deps.setProject ?? setHostSessionsProject)(patch.project.folder, patch.project.mode);
       }

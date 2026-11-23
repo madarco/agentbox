@@ -27,7 +27,8 @@ function memSink() {
     sink: {
       async ingest(f: HistoryFrame): Promise<HistoryIngestResult> {
         const at = held.get(f.path) ?? 0;
-        if (f.offset !== at) return { ok: false, code: 'offset_mismatch', message: 'x', offset: at };
+        if (f.offset !== at)
+          return { ok: false, code: 'offset_mismatch', message: 'x', offset: at };
         frames.push(f);
         const len = Buffer.from(f.data, 'base64').length;
         held.set(f.path, at + len);

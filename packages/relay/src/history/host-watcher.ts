@@ -102,7 +102,9 @@ export function hostWatchedAgents(home: string = homedir()): WatchedAgent[] {
 }
 
 /** Registered project folders plus this PC's box project roots, deduped. */
-export async function knownProjectFolders(): Promise<Array<{ folder: string; originUrl?: string }>> {
+export async function knownProjectFolders(): Promise<
+  Array<{ folder: string; originUrl?: string }>
+> {
   const out = new Map<string, { folder: string; originUrl?: string }>();
   for (const p of await listProjectsConfigured().catch(() => [])) {
     out.set(p.originalPath, {
@@ -252,7 +254,11 @@ export class HostSessionWatcher {
     return this.ticking;
   }
 
-  private emptyStatus(enabled: boolean, target: string | null, errors: string[]): HostSessionsStatus {
+  private emptyStatus(
+    enabled: boolean,
+    target: string | null,
+    errors: string[],
+  ): HostSessionsStatus {
     return {
       enabled,
       target,

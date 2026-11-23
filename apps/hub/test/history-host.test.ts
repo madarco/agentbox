@@ -4,7 +4,10 @@ import { parseHostSessionsPatch } from '../lib/backend/history-host-patch';
 
 describe('PUT /history/host body', () => {
   it('accepts enabled and/or one project', () => {
-    expect(parseHostSessionsPatch({ enabled: true })).toEqual({ ok: true, value: { enabled: true } });
+    expect(parseHostSessionsPatch({ enabled: true })).toEqual({
+      ok: true,
+      value: { enabled: true },
+    });
     expect(parseHostSessionsPatch({ project: { folder: '/a/b', mode: 'deny' } })).toEqual({
       ok: true,
       value: { project: { folder: '/a/b', mode: 'deny' } },
@@ -44,8 +47,15 @@ describe('host sessions backend', () => {
         return f;
       },
     });
-    const v = await backend.updateHostSessions({ enabled: true, project: { folder: '/p', mode: 'deny' } });
+    const v = await backend.updateHostSessions({
+      enabled: true,
+      project: { folder: '/p', mode: 'deny' },
+    });
     expect(calls).toEqual(['enabled=true', '/p=deny']);
-    expect(v).toMatchObject({ enabled: true, projects: [{ folder: '/p', allowed: true }], status: null });
+    expect(v).toMatchObject({
+      enabled: true,
+      projects: [{ folder: '/p', allowed: true }],
+      status: null,
+    });
   });
 });

@@ -1999,7 +1999,7 @@ export function buildOpenApi(): Record<string, unknown> {
                     origin: {
                       type: 'object',
                       description:
-                        'A box session names `boxId`. A session run directly on a PC (`kind: host`) names `hostId` instead; a device-token caller\'s `hostId` is replaced with its verified device id.',
+                        "A box session names `boxId`. A session run directly on a PC (`kind: host`) names `hostId` instead; a device-token caller's `hostId` is replaced with its verified device id.",
                       properties: {
                         kind: { type: 'string', enum: ['box', 'host'] },
                         boxId: { type: 'string' },

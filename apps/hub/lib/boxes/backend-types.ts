@@ -552,7 +552,8 @@ export type BoxLogAttachSpec =
 // packages never enter Next's bundle. This is a pure-type module (no runtime
 // imports) so both the implementation and the ambient global can share it.
 export interface HubBackend
-  extends WorkspaceBackend,
+  extends
+    WorkspaceBackend,
     ManagerBackend,
     TimelineBackend,
     CheckoutBackend,
