@@ -5,6 +5,7 @@ export {
   applyMcpRegistration,
   mcpJsonEntry,
   parseAgentMcpSpec,
+  removeMcpRegistration,
   type McpRegistrationResult,
 } from './registration.js';
 

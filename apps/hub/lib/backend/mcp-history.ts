@@ -19,6 +19,8 @@ const CONDENSED_TEXT_CHARS = 2_000;
 /** Characters of text a single tool reply carries before it pages. */
 const PAGE_CHARS = 48_000;
 const PROPOSAL_PREVIEW_CHARS = 1_500;
+/** The history service's own cap on one listing. */
+const SESSIONS_LIST_MAX = 500;
 
 const str = (v: unknown): string | undefined =>
   typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined;
@@ -153,7 +155,13 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
     async run(args, scope) {
       const history = historyOf(deps);
       const limit = int(args.limit, 20, 1, 100);
-      const offset = int(args.offset, 0, 0, 400);
+      // listSessions answers at most 500 rows, so a page must end inside them.
+      const offset = int(args.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      if (offset + limit > SESSIONS_LIST_MAX) {
+        throw new McpToolError(
+          `offset + limit must be at most ${String(SESSIONS_LIST_MAX)}; narrow with agent, box or since`,
+        );
+      }
       const since = str(args.since);
       const sinceMs = since ? Date.parse(since) : undefined;
       if (sinceMs !== undefined && Number.isNaN(sinceMs)) {
@@ -165,13 +173,16 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
         ...(str(args.box) ? { box: str(args.box) } : {}),
         ...(sinceMs !== undefined ? { sinceMs } : {}),
         ...(projectUrls ? { projectUrls } : {}),
-        limit: offset + limit + 1,
+        limit: Math.min(offset + limit + 1, SESSIONS_LIST_MAX),
       });
       const page = rows.slice(offset, offset + limit);
       return {
         data: {
           sessions: page.map(sessionSummary),
           ...(rows.length > offset + limit ? { nextOffset: offset + limit } : {}),
+          ...(rows.length === SESSIONS_LIST_MAX && offset + limit === SESSIONS_LIST_MAX
+            ? { truncated: true }
+            : {}),
         },
       };
     },
@@ -279,12 +290,10 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
       }
       flushTools();
       const total = await history.repo.countTurns(s.key);
-      if (
-        nextFrom === undefined &&
-        rows.length === span &&
-        from + span < total &&
-        toArg === undefined
-      ) {
+      // More rows exist past this page: the default window, or a `to` beyond
+      // the 200-row cap.
+      const wanted = toArg === undefined ? total - 1 : Math.min(toArg, total - 1);
+      if (nextFrom === undefined && rows.length === span && from + span <= wanted) {
         nextFrom = from + span;
       }
       return {
@@ -398,6 +407,10 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
       if (current && current.bytes.equals(bytes)) {
         return { data: { status: 'unchanged', path, version: current.view.version } };
       }
+      // The proposal is a whole file written against this version. A version
+      // that lands before the approval would be lost under it, so the approval
+      // then writes nothing.
+      const baseVersion = (await memory.versions(key, path)).at(-1)?.version ?? 0;
       const who = scope.kind === 'box' ? `Box ${scope.boxName}` : 'A hub client';
       const reason = str(args.reason);
       const approved = scope.approve({
@@ -409,6 +422,13 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
       void approved
         .then(async (yes) => {
           if (!yes) return;
+          const latest = (await memory.versions(key, path)).at(-1)?.version ?? 0;
+          if (latest !== baseVersion) {
+            deps.log?.(
+              `mcp: memory_propose ${path} approved but not applied: v${String(latest)} landed after the proposal (based on v${String(baseVersion)})`,
+            );
+            return;
+          }
           const r = await memory.memoryPut({
             repoKey: key.repoKey,
             agent: key.agent,
@@ -428,7 +448,9 @@ export function historyMcpTools(deps: HistoryMcpDeps): McpTool[] {
         data: {
           status: 'pending',
           path,
-          message: 'Sent for approval. It becomes the shared version once a human approves it.',
+          baseVersion,
+          message:
+            'Sent for approval. It becomes the shared version once a human approves it, unless the file changes first (then propose again from the new version).',
         },
       };
     },

@@ -372,3 +372,23 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   the outcome. A `memory_get` later shows whether it landed.
 - **`session_get` pages by turn index, not tokens.** A page stops at ~48k
   characters; a single huge turn in `detail: full` is still returned whole.
+- **From the Phase 6 review, not fixed:**
+  - *Registration for agents the box does not run.* `agents.list` carries
+    `mcp` for every agent, so a claude-only box also gets
+    `~/.codex/config.toml` and `~/.config/opencode/opencode.json` written. Gate
+    it on `runsHere` like `service`, and register on `agent add` too (ctl only
+    reconciles at start).
+  - *`~/.claude.json` write race.* ctl's read-modify-rename can drop a write
+    claude made in the same few milliseconds, and a running claude that later
+    saves its in-memory copy drops the entry until ctl's next start. On docker
+    the file is shared by every box. A re-check on an interval, or a flag
+    injection (`--mcp-config`) at every launch path, would remove the race.
+  - *`projectUrlsFor` scans every distinct URL* on each box-scoped list or
+    search. Cache it, or store a `repo_key` column on sessions.
+- **Fixed in the Phase 6 review:** `sessions_list` paging past the 500-row
+  listing, `memory_propose` applying over a newer version (it now records its
+  base version and an approval of a superseded proposal writes nothing),
+  `session_get` dropping `nextFrom` for a capped `to`, other TOML spellings of
+  an existing `agentbox` server (no duplicate table), a box config pulled to a
+  host that had none carrying the box-only server (`agentPull` strips it), and
+  one `git remote get-url` per MCP message (the scope is cached for a minute).

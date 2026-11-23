@@ -275,4 +275,28 @@ describe('history tools', () => {
     expect((await call(server, hubScope, 'memory_list', {})).isError).toBe(true);
     expect((await call(server, boxScope(null), 'memory_list', {})).isError).toBe(true);
   });
+
+  it('drops an approved proposal whose base version was superseded', async () => {
+    const { server, memory } = await setup();
+    let approve!: (v: boolean) => void;
+    const scope = {
+      ...boxScope('github.com/owner/repo'),
+      approve: () => new Promise<boolean>((res) => (approve = res)),
+    };
+    const key = { repoKey: 'github.com/owner/repo', agent: 'claude', scope: 'project' as const };
+    const r = await call(server, scope, 'memory_propose', { path: 'x.md', content: 'mine' });
+    expect(r.structuredContent.baseVersion).toBe(0);
+    await memory.memoryPut({ ...key, path: 'x.md', bytes: Buffer.from('newer'), origin: { boxId: 'b2' } });
+    approve(true);
+    await new Promise((res) => setTimeout(res, 20));
+    expect((await memory.file(key, 'x.md'))?.bytes.toString()).toBe('newer');
+  });
+
+  it('pages sessions_list inside the 500-row listing and flags a capped session_get range', async () => {
+    const { server } = await setup();
+    const big = await call(server, hubScope, 'sessions_list', { offset: 490, limit: 20 });
+    expect(big.isError).toBe(true);
+    const got = await call(server, hubScope, 'session_get', { id: A, detail: 'full', from: 0, to: 1 });
+    expect(got.structuredContent.nextFrom).toBeUndefined();
+  });
 });

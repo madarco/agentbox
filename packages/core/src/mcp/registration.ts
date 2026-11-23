@@ -87,14 +87,75 @@ function applyToml(
   if (!spec.serversPath.every((k) => TOML_KEY.test(k))) {
     return { ok: false, reason: 'serversPath has a key that needs quoting' };
   }
-  const table = [...spec.serversPath, AGENTBOX_MCP_SERVER_NAME].join('.');
   const current = text ?? '';
-  const header = new RegExp(`^\\s*\\[\\s*${table.replace(/\./g, '\\s*\\.\\s*')}\\s*\\]`, 'm');
-  if (header.test(current)) return { ok: true, changed: false, text: current };
-  const args = AGENTBOX_MCP_ARGS.map((a) => JSON.stringify(a)).join(', ');
-  const block = `[${table}]\ncommand = ${JSON.stringify(AGENTBOX_MCP_COMMAND)}\nargs = [${args}]\n`;
+  if (tomlDefinesServer(current, spec.serversPath)) {
+    return { ok: true, changed: false, text: current };
+  }
+  const block = tomlBlock(spec.serversPath);
   const sep = current === '' ? '' : current.endsWith('\n') ? '\n' : '\n\n';
   return { ok: true, changed: true, text: `${current}${sep}${block}` };
+}
+
+function tomlBlock(serversPath: readonly string[]): string {
+  const table = [...serversPath, AGENTBOX_MCP_SERVER_NAME].join('.');
+  const args = AGENTBOX_MCP_ARGS.map((a) => JSON.stringify(a)).join(', ');
+  return `[${table}]\ncommand = ${JSON.stringify(AGENTBOX_MCP_COMMAND)}\nargs = [${args}]\n`;
+}
+
+/**
+ * Whether the TOML already names a server `agentbox` under `serversPath`, in
+ * any spelling a parser would merge with ours: a `[a.agentbox]` /
+ * `[a."agentbox"]` header (or a sub-table of it), dotted keys
+ * `a.agentbox.x = …`, an `agentbox = …` key inside `[a]`, or an inline
+ * `a = { agentbox = … }`. Appending next to any of them would be a duplicate
+ * key, which makes the whole file unreadable.
+ */
+function tomlDefinesServer(text: string, serversPath: readonly string[]): boolean {
+  const name = `(?:${AGENTBOX_MCP_SERVER_NAME}|"${AGENTBOX_MCP_SERVER_NAME}"|'${AGENTBOX_MCP_SERVER_NAME}')`;
+  const path = serversPath.map((k) => `(?:${k}|"${k}"|'${k}')`).join('\\s*\\.\\s*');
+  if (new RegExp(`^\\s*\\[\\s*${path}\\s*\\.\\s*${name}\\s*[\\].]`, 'm').test(text)) return true;
+  if (new RegExp(`^\\s*${path}\\s*\\.\\s*${name}\\s*[.=]`, 'm').test(text)) return true;
+  if (new RegExp(`^\\s*${path}\\s*=\\s*\\{[^\\n]*\\b${AGENTBOX_MCP_SERVER_NAME}\\b`, 'm').test(text)) {
+    return true;
+  }
+  // `agentbox = …` as a key of the `[serversPath]` table itself.
+  let inTable = false;
+  const header = new RegExp(`^\\s*\\[\\s*${path}\\s*\\]\\s*(?:#.*)?$`);
+  for (const line of text.split('\n')) {
+    if (/^\s*\[/.test(line)) inTable = header.test(line);
+    else if (inTable && new RegExp(`^\\s*${name}\\s*[.=]`).test(line)) return true;
+  }
+  return false;
+}
+
+/**
+ * Take the AgentBox server back out of `text`, but only the exact entry ctl
+ * writes: a box config pulled to the host must not carry a server whose
+ * command exists only in boxes. Anything else is left as it was.
+ */
+export function removeMcpRegistration(
+  text: string,
+  spec: Pick<AgentMcpSpec, 'format' | 'serversPath' | 'entry'>,
+): { changed: boolean; text: string } {
+  if (spec.format === 'toml') {
+    const block = tomlBlock(spec.serversPath);
+    if (!text.includes(block)) return { changed: false, text };
+    const out = text.replace(`\n\n${block}`, '\n').replace(`\n${block}`, '\n').replace(block, '');
+    return { changed: true, text: out };
+  }
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch {
+    return { changed: false, text };
+  }
+  let node: unknown = root;
+  for (const key of spec.serversPath) node = isRecord(node) ? node[key] : undefined;
+  if (!isRecord(node) || !sameJson(node[AGENTBOX_MCP_SERVER_NAME], mcpJsonEntry(spec.entry))) {
+    return { changed: false, text };
+  }
+  delete node[AGENTBOX_MCP_SERVER_NAME];
+  return { changed: true, text: `${JSON.stringify(root, null, 2)}\n` };
 }
 
 /**
