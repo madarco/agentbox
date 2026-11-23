@@ -159,7 +159,7 @@ export const RESERVED_SKILL_PREFIX = 'agentbox-';
 
 export class SkillsError extends Error {
   constructor(
-    readonly code: 'invalid_request' | 'not_found',
+    readonly code: 'invalid_request' | 'not_found' | 'conflict',
     message: string,
   ) {
     super(message);
@@ -369,6 +369,12 @@ export async function importSkill(
     commit?: string;
     /** Make it current even under `manual` (an explicit add is its own approval). */
     apply?: boolean;
+    /**
+     * Refuse (`conflict`) unless the skill's current version is this one, checked
+     * under the skill's lock; `null` = the skill must not exist yet. The web
+     * editor's optimistic concurrency.
+     */
+    expectCurrent?: string | null;
   },
 ): Promise<ImportResult> {
   assertName(input.name);
@@ -381,6 +387,19 @@ async function importLocked(
 ): Promise<ImportResult> {
   const { name, meta } = input;
   const now = (input.now ?? new Date()).toISOString();
+  if (input.expectCurrent !== undefined) {
+    const cur = (await readSkillMeta(store, name))?.current ?? null;
+    if (cur !== input.expectCurrent) {
+      throw new SkillsError(
+        'conflict',
+        cur === null
+          ? `skill '${name}' was discarded since the editor opened it`
+          : input.expectCurrent === null
+            ? `skill '${name}' already exists; open it to edit`
+            : `skill '${name}' changed since the editor opened it (now ${cur.slice(0, 12)}); reload and edit again`,
+      );
+    }
+  }
   const stored = await store.putStream(tarballPath(name, meta.sha256), input.body, {
     ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
   });
@@ -467,6 +486,7 @@ export async function approveSkillUpdate(
   name: string,
   version?: string,
   now: Date = new Date(),
+  opts: { onlyPending?: boolean } = {},
 ): Promise<{ name: string; from: string; to: string; skill: SkillSummary }> {
   assertName(name);
   return withSkillLock(name, async () => {
@@ -474,6 +494,12 @@ export async function approveSkillUpdate(
     if (!meta) throw new SkillsError('not_found', `no skill '${name}' on this hub`);
     const to = version ?? meta.pending;
     if (!to) throw new SkillsError('invalid_request', `skill '${name}' has no pending update`);
+    if (opts.onlyPending && to !== meta.pending) {
+      throw new SkillsError(
+        'conflict',
+        `skill '${name}': the pending update is ${meta.pending ? meta.pending.slice(0, 12) : 'gone'}, not the reviewed ${to.slice(0, 12)}; review it again`,
+      );
+    }
     if (!meta.versions.some((v) => v.sha256 === to)) {
       throw new SkillsError('not_found', `skill '${name}' has no version ${to.slice(0, 12)}`);
     }

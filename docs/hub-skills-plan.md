@@ -5,8 +5,8 @@
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
 from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3, 4, 5 and 7
-implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
-they left open); Phase 6 not started.
+implemented, and Phase 6's web part (see [`hub-skills-backlog.md`](./hub-skills-backlog.md)
+for what they left open); Phase 6's tray part is the coordinator's.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -825,6 +825,60 @@ above.
 
 **Done:** add a skill from a git URL in the web UI, see it in a new box, update
 it from the tray.
+
+**Implementation plan, web part (2026-11-23).** The tray part is the
+coordinator's, against the routes below.
+
+1. **Skills page** (`app/(dashboard)/skills`, pure `/api/v1` client). Each row
+   shows its origin (upload, linked folder, git, marketplace), the update
+   policy (a toggle, `PATCH /skills/{name}`), and a pending update. Header
+   actions: *Add from git* and *Add from marketplace* (`POST /skills` with
+   `dryRun` first, so the user picks from what the source holds and sees each
+   one's scan findings and problems, then the import), *Refresh all*
+   (`POST /skills/refresh`, already there for the CLI), *New skill*.
+2. **Pending update view**, per row: `GET /skills/{name}/diff`, rendered file
+   by file with a line diff, plus the hub's secret scan of the pending tree, then
+   *Approve* (`POST /skills/{name}/approve`). Per-row *Refresh* for git and
+   marketplace skills; a refresh the scan blocked offers *Fetch anyway*
+   (`allowFindings`).
+3. **SKILL.md editor**: open a skill's SKILL.md, edit, save as a new `upload`
+   version; *New skill* starts from a frontmatter template. The browser can't
+   build a tarball and its tree hash, so one new route does it hub-side:
+   `GET|PUT /api/v1/skills/{name}/skill-md`. `GET` takes the elevated read like
+   `/diff` (it returns content); `PUT {content, base?, allowFindings?}` copies
+   the base version's other files, swaps SKILL.md, checks the frontmatter and
+   the scan, and imports it through `importSkill` (`auto`, so running boxes
+   sync). `base` refuses a save over a version that moved since the editor
+   opened. Saving over a git, marketplace or linked skill makes it an upload,
+   and the editor says so.
+4. **Box proposals**: the page lists the waiting `skills_propose` /
+   `skills_propose_install` approvals with the existing approval buttons, and
+   each version's source (`box <name>`) shows where a proposed version came from.
+5. **Box detail Skills section**: `GET /boxes/{id}/skills` (what the box
+   holds, `behind`, `pending`), *Sync now* (`POST /boxes/{id}/skills/sync`),
+   and a per-skill box-scope enable/disable/inherit (`PUT
+   /skill-bindings?scope=box`), with the library skills the box doesn't hold
+   listed as off.
+6. **Tray badge route**: `GET /api/v1/skill-status` → pending updates plus
+   the boxes behind, one call instead of one `GET /boxes/{id}/skills` per box.
+   Served by the skills backend slice over the box ids it already reaches.
+7. **Diff carries the scan**: `SkillDiff.findings`, the hub's secret scan of
+   the `to` tree, so the pending view shows the findings of what is about to be
+   approved.
+8. **Public docs**: a sweep of `apps/web/content/docs` so the skills pages
+   cover Phases 1-7 and the web UI as built.
+
+**Status (web part): implemented 2026-11-23**, live-checked on an isolated hub
+(scratch HOME, port 18796) with a docker box: a skill added in the web UI from a
+`file://` git repo (dry-run picker, then Add) was linked into a new box's
+`/etc/claude-code/.claude/skills` at boot; a new commit, fetched with the row's
+Refresh, showed as "update waiting" with its line diff and a clean scan in Review
+update, and Approve reached the running box in about 3 seconds. Also checked: New
+skill and Edit (an edit to the git skill became an upload and synced to the box),
+the box page's Sync now, and a box-scope "off" removing a skill on sync.
+Deviations: the box detail page has sections, not tabs, so it is a Skills
+section; scan findings come from the diff route (not stored per version). Open
+items are in [`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 ### Phase 7 — box → library and MCP
 
