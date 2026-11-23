@@ -211,8 +211,11 @@ export class HistoryShipper {
       stats.errors.push(`bindings: ${e instanceof Error ? e.message : String(e)}`);
       return stats;
     }
-    // Only this box's own lines: a checkpoint carries the source box's log.
-    bindings = bindingsForBox(bindings, this.opts.origin.boxId);
+    // Only this box's own lines: a checkpoint carries the source box's log. A
+    // host source synthesizes its bindings from its own files: all its own.
+    if (this.opts.origin.kind !== 'host') {
+      bindings = bindingsForBox(bindings, this.opts.origin.boxId);
+    }
     const seen = new Set<string>();
     for (const b of bindings) {
       const agent = this.opts.agents.find((a) => a.agent === b.agent);
@@ -350,6 +353,7 @@ export class HistoryShipper {
     }
     if (res.code === 'disabled') {
       this.disabled = true;
+      stats.errors.push(`${rel}: disabled: ${res.message}`);
       return 'stop';
     }
     if (res.code !== 'offset_mismatch') {

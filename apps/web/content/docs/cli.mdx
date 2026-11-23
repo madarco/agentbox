@@ -219,9 +219,15 @@ agentbox sessions search flaky test retry
 
 # Download the transcript files byte for byte (main + subagents)
 agentbox sessions download 3e383de9 -o ./transcripts
+
+# Sessions run directly on this PC (opt-in): status, toggle, per-project allow/deny
+agentbox sessions host
+agentbox sessions host on
+agentbox sessions host deny ~/code/private-thing
+agentbox sessions host allow            # the current repo
 ```
 
-The hub records the transcript of every claude, codex, pi and opencode session your boxes run, attributed to its box, and keeps it after the box is destroyed (see [`history.*`](/docs/configuration#history--session-history) for the opt-out and retention). `sessions` reads that record through the hub's [`/api/v1/history`](/docs/api#history) routes. A session is named by its id, by an id prefix of at least 8 characters, or by `<agent>:<id>`. `show` prints the box, the files (the main transcript plus one per subagent), tool counts and the first 40 transcript rows (`--turns <n>`, or `--all`). `download` writes each file to `<dir>/<sessionId>/<path>`, where `path` is the agent-relative path (`projects/-workspace/<id>.jsonl`, `projects/-workspace/<id>/subagents/…`), so a `diff -r` against the box's `~/.claude/` lines up (codex: `sessions/YYYY/MM/DD/rollout-…jsonl` under `~/.codex/`; pi: `sessions/--workspace--/…jsonl` under `~/.pi/agent/`). An opencode session lives in a sqlite database, so what is recorded and downloaded is `agentbox-history/<id>.jsonl`: one JSON line per session, message and part row, written in the box as the rows settle. The bytes are what the box shipped: known secrets were masked before they left the machine, with the length kept. Reads go to the configured hub (a [control box](/docs/deployed-hub) when one is set); `--local` reads this machine's hub instead.
+The hub records the transcript of every claude, codex, pi and opencode session your boxes run (and, opt-in, the claude sessions you run on your PCs: see below), attributed to its box, and keeps it after the box is destroyed (see [`history.*`](/docs/configuration#history--session-history) for the opt-out and retention). `sessions` reads that record through the hub's [`/api/v1/history`](/docs/api#history) routes. A session is named by its id, by an id prefix of at least 8 characters, or by `<agent>:<id>`. `show` prints the box, the files (the main transcript plus one per subagent), tool counts and the first 40 transcript rows (`--turns <n>`, or `--all`). `download` writes each file to `<dir>/<sessionId>/<path>`, where `path` is the agent-relative path (`projects/-workspace/<id>.jsonl`, `projects/-workspace/<id>/subagents/…`), so a `diff -r` against the box's `~/.claude/` lines up (codex: `sessions/YYYY/MM/DD/rollout-…jsonl` under `~/.codex/`; pi: `sessions/--workspace--/…jsonl` under `~/.pi/agent/`). An opencode session lives in a sqlite database, so what is recorded and downloaded is `agentbox-history/<id>.jsonl`: one JSON line per session, message and part row, written in the box as the rows settle. The bytes are what the box shipped: known secrets were masked before they left the machine, with the length kept. Reads go to the configured hub (a [control box](/docs/deployed-hub) when one is set); `--local` reads this machine's hub instead.
 
 | Command             | Useful flags                                                                                                                                 |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -230,7 +236,11 @@ The hub records the transcript of every claude, codex, pi and opencode session y
 | `sessions search`   | `-n, --limit <n>`, `--json`                                                                                                                  |
 | `sessions download` | `-o, --out <dir>`, `--json`                                                                                                                  |
 
-All four take `--local`.
+| `sessions host` | `[status\|on\|off\|allow\|deny\|inherit] [dir]`, `--json` |
+
+All but `host` take `--local`.
+
+**Host sessions.** `sessions host on` turns on the relay's host-session watcher on this PC: the claude sessions you run outside a box (the CLI and the Claude desktop app, which write the same `~/.claude/projects/` tree) are shipped to the hub like a box's, listed with provider `host` and the PC's machine id in the `PC` column. Only project folders agentbox knows on this PC are read (registered projects and the folders of this PC's boxes), never the whole tree. `deny [dir]` keeps one project out whatever the global toggle, `allow [dir]` ships one even with the toggle off (and registers the folder, which is how you add a project you never made a box for), `inherit` goes back to the global value; `dir` defaults to the current repo. The settings are [`history.hostSessions`](/docs/configuration#history--session-history), global and per project. Sessions go to the configured hub: with a [control box](/docs/deployed-hub) set, this PC ships to it with its own device token (`agentbox hub login`), so several PCs land in one history. `sessions host` (status) shows the toggle, each known project's setting and outcome, and the watcher's last pass: where it shipped, how much, and any error. A hub that refuses the uploads (an older control box, a revoked device token) or cannot be reached is left alone for 10 minutes, shown as `paused`. Only a session whose transcript records the project folder as its working directory is shipped, so a similarly named folder never rides along. The watcher runs in this PC's relay and acts on this machine's config, so `host` works locally and takes no `--local`. claude keeps host transcripts for 30 days, so that is as far back as a first upload reaches.
 
 ## Agent memory
 
@@ -281,7 +291,11 @@ and stops. The files come from box agents and your PC's claude reads them, so re
 | `memory show`     | `<path>`, `--version <n>`, `--repo <url>`, `--agent <id>`, `--json`                             |
 | `memory pull`     | `--dir <folder>`, `--prune`, `--dry-run`, `-y, --yes`, `--repo <url>`, `--agent <id>`, `--json` |
 
-All four take `--local`.
+| `sessions host` | `[status\|on\|off\|allow\|deny\|inherit] [dir]`, `--json` |
+
+All but `host` take `--local`.
+
+**Host sessions.** `sessions host on` turns on the relay's host-session watcher on this PC: the claude sessions you run outside a box (the CLI and the Claude desktop app, which write the same `~/.claude/projects/` tree) are shipped to the hub like a box's, listed with provider `host` and the PC's machine id in the `PC` column. Only project folders agentbox knows on this PC are read (registered projects and the folders of this PC's boxes), never the whole tree. `deny [dir]` keeps one project out whatever the global toggle, `allow [dir]` ships one even with the toggle off (and registers the folder, which is how you add a project you never made a box for), `inherit` goes back to the global value; `dir` defaults to the current repo. The settings are [`history.hostSessions`](/docs/configuration#history--session-history), global and per project. Sessions go to the configured hub: with a [control box](/docs/deployed-hub) set, this PC ships to it with its own device token (`agentbox hub login`), so several PCs land in one history. `sessions host` (status) shows the toggle, each known project's setting and outcome, and the watcher's last pass: where it shipped, how much, and any error. A hub that refuses the uploads (an older control box, a revoked device token) or cannot be reached is left alone for 10 minutes, shown as `paused`. Only a session whose transcript records the project folder as its working directory is shipped, so a similarly named folder never rides along. The watcher runs in this PC's relay and acts on this machine's config, so `host` works locally and takes no `--local`. claude keeps host transcripts for 30 days, so that is as far back as a first upload reaches.
 
 ## Lifecycle
 

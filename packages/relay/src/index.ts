@@ -366,6 +366,28 @@ export { dockerHistorySource, untarSingleFile } from './history/docker-source.js
 export { collectHostSecrets } from './history/host-secrets.js';
 export { runHistoryRpc } from './history/rpc.js';
 export {
+  HOST_SESSIONS_STATUS_FILE,
+  HostSessionWatcher,
+  defaultHostSinkResolver,
+  hostWatchedAgents,
+  httpHistorySink,
+  knownProjectFolders,
+  localHostSource,
+  readHostSessionsStatus,
+  type HostProjectStatus,
+  type HostSessionWatcherDeps,
+  type HostSessionsStatus,
+  type HostSink,
+} from './history/host-watcher.js';
+export {
+  hostProjectDecisions,
+  setHostSessionsEnabled,
+  setHostSessionsProject,
+  type HostDecisions,
+  type HostProjectDecision,
+  type HostProjectMode,
+} from './history/host-settings.js';
+export {
   SKILL_BLOB_CHUNK_BYTES,
   parseSkillSelection,
   resolveBoxSkills,

@@ -642,6 +642,10 @@
           "type": "integer",
           "minimum": 1,
           "description": "Days the hub keeps a session after its last activity (default 90)."
+        },
+        "hostSessions": {
+          "type": "boolean",
+          "description": "Ship this PC's own (non-box) agent sessions to the hub (default false). Global: the toggle; project: allow (true) / deny (false)."
         }
       }
     },
