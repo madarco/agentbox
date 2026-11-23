@@ -408,6 +408,8 @@ async function main(): Promise<void> {
     // gzip can't inflate into the hub's memory.
     maxBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES) ?? 100 * 1024 * 1024,
     log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+    // The backend is built just below; an approval lands long after.
+    changed: (names) => globalThis.__AGENTBOX_HUB_BACKEND?.skillsChanged(names),
   });
   // Where this hub's timeline rows go, and where its manager records live. With
   // a control box configured the store (workspaces, tasks, log, managers) is

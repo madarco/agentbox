@@ -363,4 +363,43 @@ describe('skill proposals', () => {
     expect(r.findings.length).toBeGreaterThan(0);
     expect(g.asked[0]!.detail).toMatch(/secret scan: \d+ finding/);
   });
+
+  it('applies an approved proposal under manual, keeps the origin, and syncs boxes', async () => {
+    const store = memStore();
+    await addSkill(store, 'alpha');
+    const { setSkillPolicy } = await import('../lib/backend/skills');
+    await setSkillPolicy(store, 'alpha', 'manual');
+    const changed: string[][] = [];
+    const proposals = createSkillProposals({
+      store,
+      approve: async () => true,
+      changed: (n) => changed.push(n),
+    });
+    await proposals.propose({ name: 'alpha', tarball: writeTar(skillFiles('alpha', 'v2')), box });
+    await settle();
+    const meta = (await readSkillMeta(store, 'alpha'))!;
+    expect(meta.current).toBe(treeHash(skillFiles('alpha', 'v2')));
+    expect(meta.pending).toBeUndefined();
+    expect(meta.policy).toBe('manual');
+    expect(meta.origin?.kind ?? 'upload').toBe('upload');
+    expect(changed).toEqual([['alpha']]);
+  });
+
+  it('refuses a proposal over a skill tracked from git', async () => {
+    const store = memStore();
+    const files = skillFiles('tracked');
+    await importSkill(store, {
+      name: 'tracked',
+      meta: { sha256: treeHash(files), description: 'x', size: 10, files: files.length },
+      body: Readable.from([writeTar(files)]),
+      origin: { kind: 'git', url: 'https://example.com/r.git', commit: 'c'.repeat(40) },
+    });
+    const g = gate();
+    const proposals = createSkillProposals({ store, approve: (_id, req) => g.approve(req) });
+    await expect(
+      proposals.propose({ name: 'tracked', tarball: writeTar(skillFiles('tracked', 'v2')), box }),
+    ).rejects.toThrow(/tracked from a git repo/);
+    expect(g.asked).toHaveLength(0);
+    expect((await readSkillMeta(store, 'tracked'))!.origin?.kind).toBe('git');
+  });
 });

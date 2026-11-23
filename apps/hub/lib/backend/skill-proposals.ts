@@ -19,6 +19,7 @@ import {
 } from '@agentbox/sandbox-core';
 import {
   importSkill,
+  originOf,
   readSkillMeta,
   SKILLS_SCOPE,
   skillNameProblem,
@@ -32,6 +33,8 @@ export interface SkillProposalDeps {
   /** Park an approval in the relay's prompt mailbox under `boxId`; resolves on the answer. */
   approve(boxId: string, req: McpApprovalRequest): Promise<boolean>;
   log?: (line: string) => void;
+  /** An approved proposal moved these skills' current version: sync running boxes. */
+  changed?: (names: string[]) => void;
   /** Proposals waiting for an answer at once (their tarballs are held in memory). */
   maxPending?: number;
   /** Cap on a skill's unpacked bytes (custody's blob cap, by default unbounded here). */
@@ -156,6 +159,21 @@ export interface SkillProposals {
   pending(): number;
 }
 
+/**
+ * A skill tracked from git or a marketplace changes upstream, never from a box:
+ * a box's copy would replace the tracked version and end the tracking. Refused
+ * at propose time and again when the approval lands.
+ */
+function refuseTracked(meta: Awaited<ReturnType<typeof readSkillMeta>>, name: string): void {
+  const kind = meta ? originOf(meta).kind : null;
+  if (kind === 'git' || kind === 'marketplace') {
+    throw new SkillsError(
+      'invalid_request',
+      `${name} is tracked from ${kind === 'git' ? 'a git repo' : 'a marketplace'}; change it upstream, or discard it from the library first`,
+    );
+  }
+}
+
 export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
   const maxPending = deps.maxPending ?? DEFAULT_MAX_PENDING;
   /** `<name>@<version>` of every proposal waiting for an answer. */
@@ -193,6 +211,7 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     const size = files.reduce((n, f) => n + f.data.length, 0);
     const findings = scanSkillFiles(files);
     const prev = await readSkillMeta(deps.store, name);
+    refuseTracked(prev, name);
     const base = { name, version, isNew: !prev, findings };
     // A version the library holds (current or older) is not new: proposing an
     // older one would roll the library back (a stale carried copy).
@@ -275,7 +294,13 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
           );
           return;
         }
+        refuseTracked(now, name);
+        // The approval was for this exact version, so it becomes current even
+        // under a `manual` policy; the skill keeps its origin (a linked folder
+        // stays linked) and its policy.
         const r = await importSkill(deps.store, {
+          ...(now ? { origin: originOf(now) } : {}),
+          apply: true,
           name,
           meta: {
             sha256: version,
@@ -289,6 +314,7 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
         deps.log?.(
           `skills: proposal ${name} from ${input.box.name} approved (${r.version.slice(0, 12)})`,
         );
+        if (r.currentChanged) deps.changed?.([name]);
       })
       .catch((err: unknown) => {
         deps.log?.(
