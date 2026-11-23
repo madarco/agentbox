@@ -11,7 +11,7 @@
  * is omitted; `ensureVolume` is present only when the backend has a volume API.
  */
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
@@ -24,6 +24,7 @@ import type {
   SyncTransport,
   TransportCaps,
 } from '@agentbox/core';
+import { PullTooLargeError } from '@agentbox/core';
 import { quoteShellArgv } from '../shell.js';
 
 export interface CloudSyncTransportInit {
@@ -108,7 +109,7 @@ export function createCloudSyncTransport(init: CloudSyncTransportInit): SyncTran
     async pullTree(
       boxSrcDir: string,
       hostDestDir: string,
-      opts?: { exclude?: string[] },
+      opts?: { exclude?: string[]; maxBytes?: number },
     ): Promise<void> {
       const remoteTar = `/tmp/agentbox-pull-${String(tarSeq++)}.tar`;
       const excludes = (opts?.exclude ?? []).map((e) => `--exclude=${e}`).join(' ');
@@ -116,10 +117,24 @@ export function createCloudSyncTransport(init: CloudSyncTransportInit): SyncTran
       if (pack.exitCode !== 0) {
         throw new Error(`cloud tar of ${boxSrcDir} failed: ${pack.stderr.slice(-200)}`);
       }
+      const max = opts?.maxBytes;
+      if (max !== undefined) {
+        // Refuse a too-big tar before it is downloaded at all...
+        const sized = await backend.exec(handle, `stat -c %s ${remoteTar}`, { noRetry: true });
+        const out = sized.stdout.trim();
+        if (sized.exitCode !== 0 || !/^\d+$/.test(out) || Number(out) > max) {
+          await backend.exec(handle, `rm -f ${remoteTar}`).catch(() => {});
+          throw new PullTooLargeError(boxSrcDir, max);
+        }
+      }
       const stage = await mkdtemp(join(tmpdir(), 'agentbox-pulltree-'));
       const localTar = join(stage, 'tree.tar');
       try {
         await backend.downloadFile(handle, remoteTar, localTar);
+        // ...and again on what actually arrived, since the box answered the first.
+        if (max !== undefined && (await stat(localTar)).size > max) {
+          throw new PullTooLargeError(boxSrcDir, max);
+        }
         await execa('tar', ['-xf', localTar, '-C', hostDestDir], { reject: false });
       } finally {
         await rm(stage, { recursive: true, force: true });

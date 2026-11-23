@@ -413,6 +413,7 @@ export { isSecretFileName, scanSkillFiles, shannonEntropy } from './skills/scan.
 export type { SecretFinding } from './skills/scan.js';
 export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
 export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.js';
+export { SKILL_PROPOSAL_LIMITS } from './skills/proposal-limits.js';
 export type { TarFile } from './skills/tar.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {

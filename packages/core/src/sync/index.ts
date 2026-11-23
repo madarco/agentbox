@@ -10,6 +10,7 @@ export type {
   SyncExecOptions,
   SyncExecResult,
 } from './transport.js';
+export { PullTooLargeError } from './transport.js';
 export type { AgentId, AgentMode, QueueAgentKind } from './agent-kind.js';
 export type {
   AgentCapabilities,

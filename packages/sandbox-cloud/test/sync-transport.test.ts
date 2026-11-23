@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PullTooLargeError } from '@agentbox/core';
 import { makeMockCloudBackend } from '../src/mock-backend.js';
 import { createCloudSyncTransport } from '../src/sync/sync-transport.js';
 
@@ -38,5 +39,30 @@ describe('CloudSyncTransport', () => {
     const t = createCloudSyncTransport({ backend: ephemeral, handle: { sandboxId: 's' } });
     expect(t.caps).toEqual({ persistentVolumes: false, helperContainer: false, ephemeralFs: true });
     expect(t.ensureVolume).toBeUndefined();
+  });
+
+  it('pullTree refuses a tar over maxBytes before downloading it', async () => {
+    const base = makeMockCloudBackend();
+    const handle = await base.provision({ name: 't', image: 'img' });
+    const backend = {
+      ...base,
+      exec: async (h: typeof handle, cmd: string, o?: unknown) => {
+        const r = await base.exec(h, cmd, o as never);
+        return cmd.startsWith('stat -c %s') ? { ...r, stdout: '999999\n' } : r;
+      },
+    } as typeof base;
+    base.clearCalls();
+    const t = createCloudSyncTransport({ backend, handle });
+    await expect(
+      t.pullTree('/home/vscode/.claude/skills/x', '/tmp/x', { maxBytes: 1024 }),
+    ).rejects.toThrow(PullTooLargeError);
+    expect(base.calls.some((c) => c.method === 'downloadFile')).toBe(false);
+  });
+
+  it('pullTree refuses when the box gives no readable size', async () => {
+    const backend = makeMockCloudBackend(); // exec answers '' for everything
+    const handle = await backend.provision({ name: 't', image: 'img' });
+    const t = createCloudSyncTransport({ backend, handle });
+    await expect(t.pullTree('/x', '/tmp/x', { maxBytes: 1024 })).rejects.toThrow(PullTooLargeError);
   });
 });
