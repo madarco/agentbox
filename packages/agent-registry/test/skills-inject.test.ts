@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOX_SKILLS_LIBRARY_DIR, agentLaunchFlags } from '@agentbox/core';
+import { BOX_SKILLS_LIBRARY_DIR, agentLaunchFlags, agentLaunchPrelude } from '@agentbox/core';
 import { BUILTIN_AGENT_SPECS } from '../src/index.js';
 import { OPENCLAW_CONFIG_MERGE_PROGRAM } from '../src/specs/openclaw.js';
 
@@ -34,6 +34,13 @@ describe('every built-in agent declares how the skills library reaches it', () =
       BOX_SKILLS_LIBRARY_DIR,
     ]);
     expect(agentLaunchFlags(spec('codex'))).toEqual(spec('codex').launchFlags);
+  });
+
+  it('only a flag injection gets a launch prelude, which creates the library dir', () => {
+    expect(agentLaunchPrelude(spec('pi'))).toBe(`mkdir -p ${BOX_SKILLS_LIBRARY_DIR} 2>/dev/null; `);
+    for (const id of ['claude', 'codex', 'opencode', 'openclaw']) {
+      expect(agentLaunchPrelude(spec(id))).toBe('');
+    }
   });
 
   it('a malformed plugin flag injection adds nothing instead of failing the launch', () => {

@@ -8,7 +8,7 @@
  * restated; that is what keeps this in step with the cloud stager.
  */
 
-import { agentLaunchFlags } from '@agentbox/core';
+import { agentLaunchFlags, agentLaunchPrelude } from '@agentbox/core';
 import type { LoopbackEndpoint } from '@agentbox/core';
 import { spawnSync } from 'node:child_process';
 import { stat } from 'node:fs/promises';
@@ -278,7 +278,8 @@ export async function startPiSession(opts: StartPiSessionOptions): Promise<void>
   const sessionName = opts.sessionName ?? DEFAULT_PI_SESSION;
   // Declared flags plus the `flag` skills injection (`--skill <library>`).
   const flags = agentLaunchFlags(PI_SPEC);
-  const cmd = [PI_SPEC.binary, ...flags, ...opts.piArgs].map(shQuote).join(' ');
+  // `exec` keeps pi the pane's process; the prelude creates the `--skill` dir.
+  const cmd = `${agentLaunchPrelude(PI_SPEC)}exec ${[PI_SPEC.binary, ...flags, ...opts.piArgs].map(shQuote).join(' ')}`;
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
   for (const [k, v] of Object.entries(PI_BOX_RUN_ENV)) envFlags.push('-e', `${k}=${v}`);

@@ -776,8 +776,9 @@ export interface AgentSkillsSpec {
   /**
    * How the box's library ({@link BOX_SKILLS_LIBRARY_DIR}) reaches the agent,
    * measured per agent in docs/hub-skills-plan.md (Phase 0 and Phase 3). `{dir}`
-   * in an argv is replaced with that path. Every shape tolerates the dir not
-   * existing yet (no library, an older ctl), so the injection is unconditional.
+   * in an argv is replaced with that path. The injection is unconditional; a
+   * `flag` one's launch creates the dir first ({@link agentLaunchPrelude}),
+   * because pi warns when it is missing.
    *
    * - `dir`: ctl symlinks each library skill into this absolute box-local
    *   directory (created with `sudo -n` when root-owned). Additive to the
@@ -817,6 +818,21 @@ export function agentLaunchFlags(spec: Pick<AgentSyncSpec, 'launchFlags' | 'skil
     ...(spec.launchFlags ?? []),
     ...(Array.isArray(argv) ? argv.filter((a) => typeof a === 'string').map(fillDir) : []),
   ];
+}
+
+/**
+ * Shell run before the agent binary on every launch (ends in `; ` when
+ * non-empty). A `flag` injection names the library dir on the command line, and
+ * pi (>= 0.84) prints a "skill path does not exist" block on every launch when
+ * it is missing, which it is whenever the hub serves no library, ctl's sync has
+ * not run yet, or the box is an older snapshot. So the launch creates it. The
+ * path is a constant with no shell metacharacters, so it is safe unquoted inside
+ * either launcher's quoting.
+ */
+export function agentLaunchPrelude(spec: Pick<AgentSyncSpec, 'skills'>): string {
+  return spec.skills?.inject.kind === 'flag'
+    ? `mkdir -p ${BOX_SKILLS_LIBRARY_DIR} 2>/dev/null; `
+    : '';
 }
 
 export interface AgentSyncSpec {

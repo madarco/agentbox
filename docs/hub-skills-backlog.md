@@ -137,7 +137,10 @@ injection Phase 0 measured, declared as data on `AgentSyncSpec.skills`.
 Measured before planning (throwaway container, codex 0.171.0, opencode 1.19.6,
 pi 0.73.1, openclaw 2026.11.6): all three non-`dir` injections tolerate a
 missing directory (a box with no library, or an older ctl), so the injection
-can be unconditional. Same-name collisions between the carried `~/.agents`
+can be unconditional. **Corrected after review (R1 of #445):** pi 0.84.4 and
+1.6.0 (what boxes install) print a "skill path does not exist" block on every
+launch when the `--skill` dir is missing, so the docker and cloud launchers now
+`mkdir -p` it first (`agentLaunchPrelude`), which also covers older snapshots. Same-name collisions between the carried `~/.agents`
 copy and the library copy: codex lists both (user + admin scope), opencode
 keeps the library copy, pi and openclaw keep the carried one.
 
@@ -460,3 +463,21 @@ Later:
 - **Duplicate names in pi and openclaw**: the carried `~/.agents` copy wins over
   the library's, so a skill edited in the library isn't seen there while the
   PC's old copy is carried. Same fix as the carry-exclusion item.
+
+## From the independent review of PR #445 (2026-11-23)
+
+Fixed in the PR: R1, pi's missing `--skill` dir warning (see the Phase 3 plan
+note above).
+
+Later:
+
+- **L1: the startup skills sync is non-blocking** (`packages/ctl/src/commands/daemon.ts`,
+  the `void syncBoxSkills(...)` after `agents.list`). pi and codex can start
+  before it finishes, and miss library skills until they restart. Related to the
+  no-retry item above.
+- **L2: with a library, every box creates `/etc/codex/skills` and
+  `~/.opencode/skills`** whatever its agent, because ctl links into every `dir`
+  injection the descriptors declare. Harmless (empty of anything but links).
+- **L3: the published SDK's `resolveAgentSpec` return type gained two inject
+  kinds** (`flag`, `config`). Additive; ships with the next SDK republish, no
+  `SDK_API_VERSION` bump.

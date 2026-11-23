@@ -57,6 +57,7 @@ export {
   IDENTITY_RULES_SENTINEL,
   BOX_SKILLS_LIBRARY_DIR,
   agentLaunchFlags,
+  agentLaunchPrelude,
 } from './agent-spec.js';
 export type {
   AgentActivityState,
