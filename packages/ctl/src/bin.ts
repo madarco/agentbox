@@ -11,6 +11,7 @@ import { ghCommand } from './commands/gh.js';
 import { toolCommand } from './commands/tool.js';
 import { historyCommand } from './commands/history.js';
 import { skillsCommand } from './commands/skills.js';
+import { mcpCommand } from './commands/mcp.js';
 import { gitCommand } from './commands/git.js';
 import { notifyCommand } from './commands/notify.js';
 import { openCommand } from './commands/open.js';
@@ -68,6 +69,7 @@ program.addCommand(openCommand);
 program.addCommand(toolCommand);
 program.addCommand(historyCommand);
 program.addCommand(skillsCommand);
+program.addCommand(mcpCommand);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);

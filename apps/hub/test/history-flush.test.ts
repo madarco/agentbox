@@ -24,6 +24,39 @@ describe('flushBoxHistory', () => {
     expect(order).toEqual(['flush started', 'timeout', 'settled', 'returned']);
   });
 
+  it('runs the docker in-box flush before the relay read (the row cursor writes first)', async () => {
+    const order: string[] = [];
+    await flushBoxHistory(box('docker'), {
+      relayHistory: {
+        flushBox: async () => void order.push('relay read'),
+        settleBox: async () => undefined,
+      },
+      exec: async () => {
+        order.push('in-box flush');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      probeState: async () => 'running',
+      log: () => {},
+    });
+    expect(order).toEqual(['in-box flush', 'relay read']);
+  });
+
+  it('starts the relay read once the in-box head start is spent, even if the in-box flush hangs', async () => {
+    let read = false;
+    await flushBoxHistory(box('docker'), {
+      relayHistory: {
+        flushBox: async () => void (read = true),
+        settleBox: async () => undefined,
+      },
+      exec: () => new Promise(() => {}), // never answers
+      probeState: async () => 'running',
+      log: () => {},
+      inBoxFirstMs: 10,
+      timeoutMs: 200,
+    });
+    expect(read).toBe(true);
+  });
+
   it('settles after a successful docker flush too', async () => {
     let settled = false;
     await flushBoxHistory(box('docker'), {

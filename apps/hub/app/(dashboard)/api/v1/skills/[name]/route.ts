@@ -6,6 +6,8 @@
 //        running box behind on it syncs; under `manual` it waits as pending.
 // PATCH  /api/v1/skills/{name} {policy: 'auto'|'manual'} — the update policy.
 // DELETE /api/v1/skills/{name} — discard the skill and every stored version.
+//        Its skill bindings stay, so a global `disable` still holds if a skill
+//        of the same name is imported again.
 import { Readable } from 'node:stream';
 import {
   discardSkill,

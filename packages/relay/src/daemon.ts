@@ -11,6 +11,7 @@ import { startQueueLoop } from './queue.js';
 import { startRetentionLoop } from './retention.js';
 import { HostReachPoller, type HostReachDecline } from './host-reach-poller.js';
 import { mirrorHostReachPrompts, type HostReachPromptClient } from './host-reach-prompts.js';
+import { HostSessionWatcher, defaultHostSinkResolver } from './history/host-watcher.js';
 import { existsSync, realpathSync } from 'node:fs';
 import { execa } from 'execa';
 import { drainCpOutbox } from './cp-outbox-drain.js';
@@ -157,6 +158,17 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
     // then transitions creating → running without waiting for the 15s SSE ping.
     onStatusChange: () => handle.hubNotifier.notify(),
   });
+  // Host sessions (agent-history Phase 5): opt-in, re-reads its config every
+  // pass, so it is always constructed and idles until `history.hostSessions`.
+  const hostSessions = new HostSessionWatcher({
+    resolveSink: defaultHostSinkResolver({
+      controlPlaneUrl,
+      isControlBox: opts.controlPlane === true,
+      ...(opts.history ? { local: opts.history } : {}),
+    }),
+    log,
+  });
+  hostSessions.start();
   // Sweep answered prompts + finished create jobs on a resident control box
   // (durable store). A no-op when the store lacks the prune methods (localhost).
   const retention = startRetentionLoop({ store: handle.store, log });
@@ -171,6 +183,7 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
     handle,
     stop: async () => {
       llmProxy?.close();
+      hostSessions.stop();
       await Promise.allSettled([
         autopause.stop(),
         cloudKeepalive.stop(),

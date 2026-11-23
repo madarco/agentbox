@@ -479,6 +479,21 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         return keys;
       });
     },
+    async staleParserSessions(agent, version, limit) {
+      return (
+        db
+          .prepare(
+            'SELECT key FROM history_sessions WHERE agent = ? AND parser_version < ? ORDER BY updated_at DESC LIMIT ?',
+          )
+          .all(agent, version, limit) as Row[]
+      ).map((r) => String(r.key));
+    },
+    async clearSessionTitle(key) {
+      db.prepare('UPDATE history_sessions SET title = NULL WHERE key = ?').run(key);
+    },
+    async setSessionParserVersion(key, version) {
+      db.prepare('UPDATE history_sessions SET parser_version = ? WHERE key = ?').run(version, key);
+    },
     async gcBlobs() {
       const r = db
         .prepare(
@@ -502,6 +517,10 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       if (f.project) {
         where.push("project_repo_url LIKE ? ESCAPE '\\'");
         args.push(`%${f.project.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      }
+      if (f.projectUrls) {
+        where.push(`project_repo_url IN (${f.projectUrls.map(() => '?').join(', ') || 'NULL'})`);
+        args.push(...f.projectUrls);
       }
       if (f.host) {
         where.push('host_id = ?');
@@ -530,19 +549,32 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       return (db.prepare(sql).all(...args, f.limit ?? 50) as Row[]).map(toSession);
     },
 
+    async projectUrls() {
+      return (
+        db
+          .prepare(
+            'SELECT DISTINCT project_repo_url AS u FROM history_sessions WHERE project_repo_url IS NOT NULL',
+          )
+          .all() as Row[]
+      ).map((r) => String(r.u));
+    },
+
     async matchSessionKeys(ref) {
       if (!ref) return [];
       const exact = db
         .prepare('SELECT key FROM history_sessions WHERE key = ? OR session_id = ?')
         .all(ref, ref) as Row[];
       if (exact.length > 0) return exact.map((r) => String(r.key));
-      if (ref.length < 8 || /[%_\\]/.test(ref)) return [];
+      if (ref.length < 8) return [];
+      // opencode ids carry `_` (`ses_…`): escape LIKE's wildcards instead of
+      // refusing them.
+      const pattern = `${ref.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
       return (
         db
           .prepare(
-            'SELECT key FROM history_sessions WHERE session_id LIKE ? ORDER BY updated_at DESC LIMIT 11',
+            "SELECT key FROM history_sessions WHERE session_id LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 11",
           )
-          .all(`${ref}%`) as Row[]
+          .all(pattern) as Row[]
       ).map((r) => String(r.key));
     },
 
@@ -603,22 +635,29 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       ).map((r) => ({ name: String(r.name), count: n(r.c) }));
     },
 
-    async search(q, limit) {
+    async search(q, limit, projectUrls) {
+      // Scoped: only turns of sessions stored under one of these repo URLs.
+      const scope = projectUrls
+        ? `AND t.session_key IN (SELECT key FROM history_sessions WHERE project_repo_url IN (${
+            projectUrls.map(() => '?').join(', ') || 'NULL'
+          }))`
+        : '';
+      const scopeArgs = projectUrls ?? [];
       const rows = fts
         ? (db
             .prepare(
               `SELECT t.session_key, t.role, t.ts,
                  snippet(history_turns_fts, 0, '[', ']', '…', 16) AS snip
                FROM history_turns_fts x JOIN history_turns t ON t.id = x.rowid
-               WHERE history_turns_fts MATCH ? ORDER BY rank LIMIT ?`,
+               WHERE history_turns_fts MATCH ? ${scope} ORDER BY rank LIMIT ?`,
             )
-            .all(q, limit) as Row[])
+            .all(q, ...scopeArgs, limit) as Row[])
         : (db
             .prepare(
-              `SELECT session_key, role, ts, substr(text, 1, 200) AS snip FROM history_turns
-               WHERE text LIKE ? LIMIT ?`,
+              `SELECT t.session_key, t.role, t.ts, substr(t.text, 1, 200) AS snip FROM history_turns t
+               WHERE t.text LIKE ? ${scope} LIMIT ?`,
             )
-            .all(`%${q.replace(/"/g, '')}%`, limit) as Row[]);
+            .all(`%${q.replace(/"/g, '')}%`, ...scopeArgs, limit) as Row[]);
       return rows.map(
         (r): HistorySearchHit => ({
           sessionKey: String(r.session_key),

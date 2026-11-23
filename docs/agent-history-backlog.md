@@ -144,12 +144,142 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   verbatim; a CR/LF or a character above U+00FF in a path makes the response
   throw (500). Use `encodeURIComponent(file.path)`.
 - **Phase 3 id shapes (LATER-7).**
-  - The prefix lookup refuses refs containing `_`; escape with `LIKE … ESCAPE`
-    instead.
+  - ~~The prefix lookup refuses refs containing `_`~~ — fixed in Phase 3 (`LIKE …
+    ESCAPE`), since an opencode id (`ses_…`) is otherwise unreachable by the
+    8-character id `sessions ls` prints.
   - `downloadTarget` skips session ids outside
     `^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$` with a misleading "outside the folder"
     message.
   - Revisit both when codex, pi and opencode ids arrive.
+
+## Phase 3 (other agents)
+
+- **openclaw: only the `main` agent.** The row cursor reads
+  `agents/main/agent/openclaw-agent.sqlite`; sessions of any other openclaw agent
+  id (`openclaw agents add`) are not captured. Fix: a `*` in the `sqlite.db`
+  path, one cursor per matching db.
+- **openclaw: an event rewritten in place is not re-copied.** `transcript_events`
+  has no updated column, so the cursor keys a row on `created_at`; the 20 s
+  settle covers a rewrite during a turn, not a later one
+  (`transcript_rewrite_watermarks` suggests rewrites exist). Rewind / reset make
+  a new window instead, which is captured.
+- **openclaw: cold archives.** Old windows can move out of the db into
+  `agents/<id>/sessions/cold/<sha256>.jsonl.zst`. Anything copied before that is
+  kept; a box whose history predates capture (a restored bot) has those events
+  only in the cold files, which are not read.
+- **openclaw: parse state grows with the session.** The parser remembers every
+  projected event `seq` to drop a re-copied row (opencode does the same per
+  part), so a weeks-long daemon session carries tens of thousands of keys in
+  its state. A per-session high-watermark would do, once rows are known to
+  arrive in `seq` order.
+- **openclaw: a shared volume.** Every session in the db is bound to the box
+  that reads it, which is right for the default per-box volume. An explicit
+  `isolate: false` override (warned at create) puts two boxes on one db: both
+  bind every session, and each takes the per-session cursor over from the
+  other (moving the other's output aside), so turns land under both boxes.
+  Restores and boxes made from a checkpoint are handled (the cursor names its
+  box; an inherited output is moved aside and only new rows are copied).
+  `bot clone` never copies the config volume, so it is not affected.
+- **openclaw: redaction misses its own secrets.** The exact-value list does not
+  hold the gateway token, `~/.openclaw/.env` or the host's
+  `~/.agentbox/openclaw/<box>.env` values, and Telegram bot tokens match no
+  format rule. Escaped JSON inside `event_json` also slips past the
+  `KEY: value` rule (as codex's, #447 L2).
+- **openclaw: cost grows with the db.** Every pass lists every session and
+  their row versions; the full `session_windows` row (last-message preview
+  included) is re-copied on every change; whole sessions are held in memory
+  in 200-row batches.
+- **openclaw: the decompressed copy is never cleaned.** `agentbox-history/`
+  (and `*.from-<box>` files after a restore) grows with the db and rides every
+  bot backup.
+- **openclaw: a stopped daemon.** A read-only reader leaves `-shm`/`-wal`
+  behind when openclaw is not running; harmless only while ctl and openclaw
+  run as the same user.
+- **codex `.jsonl` → `.jsonl.zst`.** Codex compresses cold rollouts and the
+  shipper does not follow the rename. A rollout compressed before its tail was
+  shipped loses that tail (the hub keeps what it has). Boxes ship every 30 s,
+  so only a session that went cold inside one pass is at risk. Fix: treat
+  `<f>.jsonl.zst` as `<f>.jsonl` and decompress at the edge.
+- **codex sub-agent threads.** They are rollouts of their own and ship only
+  when a hook fires with their own `session_id`. Not verified; if hooks only
+  name the root thread, sub-agent rollouts are never bound.
+- **opencode streaming rows.** The row cursor writes a message/part row once it
+  has been quiet for 20 s, and the parser projects a part the first time it
+  sees it. A text part that paused longer than that mid-stream is projected
+  with its early text. Usage is only taken from a completed message, so it is
+  not affected.
+- **Row cursor on a paused docker box.** The destroy flush runs the box's
+  `agentbox-ctl history flush` only when the box is running; a paused box's
+  unsettled opencode rows (the last ~20 s) are not copied out.
+- **Row cursor needs Node ≥ 22.5** (`node:sqlite`) in the box. On an older base
+  it is a no-op and opencode is not captured until the provider is re-baked.
+- **`agentbox-history/` on the shared opencode volume** grows with every bound
+  session and is never cleaned.
+- **Re-parse keeps identity.** The job re-derives turns, usage and title, not
+  `sessionKey`, parent or `child`, which are fixed at a file's first frame. A
+  change to `identify()` needs its own migration.
+- **Re-parse blocks ingest per session.** Each session is re-derived inside the
+  ingest queue, so a very large session holds frames back while it runs.
+- **From the Phase 3 review, not fixed:**
+  - *opencode final flush ships unsettled parts.* A destroy's flush ignores
+    `settleMs`, so a part still streaming is written, projected with its
+    partial text, and its complete copy is skipped as seen. Fix: let a later,
+    longer copy of a text part replace the turn (needs a record update path).
+  - *Rows that never become due* (a NULL parent column, a parent from an
+    unbound session, a NULL `updated`) keep the row cursor's stamp cache off,
+    so the db is reopened and scanned every pass. Drop such rows from
+    `pending`.
+  - *Glob expansion cost on clouds.* ctl expands codex's
+    `*/*/*/rollout-*-<id>.jsonl` with a `readdir` per wildcard segment, per
+    bound session, per pass. Cache the resolved path per session id, or list
+    the root once per pass as the docker `scan` does.
+  - *Session-id regex in three places* (`row-cursor.ts`, `shipper.ts`, ctl's
+    `appendHistoryBinding`). Export one constant from `core/history`.
+- **codex hooks in the TUI: they fire (checked 2026-11-23).** One interactive
+  codex 0.171 TUI turn (`--enable hooks --dangerously-bypass-hook-trust`, as
+  agentbox launches it) ran SessionStart/Stop, the session bound and shipped,
+  and `sessions search` found it. `ctl/src/codex-scraper.ts`'s note that
+  hooks.json often does not fire in TUI mode predates this codex; the scraper
+  stays the activity source, but history attribution does not depend on it.
+  The hooks now buffer stdin and background ctl (#447 review R1): with the
+  in-box daemon stopped a hook returned in 10 ms and still wrote the binding.
+- **From the review of #447 (2026-11-23), deferred:**
+  - *L2: opencode rows reach the redactor double-escaped.* A row's JSON
+    columns (`data`) are written as strings inside the line, so a quoted
+    `"API_KEY": "…"` inside them is `\"API_KEY\": \"…\"` and the
+    `KEY: value` rule misses it (exact host-secret values and known formats
+    still match). Fix: parse JSON columns in `rowLine` and write them as
+    objects.
+  - *L3: the first copy of a session is synchronous and in memory.* The row
+    cursor reads every due row of a session, builds all its lines and appends
+    them in one write, inside the ctl daemon's event loop. A large first copy
+    (an old session bound late) blocks the daemon and holds it all in memory.
+    Batch the append per query page.
+  - *L4: the cursor temp file is always `<path>.tmp`.* Two writers (a destroy's
+    `history flush` racing the daemon's tick, or the same opencode session in
+    two boxes on the shared volume) can rename each other's temp. Harmless
+    today (the parser dedupes), but use a unique temp name.
+  - *L5: opencode binds at its first `session.idle`.* A session whose first
+    turn is still running at a destroy or a crash is never bound, so nothing
+    of it ships.
+  - *L6: a failed re-parse saves the parse state at the failure point.* The
+    next ingest frame then parses from a state that does not match the file's
+    offset. Do not save the state of a file whose re-parse failed (the session
+    stays stale and is redone anyway).
+  - *L7: opencode revert.* A revert deletes message/part rows in the db; the row
+    cursor only sees rows that exist, so the hub keeps the reverted turns.
+  - *L8: smaller items.*
+    - `agentbox-ctl history flush` builds its `HistoryLoop` with no logger, so
+      row-cursor errors during a destroy are silent.
+    - opencode's parse state (seen parts, roles) grows with the session and is
+      rewritten with every frame.
+    - The docker `scan` lists every codex and pi rollout on the shared volume
+      on every pass (5 levels deep), not just the bound sessions'.
+    - The `session` table has no settle time, so a busy session's row (its
+      `time_updated` moves with every message) is re-copied on every pass.
+- **Boxes built before Phase 3** bind claude sessions only. Codex, pi and
+  opencode report their session ids from hooks baked into the image (docker)
+  or the provider's base snapshot (clouds); rebuild or re-bake to capture them.
 
 ## Phase 4 (memory in the hub)
 
@@ -238,3 +368,161 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
       images: one harmless log line.
     - A seed reply of 1000 x 256 KB could exceed the cloud bridge's body cap
       and fail forever. Real sets are KBs.
+
+## Phase 5 (host sessions + multiple PCs)
+
+- **Tray toggle against a remote hub.** `GET|PUT /api/v1/history/host` reads and
+  writes the watcher of the machine the hub runs on. A tray pointed at a
+  control box therefore toggles the control box's watcher, not the PC's. A
+  per-device setting carried by the hub (the PC's relay reading it back) would
+  fix it; `agentbox sessions host` on the PC works today.
+- **Only claude is host-watched.** A host agent needs a `hostKey` on its
+  transcripts entry. codex keys rollouts by date, not by project, so its host
+  filter has to read `session_meta.cwd` (Phase 3 territory); pi keys by
+  `--<cwd dashed>--`, which is a second `hostKey` kind.
+- **Sessions started below the project root.** claude keys a transcript by the
+  cwd it was launched in, so a session run in `repo/sub` lives under another
+  key and is not shipped. Same for a path claude spells differently from the
+  registered one (macOS `/private/var` realpath), and for long paths claude
+  truncates and hashes. Fix: match keys by prefix, or read each file's `cwd`.
+- **Host memory.** The watcher ships transcripts only. Host memory still reaches
+  the hub only as the hub machine's own import at a box seed (Phase 4); a
+  second PC's host memory never does.
+- **Restart cost (L2 again).** After every relay restart the watcher re-learns
+  each host file's cursor: one first frame, then a re-hash of the ingested
+  prefix. On a PC like the one measured in Phase 0 that is ~2 GB read once per
+  restart. The empty-data probe + persisted edge cursor from L2 fixes it.
+- **Same session on the host and in a box.** `agentbox fork` copies a host
+  session into a box under the same id. With both shipped, the session's turns
+  count twice and its row keeps the first origin (the "same session from two
+  boxes" item, with a host origin as one side).
+- **Admin-key callers name their own `hostId`.** A device-token caller's host
+  frames are stamped with the verified device; a caller with the shared admin
+  key or API key is trusted, like box frames (see "REST ingest trusts the
+  caller's origin").
+- **`PC` column shows a machine-id prefix,** not the device label the hub has
+  in its devices table.
+- **Per-pass cost with the feature off (review of this phase).** Every 60 s the
+  watcher loads the effective config of every known folder, even when nothing
+  is allowed, and lists each allowed project dir twice. Cheap at tens of
+  folders. Skip folders with no project override while the global toggle is
+  off, and count sessions from the shipper's own listing.
+- **`sessions host` acts locally, not through `/api/v1/history/host`** (review
+  of this phase). Deliberate: the watcher and its config are this PC's, and a
+  PC on a remote hub may run no local hub to ask. Both paths share
+  `host-settings.ts`, so the rules cannot drift; only the folder argument is
+  resolved by the CLI (project root of the cwd).
+
+## From the review of #449 (2026-11-23)
+
+Fixed in #449: B1 (a refusing or unreachable hub is backed off for 10
+minutes per target, shown as `backoffUntil` in the status, instead of every
+session being re-read and re-posted each pass) and B2 (claude's dashed key is
+lossy, so a session ships only when its transcript's first `cwd` is the allowed
+folder). Still open:
+
+- **L1: PUT/tray allow below an `agentbox.yaml`.** The project key is written
+  to the nearest project root, so allowing a subfolder of a project writes the
+  allow on the parent while reporting the subfolder. PUT also accepts a folder
+  that does not exist.
+- **L2: global off is not a kill switch.** A project `allow` ships with the
+  global toggle off (by design, it is the per-project opt-in). The tray must
+  not present "off" as "nothing ships": show the allowed projects next to it.
+- **L3: origin URL shipped raw.** `projectRepoUrl` comes from `.git/config`
+  verbatim, so an `https://user:token@…` origin reaches the hub and the status
+  file. Box sessions have the same gap. Strip userinfo at the edge.
+- **L4: host secrets miss the control-plane credentials.** `collectHostSecrets`
+  does not read `control-plane.env` (API key, admin token, admin password) or
+  this PC's `abdev_` device token, and falls back to formats-only redaction if
+  it throws.
+- **L5: status file rewritten every 60 s** even with the feature off.
+- **L6: `GET /history/host` answers device-token callers** with the hub
+  machine's project folder list. Refuse it for devices like the PUT.
+- **L7: `stop()` does not await a running pass.**
+- **L8: a project's `relay.controlPlaneUrl` is ignored.** The watcher always
+  ships to the global hub (the daemon's), not a per-project one.
+
+## Phase 6 (MCP)
+
+- **Workspace scope.** A box is scoped to its repository only. The plan says
+  "project, or workspace when it has one", but sessions carry no workspace id
+  yet (`history_sessions` has no `workspace_id`), so there is nothing to scope
+  a workspace by. Add the column at ingest, then widen a box's scope to its
+  workspace's repos.
+- **Sessions with no repo URL are invisible to boxes.** A session is matched by
+  `repoKey(project_repo_url)`. `HistoryRelay` stamps that URL from the
+  registration's `originUrl` only, so a session shipped after a relay restart
+  (registration re-pushed without `originUrl`, see Phase 4's live-check note)
+  has none and no box can find it. Use the same folder-`origin` fallback the
+  memory relay uses (`MemoryRelay.boxIdentity`) when stamping transcripts.
+- **`local:` repos.** A repo with no `origin` keys as `local:<machine>:<root>`
+  for memory, but its sessions carry no URL, so such a box sees no sessions.
+- **`usage_query`.** In the plan's tool list; it waits for Phase 7's usage API.
+- **Registration timing on a fresh cloud box.** ctl writes the MCP entries when
+  `agents.list` first answers (retried with backoff). An agent launched before
+  that starts without the server until its next launch. Docker is unaffected
+  after the first box (the entry is on the shared config volume).
+- **Older images on a shared docker volume.** claude's and codex's MCP files are
+  on the shared config volume, so a box from an image older than this phase
+  sees the `agentbox` entry too, and its ctl has no `mcp` command: the agent
+  shows one failed MCP server. Harmless; goes away with a rebuild.
+- **openclaw** gets no registration. It is a service agent with its own MCP
+  config layer; needs an `mcp` spec kind for its config file.
+- **Host-reach path.** `mcp.*` from a box served through another PC's
+  host-reach executor (`daemon.ts`) is not routed (answers unknown method),
+  like `history.*`.
+- **Hub-scope proposals.** `memory_propose` from `/api/mcp` parks its approval
+  under the pseudo box id `hub`; the web approvals list shows it, the tray may
+  group it under no box. Its content is not redacted (the caller holds the hub
+  token already).
+- **No approval id in the reply.** `memory_propose` returns `pending` without
+  the approval id (`askPrompt` mints it internally), so an agent cannot poll
+  the outcome. A `memory_get` later shows whether it landed.
+- **`session_get` pages by turn index, not tokens.** A page stops at ~48k
+  characters; a single huge turn in `detail: full` is still returned whole.
+- **From the Phase 6 review, not fixed:**
+  - *Registration for agents the box does not run.* `agents.list` carries
+    `mcp` for every agent, so a claude-only box also gets
+    `~/.codex/config.toml` and `~/.config/opencode/opencode.json` written. Gate
+    it on `runsHere` like `service`, and register on `agent add` too (ctl only
+    reconciles at start).
+  - *`~/.claude.json` write race.* ctl's read-modify-rename can drop a write
+    claude made in the same few milliseconds, and a running claude that later
+    saves its in-memory copy drops the entry until ctl's next start. On docker
+    the file is shared by every box. A re-check on an interval, or a flag
+    injection (`--mcp-config`) at every launch path, would remove the race.
+  - *`projectUrlsFor` scans every distinct URL* on each box-scoped list or
+    search. Cache it, or store a `repo_key` column on sessions.
+- **Fixed in the Phase 6 review:** `sessions_list` paging past the 500-row
+  listing, `memory_propose` applying over a newer version (it now records its
+  base version and an approval of a superseded proposal writes nothing),
+  `session_get` dropping `nextFrom` for a capped `to`, other TOML spellings of
+  an existing `agentbox` server (no duplicate table), a box config pulled to a
+  host that had none carrying the box-only server (`agentPull` strips it), and
+  one `git remote get-url` per MCP message (since removed: the scope reads the registration only).
+- **From the review of #450 (2026-11-23), deferred:**
+  - *Inline `mcp_servers = { … }` in codex's config.toml.* Appending a
+    `[mcp_servers.agentbox]` table after an inline `mcp_servers` table makes
+    the file invalid TOML. The check now skips an inline table that names
+    `agentbox`; one that does not should be skipped too (with a log line).
+  - *`initialize` and `tools/list` go to the host.* Each is a relay round trip
+    with a 60 s timeout, so a cloud box whose PC is off shows a slow, then
+    failed, MCP server on every agent launch. ctl could answer both locally
+    and forward only `tools/call`.
+  - *`memory_propose` gaps.* `agent` is free-form (any name creates a memory
+    set); it ignores the project's `history.capture` opt-out; the approver sees
+    only the first 1,500 characters; a box with `autoApproveHostActions`
+    auto-approves it; a pending approval is lost on a hub restart (the
+    proposal is then neither applied nor reported).
+  - *Small items.* The hub logs one `rpc box=… method=mcp.message` line per MCP
+    message; the reply duplicates its payload (`content[0].text` and
+    `structuredContent`).
+  - *Re-registration without a repo.* The scope uses only the registration's
+    `repoKey`/`originUrl`. A registration re-pushed with neither (after a
+    relay restart, see Phase 4) leaves the box with no repo, so it sees
+    nothing until it registers again. Fail-closed by design.
+- **Fixed in the review of #450:** the host-side setup no longer puts the hub
+  token in an agent config (`agentbox mcp`, a stdio proxy that reads it at run
+  time), and staging `_claude.json` for a box (docker seed and cloud overlay)
+  drops any MCP server carrying the hub token or pointing at a hub `/api/mcp`.
+  The box scope no longer falls back to a live `git remote get-url`.

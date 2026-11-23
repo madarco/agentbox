@@ -49,7 +49,7 @@ describe('formatting', () => {
       boxId: 'b1',
       boxName: 'smoke',
       provider: 'docker',
-      hostId: null,
+      hostId: '0123456789abcdef',
       projectRepoUrl: null,
       parentSessionId: null,
       title: 'say hi',
@@ -61,8 +61,16 @@ describe('formatting', () => {
       createdAt: '2026-11-22T10:00:00Z',
       updatedAt: '2026-11-22T10:00:00Z',
     });
-    expect(row.slice(0, 6)).toEqual(['aaaaaaaa', 'claude', 'smoke', 'docker', '2', '1.2k/30']);
-    expect(row[7]).toBe('say hi');
+    expect(row.slice(0, 7)).toEqual([
+      'aaaaaaaa',
+      'claude',
+      'smoke',
+      'docker',
+      '01234567',
+      '2',
+      '1.2k/30',
+    ]);
+    expect(row[8]).toBe('say hi');
     const base = {
       index: 0,
       ts: null,

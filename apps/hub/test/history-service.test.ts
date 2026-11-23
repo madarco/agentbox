@@ -361,6 +361,20 @@ describe('history reads (Phase 2)', () => {
     expect(await svc.resolveSession('aaaaaaa%')).toMatchObject({ ok: false, code: 'not_found' });
   });
 
+  it('resolves a prefix containing `_` (opencode ids) literally', async () => {
+    const { svc } = await service();
+    await new Edge(svc, 'box1', 'projects/-workspace/ses_df9264f6cffe.jsonl').append(
+      line({ type: 'user', message: { content: 'x' } }),
+    );
+    await new Edge(svc, 'box1', 'projects/-workspace/sesXdf9264f6cffe.jsonl').append(
+      line({ type: 'user', message: { content: 'y' } }),
+    );
+    expect(await svc.resolveSession('ses_df92')).toEqual({
+      ok: true,
+      key: 'claude:ses_df9264f6cffe',
+    });
+  });
+
   it('reports an ambiguous prefix with its candidates', async () => {
     const { svc } = await seeded();
     await new Edge(
@@ -472,5 +486,46 @@ describe('history reads (Phase 2)', () => {
     );
     const rows = await svc.sessionTurns(`claude:${S}`, 0, 10);
     expect(rows.map((r) => r.text ?? r.name)).toEqual(['first', 'reply', 'Read', 'second']);
+  });
+});
+
+describe('host sessions (Phase 5)', () => {
+  const hostFrame = (hostId: string, data: string, offset = 0, prefix = ''): HistoryFrame => ({
+    origin: { kind: 'host', boxId: '', provider: 'host', hostId, projectRepoUrl: 'git@x:o/r.git' },
+    agent: 'claude',
+    path: `projects/-Users-me-r/${S}.jsonl`,
+    offset,
+    sha256Prefix: prefix,
+    sha256: createHash('sha256').update(data).digest('hex'),
+    data: Buffer.from(data).toString('base64'),
+  });
+
+  it('keys a host session by its PC, with no box', async () => {
+    const { svc, repo } = await service();
+    const text = line({
+      type: 'user',
+      timestamp: '2026-11-23T10:00:00Z',
+      message: { content: 'hi' },
+    });
+    expect(await svc.ingest(hostFrame('pc-a', text))).toMatchObject({ ok: true });
+    const [s] = await repo.listSessions();
+    expect(s).toMatchObject({
+      key: `claude:${S}`,
+      boxId: null,
+      boxName: null,
+      provider: 'host',
+      hostId: 'pc-a',
+      projectRepoUrl: 'git@x:o/r.git',
+      turns: 1,
+    });
+    expect(await svc.listSessions({ host: 'pc-a' })).toHaveLength(1);
+    expect(
+      await repo.getFile('host:pc-a', 'claude', `projects/-Users-me-r/${S}.jsonl`),
+    ).not.toBeNull();
+  });
+
+  it('refuses a host frame with no host id', async () => {
+    const { svc } = await service();
+    expect(await svc.ingest(hostFrame('', 'x\n'))).toMatchObject({ ok: false, code: 'invalid' });
   });
 });

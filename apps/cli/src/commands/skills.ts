@@ -14,6 +14,11 @@ import { cancel, confirm, isCancel, log, multiselect, note, select, spinner } fr
 import { loadEffectiveConfig } from '@agentbox/config';
 import { homedir } from 'node:os';
 import { withHubClient } from '../control-plane/with-hub.js';
+import {
+  skillsBindingsCommand,
+  skillsDisableCommand,
+  skillsEnableCommand,
+} from './skills-bindings.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import type { HubApiClient } from '../control-plane/hub-api-client.js';
 import { skillsSubcommands } from './skills-updates.js';
@@ -375,6 +380,12 @@ export const skillsCommand = new Command('skills')
   .option('--discard <names>', 'delete these skills (every version) from the hub', collect)
   .option('-y, --yes', 'skip confirms (discard; replacing a different local copy on download)')
   .option('--allow-findings', 'upload skills the secret scan flagged')
+  // Without it the parent swallows a subcommand's own options (`skills
+  // bindings --json` would set the parent's --json). Not inherited from the root.
+  .enablePositionalOptions()
+  .addCommand(skillsEnableCommand)
+  .addCommand(skillsDisableCommand)
+  .addCommand(skillsBindingsCommand)
   .action(async (opts: SkillsOpts) => {
     const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
     // Downloads read skill BYTES, which the hub gates like a custody read: the
@@ -435,7 +446,4 @@ export const skillsCommand = new Command('skills')
     });
   });
 
-// The parent's own `--yes` / `--allow-findings` would otherwise swallow the same
-// flags given to a subcommand (`skills update x --yes`).
-skillsCommand.enablePositionalOptions();
 for (const sub of skillsSubcommands) skillsCommand.addCommand(sub);

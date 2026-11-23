@@ -16,7 +16,10 @@
  * agent package.
  */
 
-import type { AgentId, SyncTransport } from '@agentbox/core';
+import { readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
+import { removeMcpRegistration, type AgentId, type SyncTransport } from '@agentbox/core';
 import { resolveAgentSpec } from './registry.js';
 import { pullFlatConfigViaTransport } from './agent-pull.js';
 
@@ -65,8 +68,32 @@ export function agentPull(
   opts: AgentPullOptions = {},
 ): Promise<AgentPullResult> {
   const mod = MODULES.get(agent);
-  if (mod) return mod.pull(t, opts);
-  return pullFlatConfigViaTransport(agent, t, opts);
+  const pulled = mod ? mod.pull(t, opts) : pullFlatConfigViaTransport(agent, t, opts);
+  return opts.dryRun ? pulled : pulled.then((r) => stripBoxMcp(agent, r, opts.hostHome));
+}
+
+/**
+ * A config file newly pulled to the host may carry the AgentBox MCP server ctl
+ * registered in the box (`AgentSyncSpec.mcp`); its command exists only in
+ * boxes, so the host's agent would fail to start it. Take that exact entry out.
+ */
+async function stripBoxMcp(
+  agent: AgentId,
+  r: AgentPullResult,
+  hostHome: string = homedir(),
+): Promise<AgentPullResult> {
+  const mcp = resolveAgentSpec(agent).mcp;
+  if (!mcp || !mcp.file.startsWith('~/')) return r;
+  const name = basename(mcp.file);
+  if (!r.newItems.some((i) => basename(i) === name)) return r;
+  const path = join(hostHome, mcp.file.slice(2));
+  try {
+    const out = removeMcpRegistration(await readFile(path, 'utf8'), mcp);
+    if (out.changed) await writeFile(path, out.text);
+  } catch {
+    /* not there (pulled elsewhere) or unreadable: nothing to strip */
+  }
+  return r;
 }
 
 /**

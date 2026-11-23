@@ -1,3 +1,4 @@
+import type { HostSessionsBackend } from '../backend/history-host';
 import type { AddBoxAgentResult } from '../backend/box-agents';
 import type { SkillsBackend } from '../backend/skills-backend';
 import type {
@@ -558,7 +559,8 @@ export interface HubBackend
     TimelineBackend,
     CheckoutBackend,
     AccountBackend,
-    SkillsBackend {
+    SkillsBackend,
+    HostSessionsBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
   // backend — so the backend produces everything else. `live` (opt-in, expensive
   // — mirrors providers' `?freshness=1`) refreshes each cloud box's `state` with

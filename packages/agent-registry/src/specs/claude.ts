@@ -138,6 +138,8 @@ export const claudeSpec: AgentSyncSpec = {
         format: 'jsonl',
         mode: 'append',
         sessionFiles: ['<sessionId>.jsonl', '<sessionId>/subagents/*.jsonl'],
+        // On a PC, `~/.claude/projects/<the cwd with every non-alphanumeric as ->`.
+        hostKey: 'dashed-path',
       },
     ],
     // Auto-memory: a MEMORY.md index plus one markdown file per fact. The box
@@ -241,6 +243,9 @@ export const claudeSpec: AgentSyncSpec = {
       label: 'the /agentbox-setup skill',
     },
   ],
+  // AgentBox MCP server (docs/agent-history-plan.md, Phase 6): user scope in
+  // ~/.claude.json (the symlink to the volume's _claude.json), written by ctl.
+  mcp: { file: '~/.claude.json', format: 'json', serversPath: ['mcpServers'], entry: 'stdio' },
   // The hub's skills library: claude reads `<managed>/.claude/skills` from its
   // managed-settings dir with no flag and no name prefix (measured, Phase 0), and
   // `/etc/claude-code` is in the container layer / VM disk, never the shared

@@ -32,6 +32,8 @@ const API_EVENTS = '/api/events';
 // The job log stream, likewise polled by headless clients — it belongs to the API
 // surface so a failure is a JSON 401 and not a redirect the client can't follow.
 const API_JOBS = '/api/jobs/';
+// The MCP endpoint (POST /api/mcp): an API client like /api/v1, so a JSON 401.
+const API_MCP = '/api/mcp';
 // Endpoints that never require auth: liveness + the spec + its docs page (no state),
 // and the two halves of device enrollment a not-yet-enrolled PC must reach. Those
 // two hand out nothing without an owner's approval in the UI (see
@@ -71,7 +73,10 @@ function apiUnauthorized(): NextResponse {
 
 function isApiSurface(pathname: string): boolean {
   return (
-    pathname.startsWith(API_PREFIX) || pathname === API_EVENTS || pathname.startsWith(API_JOBS)
+    pathname.startsWith(API_PREFIX) ||
+    pathname === API_EVENTS ||
+    pathname.startsWith(API_JOBS) ||
+    pathname === API_MCP
   );
 }
 

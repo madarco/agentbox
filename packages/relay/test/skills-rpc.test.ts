@@ -9,7 +9,7 @@ import {
   parseSkillSelection,
   resolveBoxSkills,
   runSkillsRpc,
-  selectSkills,
+  skillContextForRegistration,
 } from '../src/skills-rpc.js';
 
 const sha = (c: string): string => c.repeat(64);
@@ -57,10 +57,6 @@ describe('skill selection', () => {
     });
     expect(parseSkillSelection({})).toBeUndefined();
     expect(parseSkillSelection('nope')).toBeUndefined();
-    expect(selectSkills(['a', 'b', 'c'], undefined)).toEqual(['a', 'b', 'c']);
-    expect(selectSkills(['a', 'b', 'c'], { exclude: ['b'] })).toEqual(['a', 'c']);
-    expect(selectSkills(['a', 'b', 'c'], { include: ['c', 'z'] })).toEqual(['c']);
-    expect(selectSkills(['a', 'b'], { none: true })).toEqual([]);
   });
 });
 
@@ -156,5 +152,81 @@ describe('served-set record (Phase 5)', () => {
     await runSkillsRpc(store, undefined, 'skills.get', {});
     await runSkillsRpc(store, undefined, 'skills.get', {}, { boxId: '../x' });
     expect(await store.list('boxes')).toEqual([]);
+  });
+});
+
+describe('skill bindings in skills.get (Phase 4)', () => {
+  const lib = () =>
+    library([
+      { name: 'alpha', version: sha('a'), bytes: Buffer.from('A') },
+      { name: 'beta', version: sha('b'), bytes: Buffer.from('B') },
+    ]);
+  const bind = async (store: FsCustodyStore, doc: unknown) =>
+    store.put('skills/.bindings.json', Buffer.from(JSON.stringify(doc)));
+  const names = (r: { skills: { name: string }[] }) => r.skills.map((s) => s.name);
+
+  it('gives the same repo the same set from two PCs', async () => {
+    const store = await lib();
+    await bind(store, { project: { 'github.com/acme/app': { alpha: 'exclude' } } });
+    const pcA = skillContextForRegistration({
+      boxId: 'b1',
+      originUrl: 'git@github.com:Acme/App.git',
+      originMachineId: '11111111-1111-4111-8111-111111111111',
+      originFolder: '/Users/a/code/app',
+    });
+    const pcB = skillContextForRegistration({
+      boxId: 'b2',
+      originUrl: 'https://github.com/acme/app',
+      originMachineId: '22222222-2222-4222-8222-222222222222',
+      originFolder: '/home/b/src/app',
+    });
+    expect(pcA.projectKey).toBe('github.com/acme/app');
+    expect(pcB.projectKey).toBe('github.com/acme/app');
+    expect(names(await resolveBoxSkills(store, undefined, pcA))).toEqual(['beta']);
+    expect(names(await resolveBoxSkills(store, undefined, pcB))).toEqual(['beta']);
+    // Another repo is untouched.
+    const other = skillContextForRegistration({
+      boxId: 'b3',
+      originUrl: 'https://github.com/acme/web',
+    });
+    expect(names(await resolveBoxSkills(store, undefined, other))).toEqual(['alpha', 'beta']);
+  });
+
+  it('applies workspace bindings and only looks the workspace up when one exists', async () => {
+    const store = await lib();
+    let lookups = 0;
+    const inWs = { workspaceId: async () => (lookups++, 'a1b2c3d4e5f60718') };
+    expect(names(await resolveBoxSkills(store, undefined, inWs))).toEqual(['alpha', 'beta']);
+    expect(lookups).toBe(0);
+    await bind(store, {
+      global: { alpha: 'exclude' },
+      workspace: { a1b2c3d4e5f60718: { alpha: 'include' } },
+    });
+    expect(names(await resolveBoxSkills(store, undefined, inWs))).toEqual(['alpha', 'beta']);
+    expect(lookups).toBe(1);
+    const elsewhere = { workspaceId: async () => 'ffffffffffffffff' };
+    expect(names(await resolveBoxSkills(store, undefined, elsewhere))).toEqual(['beta']);
+    expect(names(await resolveBoxSkills(store, undefined, {}))).toEqual(['beta']);
+  });
+
+  it('refuses a blob the bindings excluded', async () => {
+    const store = await lib();
+    await bind(store, { box: { b1: { alpha: 'exclude' } } });
+    const r = await runSkillsRpc(
+      store,
+      undefined,
+      'skills.blob',
+      { name: 'alpha', version: sha('a'), offset: 0 },
+      { boxId: 'b1' },
+    );
+    expect(r.exitCode).toBe(1);
+    const ok = await runSkillsRpc(
+      store,
+      undefined,
+      'skills.blob',
+      { name: 'alpha', version: sha('a'), offset: 0 },
+      { boxId: 'b2' },
+    );
+    expect(ok.exitCode).toBe(0);
   });
 });

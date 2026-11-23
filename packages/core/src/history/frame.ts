@@ -31,7 +31,8 @@ export function parseHistoryFrame(input: unknown): HistoryFrame | null {
   if (p.path.startsWith('/') || p.path.split('/').some((s) => s === '..' || s === '')) return null;
   const o = p.origin && typeof p.origin === 'object' ? (p.origin as Record<string, unknown>) : {};
   const origin: HistoryOrigin = {
-    boxId: str(o.boxId) ?? '',
+    ...(o.kind === 'host' ? { kind: 'host' as const } : {}),
+    boxId: o.kind === 'host' ? '' : (str(o.boxId) ?? ''),
     ...(str(o.boxName) ? { boxName: str(o.boxName) } : {}),
     ...(str(o.provider) ? { provider: str(o.provider) } : {}),
     ...(str(o.hostId) ? { hostId: str(o.hostId) } : {}),

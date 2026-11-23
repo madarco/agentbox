@@ -45,7 +45,18 @@ export const opencodeSpec: AgentSyncSpec = {
       // Push excludes for the data tree (single source of truth; consumed by
       // `agentPushExcludes`, which also derives the credential file and the
       // live-database deny). The rest is host-only runtime state.
-      exclude: ['storage', 'log', 'project', 'cache', 'bin', 'repos', 'snapshot', 'config'],
+      exclude: [
+        'storage',
+        'log',
+        'project',
+        'cache',
+        'bin',
+        'repos',
+        'snapshot',
+        'config',
+        // The history row cursor's per-session output (box-written).
+        'agentbox-history',
+      ],
     },
     { hostHomeRel: ['.config', 'opencode'], boxDir: OPENCODE_BOX_DIR, relocToSubpath: 'config' },
     {
@@ -59,6 +70,41 @@ export const opencodeSpec: AgentSyncSpec = {
       stagedAs: 'state',
     },
   ],
+  // Session history (docs/agent-history-plan.md). Sessions live in one live
+  // sqlite db, so the box's row cursor copies each bound session's rows into
+  // `agentbox-history/<sessionId>.jsonl` and that file is shipped. Message and
+  // part rows are rewritten while a turn streams: they are copied once quiet.
+  history: {
+    transcripts: [
+      {
+        root: 'agentbox-history',
+        format: 'sqlite',
+        mode: 'snapshot',
+        sessionFiles: ['<sessionId>.jsonl'],
+        sqlite: {
+          db: 'opencode.db',
+          tables: [
+            { name: 'session', id: 'id', session: 'id', updated: 'time_updated' },
+            {
+              name: 'message',
+              id: 'id',
+              session: 'session_id',
+              updated: 'time_updated',
+              settleMs: 20_000,
+            },
+            {
+              name: 'part',
+              id: 'id',
+              session: 'session_id',
+              updated: 'time_updated',
+              parent: { column: 'message_id', table: 'message' },
+              settleMs: 20_000,
+            },
+          ],
+        },
+      },
+    ],
+  },
   credential: {
     boxRelPath: 'auth.json',
     boxAbsPath: `${OPENCODE_BOX_DIR}/auth.json`,
@@ -99,6 +145,15 @@ export const opencodeSpec: AgentSyncSpec = {
   // `skills.paths`: a config layer REPLACES the user's own `skills.paths` array
   // (measured, opencode 1.19.6), and it would need env delivery the VPS
   // providers' box.env drops.
+  // AgentBox MCP server (docs/agent-history-plan.md, Phase 6). The global
+  // config file is box-local (the host's config rides OPENCODE_CONFIG_DIR on the
+  // volume), so writing it touches nothing the host synced.
+  mcp: {
+    file: '~/.config/opencode/opencode.json',
+    format: 'json',
+    serversPath: ['mcp'],
+    entry: 'opencode',
+  },
   skills: {
     dirs: ['.config/opencode/skills', '.claude/skills', '.agents/skills'],
     inject: { kind: 'dir', path: '/home/vscode/.opencode/skills' },

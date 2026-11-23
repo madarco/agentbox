@@ -7,13 +7,16 @@
 // control box's postgres later) and `HistoryArchive` (chunk bytes: a directory
 // here, object storage later). This file holds no SQL and no paths.
 import { zstdCompressSync, zstdDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
+import { repoKey } from '@agentbox/config';
 import {
   agentHistoryModule,
+  agentHistoryModules,
   extractLargeStrings,
   restoreLargeStrings,
   type HistoryFrame,
   type HistoryIngestResult,
   type HistoryIngestSink,
+  type AgentHistoryModule,
   type HistoryRecord,
   type ParseState,
 } from '@agentbox/core';
@@ -78,6 +81,11 @@ export interface HistorySessionFilter {
   box?: string;
   /** Substring of the project's repo URL. */
   project?: string;
+  /**
+   * Exact stored repo URLs (one repo's spellings, see `projectUrlsFor`). An
+   * empty list matches nothing: it is a scope, never "no filter".
+   */
+  projectUrls?: readonly string[];
   /** The PC (machine id) that shipped it. */
   host?: string;
   /** Last activity (the transcript's own last timestamp) at or after this epoch-ms. */
@@ -153,6 +161,11 @@ export interface HistoryRepo {
   deleteSession(key: string): Promise<string[]>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
+  /** Keys of `agent`'s sessions projected by a parser older than `version`. */
+  staleParserSessions(agent: string, version: number, limit: number): Promise<string[]>;
+  /** Forget a session's title (a re-parse derives it again). */
+  clearSessionTitle(key: string): Promise<void>;
+  setSessionParserVersion(key: string, version: number): Promise<void>;
 
   // ---- reads (Phase 2) ----
   querySessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
@@ -163,8 +176,10 @@ export interface HistoryRepo {
   /** Turn/tool rows in session order, `limit` from `from`. */
   turns(key: string, from: number, limit: number): Promise<HistoryTurnRow[]>;
   toolCounts(key: string): Promise<Array<{ name: string; count: number }>>;
-  /** FTS hits for an already-quoted query (see `ftsQuery`). */
-  search(fts: string, limit: number): Promise<HistorySearchHit[]>;
+  /** FTS hits for an already-quoted query (see `ftsQuery`), optionally within these repo URLs. */
+  search(fts: string, limit: number, projectUrls?: readonly string[]): Promise<HistorySearchHit[]>;
+  /** Every distinct `project_repo_url` stored. */
+  projectUrls(): Promise<string[]>;
 }
 
 /** Chunk bytes. */
@@ -227,7 +242,18 @@ export interface HistoryService extends HistoryIngestSink {
   sessionTurns(key: string, from: number, limit: number): Promise<HistoryTurnRow[]>;
   /** The file to download: `path` when it belongs to the session, else its main file. */
   sessionFile(key: string, path?: string): Promise<HistoryFileRow | null>;
-  search(q: string, limit: number): Promise<HistorySearchHit[]>;
+  search(
+    q: string,
+    limit: number,
+    opts?: { projectUrls?: readonly string[] },
+  ): Promise<HistorySearchHit[]>;
+  /** The stored repo URLs whose `repoKey` is `key` (ssh and https spellings of one repo). */
+  projectUrlsFor(key: string): Promise<string[]>;
+  /**
+   * Re-derive the projection of every session whose parser is older than its
+   * agent module's, from the raw archive. Returns how many sessions it redid.
+   */
+  reparse(): Promise<number>;
   /** Seal idle files and apply retention. */
   sweep(opts?: {
     retention?: boolean;
@@ -313,15 +339,22 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   }
 
   async function ingestOne(frame: HistoryFrame): Promise<HistoryIngestResult> {
-    const boxId = frame.origin?.boxId ?? '';
-    if (!boxId || !frame.agent || !frame.path) {
-      return { ok: false, code: 'invalid', message: 'frame needs origin.boxId, agent and path' };
+    const host = frame.origin?.kind === 'host';
+    const boxId = host ? '' : (frame.origin?.boxId ?? '');
+    const hostId = frame.origin?.hostId ?? '';
+    if ((host ? !hostId : !boxId) || !frame.agent || !frame.path) {
+      return {
+        ok: false,
+        code: 'invalid',
+        message: 'frame needs origin.boxId (or kind host + hostId), agent and path',
+      };
     }
     const data = Buffer.from(frame.data, 'base64');
     if (data.length === 0 || data.length > MAX_FRAME_BYTES) {
       return { ok: false, code: 'invalid', message: 'frame data is empty or too large' };
     }
-    const originKey = `box:${boxId}`;
+    // A host session (Phase 5) is keyed by the PC that ran it.
+    const originKey = host ? `host:${hostId}` : `box:${boxId}`;
     const mod = agentHistoryModule(frame.agent);
     let file = await repo.getFile(originKey, frame.agent, frame.path);
 
@@ -348,9 +381,9 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
           key: sessionKey,
           agent: frame.agent,
           sessionId: id.sessionId,
-          boxId: existing?.boxId ?? o.boxId,
-          boxName: existing?.boxName ?? o.boxName ?? null,
-          provider: existing?.provider ?? o.provider ?? null,
+          boxId: existing?.boxId ?? (host ? null : o.boxId),
+          boxName: existing?.boxName ?? (host ? null : (o.boxName ?? null)),
+          provider: existing?.provider ?? (host ? 'host' : (o.provider ?? null)),
           hostId: existing?.hostId ?? o.hostId ?? null,
           projectRepoUrl: existing?.projectRepoUrl ?? o.projectRepoUrl ?? null,
           parentSessionId: existing?.parentSessionId ?? id.parentSessionId ?? null,
@@ -360,7 +393,9 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
           turns: existing?.turns ?? 0,
           inputTokens: existing?.inputTokens ?? 0,
           outputTokens: existing?.outputTokens ?? 0,
-          parserVersion: mod?.parserVersion ?? 0,
+          // An existing session keeps its version: a new file must not mark
+          // the older files' projection current before the re-parse job runs.
+          parserVersion: existing?.parserVersion ?? mod?.parserVersion ?? 0,
           createdAt: existing?.createdAt ?? now(),
           updatedAt: now(),
         });
@@ -428,6 +463,39 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
     return { ok: true, offset, sha256: frame.sha256 };
   }
 
+  /** One session's projection, from raw. Runs inside the ingest queue. */
+  async function reparseSession(key: string, mod: AgentHistoryModule): Promise<boolean> {
+    const session = await repo.getSession(key);
+    const files = await repo.filesOfSession(key);
+    for (const f of files) await repo.clearFileRecords(f.id);
+    await repo.clearSessionTitle(key);
+    let ok = true;
+    for (const f of files) {
+      let state: ParseState = {};
+      let pos = 0;
+      try {
+        for await (const bytes of service.rawStream(f.id, f.offset)) {
+          const r = mod.parse({ path: f.path, offset: pos, bytes }, state);
+          state = r.state;
+          pos += bytes.length;
+          if (r.records.length > 0) await repo.insertRecords(key, f.id, r.records);
+        }
+      } catch (e) {
+        // The raw is intact; the session stays stale so a later run redoes it.
+        ok = false;
+        log(`history: re-parse ${f.path}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      await repo.updateFile(f.id, { parseState: state });
+    }
+    // Keep the session's activity time: a re-parse is not activity (ordering,
+    // retention).
+    await repo.refreshSessionTotals(key, session?.updatedAt ?? now());
+    if (ok) await repo.setSessionParserVersion(key, mod.parserVersion);
+    return ok;
+  }
+
+  let reparsing: Promise<number> | null = null;
+
   const service: HistoryService = {
     repo,
     ingest: (frame) =>
@@ -486,6 +554,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       const fts = q ? ftsQuery(q) : null;
       // A query with no words matches nothing (as `search` does), not everything.
       if (q && !fts) return Promise.resolve([]);
+      if (filter.projectUrls && filter.projectUrls.length === 0) return Promise.resolve([]);
       return repo.querySessions({
         ...rest,
         ...(fts ? { q: fts } : {}),
@@ -532,10 +601,44 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return files.find((f) => !f.child) ?? files[0] ?? null;
     },
 
-    async search(q, limit) {
+    async search(q, limit, opts) {
       const fts = ftsQuery(q);
       if (!fts) return [];
-      return repo.search(fts, Math.min(Math.max(limit, 1), 200));
+      if (opts?.projectUrls && opts.projectUrls.length === 0) return [];
+      return repo.search(fts, Math.min(Math.max(limit, 1), 200), opts?.projectUrls);
+    },
+
+    async projectUrlsFor(key) {
+      return (await repo.projectUrls()).filter((u) => u === key || repoKey(u) === key);
+    },
+
+    reparse() {
+      // One job at a time; each session is its own turn in the ingest queue,
+      // so frames keep landing between sessions.
+      reparsing ??= (async () => {
+        let done = 0;
+        try {
+          for (const mod of agentHistoryModules()) {
+            // A session that failed stays stale for the next run, not this one.
+            const failed = new Set<string>();
+            for (;;) {
+              const keys = (
+                await repo.staleParserSessions(mod.id, mod.parserVersion, 50 + failed.size)
+              ).filter((k) => !failed.has(k));
+              if (keys.length === 0) break;
+              for (const key of keys) {
+                if (await serialized(() => reparseSession(key, mod))) done++;
+                else failed.add(key);
+              }
+            }
+          }
+        } finally {
+          reparsing = null;
+        }
+        if (done > 0) log(`history: re-parsed ${String(done)} session(s)`);
+        return done;
+      })();
+      return reparsing;
     },
 
     sweep: (opts = {}) =>
@@ -574,8 +677,20 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
             log(`history: sweep failed: ${e instanceof Error ? e.message : String(e)}`),
         );
       };
+      const redo = (): void => {
+        service
+          .reparse()
+          .catch((e: unknown) =>
+            log(`history: re-parse failed: ${e instanceof Error ? e.message : String(e)}`),
+          );
+      };
+      // A parser bump takes effect at the first start that carries it.
+      redo();
       const a = setInterval(() => run(false), 60_000);
-      const b = setInterval(() => run(true), 60 * 60_000);
+      const b = setInterval(() => {
+        run(true);
+        redo();
+      }, 60 * 60_000);
       a.unref();
       b.unref();
       timers.push(a, b);

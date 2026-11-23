@@ -5,9 +5,20 @@
  * a cloud box). Docker boxes are shipped host-side by the relay instead, which
  * `history.config` tells us by answering `enabled: false`.
  */
-import { open, readFile, readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import {
+  appendFile,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname } from 'node:path';
+import {
+  HistoryRowCursor,
   HistoryShipper,
   createRedactor,
   parseBindingLog,
@@ -17,11 +28,14 @@ import {
   type HistoryFileSource,
   type HistoryFrame,
   type HistoryIngestResult,
+  type HistoryRowFiles,
+  type HistoryRowSource,
   type ShipStats,
+  type ShippedAgent,
 } from '@agentbox/core';
 import { postRpcAwait } from './relay-rpc.js';
 import { resolveRelayEnv } from './relay-env.js';
-import { HISTORY_BINDINGS_PATH, currentBoxId } from './session-pointer.js';
+import { HISTORY_BINDINGS_PATH, appendHistoryBinding, currentBoxId } from './session-pointer.js';
 
 /** Raw frame cap: base64 of this plus the JSON envelope stays under the relay's 1 MiB `/rpc` cap. */
 export const CTL_FRAME_MAX = 512 * 1024;
@@ -72,6 +86,7 @@ export async function fetchHistoryConfig(): Promise<HistoryConfigFetch> {
         enabled: v.enabled,
         ...(typeof v.reason === 'string' ? { reason: v.reason } : {}),
         agents: Array.isArray(v.agents) ? v.agents : [],
+        ...(Array.isArray(v.materialize) ? { materialize: v.materialize } : {}),
         credentialFiles: Array.isArray(v.credentialFiles)
           ? v.credentialFiles.filter((p): p is string => typeof p === 'string')
           : [],
@@ -135,6 +150,171 @@ export const localFileSource: HistoryFileSource = {
   },
 };
 
+interface SqliteStatement {
+  all(...params: unknown[]): Array<Record<string, unknown>>;
+}
+interface SqliteDb {
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+}
+type SqliteModule = { DatabaseSync: new (path: string, opts?: { readOnly?: boolean }) => SqliteDb };
+
+/**
+ * `node:sqlite` when this node has it (22.5+). Through `getBuiltinModule` so the
+ * Node 20 boxes some providers still bake load ctl fine and just skip the row
+ * cursor.
+ */
+function loadSqlite(): SqliteModule | null {
+  try {
+    const get = (process as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
+    return (get?.('node:sqlite') as SqliteModule | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+type ZstdDecompress = (buf: Uint8Array, opts?: { maxOutputLength?: number }) => Buffer;
+
+function loadZstd(): ZstdDecompress | null {
+  try {
+    const get = (process as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
+    const zlib = get?.('node:zlib') as { zstdDecompressSync?: ZstdDecompress } | undefined;
+    return zlib?.zstdDecompressSync ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** openclaw caps a compressed event at 4 MiB of text. */
+const ZSTD_MAX_OUTPUT = 8 * 1024 * 1024;
+
+const ZSTD = loadZstd();
+
+/**
+ * Replace a zstd blob with its text. Throws when this node has no zstd (added
+ * in 22.15/23.8), so the pass fails and the row is retried, never copied empty.
+ * A frame that does not decode is copied without its text, flagged
+ * `<column>_error`: retrying it would stall every session behind it.
+ */
+export function decodeZstdColumn(
+  row: Record<string, unknown>,
+  column: string,
+  into: string,
+  zstd: ZstdDecompress | null = ZSTD,
+): void {
+  const blob = row[column];
+  if (!(blob instanceof Uint8Array)) return;
+  if (!zstd) throw new Error(`no zstd in this node: cannot decode ${column}`);
+  try {
+    row[into] = zstd(blob, { maxOutputLength: ZSTD_MAX_OUTPUT }).toString('utf8');
+  } catch (e) {
+    row[into] = null;
+    row[`${column}_error`] = e instanceof Error ? e.message : String(e);
+  }
+  delete row[column];
+}
+
+/** A read-only `node:sqlite` handle behind the row cursor's seam. */
+export function openSqliteRowSource(path: string): HistoryRowSource | null {
+  const mod = loadSqlite();
+  if (!mod) return null;
+  let db: SqliteDb;
+  try {
+    db = new mod.DatabaseSync(path, { readOnly: true });
+  } catch {
+    return null;
+  }
+  // Identifiers were validated by `snapshotSources` (plain sql names only).
+  return {
+    versions(t, sessionId) {
+      const parent = t.parent ? `, ${t.parent.column} AS p` : '';
+      return db
+        .prepare(
+          `SELECT ${t.id} AS id, ${t.updated} AS u${parent} FROM ${t.name} WHERE ${t.session} = ?`,
+        )
+        .all(sessionId)
+        .map((r) => ({
+          id: String(r.id),
+          u: Number(r.u),
+          ...(t.parent && r.p !== null && r.p !== undefined ? { parent: String(r.p) } : {}),
+        }));
+    },
+    rows(t, sessionId, ids) {
+      if (ids.length === 0) return [];
+      const marks = ids.map(() => '?').join(', ');
+      const rows = db
+        .prepare(`SELECT * FROM ${t.name} WHERE ${t.session} = ? AND ${t.id} IN (${marks})`)
+        .all(sessionId, ...ids);
+      if (t.zstd) for (const r of rows) decodeZstdColumn(r, t.zstd.column, t.zstd.into);
+      return rows;
+    },
+    sessions(table, column) {
+      return db
+        .prepare(`SELECT DISTINCT ${column} AS s FROM ${table} WHERE ${column} IS NOT NULL`)
+        .all()
+        .map((r) => String(r.s));
+    },
+    close() {
+      try {
+        db.close();
+      } catch {
+        /* already closed */
+      }
+    },
+  };
+}
+
+export const localRowFiles: HistoryRowFiles = {
+  async readText(path) {
+    try {
+      return await readFile(path, 'utf8');
+    } catch {
+      return null;
+    }
+  },
+  async append(path, text) {
+    await mkdir(dirname(path), { recursive: true });
+    await appendFile(path, text, 'utf8');
+  },
+  async writeText(path, text) {
+    await mkdir(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, text, 'utf8');
+    await rename(tmp, path);
+  },
+  async rename(from, to) {
+    try {
+      await rename(from, to);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+  },
+  async stamp(path) {
+    const one = async (p: string): Promise<string> => {
+      try {
+        const s = await stat(p);
+        return `${String(s.mtimeMs)}:${String(s.size)}`;
+      } catch {
+        return '-';
+      }
+    };
+    const main = await one(path);
+    if (main === '-') return null;
+    return `${main}|${await one(`${path}-wal`)}`;
+  },
+};
+
+export function buildRowCursor(agents: ShippedAgent[]): HistoryRowCursor {
+  return new HistoryRowCursor({
+    agents,
+    boxId: currentBoxId(),
+    readBindings: () => localFileSource.readBindings(),
+    bind: (agent, sessionId) => appendHistoryBinding(agent, sessionId),
+    open: openSqliteRowSource,
+    files: localRowFiles,
+  });
+}
+
 async function boxSecrets(credentialFiles: readonly string[]): Promise<string[]> {
   const out = secretValuesFromEnv(process.env);
   const { token } = resolveRelayEnv();
@@ -173,6 +353,7 @@ export async function buildShipper(cfg: HistoryConfigReply): Promise<HistoryShip
 export class HistoryLoop {
   private timer: NodeJS.Timeout | null = null;
   private shipper: HistoryShipper | null = null;
+  private rowCursor: HistoryRowCursor | null = null;
   private configAt = 0;
   private delayMs: number;
   private stopped = false;
@@ -184,6 +365,7 @@ export class HistoryLoop {
       /** Tests: the config RPC and the shipper factory. */
       fetchConfig?: () => Promise<HistoryConfigFetch>;
       makeShipper?: (cfg: HistoryConfigReply) => Promise<HistoryShipper>;
+      makeRowCursor?: (agents: ShippedAgent[]) => HistoryRowCursor;
     } = {},
   ) {
     this.delayMs = opts.intervalMs ?? 30_000;
@@ -220,6 +402,20 @@ export class HistoryLoop {
           res.kind === 'ok' && res.config.enabled
             ? await (this.opts.makeShipper ?? buildShipper)(res.config)
             : null;
+        // Snapshot sources (sqlite) are copied into append files in every box,
+        // a docker one included: the host relay ships those files there.
+        const snapshotAgents =
+          res.kind !== 'ok'
+            ? []
+            : res.config.enabled
+              ? res.config.agents
+              : (res.config.materialize ?? []);
+        const cursor = (this.opts.makeRowCursor ?? buildRowCursor)(snapshotAgents);
+        this.rowCursor = cursor.active ? cursor : null;
+      }
+      if (this.rowCursor) {
+        const r = await this.rowCursor.pass({ final });
+        for (const e of r.errors) this.opts.log?.(`history: row cursor: ${e}`);
       }
       if (this.shipper) stats = await this.shipper.pass({ final });
       const timedOut = stats?.errors.some((e) => e.includes('timed out')) ?? false;

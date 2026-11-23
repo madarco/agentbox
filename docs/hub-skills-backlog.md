@@ -233,6 +233,60 @@ it; `diff --from/--to` refused the 12-character versions the CLI prints;
 - **Openclaw bots follow the skill's policy** like any box; the plan's open
   question (always manual for bots) is unanswered.
 
+## Phase 4 — implementation plan (2026-11-23)
+
+See the plan doc's Phase 4 section. Deviations from the plan text: bindings live
+in one custody file (`skills/.bindings.json`), not a hub DB table; the pure
+resolver is in `@agentbox/core` (a hub route can't bundle `@agentbox/relay`).
+
+## From Phase 4 (2026-11-23)
+
+- **Box scope is API-only.** `PUT /api/v1/skill-bindings?scope=box&scopeId=<id>`
+  works; there's no `agentbox skills enable --box` yet (needs box name → id
+  resolution in the command). Box bindings of a destroyed box are never
+  removed (harmless: no box has that id again).
+- **Binding changes reach a running box only on its next sync** (restart or
+  `agentbox-ctl skills sync`). Pushing `skills.sync` is Phase 5.
+- **The web picker keys the project by the hub's view of the origin URL**: a PC
+  remote spelled with an `~/.ssh/config` alias (`work:acme/app`) keys as written
+  there, so the preview can miss a project binding the CLI set with the expanded
+  key. The box itself resolves with its registration's expanded key, so only the
+  picker's prefill is affected.
+- **The web picker's workspace is the project's (`Project.workspaceId`, folder
+  based on the hub's machine)**; the box's own workspace is joined from its
+  origin folder on its origin machine, then its repo. They agree except for a
+  repo listed in two workspaces.
+- **A PC's local relay still has no library on a remote-hub setup** (the Phase 2
+  item): a docker box created on a PC registered with that PC's relay reads that
+  relay's custody, so the remote hub's bindings don't apply to it either.
+- **Tray**: the create sheet has no Skills picker yet (Phase 6, with the other
+  tray surfaces).
+- **Review (medium), not fixed:** each `skills.blob` chunk now also reads the
+  bindings file and, with workspace bindings, scans the workspace records (adds
+  to L1 of #441: resolve once per sync); a workspace lookup that throws resolves
+  the box without its workspace bindings, silently (log it); `enable|disable`
+  makes three sequential hub calls (parallelize, read only the global scope for
+  the hint).
+- **L1 (review of #448): docker registrations carry no `repoKey`.**
+  `sandbox-docker/src/create.ts` (the register body, ~L901-916) sends
+  `originUrl` only, so the relay keys the box with a raw `repoKey(originUrl)`,
+  while `agentbox skills enable|disable --project` stores the alias-expanded
+  `repoKeyAtEdge` key. A project binding misses a docker box whose remote uses an
+  `~/.ssh/config` alias (`work:acme/app`). Fix: send `repoKeyAtEdge(originUrl)`
+  in the docker registration, as the cloud path does.
+- **L3 (review of #448): a corrupt `skills/.bindings.json` fails open
+  silently.** `skills.get` reads it as "nothing bound", so every box gets every
+  skill (excludes stop applying) and nothing is logged; `GET
+  /api/v1/skill-bindings` shows it empty while `PUT` refuses with "not valid
+  JSON". Fix: log/emit a relay event on the tolerant read, and surface the error
+  on GET.
+- **Discard keeps bindings** (on purpose, from the review): a global `disable`
+  must survive a discard + re-import. Bindings for skills that never come back
+  stay in the file; `agentbox skills bindings` shows them.
+- **`enable --workspace` with a skill not disabled globally** changes nothing;
+  the CLI prints a hint rather than offering a "workspace only" mode. Revisit if
+  users trip on it.
+
 ## Open items
 
 - **`--link` (a PC folder watched and re-uploaded on change)** is not in
