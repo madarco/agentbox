@@ -417,6 +417,7 @@ export function createCloudProvider(
       agent: primaryAgent(box),
       ...(box.skills ? { skills: box.skills } : {}),
       ...(box.accounts ? { accounts: box.accounts } : {}),
+      ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
     });
   }
 
@@ -671,6 +672,7 @@ export function createCloudProvider(
             webPort: box.cloud.webPort,
             agent: primaryAgent(box),
             ...(box.accounts ? { accounts: box.accounts } : {}),
+            ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
           });
         } catch {
@@ -698,6 +700,7 @@ export function createCloudProvider(
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
           agent: primaryAgent(box),
           ...(box.accounts ? { accounts: box.accounts } : {}),
+          ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
         });
       } catch {
         // best-effort
@@ -1360,6 +1363,7 @@ export function createCloudProvider(
                 // the box's first boot got no service units (no gateway).
                 agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
                 ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+                ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
                 projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
@@ -1454,6 +1458,7 @@ export function createCloudProvider(
               ...(req.requester ? { requester: req.requester } : {}),
               agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
               ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+              ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
             });
           } catch (err) {
             log(

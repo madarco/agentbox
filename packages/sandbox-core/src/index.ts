@@ -270,7 +270,9 @@ export {
   llmProxyLaunchPreamble,
   resolveLlmProxyRecord,
   allAgentLlmHosts,
+  llmProxyCredential,
   llmProxyListenerEnabled,
+  LLM_PROXY_HMAC_LABEL,
   type LlmProxyConfig,
 } from './llm-split-proxy.js';
 export * from './sync/index.js';

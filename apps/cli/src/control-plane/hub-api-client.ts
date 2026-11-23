@@ -30,6 +30,8 @@ export interface HubApiBox {
   accounts?: Record<string, string>;
   /** Label + kind for each entry of `accounts`, from the hub machine's store. */
   accountsInfo?: Array<{ agent: string; account: string; label?: string; kind?: string }>;
+  /** The hub egress proxy the box was created with (llm-accounts Phase 7). */
+  llmProxy?: { mode: 'forward'; upstream: string };
   name?: string;
   /** Cosmetic user label (set via rename); the CLI prefers it over `name`. */
   displayName?: string | null;

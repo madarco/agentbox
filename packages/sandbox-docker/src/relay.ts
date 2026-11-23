@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { primaryAgent } from '@agentbox/core';
+import { primaryAgent, type LlmProxyRecord } from '@agentbox/core';
 import { randomBytes } from 'node:crypto';
 import { existsSync, openSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
@@ -707,6 +707,8 @@ export interface RegisterBoxArgs {
   agent?: string;
   /** Named LLM account per agent (`BoxRecord.accounts`). */
   accounts?: Record<string, string>;
+  /** The hub egress proxy (`BoxRecord.llmProxy`). */
+  llmProxy?: LlmProxyRecord;
 }
 
 export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
@@ -746,6 +748,7 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     originUrl: args.originUrl,
     agent: args.agent,
     ...(args.accounts && Object.keys(args.accounts).length > 0 ? { accounts: args.accounts } : {}),
+    ...(args.llmProxy ? { llmProxy: args.llmProxy } : {}),
   });
 }
 
@@ -941,6 +944,8 @@ export interface BoxWithToken {
   name: string;
   /** Named LLM account per agent — kept across a relay restart's re-registration. */
   accounts?: Record<string, string>;
+  /** The hub egress proxy — kept across a relay restart's re-registration. */
+  llmProxy?: LlmProxyRecord;
   /** Sandbox backend the box runs on. Defaults to 'docker' when absent. */
   provider?: 'docker' | 'cloud' | string;
   container?: string;
@@ -997,6 +1002,7 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         agent: primaryAgent(b),
         ...(b.skills ? { skills: b.skills } : {}),
         ...(b.accounts ? { accounts: b.accounts } : {}),
+        ...(b.llmProxy ? { llmProxy: b.llmProxy } : {}),
       });
     } catch {
       // best-effort

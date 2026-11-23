@@ -879,6 +879,15 @@ export async function runAgentCreate(
       for (const w of cmdLog.warnings()) log.warn(w);
       if (adopted) {
         await recordCreate({ boxId: adopted.id });
+        // Asked for the LLM proxy but the box came back without it (a control
+        // box that predates it dropped the option): starting the agent now would
+        // run it direct, the one outcome `forward` promises never happens.
+        if (llmProxyMode === 'forward' && !adopted.llmProxy) {
+          cmdLog.close();
+          throw new Error(
+            `box ${adopted.name} was created without the LLM proxy (the control box did not apply --llm-proxy forward; upgrade it), so the agent was not started. Destroy it with \`agentbox destroy ${adopted.name}\`, or attach anyway with \`agentbox ${a.id} attach ${adopted.name}\` to run it direct.`,
+          );
+        }
         await cloudAgentAttach({
           box: adopted,
           binary: a.spec.binary,

@@ -185,3 +185,27 @@ describe('accounts travel with an adopted box (llm-accounts #437-4)', () => {
     expect(rec.accounts).toBeUndefined();
   });
 });
+
+describe('the LLM proxy travels with an adopted box (#446 review B1)', () => {
+  const freshToken = () => 'tok';
+  const llmProxy = { mode: 'forward' as const, upstream: 'hub.example.com:8790' };
+  it('copies the registration llmProxy onto the record', () => {
+    const rec = registrationToBoxRecord(reg({ llmProxy }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    expect(rec.llmProxy).toEqual(llmProxy);
+  });
+  it('keeps an existing record llmProxy when the registration has none', () => {
+    const existing = registrationToBoxRecord(reg({ llmProxy }), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+    });
+    const rec = registrationToBoxRecord(reg(), {
+      controlPlaneUrl: 'https://hub.example',
+      freshToken,
+      existing,
+    });
+    expect(rec.llmProxy).toEqual(llmProxy);
+  });
+});

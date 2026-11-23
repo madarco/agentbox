@@ -803,18 +803,23 @@ Phase 0 (c) measured the CONNECT path for both agents (refreshes included), so
    control-box job (`CreateJobRequestOpts.llmProxy`, not a portable key).
 3. **Relay listener** (`packages/relay/src/llm-proxy.ts`), started by the hub
    server and `agentbox-relay serve` on `llm.proxyPort` (a taken port is
-   logged, never fatal). **Auth is the box's existing relay token**
-   (`Proxy-Authorization: Basic agentbox:<token>`, checked with
-   `store.authenticateBox`); the box id in the plan was dropped, since the box
-   holds its token (`/run/agentbox/relay.env`, or the container env on docker)
-   but not its id. Destination must be an `llmHosts` entry on 443. 407 / 403 /
-   502 carry the reason in the body. Never decrypts.
+   logged, never fatal). **Auth is a proxy-only credential**
+   (`Proxy-Authorization: Basic <boxId>:<HMAC-SHA256(relayToken,
+   "agentbox-llm-proxy")>`, `llmProxyCredential`), which the hub recomputes from
+   the registration's token (`store.getBox`) and compares in constant time. The
+   hub leg to `llm.proxyUrl` is unencrypted TCP, and the relay token is the
+   box's whole hub identity (git push over `/rpc`, host tools, `cp`, events,
+   credential posts), so it never travels there (#446 review B2). The box reads
+   its token from `relay.env` (or the container env) and its id from
+   `AGENTBOX_BOX_ID` / `/etc/agentbox/box.env`. Destination must be an
+   `llmHosts` entry on 443. 407 / 403 / 502 carry the reason in the body. Never
+   decrypts.
 4. **Split proxy** (`LLM_SPLIT_PROXY_SCRIPT`, sandbox-core). A CommonJS script
    shipped base64 on the launch command (about 7 KB of preamble, under tmux's
    16 KB message cap), so any image on any provider gets it with no bake.
    `--ensure` is idempotent (probes its own `/__agentbox` marker, which carries
-   its upstream and host list). It reads the token per connection (env, then
-   `relay.env`), so a re-registered box keeps working. A failed start stops
+   its upstream and host list, and a version). It reads the token per
+   connection (`relay.env`, then env), so a re-registered box keeps working. A failed start stops
    the launch with the reason instead of running the agent unproxied.
 5. **Launch seams.** `llmProxyLaunchPreamble` (no single quote, so it is safe
    in a `sh -c` string and inside the cloud launcher's `bash -lc '…'`).
@@ -824,7 +829,12 @@ Phase 0 (c) measured the CONNECT path for both agents (refreshes included), so
    a byte-identical command.
 6. **Vercel.** `withLlmProxyHost` appends the proxy host to an allowlist
    `networkPolicy`; unset / `allow-all` / `deny-all` are left alone.
-7. **Payload.** `Box.llmProxy` (`{ mode, upstream }`) on `/api/v1/boxes`.
+7. **Payload.** `Box.llmProxy` (`{ mode, upstream }`) on `/api/v1/boxes`. It
+   rides the relay registration too (`BoxRegistration.llmProxy`, kept across a
+   re-register that omits it), so `hub adopt`, an adopted foreground create,
+   the dashboard and a PC relaunch start the agent behind the proxy; a
+   foreground create that asked for `forward` refuses to attach a box that came
+   back without it (#446 review B1).
    **Review changes.** The listener runs only once this machine opted in
    (`llmProxyListenerEnabled`: global `llm.proxy: forward` or `llm.proxyUrl`),
    and a `forward` create is refused without it. `llm.proxyPort` / `llm.proxyUrl`

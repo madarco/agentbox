@@ -14,6 +14,7 @@
  * CONNECT gets a 502/407 whose body names the reason — the call fails, it never
  * silently leaves from the box's own IP.
  */
+import { createHmac } from 'node:crypto';
 import type { LlmProxyRecord } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from './sync/registry.js';
 
@@ -30,6 +31,20 @@ export function isValidLlmProxyUpstream(s: string): boolean {
   return port >= 1 && port <= 65535;
 }
 
+/** The HMAC label of the proxy credential (`llmProxyCredential`). */
+export const LLM_PROXY_HMAC_LABEL = 'agentbox-llm-proxy';
+
+/**
+ * The proxy-only credential a box presents to the hub's LLM proxy:
+ * HMAC-SHA256(relayToken, LLM_PROXY_HMAC_LABEL), hex. The hub leg to
+ * `llm.proxyUrl` is unencrypted TCP, so the relay token (which authorizes git
+ * pushes, host tools, `cp`, credential posts) must never travel on it; a
+ * sniffed credential opens only the LLM proxy, for that box.
+ */
+export function llmProxyCredential(relayToken: string): string {
+  return createHmac('sha256', relayToken).update(LLM_PROXY_HMAC_LABEL).digest('hex');
+}
+
 /** The script (CommonJS, Node built-ins only). argv: [--ensure] <port> <upstream> <hostsCsv>. */
 export const LLM_SPLIT_PROXY_SCRIPT = String.raw`'use strict';
 const http = require('http');
@@ -37,7 +52,9 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const MARK = 'agentbox-llm-split-proxy';
+// Versioned: a running proxy of an older version is stale, never reused.
+const BASE_MARK = 'agentbox-llm-split-proxy';
+const MARK = BASE_MARK + '/2';
 const args = process.argv.slice(2);
 const ensure = args[0] === '--ensure';
 if (ensure) args.shift();
@@ -60,7 +77,7 @@ function probe(cb) {
     let b = '';
     res.on('data', (d) => (b += d));
     res.on('end', () =>
-      once(b === MARK + ' ' + upstream + ' ' + hostsCsv ? 'ours' : b.startsWith(MARK) ? 'stale' : 'none'));
+      once(b === MARK + ' ' + upstream + ' ' + hostsCsv ? 'ours' : b.startsWith(BASE_MARK) ? 'stale' : 'none'));
   });
   req.on('error', () => once('none'));
   req.on('timeout', () => { req.destroy(); once('none'); });
@@ -124,6 +141,24 @@ function token() {
   return process.env.AGENTBOX_RELAY_TOKEN || '';
 }
 
+// The box id: the env (docker, and a login shell on cloud), else box.env.
+function boxId() {
+  if (process.env.AGENTBOX_BOX_ID) return process.env.AGENTBOX_BOX_ID;
+  try {
+    const m = /^(?:export\s+)?AGENTBOX_BOX_ID=(['"]?)([^'"\n]+)\1\s*$/m.exec(
+      fs.readFileSync(process.env.AGENTBOX_BOX_ENV_FILE || '/etc/agentbox/box.env', 'utf8'),
+    );
+    if (m) return m[2];
+  } catch {}
+  return '';
+}
+
+// A proxy-only credential: the hub leg is plain TCP, so the relay token itself
+// (the box's whole hub identity) never crosses it — only HMAC(token, label).
+function credential(t) {
+  return require('crypto').createHmac('sha256', t).update('${LLM_PROXY_HMAC_LABEL}').digest('hex');
+}
+
 function fail(client, status, reason) {
   try {
     client.end('HTTP/1.1 ' + status + '\r\nX-Agentbox-Proxy-Reason: ' + reason + '\r\nContent-Length: ' +
@@ -160,13 +195,14 @@ server.on('connect', (req, client, head) => {
     return;
   }
   const t = token();
-  if (!t) return fail(client, '407 Proxy Authentication Required', 'agentbox LLM proxy: no relay token in this box');
+  const id = boxId();
+  if (!t || !id) return fail(client, '407 Proxy Authentication Required', 'agentbox LLM proxy: no relay token or box id in this box');
   const s = net.connect(upPort, upHost);
   let buf = Buffer.alloc(0);
   let ok = false;
   s.once('connect', () => {
     s.write('CONNECT ' + host + ':' + p + ' HTTP/1.1\r\nHost: ' + host + ':' + p +
-      '\r\nProxy-Authorization: Basic ' + Buffer.from('agentbox:' + t).toString('base64') + '\r\n\r\n');
+      '\r\nProxy-Authorization: Basic ' + Buffer.from(id + ':' + credential(t)).toString('base64') + '\r\n\r\n');
   });
   const onData = (d) => {
     buf = Buffer.concat([buf, d]);

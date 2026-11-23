@@ -1,8 +1,10 @@
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { llmProxyCredential } from '@agentbox/sandbox-core';
 import {
   createLlmProxyServer,
+  llmProxyCredentialMatches,
   llmProxyHosts,
   parseConnectTarget,
   parseProxyAuth,
@@ -12,8 +14,8 @@ const basic = (s: string) => `Basic ${Buffer.from(s).toString('base64')}`;
 
 describe('parseProxyAuth / parseConnectTarget', () => {
   it('parses Basic boxId:token, refuses anything else', () => {
-    expect(parseProxyAuth(basic('agentbox:tok:en'))).toEqual({ token: 'tok:en' });
-    expect(parseProxyAuth(basic(':tok'))).toEqual({ token: 'tok' });
+    expect(parseProxyAuth(basic('box1:cr:ed'))).toEqual({ boxId: 'box1', credential: 'cr:ed' });
+    expect(parseProxyAuth(basic(':cred'))).toBeNull();
     expect(parseProxyAuth(undefined)).toBeNull();
     expect(parseProxyAuth('Bearer x')).toBeNull();
     expect(parseProxyAuth(basic('box1:'))).toBeNull();
@@ -55,7 +57,7 @@ describe('createLlmProxyServer', () => {
     const echoPort = (echo.address() as AddressInfo).port;
     const dialed: string[] = [];
     const proxy = createLlmProxyServer({
-      authorize: async (token) => (token === 'good' ? 'box1' : null),
+      authorize: async (boxId, cred) => boxId === 'box1' && cred === 'good',
       allowedHosts: () => ['api.anthropic.com'],
       connect: (port, host) => {
         dialed.push(`${host}:${String(port)}`);
@@ -123,7 +125,7 @@ describe('createLlmProxyServer', () => {
   it('502 naming the host when the upstream is unreachable', async () => {
     const echo = net.createServer();
     const proxy = createLlmProxyServer({
-      authorize: async () => 'box1',
+      authorize: async () => true,
       allowedHosts: () => ['api.anthropic.com'],
       connect: () => net.connect(1, '127.0.0.1'),
     });
@@ -145,5 +147,17 @@ describe('createLlmProxyServer', () => {
     const { port } = await setup();
     const res = await fetch(`http://127.0.0.1:${String(port)}/`);
     expect(res.status).toBe(405);
+  });
+});
+
+describe('the proxy credential (#446 review B2)', () => {
+  it('is an HMAC of the relay token, never the token, and is checked in constant time', () => {
+    const cred = llmProxyCredential('relay-token');
+    expect(cred).toMatch(/^[0-9a-f]{64}$/);
+    expect(cred).not.toContain('relay-token');
+    expect(llmProxyCredentialMatches('relay-token', cred)).toBe(true);
+    expect(llmProxyCredentialMatches('relay-token', 'relay-token')).toBe(false);
+    expect(llmProxyCredentialMatches('other-token', cred)).toBe(false);
+    expect(llmProxyCredentialMatches('relay-token', cred.slice(1))).toBe(false);
   });
 });

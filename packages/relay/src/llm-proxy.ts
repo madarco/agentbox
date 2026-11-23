@@ -7,15 +7,24 @@
  * byte pipe.
  *
  * The port is reachable by boxes, so it is closed by default:
- *  - `Proxy-Authorization: Basic agentbox:<relayToken>` must carry a registered
- *    box's relay token (407 otherwise) — the token the box already holds for
- *    the relay, so nothing new is minted or pushed. The username is ignored;
+ *  - `Proxy-Authorization: Basic <boxId>:<credential>` where credential is
+ *    `llmProxyCredential(relayToken)` (an HMAC of the box's relay token), 407
+ *    otherwise. The hub leg is unencrypted TCP, so the relay token itself —
+ *    the box's whole hub identity — never travels on it; nothing new is minted;
  *  - the destination must be one of the registry's `llmHosts`, on 443 (403
  *    otherwise) — it is not a general-purpose proxy.
  */
 import http from 'node:http';
 import net from 'node:net';
-import { allAgentLlmHosts } from '@agentbox/sandbox-core';
+import { timingSafeEqual } from 'node:crypto';
+import { allAgentLlmHosts, llmProxyCredential } from '@agentbox/sandbox-core';
+
+/** Constant-time check of a presented proxy credential against a relay token. */
+export function llmProxyCredentialMatches(relayToken: string, presented: string): boolean {
+  const want = Buffer.from(llmProxyCredential(relayToken), 'utf8');
+  const got = Buffer.from(presented, 'utf8');
+  return want.length === got.length && timingSafeEqual(want, got);
+}
 
 /** Every agent's declared model hosts (`AgentSyncSpec.llmHosts`): the allowlist. */
 export function llmProxyHosts(): readonly string[] {
@@ -23,8 +32,8 @@ export function llmProxyHosts(): readonly string[] {
 }
 
 export interface LlmProxyDeps {
-  /** The registered box whose relay token this is, or null. */
-  authorize(token: string): Promise<string | null>;
+  /** Whether `credential` is registered box `boxId`'s proxy credential. */
+  authorize(boxId: string, credential: string): Promise<boolean>;
   /** The hosts a box may reach through the proxy (the registry's `llmHosts`). */
   allowedHosts(): readonly string[];
   log?: (msg: string) => void;
@@ -32,8 +41,10 @@ export interface LlmProxyDeps {
   connect?: (port: number, host: string) => net.Socket;
 }
 
-/** Parse `Proxy-Authorization: Basic base64(user:token)`; the token is all that counts. */
-export function parseProxyAuth(header: string | undefined): { token: string } | null {
+/** Parse `Proxy-Authorization: Basic base64(boxId:credential)`. */
+export function parseProxyAuth(
+  header: string | undefined,
+): { boxId: string; credential: string } | null {
   if (!header) return null;
   const m = /^Basic\s+(\S+)$/i.exec(header.trim());
   if (!m) return null;
@@ -44,8 +55,8 @@ export function parseProxyAuth(header: string | undefined): { token: string } | 
     return null;
   }
   const i = decoded.indexOf(':');
-  if (i < 0 || i === decoded.length - 1) return null;
-  return { token: decoded.slice(i + 1) };
+  if (i <= 0 || i === decoded.length - 1) return null;
+  return { boxId: decoded.slice(0, i), credential: decoded.slice(i + 1) };
 }
 
 /** `host:port` from a CONNECT request target, lowercased; null when malformed. */
@@ -79,13 +90,16 @@ export function createLlmProxyServer(deps: LlmProxyDeps): http.Server {
       const target = parseConnectTarget(req.url);
       if (!target) return reply(client, '400 Bad Request', 'malformed CONNECT target');
       const auth = parseProxyAuth(req.headers['proxy-authorization']);
-      const boxId = auth ? await deps.authorize(auth.token).catch(() => null) : null;
+      const boxId =
+        auth && (await deps.authorize(auth.boxId, auth.credential).catch(() => false))
+          ? auth.boxId
+          : null;
       if (!boxId) {
         log(`llm-proxy: refused ${target.host} (no valid box credential)`);
         return reply(
           client,
           '407 Proxy Authentication Required',
-          'agentbox LLM proxy: unknown box token',
+          'agentbox LLM proxy: unknown box or wrong credential',
           'Proxy-Authenticate: Basic realm="agentbox"\r\n',
         );
       }

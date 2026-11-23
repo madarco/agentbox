@@ -10,6 +10,7 @@ import {
   LLM_SPLIT_PROXY_SCRIPT,
   isValidLlmProxyUpstream,
   allAgentLlmHosts,
+  llmProxyCredential,
   llmProxyLaunchPreamble,
   llmProxyListenerEnabled,
   resolveLlmProxyRecord,
@@ -83,7 +84,9 @@ describe('the split proxy script', () => {
         if (end < 0) return;
         s.removeListener('data', onData);
         hubSaw.push(buf.slice(0, end));
-        const good = buf.includes(`Basic ${Buffer.from('agentbox:tok').toString('base64')}`);
+        const good = buf.includes(
+          `Basic ${Buffer.from(`box1:${llmProxyCredential('tok')}`).toString('base64')}`,
+        );
         if (!good) {
           s.end('HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 9\r\n\r\nbad token');
           return;
@@ -112,6 +115,7 @@ describe('the split proxy script', () => {
         env: {
           ...process.env,
           AGENTBOX_RELAY_TOKEN: 'tok',
+          AGENTBOX_BOX_ID: 'box1',
           AGENTBOX_RELAY_ENV_FILE: '/nonexistent/relay.env',
         },
         stdio: 'ignore',
@@ -155,7 +159,11 @@ describe('the split proxy script', () => {
     expect(out).toContain('200 Connection Established');
     expect(out.endsWith('ping')).toBe(true);
     expect(hubSaw.at(-1)).toContain('CONNECT api.anthropic.com:443');
-    expect(hubSaw.at(-1)).toContain(`Basic ${Buffer.from('agentbox:tok').toString('base64')}`);
+    expect(hubSaw.at(-1)).toContain(
+      `Basic ${Buffer.from(`box1:${llmProxyCredential('tok')}`).toString('base64')}`,
+    );
+    // The relay token itself never goes on the (plain TCP) hub leg.
+    expect(hubSaw.at(-1)).not.toContain(Buffer.from('agentbox:tok').toString('base64'));
   });
 
   it('sends any other host direct (not via the hub)', async () => {
@@ -206,6 +214,7 @@ describe('the split proxy script: hub refusals and outages', () => {
         env: {
           ...process.env,
           AGENTBOX_RELAY_TOKEN: 'wrong',
+          AGENTBOX_BOX_ID: 'box1',
           AGENTBOX_RELAY_ENV_FILE: '/nonexistent/relay.env',
         },
         stdio: 'ignore',
@@ -351,6 +360,7 @@ describe('the split proxy script: review fixes', () => {
         env: {
           ...process.env,
           AGENTBOX_RELAY_TOKEN: 't',
+          AGENTBOX_BOX_ID: 'box1',
           AGENTBOX_RELAY_ENV_FILE: '/nonexistent/relay.env',
         },
         stdio: 'ignore',
@@ -390,7 +400,12 @@ describe('the split proxy script: review fixes', () => {
       process.execPath,
       [file, String(port), `127.0.0.1:${String(hubPort)}`, 'api.anthropic.com'],
       {
-        env: { ...process.env, AGENTBOX_RELAY_TOKEN: 'stale', AGENTBOX_RELAY_ENV_FILE: envFile },
+        env: {
+          ...process.env,
+          AGENTBOX_RELAY_TOKEN: 'stale',
+          AGENTBOX_RELAY_ENV_FILE: envFile,
+          AGENTBOX_BOX_ID: 'box1',
+        },
         stdio: 'ignore',
       },
     );
@@ -402,7 +417,9 @@ describe('the split proxy script: review fixes', () => {
         s.on('close', () => resolve());
         s.write('CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n');
       });
-      expect(saw[0]).toContain(`Basic ${Buffer.from('agentbox:fresh').toString('base64')}`);
+      expect(saw[0]).toContain(
+        `Basic ${Buffer.from(`box1:${llmProxyCredential('fresh')}`).toString('base64')}`,
+      );
     } finally {
       child.kill();
       hub.close();

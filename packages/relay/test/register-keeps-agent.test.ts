@@ -63,3 +63,45 @@ describe('/admin/register-box keeps the agent across a re-register that omits it
     expect(await services('t3')).toEqual(['openclaw']);
   });
 });
+
+describe('/admin/register-box and llmProxy (#446 review B1)', () => {
+  let handle: RelayServerHandle;
+  const post = async (body: unknown) => {
+    const port = (handle.server.address() as AddressInfo).port;
+    await fetch(`http://127.0.0.1:${String(port)}/admin/register-box`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  };
+  beforeEach(async () => {
+    handle = await startRelayServer({ port: 0, host: '127.0.0.1' });
+  });
+  afterEach(async () => {
+    await handle.close();
+  });
+  const llmProxy = { mode: 'forward', upstream: 'hub.example.com:8790' };
+
+  it('stores it, and keeps it across a re-register that omits it', async () => {
+    await post({ boxId: 'b1', token: 't1', name: 'p', llmProxy });
+    expect((await handle.store.getBox('b1'))?.llmProxy).toEqual(llmProxy);
+    await post({ boxId: 'b1', token: 't1', name: 'p' });
+    expect((await handle.store.getBox('b1'))?.llmProxy).toEqual(llmProxy);
+  });
+  it('drops a malformed one (not host:port, not forward)', async () => {
+    await post({
+      boxId: 'b2',
+      token: 't2',
+      name: 'p',
+      llmProxy: { mode: 'forward', upstream: 'a;b' },
+    });
+    expect((await handle.store.getBox('b2'))?.llmProxy).toBeUndefined();
+    await post({
+      boxId: 'b3',
+      token: 't3',
+      name: 'p',
+      llmProxy: { mode: 'reverse', upstream: 'h:1' },
+    });
+    expect((await handle.store.getBox('b3'))?.llmProxy).toBeUndefined();
+  });
+});

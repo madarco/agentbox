@@ -1,6 +1,6 @@
 import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
 import { tryGetMachineId } from '@agentbox/config';
-import { createLlmProxyServer, llmProxyHosts } from './llm-proxy.js';
+import { createLlmProxyServer, llmProxyCredentialMatches, llmProxyHosts } from './llm-proxy.js';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
 import { startAutopauseLoop } from './autopause.js';
 import { startCloudKeepaliveLoop } from './cloud-keepalive.js';
@@ -414,7 +414,10 @@ async function startLlmProxy(
   log: (msg: string) => void,
 ): Promise<{ close: () => void } | null> {
   const server = createLlmProxyServer({
-    authorize: async (token) => (await handle.store.authenticateBox(token))?.boxId ?? null,
+    authorize: async (boxId, credential) => {
+      const reg = await handle.store.getBox(boxId);
+      return reg ? llmProxyCredentialMatches(reg.token, credential) : false;
+    },
     allowedHosts: llmProxyHosts,
     log,
   });

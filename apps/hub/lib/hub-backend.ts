@@ -645,6 +645,7 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     // looked agentless and its gateway was never started.
     ...(reg.agent && reg.agent !== 'none' ? { agents: [reg.agent] } : {}),
     ...(reg.accounts ? { accounts: { ...reg.accounts } } : {}),
+    ...(reg.llmProxy ? { llmProxy: { ...reg.llmProxy } } : {}),
     // A control box only knows a registered box through the plane, so it is by
     // definition a control-plane-topology box.
     topology: 'control-plane',
