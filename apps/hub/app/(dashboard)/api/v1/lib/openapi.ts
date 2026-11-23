@@ -5270,6 +5270,54 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/skills/{name}/propose': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name (must match the SKILL.md frontmatter)',
+          },
+        ],
+        post: {
+          tags: ['Skills'],
+          summary: 'Propose a skill written in a box for the library',
+          description:
+            "Body: the skill's gzip tarball. `X-AgentBox-Skill-Proposal`: base64 JSON `{ box: {id, name}, agent?, source?: {host?, machineId?, path?} }`. The hub reads the tarball itself (tree hash, frontmatter, secret scan) and parks ONE approval (default no, 24 h) under the box's id in `/api/v1/approvals`; nothing is stored until it is approved. `unchanged` = the library's current version is already this tree. Backs the propose step of `agentbox download <agent>`.",
+          responses: {
+            '200': {
+              description: 'Proposal state',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      version: { type: 'string', description: 'Tree hash the hub derived' },
+                      status: { type: 'string', enum: ['pending', 'unchanged'] },
+                      isNew: { type: 'boolean' },
+                      findings: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            rule: { type: 'string' },
+                            path: { type: 'string' },
+                            line: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/skill-bindings': {
         parameters: [
           {

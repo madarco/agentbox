@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -10,7 +10,7 @@ import {
   approveSkillUpdate,
   importSkill,
   listSkills,
-  readMeta,
+  readSkillMeta,
   setSkillPolicy,
 } from '../lib/backend/skills';
 import { diffFileSets, diffSkillVersions } from '../lib/backend/skill-diff';
@@ -68,7 +68,7 @@ describe('update policy', () => {
 
     const ap = await approveSkillUpdate(store, 's');
     expect(ap).toMatchObject({ from: sha('a'), to: sha('b') });
-    const after = await readMeta(store, 's');
+    const after = await readSkillMeta(store, 's');
     expect(after?.current).toBe(sha('b'));
     expect(after?.pending).toBeUndefined();
   });
@@ -121,7 +121,7 @@ describe('update policy', () => {
     for (const c of '123456789') {
       await importSkill(store, { name: 's', meta: meta(sha(c)), body: body(c), origin: gitOrigin });
     }
-    const m = (await readMeta(store, 's'))!;
+    const m = (await readSkillMeta(store, 's'))!;
     expect(m.current).toBe(sha('0'));
     expect(m.pending).toBe(sha('9'));
     expect(m.versions.length).toBe(MAX_SKILL_VERSIONS + 1);
@@ -230,6 +230,64 @@ describe('git sources', () => {
     await expect(discoverRepoSkills(repo, '../')).rejects.toThrow();
   });
 
+  it('never follows a skill folder or skills/ linked out of the checkout', async () => {
+    const outside = join(tmp, 'owner-private');
+    mkdirSync(join(outside, 'secret'), { recursive: true });
+    writeFileSync(join(outside, 'secret', 'SKILL.md'), skillMd('secret', 'private'));
+    // A skill folder linked out.
+    const repo = makeRepo();
+    symlinkSync(join(outside, 'secret'), join(repo, 'skills', 'secret'));
+    // An in-repo link is fine.
+    symlinkSync(join(repo, 'skills', 'alpha'), join(repo, 'skills', 'alias'));
+    expect((await discoverRepoSkills(repo)).map((s) => s.name)).toEqual(['alias', 'alpha', 'beta']);
+    await expect(discoverRepoSkills(repo, 'skills/secret')).rejects.toThrow(
+      /leaves the repository/,
+    );
+    // skills/ itself linked out.
+    const repo2 = join(tmp, `linked-parent-${String(Date.now())}`);
+    mkdirSync(repo2);
+    symlinkSync(outside, join(repo2, 'skills'));
+    expect(await discoverRepoSkills(repo2)).toEqual([]);
+    // A SKILL.md linked out of its folder.
+    mkdirSync(join(repo2, 'leak'));
+    symlinkSync(join(outside, 'secret', 'SKILL.md'), join(repo2, 'leak', 'SKILL.md'));
+    expect(await discoverRepoSkills(repo2)).toEqual([]);
+    // Through add: nothing is imported from outside the checkout.
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'links');
+    const store = memStore();
+    const res = await addFromGit(
+      { store, allowFile: true, git: realGit },
+      parseGitSpec(`file://${repo}`, {}, { allowFile: true }),
+      {},
+    );
+    // `alias` is found but refused: its frontmatter names it alpha.
+    expect(res.imported.map((i) => i.name).sort()).toEqual(['alpha', 'beta']);
+    expect(await readSkillMeta(store, 'secret')).toBeNull();
+  });
+
+  it('refuses a marketplace.json linked out of the checkout', async () => {
+    const outside = join(tmp, 'owner-market');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'marketplace.json'), JSON.stringify({ plugins: [] }));
+    const repo = join(tmp, `market-link-${String(Date.now())}`);
+    mkdirSync(join(repo, '.claude-plugin'), { recursive: true });
+    symlinkSync(
+      join(outside, 'marketplace.json'),
+      join(repo, '.claude-plugin', 'marketplace.json'),
+    );
+    writeFileSync(join(repo, 'README'), 'x');
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'init');
+    await expect(
+      addFromMarketplace(
+        { store: memStore(), allowFile: true, git: realGit },
+        { marketplace: 'm', url: `file://${repo}`, plugin: 'p1' },
+      ),
+    ).rejects.toThrow(/no .claude-plugin\/marketplace.json/);
+  });
+
   it('adds, refreshes to pending, and approves', async () => {
     const repo = makeRepo();
     const store = memStore();
@@ -261,7 +319,7 @@ describe('git sources', () => {
     expect((await refreshSkill(deps, 'alpha')).status).toBe('up-to-date');
 
     await approveSkillUpdate(store, 'alpha');
-    expect((await readMeta(store, 'alpha'))?.current).toBe(r.to);
+    expect((await readSkillMeta(store, 'alpha'))?.current).toBe(r.to);
   });
 
   it('refuses file:// unless allowed', async () => {
@@ -428,7 +486,7 @@ describe('review fixes', () => {
     const store = memStore();
     await importSkill(store, { name: 's', meta: meta(sha('a')), body: body('A') });
     // A meta written before Phase 5 carries no origin.
-    const m = (await readMeta(store, 's'))!;
+    const m = (await readSkillMeta(store, 's'))!;
     delete m.origin;
     await store.put('skills/s/meta.json', Buffer.from(JSON.stringify(m)));
     await setSkillPolicy(store, 's', 'manual');
@@ -450,9 +508,9 @@ describe('review fixes', () => {
       body: body('B'),
       origin: gitOrigin,
     });
-    expect((await readMeta(store, 's'))?.description).toBe('A skill.');
+    expect((await readSkillMeta(store, 's'))?.description).toBe('A skill.');
     await approveSkillUpdate(store, 's');
-    expect((await readMeta(store, 's'))?.description).toBe('New words.');
+    expect((await readSkillMeta(store, 's'))?.description).toBe('New words.');
   });
 
   it('resolves a printed version prefix', async () => {

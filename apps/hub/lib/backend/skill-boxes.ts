@@ -12,7 +12,7 @@
 // docker, the provider's SDK or SSH for every cloud provider and remote-docker.
 // The box then pulls over its own relay channel. A box that isn't running is
 // never woken; ctl runs the same pull at its next boot.
-import { readMeta, type SkillsStore } from './skills';
+import { readSkillMeta, type SkillsStore } from './skills';
 
 export const SKILLS_SYNC_TIMEOUT_MS = 120_000;
 /** Boxes synced at once by a fan-out. */
@@ -66,7 +66,7 @@ export async function boxSkillsStatus(store: SkillsStore, boxId: string): Promis
   const skills: BoxSkillState[] = [];
   for (const name of Object.keys(rec.skills).sort()) {
     const version = rec.skills[name]!;
-    const meta = await readMeta(store, name).catch(() => null);
+    const meta = await readSkillMeta(store, name).catch(() => null);
     skills.push({
       name,
       version,

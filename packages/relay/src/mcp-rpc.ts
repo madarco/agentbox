@@ -1,11 +1,11 @@
 import type { McpApprovalRequest, McpBoxHandler, McpBoxScope } from '@agentbox/core';
 import { askPrompt, type PendingPrompts, type PromptSubscribers } from './prompts.js';
 
-/** A `memory_propose` approval left unanswered resolves to no after a day. */
+/** An MCP approval (a proposal) left unanswered resolves to no after a day. */
 export const MCP_APPROVAL_TTL_MS = 24 * 60 * 60_000;
 
 /**
- * Park an MCP approval (a `memory_propose`) in the prompt mailbox, where the
+ * Park an MCP approval (a `memory_propose`, a skill proposal or install) in the prompt mailbox, where the
  * web UI, the tray and an attached footer answer it. Never auto-denied for want
  * of an attached client: it waits for a human until the TTL.
  */
@@ -24,10 +24,10 @@ export function askMcpApproval(
       message: req.message,
       ...(req.detail ? { detail: req.detail } : {}),
       defaultAnswer: 'n',
-      context: { command: 'memory_propose' },
+      context: { command: req.command ?? 'memory_propose' },
       ...(req.summary ? { richDetail: { type: 'text', summary: req.summary } } : {}),
     },
-    { ttlMs: MCP_APPROVAL_TTL_MS },
+    { ttlMs: MCP_APPROVAL_TTL_MS, ...(req.noAutoApprove ? { noAutoApprove: true } : {}) },
   ).then((r) => r.answer === 'y' && r.cancelled !== true);
 }
 

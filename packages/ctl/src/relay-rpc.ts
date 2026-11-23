@@ -22,6 +22,27 @@ export interface RelayRpcResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /** The relay's HTTP status when it answered with no `{exitCode}` body. */
+  httpStatus?: number;
+}
+
+/** How long after ctl starts a 401 still means "not registered yet". */
+export const REGISTRATION_GRACE_S = 5 * 60;
+
+/**
+ * No usable answer yet, so worth asking again soon: no relay env (65), a
+ * transport failure (126), or a relay that does not know this box yet (401). A
+ * cloud box's ctl starts before the hub registers it, so its first RPCs get 401
+ * for a few seconds; read as "this relay lacks the method", that answer would
+ * park a feature for minutes. Past the grace window a 401 is a box the relay
+ * will not know again, and callers back off as for any other refusal.
+ */
+export function relayNotReady(
+  r: Pick<RelayRpcResult, 'exitCode' | 'httpStatus'>,
+  uptimeS: number = process.uptime(),
+): boolean {
+  if (r.exitCode === 65 || r.exitCode === 126) return true;
+  return r.httpStatus === 401 && uptimeS < REGISTRATION_GRACE_S;
 }
 
 export interface PostRpcOptions {
@@ -210,6 +231,7 @@ export async function postRpcAwait<TParams>(
     exitCode: 1,
     stdout: '',
     stderr: `${prefix}: relay returned ${String(out.status)}: ${out.raw}\n`,
+    httpStatus: out.status,
   };
 }
 

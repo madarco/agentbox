@@ -20,7 +20,7 @@ import { syncSkillBoxes, type SkillBoxesDeps, type SkillSyncOutcome } from './sk
 import {
   approveSkillUpdate,
   resolveSkillVersion,
-  readMeta,
+  readSkillMeta,
   SkillsError,
   type SkillsStore,
   type SkillSummary,
@@ -147,7 +147,7 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
 
     async skillDiff(name, opts = {}) {
       const store = storeOrThrow(deps);
-      if (!(await readMeta(store, name))) {
+      if (!(await readSkillMeta(store, name))) {
         throw new SkillsError('not_found', `no skill '${name}' on this hub`);
       }
       const from = opts.from ? await resolveSkillVersion(store, name, opts.from) : undefined;

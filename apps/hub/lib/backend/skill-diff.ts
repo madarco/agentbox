@@ -3,7 +3,7 @@
 // (docs/hub-skills-plan.md, Phase 5). Both versions are read back from custody
 // with the same safe tar reader the PC and the box use.
 import { readTar, type TarFile } from '@agentbox/sandbox-core';
-import { openSkillTarball, readMeta, SkillsError, type SkillsStore } from './skills';
+import { openSkillTarball, readSkillMeta, SkillsError, type SkillsStore } from './skills';
 
 /** Text bodies above this are reported as changed without their content. */
 export const DIFF_MAX_TEXT_BYTES = 256 * 1024;
@@ -91,7 +91,7 @@ export async function diffSkillVersions(
   name: string,
   opts: { from?: string; to?: string } = {},
 ): Promise<SkillDiff> {
-  const meta = await readMeta(store, name);
+  const meta = await readSkillMeta(store, name);
   if (!meta) throw new SkillsError('not_found', `no skill '${name}' on this hub`);
   const to = opts.to ?? meta.pending ?? meta.current;
   let from = opts.from;

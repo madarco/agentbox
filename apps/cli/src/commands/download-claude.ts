@@ -10,11 +10,13 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { pullTransportForBox } from './_agent-pull-transport.js';
 import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
+import { PROPOSE_FLAG_HELP, runSkillProposeStep } from './_skill-propose-step.js';
 import { claudeStagedItems } from '@agentbox/agent-claude';
 
 interface DownloadClaudeOpts {
   yes?: boolean;
   dryRun?: boolean;
+  propose?: boolean;
   propagate?: string;
 }
 
@@ -33,6 +35,7 @@ export const downloadClaudeCommand = new Command('claude')
   )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--dry-run', "list new items and exit; don't write")
+  .option('--no-propose', PROPOSE_FLAG_HELP)
   .option(
     '--propagate <scope>',
     'also copy the pulled items into other boxes: project|all|none (default: ask)',
@@ -46,6 +49,15 @@ export const downloadClaudeCommand = new Command('claude')
       // agent's docker config VOLUME mounted at its box path (so the box can be
       // stopped — no unpause/start dance).
       const { transport } = await pullTransportForBox(box, 'claude');
+      // Proposals first: the pull below may copy a box-written skill into this
+      // PC's folders, after which it would read as a copy carried from here.
+      await runSkillProposeStep({
+        box,
+        agent: 'claude',
+        transport,
+        propose: opts.propose,
+        dryRun: opts.dryRun,
+      });
       const pull = (dryRun: boolean): Promise<PullClaudeResult> =>
         pullClaudeExtrasViaTransport(transport, { dryRun });
 

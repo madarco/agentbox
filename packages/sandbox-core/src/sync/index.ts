@@ -37,6 +37,7 @@ export {
 } from './claude-pull.js';
 export {
   claudeInventoryScript,
+  isSafePullName,
   parseClaudeInventory,
   computeClaudePullPlan,
   writeClaudeMergedRegistries,

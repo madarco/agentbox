@@ -25,7 +25,7 @@ import {
   importSkill,
   listSkillMetas,
   originOf,
-  readMeta,
+  readSkillMeta,
   skillNameProblem,
   SkillsError,
   type ImportResult,
@@ -211,6 +211,20 @@ async function isFile(p: string): Promise<boolean> {
   }
 }
 
+function inside(realRoot: string, real: string): boolean {
+  return real === realRoot || real.startsWith(realRoot + sep);
+}
+
+/**
+ * `p` resolved through every symlink, or null when it is missing or resolves
+ * outside the checkout. A third-party repo can commit `skills/foo ->
+ * /root/.claude/skills/foo`; following it would import the hub owner's own files.
+ */
+async function realInside(realRoot: string, p: string): Promise<string | null> {
+  const real = await realpath(p).catch(() => null);
+  return real !== null && inside(realRoot, real) ? real : null;
+}
+
 async function underRoot(root: string, p: string): Promise<string> {
   const realRoot = await realpath(root);
   const real = await realpath(p).catch(() => {
@@ -219,7 +233,7 @@ async function underRoot(root: string, p: string): Promise<string> {
       `no such path in the repository: ${p.slice(root.length + 1) || '.'}`,
     );
   });
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) {
+  if (!inside(realRoot, real)) {
     throw new SkillsError('invalid_request', 'path leaves the repository');
   }
   return real;
@@ -235,7 +249,9 @@ function rel(root: string, dir: string): string {
 }
 
 async function skillAt(root: string, dir: string): Promise<FoundSkill | null> {
-  if (!(await isFile(join(dir, 'SKILL.md')))) return null;
+  // A SKILL.md linked out of its folder would leak the target's frontmatter.
+  const md = await realInside(dir, join(dir, 'SKILL.md'));
+  if (!md || !(await isFile(md))) return null;
   const fm = parseSkillFrontmatter(await readFile(join(dir, 'SKILL.md'), 'utf8').catch(() => ''));
   // A skill at a repo root has no meaningful folder name (the temp dir): its
   // frontmatter name is the name. Elsewhere the folder is, as the spec says.
@@ -253,7 +269,10 @@ export async function discoverRepoSkills(root: string, sub = ''): Promise<FoundS
   const self = await skillAt(realRoot, base);
   if (self) return [self];
   const found = new Map<string, FoundSkill>();
-  for (const parent of [join(base, 'skills'), base]) {
+  for (const p of [join(base, 'skills'), base]) {
+    // `skills` itself may be a link out of the checkout.
+    const parent = await realInside(realRoot, p);
+    if (!parent) continue;
     let names: string[];
     try {
       names = (await readdir(parent)).sort();
@@ -262,7 +281,13 @@ export async function discoverRepoSkills(root: string, sub = ''): Promise<FoundS
     }
     for (const n of names) {
       if (n.startsWith('.')) continue;
-      const s = await skillAt(realRoot, join(parent, n));
+      // Each folder is read at its resolved path, so its tree walk is bounded by
+      // a folder inside the checkout; one that resolves outside is skipped.
+      const dir = await realInside(realRoot, join(parent, n));
+      if (!dir) continue;
+      const s = await skillAt(realRoot, dir);
+      // The name stays the folder's as committed, not its link target's.
+      if (s && dir !== realRoot) s.name = n;
       if (s && !found.has(s.name)) found.set(s.name, s);
     }
   }
@@ -566,9 +591,13 @@ export interface MarketplaceSpec {
 }
 
 async function readMarketplace(dir: string): Promise<unknown> {
-  const raw = await readFile(join(dir, '.claude-plugin', 'marketplace.json'), 'utf8').catch(() => {
+  const missing = (): never => {
     throw new SkillsError('not_found', 'the repository has no .claude-plugin/marketplace.json');
-  });
+  };
+  const realRoot = await realpath(dir);
+  const file = await realInside(realRoot, join(dir, '.claude-plugin', 'marketplace.json'));
+  if (!file) missing();
+  const raw = await readFile(file!, 'utf8').catch(missing);
   try {
     return JSON.parse(raw) as unknown;
   } catch {
@@ -654,7 +683,7 @@ export async function refreshSkill(
   name: string,
   opts: { allowFindings?: boolean } = {},
 ): Promise<RefreshOutcome> {
-  const meta = await readMeta(deps.store, name);
+  const meta = await readSkillMeta(deps.store, name);
   if (!meta) throw new SkillsError('not_found', `no skill '${name}' on this hub`);
   const origin = originOf(meta);
   const git = deps.git ?? runGit;

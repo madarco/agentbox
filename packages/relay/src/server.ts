@@ -112,6 +112,7 @@ import type {
   LlmProxyRecord,
   McpBoxHandler,
   McpBoxScope,
+  McpBoxSkills,
 } from '@agentbox/core';
 import { HistoryRelay } from './history/history-relay.js';
 import { runHistoryRpc } from './history/rpc.js';
@@ -476,6 +477,17 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     memoryRelay
       ? memoryRelay.boxIdentity(reg)
       : { repoKey: null, origin: { boxId: reg.boxId, boxName: reg.name } };
+  // The library context `skills.get` resolves with, so MCP shows a box only
+  // the skills its bindings let it see.
+  const mcpSkills = (reg: BoxRegistration): McpBoxSkills => {
+    const ctx = skillContextForRegistration(reg);
+    return {
+      boxId: reg.boxId,
+      ...(ctx.projectKey ? { projectKey: ctx.projectKey } : {}),
+      ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+      ...(reg.skills ? { selection: reg.skills } : {}),
+    };
+  };
   // `prompts`/`subscribers` are read when a proposal is made, long after setup.
   const mcpScope = (reg: BoxRegistration) => async (): Promise<McpBoxScope> => ({
     kind: 'box',
@@ -484,6 +496,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     ...mcpIdentity(reg),
     approve: (req) => askMcpApproval(prompts, subscribers, reg.boxId, req),
     redact: (bytes) => (historyRelay ? historyRelay.redact(bytes) : Promise.resolve(bytes)),
+    skills: mcpSkills(reg),
   });
   const mcpRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
     runMcpRpc(opts.mcp ?? null, mcpScope(reg), method, params);

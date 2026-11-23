@@ -329,15 +329,23 @@ export async function askPrompt(
   subscribers: PromptSubscribers,
   boxId: string,
   params: Omit<PromptAskEvent, 'id'>,
-  opts?: { ttlMs?: number },
+  opts?: {
+    ttlMs?: number;
+    /**
+     * Always ask a human: neither `AGENTBOX_PROMPT=off` nor the box's
+     * `autoApproveHostActions` answers it. For writes a box must never approve
+     * for itself (a skill entering the library reaches every later box).
+     */
+    noAutoApprove?: boolean;
+  },
 ): Promise<PromptResolution> {
-  if (process.env.AGENTBOX_PROMPT === 'off') {
+  if (process.env.AGENTBOX_PROMPT === 'off' && !opts?.noAutoApprove) {
     return { answer: 'y' };
   }
   // Per-box opt-in: `box.autoApproveHostActions` resolves the confirm to 'y'
   // without surfacing a prompt, but records an audit event (inside
   // consumeAutoApprove) so the bypass is never silent.
-  if (prompts.consumeAutoApprove(boxId, params)) {
+  if (!opts?.noAutoApprove && prompts.consumeAutoApprove(boxId, params)) {
     return { answer: 'y' };
   }
   const ev: PromptAskEvent = { id: randomUUID(), ...params };
