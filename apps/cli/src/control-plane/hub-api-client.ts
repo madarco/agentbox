@@ -793,6 +793,22 @@ export interface HubApiSkillUploadMeta {
   source?: { host?: string; machineId?: string; path?: string };
 }
 
+/** `POST /api/v1/skills/{name}/propose` metadata (Phase 7). */
+export interface HubApiSkillProposalMeta {
+  box: { id: string; name: string };
+  agent?: string;
+  source?: { host?: string; machineId?: string; path?: string };
+}
+
+export interface HubApiSkillProposal {
+  name: string;
+  /** Tree hash the hub derived from the tarball. */
+  version: string;
+  status: 'pending' | 'unchanged';
+  isNew: boolean;
+  findings: { rule: string; path: string; line: number }[];
+}
+
 export const SUPPORTED_HUB_API_VERSIONS = ['v1'] as const;
 
 export interface HubApiTarget {
@@ -1398,6 +1414,31 @@ export class HubApiClient {
       version: res.headers.get('x-agentbox-skill-version') ?? '',
       data: Buffer.from(await res.arrayBuffer()),
     };
+  }
+
+  /**
+   * Propose a skill read from a box for the library (Phase 7). The hub checks
+   * the tarball itself and parks one approval; nothing is stored until a human
+   * approves it.
+   */
+  async proposeSkill(
+    name: string,
+    tarball: Buffer,
+    meta: HubApiSkillProposalMeta,
+  ): Promise<HubApiSkillProposal> {
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/skills/${encodeURIComponent(name)}/propose`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/gzip',
+          'X-AgentBox-Skill-Proposal': Buffer.from(JSON.stringify(meta), 'utf8').toString('base64'),
+        },
+        body: new Uint8Array(tarball),
+      },
+    );
+    return this.parseRaw(res);
   }
 
   discardSkill(name: string): Promise<{ name: string; removed: number }> {

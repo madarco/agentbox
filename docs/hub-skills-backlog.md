@@ -225,6 +225,79 @@ resolver is in `@agentbox/core` (a hub route can't bundle `@agentbox/relay`).
   the CLI prints a hint rather than offering a "workspace only" mode. Revisit if
   users trip on it.
 
+## Phase 7 — implementation plan (2026-11-23)
+
+See the plan doc's Phase 7 section. Deviation from the plan text: a box binding
+now outranks the create flags (box binding > flags > project > workspace >
+global), so an approved `skills_propose_install` can widen a box created with
+`--skills` / `--skip-skills` / `--no-skills`.
+
+## From Phase 7 (2026-11-23)
+
+Fixed from the `/code-review medium`: the proposal's tar read had no unpacked
+cap (a small gzip could inflate into hub memory); a stale carried copy matching
+an OLDER library version was proposed as "a new version" (any kept version now
+answers `unchanged`); runtime artifacts (`__pycache__`, `node_modules`) made a
+carried skill look edited (the PC-side skip compares authored-file hashes); the
+pending approval kept the unpacked files alive; `skills_propose_install` had no
+dedupe; `download opencode` lacked the step; a proposal in the hub's startup
+window answered `pending` with no prompt ever shown (the handler is published
+only once the prompt mailbox exists). Still open:
+
+- **From the PR #453 review (fixed there):** a box with `autoApproveHostActions`
+  approved its own proposals and installs (now `noAutoApprove` on both asks); box
+  stdout names reached host paths before any check, in the propose step and in
+  the shared agent-pull inventory parsers (now one safe segment each); the
+  approval showed no file list or diff (now added/modified/removed paths and a
+  `SKILL.md` diff vs the current version); hub-scope MCP `skill_get` bypassed the
+  custody byte-read gate (now required, carried on `McpHubScope.skillBytes`).
+- **From the PR #453 review, open:**
+  - one box can fill all 20 global pending proposal slots (~2 GB of hub memory);
+    cap per box;
+  - the CLI's hub calls in the propose step have no timeout and run before the
+    pull, so a hung hub delays the download;
+  - on docker the transport reads the SHARED claude config volume, so a skill
+    written by one box is attributed to whichever box the download names;
+  - a box can fill host disk through the staged pull, and a `/dev/zero`-style
+    SKILL.md makes the CLI read until the size cap (stream with a cap per file);
+  - `skill_get` runs `gunzipSync` on the hub event loop per call (cache or
+    stream);
+  - a proposal with secret-scan findings can still be approved (shown, not
+    blocked, as for uploads);
+  - a late install approval can re-enable a skill the user excluded for that box
+    after the request (the binding write doesn't re-check);
+  - skills excluded by the box's create flags are still readable through MCP
+    (visible = bindings only, by design of `skills_propose_install`);
+  - a PC that holds the admin token sends only its API key from `agentbox mcp`,
+    so `skill_get` from a host agent on a remote hub needs an enrolled device.
+- **Two proposals of different versions of one skill are both parked.**
+  Approving the second after the first lands logs "not applied: the library's
+  version changed" and the approver sees nothing. Replace the earlier pending
+  proposal per name, or surface the outcome as a notice.
+- **Pending proposals live in hub memory** (up to 20, each up to the custody blob
+  cap compressed). A hub restart drops them along with the prompt mailbox.
+- **The CLI's library skip compares raw tree hashes** (the library stores raw
+  trees); the hub answers `unchanged` for any kept version. A carried copy the
+  agent ran (with `__pycache__`) and that this PC no longer has as-is is still
+  proposed; the approver sees it. Strip runtime dirs at proposal time.
+- **`agentbox-ctl download <agent>` reaches the propose step only on docker**
+  (the box-initiated `download.claude` RPC shells the host CLI; on cloud only
+  `download.workspace` is routed, a pre-existing gap). From a cloud box, run
+  `agentbox download <agent> <box>` on the PC.
+- **opencode's in-box `.claude/skills` and `~/.agents/skills` are not read**:
+  only skill dirs under the agent's own box config dir are, because the docker
+  transport mounts that dir alone.
+- **A box skill already downloaded to this PC is never proposed** (it reads as a
+  copy carried from here), e.g. one pulled by an older CLI or with
+  `--no-propose`. Upload it with `agentbox skills --upload <name>`, or compare
+  against the box's carried set instead of the PC's folders.
+- **An approved MCP install needs `agentbox-ctl skills sync`** in the box; pushing
+  the sync is Phase 5.
+- **MCP `skills_list` re-implements the library listing** (`libraryNames` next to
+  `listSkills`) to avoid hashing; fold together with the L1 stat-only listing.
+- **Box bindings of destroyed boxes** (now also written by approved installs)
+  are never removed (Phase 4 item).
+
 ## Open items
 
 - **`--link` (a PC folder watched and re-uploaded on change)** is not in

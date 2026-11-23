@@ -122,6 +122,17 @@ export function claudeInventoryScript(src: string): string {
   ].join(' ');
 }
 
+/**
+ * One path segment a box may name: an inventory line is box stdout, which an
+ * agent in the box controls, and its names become host paths under the
+ * agent's config dir. `..`, `.`, separators and NUL would leave that dir.
+ */
+export function isSafePullName(name: string): boolean {
+  return (
+    name.length > 0 && name.length <= 255 && name !== '.' && name !== '..' && !/[/\\\0]/.test(name)
+  );
+}
+
 export interface ClaudeInventory {
   dirs: Record<string, string[]>;
   plugins: string[];
@@ -139,9 +150,11 @@ export function parseClaudeInventory(stdout: string): ClaudeInventory {
       if (sp === -1) continue;
       const cat = rest.slice(0, sp);
       const name = rest.slice(sp + 1);
-      if (cat in dirs) dirs[cat]!.push(name);
+      if (cat in dirs && isSafePullName(name)) dirs[cat]!.push(name);
     } else if (line.startsWith('PLUGIN ')) {
-      plugins.push(line.slice(7));
+      const key = line.slice(7);
+      const parts = key.split('/');
+      if (parts.length === 2 && parts.every(isSafePullName)) plugins.push(key);
     } else if (line.startsWith('JSON ')) {
       const rest = line.slice(5);
       const sp = rest.indexOf(' ');
@@ -378,7 +391,7 @@ export function parseFlatInventory(stdout: string): FlatInventoryEntry[] {
   const out: FlatInventoryEntry[] = [];
   for (const line of stdout.split('\n')) {
     const m = /^(\S+) (FILE|DIR) (\S+)$/.exec(line.trim());
-    if (!m) continue;
+    if (!m || !isSafePullName(m[3]!)) continue;
     out.push({ group: m[1]!, kind: m[2] === 'DIR' ? 'dir' : 'file', name: m[3]! });
   }
   return out;

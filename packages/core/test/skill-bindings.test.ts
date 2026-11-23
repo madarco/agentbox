@@ -70,6 +70,22 @@ describe('skill bindings', () => {
     ]);
   });
 
+  it('lets a box binding outrank the create flags', () => {
+    const doc = applyBindingChanges(emptyBindings(), 'box', 'box1', {
+      alpha: 'include',
+      gamma: 'exclude',
+    });
+    const ctx = { boxId: 'box1' };
+    expect(resolveSkillNames(names, doc, ctx, { none: true })).toEqual(['alpha']);
+    expect(resolveSkillNames(names, doc, ctx, { exclude: ['alpha'] })).toEqual(['alpha', 'beta']);
+    expect(resolveSkillNames(names, doc, ctx, { include: ['beta', 'gamma'] })).toEqual([
+      'alpha',
+      'beta',
+    ]);
+    // Another box's bindings change nothing here.
+    expect(resolveSkillNames(names, doc, { boxId: 'box2' }, { none: true })).toEqual([]);
+  });
+
   it('clears a binding with null and drops an emptied scope', () => {
     let doc = applyBindingChanges(emptyBindings(), 'project', REPO, { alpha: 'exclude' });
     expect(doc.project[REPO]).toEqual({ alpha: 'exclude' });

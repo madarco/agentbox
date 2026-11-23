@@ -13,6 +13,9 @@ export function hubMcpForward(target: { url: string; apiKey: string }): McpForwa
       method: 'POST',
       headers: {
         authorization: `Bearer ${target.apiKey}`,
+        // Reading a skill's files (`skill_get`) is a custody byte read on the
+        // hub: an enrolled device's own token passes it, as for `skills --download`.
+        'x-agentbox-admin-token': target.apiKey,
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
       },

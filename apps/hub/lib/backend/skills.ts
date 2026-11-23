@@ -169,7 +169,8 @@ export function parseImportMeta(raw: unknown): SkillImportMeta {
   return { sha256: m.sha256, description: m.description, size: m.size, files: m.files, source };
 }
 
-async function readMeta(store: SkillsStore, name: string): Promise<SkillMeta | null> {
+/** One skill's `meta.json`, or null when absent or unreadable. */
+export async function readSkillMeta(store: SkillsStore, name: string): Promise<SkillMeta | null> {
   const found = await store.get(metaPath(name));
   if (!found) return null;
   try {
@@ -206,7 +207,7 @@ export async function listSkills(store: SkillsStore): Promise<SkillsListing> {
   }
   const skills: SkillSummary[] = [];
   for (const name of [...names].sort()) {
-    const meta = await readMeta(store, name);
+    const meta = await readSkillMeta(store, name);
     const row = meta ? summarize(meta) : null;
     if (row) skills.push(row);
   }
@@ -242,7 +243,7 @@ export async function importSkill(
     ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
   });
 
-  const prev = await readMeta(store, name);
+  const prev = await readSkillMeta(store, name);
   const known = prev?.versions.find((v) => v.sha256 === meta.sha256);
   const version: SkillVersionMeta = {
     sha256: meta.sha256,
@@ -287,7 +288,7 @@ export async function openSkillTarball(
   version?: string,
 ): Promise<{ version: string; data: NodeJS.ReadableStream; bytes: number; tarballSha256: string }> {
   assertName(name);
-  const meta = await readMeta(store, name);
+  const meta = await readSkillMeta(store, name);
   if (!meta) throw new SkillsError('not_found', `no skill '${name}' on this hub`);
   const sha = version ?? meta.current;
   if (!meta.versions.some((v) => v.sha256 === sha)) {
