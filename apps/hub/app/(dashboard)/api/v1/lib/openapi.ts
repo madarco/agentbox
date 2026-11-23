@@ -4387,7 +4387,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Deny every waiting enrollment code',
           description:
-            'Owner only (signed-in session or API key). The way out of a flood of unsolicited codes; their polls get `access_denied`.',
+            'Owner only: the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403). The way out of a flood of unsolicited codes; their polls get `access_denied`.',
           responses: {
             '200': {
               description: 'Denied',
@@ -4412,7 +4412,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Approve an enrollment code',
           description:
-            'Owner only: a signed-in browser session or the API key. A device token gets 403.',
+            'Owner only: the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403). A device token gets 403: a stolen laptop must not mint a spare, and a device token reads custody, so the API key alone must not mint one either.',
           requestBody: {
             required: true,
             content: {
@@ -4477,7 +4477,8 @@ export function buildOpenApi(): Record<string, unknown> {
         patch: {
           tags: ['Devices'],
           summary: 'Rename a device',
-          description: 'The owner may rename any device; a device token only itself.',
+          description:
+            'The owner may rename any device (the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403)); a device token only itself.',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: true,
@@ -4505,7 +4506,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Devices'],
           summary: 'Revoke a device',
           description:
-            "Immediate: the device's next request is a 401, and any stream it holds open is closed. Idempotent. The owner may revoke any device; a device token may revoke only itself (403 otherwise).",
+            "Immediate: the device's next request is a 401, and any stream it holds open is closed. Idempotent. The owner may revoke any device (the owner (a signed-in session, or the API key together with the admin token in `X-Agentbox-Admin-Token`; the API key alone gets 403)); a device token may revoke only itself (403 otherwise).",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           responses: {
             '200': { description: 'Revoked' },
@@ -5338,7 +5339,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Diff two versions of a skill',
           description:
-            'Answers `{name, from, to, files: [{path, status: added|removed|modified, modeOnly?, binary?, before?, after?}]}`; text bodies over 256 KiB and binary files are named without content. Backs `agentbox skills diff`.',
+            'Answers `{name, from, to, files: [{path, status: added|removed|modified, modeOnly?, binary?, before?, after?}]}`; text bodies over 256 KiB and binary files are named without content. Takes the same read as the tarball (a signed-in session may). Backs `agentbox skills diff`.',
           responses: {
             '200': {
               description: 'The diff',
@@ -5371,7 +5372,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Download a version of a skill',
           description:
-            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. ELEVATED like custody byte reads: the admin token or an enrolled device token in `X-Agentbox-Admin-Token` (a local hub: loopback); the API key alone gets `401`. Backs `agentbox skills --download`.',
+            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. ELEVATED like custody byte reads: the admin token or an enrolled device token in `X-Agentbox-Admin-Token` (a local hub: loopback), or a signed-in owner session (skill content only; custody itself keeps the stricter rule); the API key alone gets `401`. Backs `agentbox skills --download`.',
           responses: {
             '200': {
               description: 'The tarball',

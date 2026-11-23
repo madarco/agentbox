@@ -165,12 +165,27 @@ for teams PCs must never hold it (device tokens only).
   Fix: skip the mute when `controlBoxIsThisMachine()`, the same exception
   `dockerProviderRefusal` makes.
 
+## Fixed
+
+- **The API key alone could enroll a device (fixed 2026-11-23, `fix/hub-elevated-auth`).**
+  From #422, `canApproveDevices` accepted the shared API key, which the tray, the web
+  and every thin client hold. With it a caller could start a code
+  (`/devices/code`), approve it (`/devices/approve`) and claim a device token
+  (`/devices/token`), and a device token passes the elevated custody byte read, so
+  the API key alone could read stored values. Approve, deny, the pending list's
+  deny-all and revoking or renaming another device now need a signed-in session,
+  or the API key plus the admin token (`X-Agentbox-Admin-Token`, timing-safe, refused
+  when the hub has none). `agentbox hub devices approve|revoke|rename` send the
+  admin token when the machine has it and otherwise point at the web Devices page.
+  A device revoking or renaming itself is unchanged.
+
 ## From the real-Hetzner sign-off of #429 / #432, noted, not fixed
 
 - **The operator PC loses `hub devices approve` once it enrolls.** Its device token
   shadows the API key in `resolveHubTarget` (`apps/cli/src/commands/hub-devices.ts`),
-  so approve answers 403 ("only the hub owner"). Workaround: POST
-  `/api/v1/devices/approve` with the API key. From #422.
+  so approve answers 403 ("only the hub owner"). Workaround: approve on the web
+  Devices page, or POST `/api/v1/devices/approve` with the API key **and** the admin
+  token (the API key alone no longer approves, see Fixed above). From #422.
 - **`hub login` blip.** A PC's first `hub login` ended in `fetch failed`; it did not
   reproduce on retry.
 - **Poller noise for hub-built boxes.** The hub logs `[cloud-poller <id>] poll error:
