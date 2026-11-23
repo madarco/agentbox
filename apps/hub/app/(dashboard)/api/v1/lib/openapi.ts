@@ -5298,7 +5298,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Apply a pending update',
           description:
-            'The pending version becomes current and every running box behind on the skill runs `agentbox-ctl skills sync`. Answers `{name, from, to, skill}`. `400` when nothing is pending. Backs `agentbox skills update`.',
+            'The pending version becomes current and every running box behind on the skill runs `agentbox-ctl skills sync`. Answers `{name, from, to, skill}`. `400` when nothing is pending. Optional body `{version}`: the version the caller reviewed; a pending version that moved since answers `409 conflict` instead of approving something unseen. Backs `agentbox skills update` and the web Review update.',
           responses: {
             '200': {
               description: 'Applied',
@@ -5307,6 +5307,7 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+            '409': errorResponse,
           },
         },
       },
@@ -5338,7 +5339,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Diff two versions of a skill',
           description:
-            'Answers `{name, from, to, files: [{path, status: added|removed|modified, modeOnly?, binary?, before?, after?}]}`; text bodies over 256 KiB and binary files are named without content. Backs `agentbox skills diff`.',
+            "Answers `{name, from, to, files: [{path, status: added|removed|modified, modeOnly?, binary?, before?, after?}], findings: [{rule, path, line}]}`; text bodies over 256 KiB and binary files are named without content. `findings` is the hub's secret scan of the `to` tree. Backs `agentbox skills diff` and the web pending-update view.",
           responses: {
             '200': {
               description: 'The diff',
@@ -5347,6 +5348,73 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/skill-md': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: "Read a version's SKILL.md",
+          description:
+            'Answers `{name, version, content, files: [{path, size, mode}]}` for `?version=` (default: current). Takes the same elevated read as `/diff` (admin token, an enrolled device token, or loopback on a local hub). Backs the web SKILL.md editor.',
+          parameters: [
+            {
+              name: 'version',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Version (7 to 64 hex; default: current)',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'SKILL.md and the file list',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Skills'],
+          summary: 'Save SKILL.md as a new version',
+          description:
+            "Body `{content, base?, allowFindings?}`. The hub copies the `base` version's other files, swaps SKILL.md, checks the frontmatter (name matches, description present) and the secret scan, and stores the tree as a new `upload` version that becomes current; running boxes holding the skill sync. A `base` other than the current version is refused with `409 conflict` (the skill moved since the editor opened it), checked under the skill's lock. Without `base` the skill must not exist yet: a new skill with SKILL.md only. Answers the import result plus `findings`.",
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object' } } },
+          },
+          responses: {
+            '200': {
+              description: 'Stored',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/skill-status': {
+        get: {
+          tags: ['Skills'],
+          summary: 'Pending skill updates and boxes behind',
+          description:
+            "Answers `{pending: [{name, version}], boxes: [{boxId, behind: [name]}]}`: the skills with a version waiting for approval, and the live boxes holding something other than the library's current version. Metadata only; one call for a badge. Approve with `POST /skills/{name}/approve`, bring a box level with `POST /boxes/{id}/skills/sync`.",
+          responses: {
+            '200': {
+              description: 'The overview',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
           },
         },
       },

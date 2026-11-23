@@ -104,7 +104,7 @@ The table compares each skill by content: `same`, `differs` (with which side cha
 
 A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. A skill that holds a symlink pointing **outside its own folder** (for example `refs -> ~/Projects/app`) is skipped too, with the link named: following it would upload that whole folder, `.env` files included.
 
-**In the hub web UI**, the **Skills** page lists what the library holds (description, size, file count, the PC it came from, when it was updated, how many versions are kept) and discards a skill after a confirm. Uploading and downloading stay with `agentbox skills` on a PC, since they read and write that PC's folders.
+**In the hub web UI**, the **Skills** page lists what the library holds (description, size, file count, the PC it came from, when it was updated, how many versions are kept) and manages it without a terminal. See [The Skills page](#the-skills-page). Uploading from and downloading to a PC's folders stays with `agentbox skills` on that PC, since only it can read and write them.
 
 ### Library skills in boxes
 
@@ -213,6 +213,22 @@ The `agentbox` MCP server every box registers (see [past sessions for agents](/d
 | `skills_propose_install` | Ask for a skill this box was created without. One approval; then `agentbox-ctl skills sync`. |
 
 A box sees only the skills its bindings allow (global, workspace, project and box bindings); a skill disabled for its project is invisible to it. An approved install is recorded as a binding for that box, so it outlasts restarts. Outside a box, `POST /api/mcp` with the hub credential lists the whole library; `skill_get` there needs the same access as downloading a skill (the admin token, an enrolled computer's token, or the same machine on a local hub), so the hub API key alone can list skills but not read them.
+
+### The Skills page
+
+The hub web UI's **Skills** page covers everything above that doesn't need a PC's folders:
+
+- **Add from git** and **Add from marketplace**: enter a repository (`owner/repo` or a URL, with an optional path and ref), or a marketplace repository and a plugin name. **Look up** lists the skills the source holds, each with its size, any problem that would stop the import, and its secret-scan findings. Tick the ones to add, choose whether their updates wait for approval (the default) or apply automatically, and add them. A skill with findings is added only after you tick "I read the scan findings; add anyway".
+- Each row shows where the skill comes from (upload, linked folder, git, marketplace) and its **update policy** (auto-update or approve updates), which you can switch in place.
+- **Refresh** on a git or marketplace skill fetches its source again; **refresh all** does every one. A new version that the policy holds shows as **update waiting**. If the secret scan flags the new version, the refresh is stopped and **Fetch anyway** stores it after all, still waiting for approval.
+- **Review update** opens the pending version: every file added, removed or modified against the current one, with a line diff of each text file, and the hub's secret scan of the new version. **Approve update** makes it current, and every running box that holds the skill syncs it.
+- **Edit** opens the skill's `SKILL.md` in an editor; **New skill** starts one from a template. Saving stores a new version (the skill's other files are kept as they are), which becomes current and reaches running boxes like an upload. The frontmatter `name` must match the skill and a `description` must be there; a secret-scan hit stops the save until you choose **Save anyway**. Editing a git or marketplace skill turns it into an upload, so a refresh no longer fetches it, and the next save in a linked folder replaces an edit made here.
+- **Skill proposals from boxes** (see [Skills written in a box](#skills-written-in-a-box)) are listed at the top of the page with Approve and Deny, next to the same entries in **Approvals**.
+- **Discard** deletes a skill and its versions after a confirm.
+
+Reading a skill's content (the update diff and the editor) takes the same access as downloading a skill. On a local hub, open the web UI from the same machine; on a [deployed control box](/docs/deployed-hub) the diff and editor need the admin token, so review updates there with `agentbox skills diff` / `update` from an enrolled PC.
+
+Each **box's page** has a **Skills** section: the library skills the box was last given, with their versions and a `behind` mark when the box holds an older version than the library's; **Sync now** (a running box pulls its set at once); and an on / off / inherit choice per library skill for that box alone. That choice is a box binding, so it outranks the create flags and the project, workspace and global bindings; sync the box (or restart it) to apply it.
 
 ### Cloud bases go stale when your skills change
 
