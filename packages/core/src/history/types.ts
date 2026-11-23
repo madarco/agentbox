@@ -14,6 +14,11 @@ export interface AgentHistoryTranscripts {
   /** `append` files are byte-tailed; `snapshot` ones (sqlite) need Phase 3's row cursor. */
   mode: 'append' | 'snapshot';
   /**
+   * How the agent spells a HOST project folder in `<projectKey>` (Phase 5's
+   * host watcher). Absent: the agent's host transcripts are not watched.
+   */
+  hostKey?: 'dashed-path';
+  /**
    * The files that make up one session, relative to `root`. `<sessionId>` is
    * the bound id; `*` may appear in the LAST segment only.
    */
@@ -47,8 +52,13 @@ export interface AgentHistorySpec {
   memory?: AgentHistoryMemory[];
 }
 
-/** Where a frame came from. The relay overwrites `boxId` from the box's auth. */
+/**
+ * Where a frame came from. The relay overwrites `boxId` from the box's auth. A
+ * `host` origin is a session run directly on a PC (Phase 5): `boxId` is '' and
+ * `hostId` is required.
+ */
 export interface HistoryOrigin {
+  kind?: 'box' | 'host';
   boxId: string;
   boxName?: string;
   provider?: string;

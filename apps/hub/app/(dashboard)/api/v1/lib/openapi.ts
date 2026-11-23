@@ -12,6 +12,39 @@ const errorResponse = {
   },
 };
 
+const hostSessionsViewSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', description: 'The global `history.hostSessions`.' },
+    projects: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          folder: { type: 'string' },
+          repoUrl: { type: 'string' },
+          mode: { type: 'string', enum: ['allow', 'deny', 'inherit'] },
+          allowed: { type: 'boolean' },
+          reason: { type: 'string', enum: ['project', 'global', 'history.capture off', 'off'] },
+        },
+      },
+    },
+    status: {
+      type: ['object', 'null'],
+      properties: {
+        enabled: { type: 'boolean' },
+        target: { type: ['string', 'null'], description: '`local`, a hub URL, or null.' },
+        hostId: { type: ['string', 'null'] },
+        lastPassAt: { type: ['string', 'null'] },
+        projects: { type: 'array', items: { type: 'object' } },
+        sessions: { type: 'integer' },
+        bytesShipped: { type: 'integer' },
+        errors: { type: 'array', items: { type: 'string' } },
+      },
+    },
+  },
+};
+
 const managerIdParam = {
   name: 'id',
   in: 'path',
@@ -1901,6 +1934,55 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/history/host': {
+        get: {
+          tags: ['History'],
+          summary: 'Host-session watcher',
+          description:
+            "This hub machine's host-session watcher (agent-history Phase 5): the global toggle (`history.hostSessions`), every project folder agentbox knows here with its own setting (`allow`/`deny`/`inherit`) and outcome, and the watcher's last pass (`status`, null when it never ran).",
+          responses: {
+            '200': {
+              description: 'OK',
+              content: { 'application/json': { schema: hostSessionsViewSchema } },
+            },
+          },
+        },
+        put: {
+          tags: ['History'],
+          summary: 'Toggle host sessions',
+          description:
+            "Turn the watcher on or off (`enabled`, the global key), and/or allow, deny or reset one project folder (`project`). Writes this hub machine's config; the watcher applies it on its next pass. Answers the updated view.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    enabled: { type: 'boolean' },
+                    project: {
+                      type: 'object',
+                      properties: {
+                        folder: { type: 'string', description: 'Absolute path.' },
+                        mode: { type: 'string', enum: ['allow', 'deny', 'inherit'] },
+                      },
+                      required: ['folder', 'mode'],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'OK',
+              content: { 'application/json': { schema: hostSessionsViewSchema } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+          },
+        },
+      },
       '/history/chunks': {
         post: {
           tags: ['History'],
@@ -1916,14 +1998,16 @@ export function buildOpenApi(): Record<string, unknown> {
                   properties: {
                     origin: {
                       type: 'object',
+                      description:
+                        'A box session names `boxId`. A session run directly on a PC (`kind: host`) names `hostId` instead; a device-token caller\'s `hostId` is replaced with its verified device id.',
                       properties: {
+                        kind: { type: 'string', enum: ['box', 'host'] },
                         boxId: { type: 'string' },
                         boxName: { type: 'string' },
                         provider: { type: 'string' },
                         hostId: { type: 'string' },
                         projectRepoUrl: { type: 'string' },
                       },
-                      required: ['boxId'],
                     },
                     agent: { type: 'string', description: 'Agent id, e.g. `claude`.' },
                     path: {
