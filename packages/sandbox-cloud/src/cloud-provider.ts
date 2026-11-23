@@ -1551,6 +1551,10 @@ export function createCloudProvider(
             // box actually booted from (not from config, which can disagree).
             // pause() branches on it: a VM pauses, a container archives.
             sandboxClass: handle.sandboxClass,
+            // The size / location this box was ASKED for, so a clone gets the
+            // same box rather than the provider default.
+            ...(size ? { size } : {}),
+            ...(location ? { location } : {}),
             // Only host-seeded boxes share a fork base with the host, so only
             // they can be resynced back to the host tip on session start (7.5).
             // inBoxClone / plane boxes clone from a leased URL — left unset.

@@ -73,23 +73,31 @@ Plan:
 
 ### 11. Cloning a box drops its settings
 
-`cloneCreateInput` carried only `persistent`, borrowed logins and accounts. What every
-`CreateBoxOpts` key does on a clone is decided in one table, `CLONE_CARRY` in
-`apps/hub/lib/boxes/clone-carry.ts`, typed `satisfies Record<keyof CreateBoxOpts, …>`.
-A new create option fails `pnpm typecheck` until someone decides it, and a unit test
-checks that every `carry` key is actually produced from a fully populated record.
+`prepareClone` copied fields one by one: `accounts` was the last wired, the skills
+selection and `llmProxy` never were. So a clone of a `--no-skills` box got the
+whole library and a clone of a proxied box egressed direct, with no warning.
 
-| option | clone | why |
-| --- | --- | --- |
-| skills | **carry** (bug) | a `--no-skills` box's clone got the whole library |
-| llmProxy | **carry** (bug) | a forward box's clone went direct, silently |
-| withPlaywright, vnc | **carry** (bug) | same kind of box |
-| sharedDockerCache, memory/cpus/pidsLimit/disk | **carry** when the provider is unchanged (bug) | resource limits are per engine |
-| persistent, borrowCredentials, accounts | carry (already) | |
-| image, snapshot, hostSnapshot, build, imageRegistry, resync | drop | the clone is a fresh box built from the exported workspace |
-| withEnv, envFiles, carry, carryAsk, carrySkip, promptAnswers | drop | carry is re-approved via `carryYes`; env files aren't exported |
-| useBranch, sessionName, restore, bundleDepth | drop | per-create, not per-box |
-| size, location, inbound, providerOptions, gitPushMode, credentialSync, remoteHost, dangerouslySkipPermissions, portless | drop: not on the record | backlog: record them to carry them |
+Fix: `apps/hub/lib/boxes/clone-carry.ts`. `CLONE_RECORD_POLICY` is
+`satisfies Record<keyof BoxRecord, 'carry' | 'drop' | 'n/a'>` (and
+`CLONE_CLOUD_POLICY` the same over `CloudBoxFields`), so a new record field fails
+`tsc` until it is classified. A pure `cloneCarryOpts(source, targetProvider)` builds
+the clone's create options, and a unit test checks that removing any `carry` field
+changes the result (it fails when a field is classified `carry` but never wired).
+
+- Carried: skills selection; `llmProxy`, mapped explicitly to `forward` / `off` so
+  the hub's config can't flip it; withPlaywright; VNC; persistent (an explicit
+  input still wins); accounts; borrowed logins. On the same provider only: docker
+  limits (memory/cpus/pids/disk), shared docker cache, Portless, cloud size,
+  location, inbound policy, daytona sandbox class, and the remote-docker engine
+  (taken from the `sandboxId`).
+- New on the record: `cloud.size` and `cloud.location` (what was ASKED for;
+  `resources` is what the backend reported), so a clone of a large box isn't
+  created at the default size.
+- Box-scope skill bindings: copied to the clone's id once its create job names
+  the box (`copyBoxBindingsWhenCreated`, fired by the clone route).
+- Intentional drops: image/checkpoint, the TUI agent (documented), config
+  volumes/credentials (fresh identity), branch, git push mode, `carry:`
+  (re-resolved under `carryYes`), ports/tokens/ids.
 
 ### 3. (dropped) and 12. (proposal), see below.
 
@@ -103,11 +111,44 @@ a clone of a `--no-skills --llm-proxy forward` box keeps both.
 - `cp.toHost` contained in the project still auto-approves and overwrites without a
   backup (same reasoning as #2, but a named single path the agent asked for). Not in
   this batch.
-- Clone: size/location/inbound/providerOptions/gitPushMode/credentialSync/remoteHost/
-  dangerouslySkipPermissions are not recorded on the box, so a clone can't carry them.
+- Clone: `credentialSync`, `dangerouslySkipPermissions`, DigitalOcean's `project` and
+  the other `providerOptions` (`timeoutMs`, `networkPolicy`) are not recorded on the
+  box, so a clone can't carry them. Boxes created before this change have no
+  `cloud.size` / `cloud.location`, so their clones use the provider default.
+- Clone: box-scope skill bindings land after the create job finishes, so the clone's
+  first boot-time skills sync can run before them; the next sync applies them.
 - Clone: `autoApproveHostActions` / `autoApproveSafeHostActions` ride the registration
   from config, not a create option, so a clone takes the hub's current config.
 
-## Item 12 proposal — planted skills exhausting hub memory / host disk (not implemented)
+## Item 12 proposal: planted skills exhausting hub memory / host disk (not implemented)
 
-See the PR body; owner decides.
+Verified on nightly. Hub: `createSkillProposals` keeps each pending proposal's
+**compressed** tarball in memory until the answer (up to 24 h), with one global cap of
+20 (`DEFAULT_MAX_PENDING`) and no per-box cap. The route accepts up to
+`AGENTBOX_CUSTODY_MAX_BLOB_BYTES` (100 MiB) per tarball, so one box can pin ~2 GB.
+CLI: `proposeBoxSkills` runs `transport.pullTree` on every box skill dir with no size
+limit (host disk), then `readLocalSkill` reads the staged copy. A `SKILL.md` that is
+a symlink to `/dev/zero`, or a FIFO, is copied as a link and then read on the PC,
+which reads forever.
+
+Proposal:
+
+1. **Hub caps** (`skill-proposals.ts`): at most **3 pending per box** and 10 in
+   total; a proposal tarball cap of **8 MiB** compressed / 32 MiB unpacked (its own
+   `skills.proposalMaxBytes` key, not custody's blob cap); and a **64 MiB total**
+   budget across pending tarballs. Over any cap the request is refused with a clear
+   409 saying how many are waiting; nothing is queued.
+2. **Where pending tarballs live**: keep them in memory under that budget, with no
+   disk spill. 64 MiB is cheap on any hub, a spill adds a temp-dir lifecycle
+   (cleanup on answer, expiry and restart) for no real gain, and a restart already
+   drops the prompts the tarballs belong to.
+3. **CLI read cap** (`box-propose.ts` / `readLocalSkill`): before pulling, list the
+   skill dir in the box (`find -printf '%y %s %p'`), refuse any non-regular entry
+   other than a directory (symlinks, FIFOs, devices), and refuse a skill whose
+   regular files sum over the proposal cap. Then pull, and `lstat` every staged
+   entry before reading it (a symlink or special file is a `problem`, never
+   followed), reading with a byte budget.
+
+Size: hub about 40 lines + 4 unit tests; CLI about 40 lines + 3 unit tests. Half a
+day including the live check. One new config key (documented in
+`configuration.mdx`), no API shape change (only a new 409 message).

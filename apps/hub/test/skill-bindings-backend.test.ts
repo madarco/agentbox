@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
+  copyBoxBindingsWhenCreated,
   getSkillBindings,
   parseBindingChanges,
   parseBindingTarget,
@@ -141,5 +142,41 @@ describe('skill bindings backend', () => {
       ['constructor', false],
     ]);
     expect((await previewSkillSet(store, {})).skills.every((s) => s.included)).toBe(true);
+  });
+});
+
+describe('copyBoxBindingsWhenCreated (a clone keeps its box bindings)', () => {
+  it("copies the source box's bindings once the create job names the new box", async () => {
+    const store = memStore();
+    await putSkillBindings(
+      store,
+      { scope: 'box', scopeId: 'src' },
+      { lint: 'exclude', a: 'include' },
+    );
+    const polls = [{ status: 'running' }, { status: 'running' }, { status: 'done', boxId: 'new' }];
+    const n = await copyBoxBindingsWhenCreated({
+      store,
+      fromBoxId: 'src',
+      jobId: 'j1',
+      getJob: () => Promise.resolve(polls.shift() ?? null),
+      sleep: () => Promise.resolve(),
+    });
+    expect(n).toBe(2);
+    expect((await getSkillBindings(store)).box['new']).toEqual({ lint: 'exclude', a: 'include' });
+  });
+
+  it('copies nothing when the create fails or the source has no bindings', async () => {
+    const store = memStore();
+    let asked = 0;
+    const getJob = () => {
+      asked++;
+      return Promise.resolve({ status: 'failed' });
+    };
+    const args = { store, jobId: 'j', getJob, sleep: () => Promise.resolve() };
+    expect(await copyBoxBindingsWhenCreated({ ...args, fromBoxId: 'src' })).toBe(0);
+    expect(asked).toBe(0); // nothing bound: no polling at all
+    await putSkillBindings(store, { scope: 'box', scopeId: 'src' }, { lint: 'exclude' });
+    expect(await copyBoxBindingsWhenCreated({ ...args, fromBoxId: 'src' })).toBe(0);
+    expect((await getSkillBindings(store)).box).not.toHaveProperty('new');
   });
 });

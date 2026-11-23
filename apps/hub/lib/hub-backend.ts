@@ -141,6 +141,7 @@ import {
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
+import { cloneCarryOpts } from './boxes/clone-carry';
 import {
   baseFreshnessFromFingerprints,
   withSkillsFreshness,
@@ -4067,14 +4068,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           files: exported.files,
           ...(agent ? { agent } : {}),
           ...(persistent !== undefined ? { persistent } : {}),
-          ...(rp.box.borrowedCredentials?.length
-            ? { borrowedCredentials: [...rp.box.borrowedCredentials] }
-            : {}),
-          // A clone stays on the source box's accounts (the box agent's and
-          // each lender's) instead of falling back to config.
-          ...(rp.box.accounts && Object.keys(rp.box.accounts).length > 0
-            ? { accounts: { ...rp.box.accounts } }
-            : {}),
+          sourceBoxId: rp.box.id,
+          carried: cloneCarryOpts(rp.box, provider),
         };
       } catch (err) {
         return { ok: false, error: errMsg(err) };

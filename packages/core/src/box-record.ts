@@ -184,6 +184,14 @@ export interface CloudBoxFields {
    */
   sandboxClass?: string;
   /**
+   * The `--size` / `box.size<P>` this box was created with, as the provider
+   * reads it (hetzner server type, daytona `cpu-mem-disk`, …). Recorded so a
+   * clone asks for the same size. Absent → the provider default.
+   */
+  size?: string;
+  /** The `--location` this box was created in. Absent → the provider default. */
+  location?: string;
+  /**
    * True when this box's `/workspace` was seeded from the host checkout (the
    * laptop `create` path), i.e. it has a real fork base shared with the host.
    * Left unset for `inBoxClone` / plane boxes (they clone in-box from a leased
