@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import next from 'next';
-import { loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
 import {
   makeStore,
   FsCustodyStore,
@@ -40,7 +40,12 @@ import { createHubBackend } from './lib/hub-backend';
 import { HEARTBEAT_INTERVAL_MS } from './lib/backend/managers';
 import { startManagerHeartbeats } from './lib/manager-heartbeat';
 import { startPtyJanitor } from './lib/pty-janitor';
-import { configureManagerStoreFromConfig, configureTimelineSinkFromConfig } from '@agentbox/relay';
+import {
+  askMcpApproval,
+  configureManagerStoreFromConfig,
+  configureTimelineSinkFromConfig,
+  type RelayServerHandle,
+} from '@agentbox/relay';
 import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
@@ -55,6 +60,8 @@ import {
 import { createDeviceService, type DeviceService } from './lib/backend/devices';
 import { createHistoryService, type HistoryService } from './lib/backend/history';
 import { createMemoryService, type MemoryService } from './lib/backend/history-memory';
+import { createMcpServer, MCP_INSTRUCTIONS, type McpHubScope } from './lib/backend/mcp';
+import { historyMcpTools } from './lib/backend/mcp-history';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -298,6 +305,35 @@ async function main(): Promise<void> {
       })
     : undefined;
   globalThis.__AGENTBOX_HUB_MEMORY = memory;
+  // The MCP server (Phase 6): boxes reach it through the relay (`mcp.message`,
+  // scoped to the box), hub-credential clients at `POST /api/mcp`.
+  const hubMachineId = tryGetMachineId();
+  let relayForMcp: Pick<RelayServerHandle, 'prompts' | 'subscribers'> | null = null;
+  const mcpServer = createMcpServer({
+    name: 'agentbox',
+    version: process.env.AGENTBOX_CLI_VERSION ?? 'dev',
+    instructions: MCP_INSTRUCTIONS,
+    toolSets: [
+      (() => {
+        const tools = historyMcpTools({
+          history: () => history,
+          memory: () => memory,
+          log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+        });
+        return () => tools;
+      })(),
+    ],
+  });
+  const hubMcpScope: McpHubScope = {
+    kind: 'hub',
+    origin: { boxId: null, boxName: 'hub', ...(hubMachineId ? { hostId: hubMachineId } : {}) },
+    approve: (req) =>
+      relayForMcp
+        ? askMcpApproval(relayForMcp.prompts, relayForMcp.subscribers, 'hub', req)
+        : Promise.resolve(false),
+    redact: (bytes) => Promise.resolve(bytes),
+  };
+  globalThis.__AGENTBOX_HUB_MCP = { handle: (message) => mcpServer.handle(message, hubMcpScope) };
 
   const daemon = await startRelayDaemon({
     port,
@@ -309,6 +345,7 @@ async function main(): Promise<void> {
     ...(llmProxyPort !== undefined ? { llmProxyPort } : {}),
     ...(history ? { history } : {}),
     ...(memory ? { memory } : {}),
+    mcp: (scope, message) => mcpServer.handle(message, scope),
     // A device token is accepted wherever a PC used the shared admin token.
     ...(devices ? { deviceAuth: relayDeviceAuth(devices) } : {}),
     // Custody carries project seed tars, which dwarf the relay's 1 MiB
@@ -364,6 +401,7 @@ async function main(): Promise<void> {
   // the /api/events SSE stream. __AGENTBOX_BOX_SOURCE (the Store) is kept for the
   // deferred poll-mode path only.
   globalThis.__AGENTBOX_BOX_SOURCE = daemon.handle.store;
+  relayForMcp = daemon.handle;
   // Where this hub's timeline rows go, and where its manager records live. With
   // a control box configured the store (workspaces, tasks, log, managers) is
   // THERE, so the rows this hub produces for its own boxes are forwarded rather

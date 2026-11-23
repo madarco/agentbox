@@ -121,6 +121,21 @@ export class MemoryRelay {
     return { key, root };
   }
 
+  /**
+   * The repo key and origin a box's MCP scope is built from (Phase 6). Only
+   * from what the box registered with (`repoKey`, else `originUrl`), never
+   * from a live `git remote get-url`: a docker box mounts the project's `.git`
+   * read-write, so it could point `origin` at another repo and read that
+   * repo's sessions and memory. No registered repo = no repo (sees nothing).
+   */
+  boxIdentity(reg: BoxRegistration): { repoKey: string | null; origin: MemoryOrigin } {
+    const machineId = tryGetMachineId() ?? undefined;
+    return {
+      repoKey: reg.repoKey ?? repoKey(reg.originUrl, { machineId }) ?? null,
+      origin: this.origin(reg),
+    };
+  }
+
   private origin(reg: BoxRegistration): MemoryOrigin {
     const hostId = tryGetMachineId();
     return {

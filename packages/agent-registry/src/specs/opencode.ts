@@ -145,6 +145,15 @@ export const opencodeSpec: AgentSyncSpec = {
   // `skills.paths`: a config layer REPLACES the user's own `skills.paths` array
   // (measured, opencode 1.19.6), and it would need env delivery the VPS
   // providers' box.env drops.
+  // AgentBox MCP server (docs/agent-history-plan.md, Phase 6). The global
+  // config file is box-local (the host's config rides OPENCODE_CONFIG_DIR on the
+  // volume), so writing it touches nothing the host synced.
+  mcp: {
+    file: '~/.config/opencode/opencode.json',
+    format: 'json',
+    serversPath: ['mcp'],
+    entry: 'opencode',
+  },
   skills: {
     dirs: ['.config/opencode/skills', '.claude/skills', '.agents/skills'],
     inject: { kind: 'dir', path: '/home/vscode/.opencode/skills' },

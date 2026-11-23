@@ -68,6 +68,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       'sessions',
       'usage',
       'memory',
+      'mcp',
     ],
   },
 ];
@@ -81,6 +82,7 @@ export const SHORT_DESCRIPTIONS: Record<string, string> = {
   sessions: 'Agent sessions the hub recorded: list, show, search, download',
   usage: 'Tokens the recorded sessions spent, by day, agent, box, project, PC',
   memory: 'Agent memory the hub keeps per repo: list, versions, show, pull',
+  mcp: "The hub's MCP tools (sessions, memory) over stdio, for an agent on this PC",
   workspace: 'Register a folder grouping several projects, with its own task list',
   tasks: 'Units of work in a workspace, assigned to boxes (not agentbox.yaml tasks)',
   manager: 'Agent sessions that create and watch boxes: detected, or run by the hub',

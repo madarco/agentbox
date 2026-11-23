@@ -106,9 +106,16 @@ import {
   CredentialsFanout,
   stateBoxAccount,
 } from './credentials-fanout.js';
-import type { HistoryIngestSink, HistoryMemorySink, LlmProxyRecord } from '@agentbox/core';
+import type {
+  HistoryIngestSink,
+  HistoryMemorySink,
+  LlmProxyRecord,
+  McpBoxHandler,
+  McpBoxScope,
+} from '@agentbox/core';
 import { HistoryRelay } from './history/history-relay.js';
 import { runHistoryRpc } from './history/rpc.js';
+import { askMcpApproval, runMcpRpc } from './mcp-rpc.js';
 import { MemoryRelay } from './history/memory-relay.js';
 import { BoxStatusStore, isValidBoxStatus, normalizeBoxStatus } from './status-store.js';
 import { MemoryStore } from './store/memory-store.js';
@@ -251,6 +258,12 @@ export interface RelayServerOptions {
    * `history.memory.put` answers `disabled`.
    */
   memory?: HistoryMemorySink;
+  /**
+   * The hub's MCP server (docs/agent-history-plan.md, Phase 6). Present ⇒ a
+   * box's `agentbox-ctl mcp` reaches it through `mcp.message`, scoped to the
+   * box; absent (a relay with no hub) ⇒ every request answers a JSON-RPC error.
+   */
+  mcp?: McpBoxHandler;
 }
 
 export interface RelayServerHandle {
@@ -459,6 +472,21 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       : null;
   const historyRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
     runHistoryRpc(historyRelay, memoryRelay, reg, method, params);
+  const mcpIdentity = (reg: BoxRegistration): Pick<McpBoxScope, 'repoKey' | 'origin'> =>
+    memoryRelay
+      ? memoryRelay.boxIdentity(reg)
+      : { repoKey: null, origin: { boxId: reg.boxId, boxName: reg.name } };
+  // `prompts`/`subscribers` are read when a proposal is made, long after setup.
+  const mcpScope = (reg: BoxRegistration) => async (): Promise<McpBoxScope> => ({
+    kind: 'box',
+    boxId: reg.boxId,
+    boxName: reg.name,
+    ...mcpIdentity(reg),
+    approve: (req) => askMcpApproval(prompts, subscribers, reg.boxId, req),
+    redact: (bytes) => (historyRelay ? historyRelay.redact(bytes) : Promise.resolve(bytes)),
+  });
+  const mcpRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
+    runMcpRpc(opts.mcp ?? null, mcpScope(reg), method, params);
   const events = new EventBuffer();
   const statusStore = new BoxStatusStore();
   const prompts = new PendingPrompts();
@@ -1227,6 +1255,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 200, await historyRpc(reg)(body.method, body.params));
         return;
       }
+      // The hub's MCP server, scoped to this box: unprompted reads (a
+      // `memory_propose` asks through the approvals on its own).
+      if (body.method.startsWith('mcp.')) {
+        send(res, 200, await mcpRpc(reg)(body.method, body.params));
+        return;
+      }
       // The box's share of the skills library: unprompted, box-scoped by its
       // registration's selection, not worktree-scoped.
       if (body.method.startsWith('skills.')) {
@@ -1298,6 +1332,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             originUrl: reg.originUrl,
             boxAgents: registrationAgents(reg),
             history: historyRpc(reg),
+            mcp: mcpRpc(reg),
             skills: (method, params) =>
               runSkillsRpc(custody, reg.skills, method, params, skillContextForRegistration(reg)),
             log,
@@ -2078,6 +2113,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                         (await store.getBox(reg.boxId).catch(() => undefined)) ?? reg,
                       ),
                       history: historyRpc(reg),
+                      mcp: mcpRpc(reg),
                       skills: (method, params) =>
                         runSkillsRpc(
                           custody,
