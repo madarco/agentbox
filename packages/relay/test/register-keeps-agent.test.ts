@@ -61,6 +61,23 @@ describe('/admin/register-box keeps the agent across a re-register that omits it
     expect((await handle.store.getBox('b4'))?.agents).toEqual(['claude', 'openclaw']);
   });
 
+  it("a re-register from another PC's older record (agents [claude]) does not drop openclaw", async () => {
+    const reg = { boxId: 'b6', token: 't6', name: 'both', agent: 'claude' };
+    await post('/admin/register-box', { ...reg, agents: ['claude', 'openclaw'] });
+    await post('/admin/register-box', { ...reg, agents: ['claude'] });
+    expect(await services('t6')).toEqual(['openclaw']);
+    // An older hub's addBoxAgent swapped `agent` instead of listing both.
+    await post('/admin/register-box', { boxId: 'b7', token: 't7', name: 'old', agent: 'openclaw' });
+    await post('/admin/register-box', {
+      boxId: 'b7',
+      token: 't7',
+      name: 'old',
+      agent: 'claude',
+      agents: ['claude'],
+    });
+    expect(await services('t7')).toEqual(['openclaw']);
+  });
+
   it('keeps originUrl and repoKey across a re-register that omits them', async () => {
     await post('/admin/register-box', {
       boxId: 'b5',

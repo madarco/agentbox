@@ -115,6 +115,7 @@ export function registrationToBoxRecord(
 
   const branch = reg.worktrees?.[0]?.branch ?? `agentbox/${reg.name}`;
   const sanctionedBranch = reg.worktrees?.[0]?.sanctionedBranch ?? branch;
+  const regAgents = registrationAgents(reg);
 
   // Git worktree bookkeeping points at the LOCAL clone (PC only). On the control
   // box `projectRoot` is undefined → no worktrees, which is correct: cloud
@@ -154,8 +155,8 @@ export function registrationToBoxRecord(
     // and `reg.agent` is only the first); otherwise the registration's.
     ...(existing?.agents && existing.agents.length > 0
       ? { agents: existing.agents }
-      : registrationAgents(reg)
-        ? { agents: [...registrationAgents(reg)!] }
+      : regAgents
+        ? { agents: [...regAgents] }
         : {}),
     // The box's named accounts travel with it, so an adopting PC never
     // reconciles it against its own DEFAULT login (llm-accounts Phase 3).
@@ -171,6 +172,18 @@ export function registrationToBoxRecord(
       ? { originUrl: reg.originUrl ?? existing?.originUrl }
       : {}),
     ...((reg.repoKey ?? existing?.repoKey) ? { repoKey: reg.repoKey ?? existing?.repoKey } : {}),
+    // And the origin stamp: a rehydrate on this PC must send it, not stamp itself.
+    ...((reg.originMachineId ?? existing?.originMachineId)
+      ? {
+          originMachineId: reg.originMachineId ?? existing?.originMachineId,
+          ...((reg.originMachineLabel ?? existing?.originMachineLabel)
+            ? { originMachineLabel: reg.originMachineLabel ?? existing?.originMachineLabel }
+            : {}),
+          ...((reg.originFolder ?? existing?.originFolder)
+            ? { originFolder: reg.originFolder ?? existing?.originFolder }
+            : {}),
+        }
+      : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
     ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,

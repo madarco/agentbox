@@ -2049,8 +2049,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.agent === 'string' && body.agent.length > 0
             ? body.agent
             : (existingReg?.agent ?? undefined),
-        // Every agent the box runs; kept like `agent` when a re-register omits it.
-        agents: sanitizeAgents(body.agents) ?? existingReg?.agents,
+        // Every agent the box runs. Merged with the stored list, never
+        // replaced: agents are only ever added to a box, and a re-register from
+        // another PC's older record must not drop one the hub added since.
+        agents: mergeAgents(
+          existingReg ? registrationAgents(existingReg) : undefined,
+          sanitizeAgents(body.agents),
+        ),
         accounts: sanitizeAccounts(body.accounts),
         // Kept from the stored registration when a re-register omits it, like
         // `agent`: a relaunch from a record that predates it must not strip it.
@@ -3466,12 +3471,20 @@ function sanitizeAccounts(raw: unknown): Record<string, string> | undefined {
   return namedAccounts(out);
 }
 
-/** A registration's `agents`: non-empty agent ids, `'none'` dropped; undefined when none. */
+/** A registration's `agents`: non-empty ids, `'none'` dropped; undefined when none. */
 function sanitizeAgents(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const out = raw.filter(
-    (a): a is string =>
-      typeof a === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(a) && a !== 'none',
+    (a): a is string => typeof a === 'string' && a.length > 0 && a.length <= 214 && a !== 'none',
   );
   return out.length > 0 ? [...new Set(out)] : undefined;
+}
+
+/** The stored list plus any new ids from the body, stored order first. */
+function mergeAgents(
+  stored: readonly string[] | undefined,
+  incoming: readonly string[] | undefined,
+): string[] | undefined {
+  const out = [...new Set([...(stored ?? []), ...(incoming ?? [])])];
+  return out.length > 0 ? out : undefined;
 }

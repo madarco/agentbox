@@ -747,7 +747,9 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<Regis
     : args.originUrl
       ? await registrationOrigin({
           originUrl: args.originUrl,
-          folder: args.workspacePath ?? args.worktrees?.[0]?.hostMainRepo,
+          // Only a create names the folder it seeded from; a re-registration
+          // (no `workspacePath`) never stamps this machine as the origin.
+          folder: args.workspacePath ?? null,
           repoKey: args.repoKey ?? null,
           requester: args.requester ?? null,
         })

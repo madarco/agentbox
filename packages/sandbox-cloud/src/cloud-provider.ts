@@ -632,6 +632,7 @@ export function createCloudProvider(
     // its origin URL, needed for lease minting); a classic-cloud box registers
     // on the host relay so its CloudBoxPoller picks up the fresh preview
     // URL/token. Both best-effort.
+    const fromRecord = registrationFromRecord(box);
     if (box.cloud?.controlPlaneUrl && box.relayToken) {
       const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN;
       const originUrl =
@@ -672,9 +673,7 @@ export function createCloudProvider(
             image: box.cloud.image,
             webPort: box.cloud.webPort,
             agent: primaryAgent(box),
-            ...(registrationFromRecord(box).agents
-              ? { agents: registrationFromRecord(box).agents }
-              : {}),
+            ...(fromRecord.agents ? { agents: fromRecord.agents } : {}),
             ...(box.accounts ? { accounts: box.accounts } : {}),
             ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
@@ -698,11 +697,10 @@ export function createCloudProvider(
           projectIndex: box.projectIndex,
           autoApproveHostActions: box.autoApproveHostActions,
           autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-          ...(box.skills ? { skills: box.skills } : {}),
           // Repo identity so a thin client can map this box to a local project
           // by origin (Step 4 adoption), from the record; a box created before
           // the record carried it falls back to the host folder's origin.
-          ...registrationFromRecord(box),
+          ...fromRecord,
           ...(box.originUrl
             ? {}
             : { originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined) }),

@@ -281,6 +281,7 @@ export async function executeHostReachAction(
     route?.role === 'origin' &&
     route.box?.originMachineId !== undefined &&
     route.box.originMachineId === (deps.machineId ?? tryGetMachineId)();
+  const routeAgents = route?.box ? registrationAgents(route.box) : undefined;
   const ephemeral =
     !owner && route && folder && route.box?.backend
       ? {
@@ -289,7 +290,7 @@ export async function executeHostReachAction(
           autoApproveSafeHostActions: isOrigin ? route.box.autoApproveSafeHostActions : false,
           // So `agents.list` answers for the box's own agent (a service agent's
           // units go only to a box that names it).
-          ...(registrationAgents(route.box) ? { agents: registrationAgents(route.box) } : {}),
+          ...(routeAgents ? { agents: routeAgents } : {}),
         }
       : null;
   if (!owner && !ephemeral) {

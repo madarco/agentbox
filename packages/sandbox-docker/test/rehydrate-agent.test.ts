@@ -93,4 +93,29 @@ describe('rehydrateRelayRegistry', () => {
       bridgeToken: 'bt',
     });
   });
+
+  it('a re-register never stamps this machine as the origin (an adopted box with no recorded stamp)', async () => {
+    await rehydrateRelayRegistry([
+      {
+        id: 'b-adopted',
+        name: 'a',
+        relayToken: 't',
+        originUrl: 'git@github.com:o/r.git',
+        repoKey: 'github.com/o/r',
+        gitWorktrees: [
+          {
+            kind: 'root',
+            branch: 'agentbox/a',
+            containerPath: '/workspace',
+            hostMainRepo: '/some/other/pc/folder',
+            gitWorktreePath: '',
+            relPathFromWorkspace: '',
+          },
+        ],
+      },
+    ]);
+    expect(bodies[0]).toMatchObject({ repoKey: 'github.com/o/r' });
+    expect(bodies[0]?.originMachineId).toBeUndefined();
+    expect(bodies[0]?.originFolder).toBeUndefined();
+  });
 });
