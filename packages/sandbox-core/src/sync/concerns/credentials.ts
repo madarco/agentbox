@@ -466,7 +466,7 @@ export async function pushCredentialToBox(
       'sh',
       '-c',
       `{ ${normalize}; } 2>/dev/null || sudo sh -c "${normalize.replaceAll('"', '\\"')}" || ` +
-        `case "$(readlink -f '${abs}')" in '${BOX_CREDS_DIR}'/*) exit 0 ;; *) exit 1 ;; esac`,
+        `case "$(readlink -f '${abs}')" in "$(readlink -f '${BOX_CREDS_DIR}')"/*) exit 0 ;; *) exit 1 ;; esac`,
     ]);
     if (norm.exitCode !== 0) {
       // Some transports (Daytona) return the combined output as stdout.

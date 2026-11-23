@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BoxRecord, ExecResult, Provider } from '@agentbox/core';
-import { startDetachedCloudAgent, verifyAgentSessionStaysUp } from '../src/detached-agent.js';
+import {
+  startDetachedCloudAgent,
+  verifyAgentSessionStaysUp,
+  type SessionProbeExec,
+} from '../src/detached-agent.js';
 
 // A live, authenticated pane — verifyDetachedSession sees the session and no
 // auth-rejection markers, so it resolves.
@@ -262,7 +266,7 @@ describe('startDetachedCloudAgent — declared-file seeding', () => {
 
 describe('verifyAgentSessionStaysUp (the docker path runs it over docker exec)', () => {
   it('fails when the session is gone', async () => {
-    const exec = vi.fn(async (_argv: string[]) => ({ exitCode: 7, stdout: '' }));
+    const exec = vi.fn<SessionProbeExec>(async () => ({ exitCode: 7, stdout: '' }));
     await expect(
       verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', { windowMs: 0 }),
     ).rejects.toThrow(/exited immediately after launch in box b1/);
@@ -282,5 +286,16 @@ describe('verifyAgentSessionStaysUp (the docker path runs it over docker exec)',
       verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', { windowMs: 5, pollMs: 1 }),
     ).resolves.toBeUndefined();
     expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('does not read the echoed seed prompt as an auth failure', async () => {
+    const seed = 'fix the 401 Unauthorized handler';
+    const exec = vi.fn<SessionProbeExec>(async () => ({ exitCode: 0, stdout: `> ${seed}` }));
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'claude', 'claude', { windowMs: 0, seedText: seed }),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'claude', 'claude', { windowMs: 0 }),
+    ).rejects.toThrow(/credentials were rejected/);
   });
 });

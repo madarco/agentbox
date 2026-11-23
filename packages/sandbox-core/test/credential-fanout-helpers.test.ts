@@ -157,7 +157,7 @@ describe('pushCredentialToBox', () => {
       .map((e) => (e.args['cmd'] as string[]).join(' '))
       .find((c) => c.includes('chmod 600'));
     expect(norm).toContain(
-      `case "$(readlink -f '/home/vscode/.local/share/opencode/auth.json')" in '/home/vscode/.agentbox-creds'/*) exit 0 ;; *) exit 1 ;; esac`,
+      `case "$(readlink -f '/home/vscode/.local/share/opencode/auth.json')" in "$(readlink -f '/home/vscode/.agentbox-creds')"/*) exit 0 ;; *) exit 1 ;; esac`,
     );
   });
 });

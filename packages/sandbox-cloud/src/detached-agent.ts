@@ -186,7 +186,7 @@ export async function verifyDetachedSession(
   box: BoxRecord,
   sessionName: string,
   binary: string,
-  opts: { windowMs?: number; pollMs?: number } = {},
+  opts: VerifySessionOpts = {},
 ): Promise<void> {
   await verifyAgentSessionStaysUp(
     (argv) => provider.exec(box, argv, { user: 'vscode' }),
@@ -205,13 +205,26 @@ export type SessionProbeExec = (argv: string[]) => Promise<{ exitCode: number; s
  * so the docker path (which drives `docker exec` directly, not a `Provider`)
  * runs the same check.
  */
+export interface VerifySessionOpts {
+  windowMs?: number;
+  pollMs?: number;
+  /**
+   * What the agent was launched with (its seed prompt). The pane echoes it, so
+   * when it contains an auth-failure marker itself the scan can't tell the
+   * user's words from the agent's error and is skipped; the stay-up check still
+   * runs.
+   */
+  seedText?: string;
+}
+
 export async function verifyAgentSessionStaysUp(
   exec: SessionProbeExec,
   boxName: string,
   sessionName: string,
   binary: string,
-  opts: { windowMs?: number; pollMs?: number } = {},
+  opts: VerifySessionOpts = {},
 ): Promise<void> {
+  const scanAuth = !AGENT_AUTH_FAILURE.test(opts.seedText ?? '');
   const windowMs = opts.windowMs ?? 10_000;
   const pollMs = opts.pollMs ?? 2_000;
   const q = tmuxTarget(sessionName);
@@ -235,7 +248,7 @@ export async function verifyAgentSessionStaysUp(
       // of death (don't false-fail on a flaky exec) — keep polling.
       if (err instanceof Error && err.message.startsWith(`agent '${binary}'`)) throw err;
     }
-    if (AGENT_AUTH_FAILURE.test(pane)) {
+    if (scanAuth && AGENT_AUTH_FAILURE.test(pane)) {
       throw new Error(
         `box ${binary} credentials were rejected — the agent launched but printed an auth error, so no work will run. ` +
           `Refresh them with \`agentbox ${binary} login\`, then re-run.`,
@@ -423,7 +436,10 @@ export async function startDetachedCloudAgent(
             : ''),
     );
   }
-  await verifyDetachedSession(provider, box, sessionName, binary, args.verify);
+  await verifyDetachedSession(provider, box, sessionName, binary, {
+    ...args.verify,
+    seedText: (args.extraArgs ?? []).join(' '),
+  });
   return box;
 }
 

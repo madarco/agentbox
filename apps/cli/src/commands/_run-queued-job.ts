@@ -564,6 +564,7 @@ async function runDockerJob(
     result.record.name,
     sessionName,
     plan.spec.binary,
+    { seedText: prompt },
   );
 
   await maybeOpenQueuedTerminal(job, plan.spec.id, result.record.name, log);
