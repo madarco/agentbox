@@ -277,9 +277,17 @@ export const localRowFiles: HistoryRowFiles = {
     await appendFile(path, text, 'utf8');
   },
   async writeText(path, text) {
+    await mkdir(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
     await writeFile(tmp, text, 'utf8');
     await rename(tmp, path);
+  },
+  async rename(from, to) {
+    try {
+      await rename(from, to);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   },
   async stamp(path) {
     const one = async (p: string): Promise<string> => {

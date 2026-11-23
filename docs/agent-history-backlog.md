@@ -172,12 +172,29 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   part), so a weeks-long daemon session carries tens of thousands of keys in
   its state. A per-session high-watermark would do, once rows are known to
   arrive in `seq` order.
-- **openclaw: a shared volume or a clone attributes to the wrong box.** Every
-  session in the db is bound to the box that reads it. That is right for the
-  default per-box volume, but an explicit `isolate: false` override (warned at
-  create) or a `bot clone` / `--restore` copy makes a second box bind and ship
-  the same sessions under its own origin (the hub merges by session id, so the
-  later box wins the attribution).
+- **openclaw: a shared volume.** Every session in the db is bound to the box
+  that reads it, which is right for the default per-box volume. An explicit
+  `isolate: false` override (warned at create) puts two boxes on one db: both
+  bind every session, and each takes the per-session cursor over from the
+  other (moving the other's output aside), so turns land under both boxes.
+  Restores and boxes made from a checkpoint are handled (the cursor names its
+  box; an inherited output is moved aside and only new rows are copied).
+  `bot clone` never copies the config volume, so it is not affected.
+- **openclaw: redaction misses its own secrets.** The exact-value list does not
+  hold the gateway token, `~/.openclaw/.env` or the host's
+  `~/.agentbox/openclaw/<box>.env` values, and Telegram bot tokens match no
+  format rule. Escaped JSON inside `event_json` also slips past the
+  `KEY: value` rule (as codex's, #447 L2).
+- **openclaw: cost grows with the db.** Every pass lists every session and
+  their row versions; the full `session_windows` row (last-message preview
+  included) is re-copied on every change; whole sessions are held in memory
+  in 200-row batches.
+- **openclaw: the decompressed copy is never cleaned.** `agentbox-history/`
+  (and `*.from-<box>` files after a restore) grows with the db and rides every
+  bot backup.
+- **openclaw: a stopped daemon.** A read-only reader leaves `-shm`/`-wal`
+  behind when openclaw is not running; harmless only while ctl and openclaw
+  run as the same user.
 - **codex `.jsonl` → `.jsonl.zst`.** Codex compresses cold rollouts and the
   shipper does not follow the rename. A rollout compressed before its tail was
   shipped loses that tail (the hub keeps what it has). Boxes ship every 30 s,

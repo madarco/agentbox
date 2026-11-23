@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -102,47 +102,48 @@ describe('node:sqlite row source', () => {
     // Same seq in another session: rows() must not mix them up.
     ins.run(SB, 0, '{"type":"session","id":"b"}', 1, null);
     const bound: string[] = [];
-    const cursor = new HistoryRowCursor({
-      agents: [
-        {
-          agent: 'openclaw',
-          configDir: base,
-          projectKey: '-workspace',
-          spec: {
-            transcripts: [
-              {
-                root: 'agentbox-history',
-                format: 'sqlite',
-                mode: 'snapshot',
-                sessionFiles: ['<sessionId>.jsonl'],
-                sqlite: {
-                  db: 'agent.sqlite',
-                  sessions: { table: 'session_windows', column: 'session_id' },
-                  tables: [
-                    {
-                      name: 'transcript_events',
-                      id: 'seq',
-                      session: 'session_id',
-                      updated: 'created_at',
-                      zstd: { column: 'event_zstd', into: 'event_json' },
-                    },
-                  ],
+    const mk = (boxId: string) =>
+      new HistoryRowCursor({
+        agents: [
+          {
+            agent: 'openclaw',
+            configDir: base,
+            projectKey: '-workspace',
+            spec: {
+              transcripts: [
+                {
+                  root: 'agentbox-history',
+                  format: 'sqlite',
+                  mode: 'snapshot',
+                  sessionFiles: ['<sessionId>.jsonl'],
+                  sqlite: {
+                    db: 'agent.sqlite',
+                    sessions: { table: 'session_windows', column: 'session_id' },
+                    tables: [
+                      {
+                        name: 'transcript_events',
+                        id: 'seq',
+                        session: 'session_id',
+                        updated: 'created_at',
+                        zstd: { column: 'event_zstd', into: 'event_json' },
+                      },
+                    ],
+                  },
                 },
-              },
-            ],
+              ],
+            },
           },
+        ],
+        boxId,
+        readBindings: async () => [],
+        bind: (_a, sid) => {
+          bound.push(sid);
         },
-      ],
-      boxId: 'b1',
-      readBindings: async () => [],
-      bind: (_a, sid) => {
-        bound.push(sid);
-      },
-      open: openSqliteRowSource,
-      files: localRowFiles,
-    });
+        open: openSqliteRowSource,
+        files: localRowFiles,
+      });
+    const cursor = mk('b1');
     const stats = await cursor.pass();
-    db.close();
     expect(stats).toMatchObject({ sessions: 2, rows: 3, errors: [] });
     expect(bound.sort()).toEqual([SB, SA].sort());
     const read = (sid: string) =>
@@ -154,6 +155,18 @@ describe('node:sqlite row source', () => {
     expect(a.map((l) => l.row.event_json)).toEqual(['{"type":"session"}', big]);
     expect(a[1]!.row).not.toHaveProperty('event_zstd');
     expect(read(SB).map((l) => l.row.event_json)).toEqual(['{"type":"session","id":"b"}']);
+
+    // The volume restored into another box: the old output moves aside and
+    // the new box's file holds only the rows it copies itself.
+    ins.run(SA, 2, '{"type":"later"}', 3, null);
+    expect((await mk('b2').pass()).errors).toEqual([]);
+    db.close();
+    expect(readFileSync(join(base, 'agentbox-history', `${SA}.jsonl.from-b1`), 'utf8')).toContain(
+      '{\\"type\\":\\"session\\"}',
+    );
+    expect(read(SA).map((l) => l.row.event_json)).toEqual(['{"type":"later"}']);
+    expect(existsSync(join(base, 'agentbox-history', `${SB}.jsonl`))).toBe(false);
+    expect(existsSync(join(base, 'agentbox-history', `${SB}.jsonl.from-b1`))).toBe(true);
   });
 
   it('refuses to copy a compressed row empty when this node has no zstd', () => {

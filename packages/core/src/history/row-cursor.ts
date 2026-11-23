@@ -46,6 +46,8 @@ export interface HistoryRowFiles {
   append(path: string, text: string): Promise<void>;
   /** Replace the file's content (write-then-rename). */
   writeText(path: string, text: string): Promise<void>;
+  /** Move a file; a missing source is not an error. */
+  rename(from: string, to: string): Promise<void>;
   /** A change marker for the db (its and its WAL's mtime/size), or null when absent. */
   stamp(path: string): Promise<string | null>;
 }
@@ -128,13 +130,16 @@ function join(...parts: string[]): string {
   return parts.filter(Boolean).join('/').replace(/\/+/g, '/');
 }
 
-function parseCursor(text: string | null): Cursor {
-  if (!text) return {};
+function parseCursor(text: string | null): { box?: string; rows: Cursor } {
+  if (!text) return { rows: {} };
   try {
-    const v = JSON.parse(text) as { rows?: unknown };
-    return v.rows && typeof v.rows === 'object' ? (v.rows as Cursor) : {};
+    const v = JSON.parse(text) as { box?: unknown; rows?: unknown };
+    return {
+      ...(typeof v.box === 'string' && v.box ? { box: v.box } : {}),
+      rows: v.rows && typeof v.rows === 'object' ? (v.rows as Cursor) : {},
+    };
   } catch {
-    return {};
+    return { rows: {} };
   }
 }
 
@@ -190,19 +195,22 @@ export class HistoryRowCursor {
       try {
         db = this.opts.open(dbPath);
         if (!db) continue;
+        const found = new Set<string>();
         if (discover) {
           const known = new Set(ids);
           for (const id of db.sessions(discover.table, discover.column)) {
             if (!SESSION_ID.test(id) || known.has(id)) continue;
-            // The shippers ship bound sessions only: bind, then copy.
-            await this.opts.bind?.(agent.agent, id);
             known.add(id);
+            found.add(id);
             ids.push(id);
           }
         }
         let pending = false;
         for (const sessionId of ids) {
           const r = await this.copySession(agent, t, db, sessionId, opts.final === true);
+          // Bound only after the copy: an output inherited from another box
+          // has been moved aside by then, so no shipper sees it as this box's.
+          if (found.has(sessionId)) await this.opts.bind?.(agent.agent, sessionId);
           pending ||= r.pending;
           if (r.written > 0) {
             stats.sessions++;
@@ -231,7 +239,24 @@ export class HistoryRowCursor {
     const root = t.root.replace(/<projectKey>/g, agent.projectKey);
     const out = join(agent.configDir, root, t.sessionFiles[0]!.replace(/<sessionId>/g, sessionId));
     const cursorPath = out.replace(/\.jsonl$/, '') + '.cursor.json';
-    const cursor = parseCursor(await this.opts.files.readText(cursorPath));
+    const parsed = parseCursor(await this.opts.files.readText(cursorPath));
+    const cursor = parsed.rows;
+    const writeCursor = () =>
+      this.opts.files.writeText(
+        cursorPath,
+        JSON.stringify({ v: 1, box: this.opts.boxId, rows: cursor }),
+      );
+    if (parsed.box !== this.opts.boxId) {
+      // A restored backup or a box made from a checkpoint carries another
+      // box's output and cursor. That box already shipped those rows: move its
+      // file aside (out of the session glob) and keep the row map, so this
+      // box's file holds only rows it copies itself. A cursor with no box
+      // predates the field and is this box's own.
+      if (parsed.box) {
+        await this.opts.files.rename(out, `${out}.from-${parsed.box}`);
+      }
+      await writeCursor();
+    }
     const now = (this.opts.now ?? Date.now)();
     const lines: string[] = [];
     let pending = false;
@@ -269,7 +294,7 @@ export class HistoryRowCursor {
     }
     if (lines.length === 0) return { written: 0, pending };
     await this.opts.files.append(out, `${lines.join('\n')}\n`);
-    await this.opts.files.writeText(cursorPath, JSON.stringify({ v: 1, rows: cursor }));
+    await writeCursor();
     return { written: lines.length, pending };
   }
 }

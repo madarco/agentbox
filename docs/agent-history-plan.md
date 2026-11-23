@@ -451,7 +451,11 @@ one `openclaw agent --local` turn against a local mock model; no account used):
 **As built:** as planned, plus a `parent` gate on `transcript_events` →
 `session_windows` (events land after their window row, so the lineage is in
 the file's head), and a frame that fails to decode is copied without its text
-(`event_zstd_error`) rather than retried forever.
+(`event_zstd_error`) rather than retried forever. Each `<sessionId>.cursor.json`
+names the box that wrote it: a box that finds another box's cursor (a restored
+bot backup, a cloud box made from a checkpoint) moves that output to
+`<sessionId>.jsonl.from-<box>`, keeps its row map, and binds the session only
+after, so only rows it copies itself ship under its origin.
 
 **Live check** (docker, isolated hub on a scratch HOME, openclaw 2026.11.7 in
 the box, a mock OpenAI-compatible endpoint in the box, no account): one turn
