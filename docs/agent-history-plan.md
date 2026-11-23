@@ -1,7 +1,8 @@
 # Agent history — sessions, memory and usage in the hub
 
 **Status:** Phases 1, 2 done (store, archive, ingest, read API + CLI for claude
-in boxes); Phase 4 (memory, claude) implemented; Phases 3, 5-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
+in boxes); Phase 3 implemented (codex, pi, opencode transcripts, re-parse job;
+openclaw deferred); Phase 4 (memory, claude) implemented; Phases 5-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -336,7 +337,7 @@ Re-parse job (raw → normalized) for parser version bumps.
 
 **Done:** one session per agent searchable; a parser bump re-derives cleanly.
 
-#### Phase 3 implementation plan (2026-11-23)
+#### Phase 3 implementation (2026-11-23)
 
 - **Bindings for every agent.** The shipper keeps shipping bound sessions only
   (shared docker volumes pool every box's sessions for codex, pi and opencode
@@ -380,6 +381,16 @@ Re-parse job (raw → normalized) for parser version bumps.
 - **openclaw** is not in this phase (see the backlog): its 2026.11 store is a
   large schema (`transcript_events` with zstd-compressed event blobs, plus
   navigation rows) that Phase 0 did not measure.
+- **As built:** ctl runs the row cursor in every box; the relay's final docker
+  read no longer triggers it itself: the hub's destroy flush runs the box's
+  `agentbox-ctl history flush` first and the relay read after it.
+- **Live check** (docker, isolated hub, a local mock model endpoint so no
+  account was used): codex 0.171 (`codex exec` with hooks), pi 1.6 (`pi -p`) and
+  opencode 1.19.6 (`opencode run`) each bound their session through the new
+  hook/extension/plugin, shipped, and showed up in one `sessions ls` and in
+  `sessions search`; the codex hook's `session_id` equals the rollout's uuid.
+  On a copy of that store, bumping all three parsers re-derived every session
+  with an identical projection, and a second run found nothing stale.
 
 ### Phase 4 — memory in the hub
 
