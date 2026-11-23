@@ -659,6 +659,16 @@ agentbox skills --list [--json]
 agentbox skills --upload <names> | --upload-all [--allow-findings]
 agentbox skills --download <names> | --download-all [--yes]
 agentbox skills --discard <names> --yes
+agentbox skills add <url>[#path][@ref] [--skill <names>] [--policy auto|manual]
+agentbox skills add --marketplace <name|url> --plugin <plugin>
+agentbox skills import <path...> [--link]   # --link: re-upload on every change
+agentbox skills unlink [names...]
+agentbox skills refresh [names...]          # re-fetch git/marketplace skills
+agentbox skills update [names...] | --all [--yes]   # approve pending updates
+agentbox skills update --box <box>          # sync a running box now
+agentbox skills diff <name> [--from <v>] [--to <v>]
+agentbox skills policy <name> auto|manual
+agentbox skills ls --box <box> [--behind]
 
 # Host relay process
 agentbox relay status

@@ -86,7 +86,7 @@ export function uploadBlocker(
 export async function uploadLocalSkill(
   client: HubApiClient,
   skill: LocalSkill,
-  opts: { allowFindings?: boolean } = {},
+  opts: { allowFindings?: boolean; linked?: boolean } = {},
 ): Promise<UploadOutcome> {
   const blocker = uploadBlocker(skill, opts);
   if (blocker) return { name: skill.name, status: 'skipped', reason: blocker };
@@ -100,6 +100,7 @@ export async function uploadLocalSkill(
       ...(tryGetMachineId() ? { machineId: tryGetMachineId()! } : {}),
       path: skill.dir,
     },
+    ...(opts.linked ? { linked: true } : {}),
   });
   return { name: skill.name, status: res.changed ? 'uploaded' : 'unchanged', version: res.version };
 }

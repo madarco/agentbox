@@ -2,11 +2,21 @@
 //        in the `X-AgentBox-Skill-Meta` header (base64 JSON: sha256 tree hash,
 //        description, size, files, source). Streamed straight into custody,
 //        capped by AGENTBOX_CUSTODY_MAX_BLOB_BYTES.
+//        Under the skill's `auto` policy the version becomes current and every
+//        running box behind on it syncs; under `manual` it waits as pending.
+// PATCH  /api/v1/skills/{name} {policy: 'auto'|'manual'} — the update policy.
 // DELETE /api/v1/skills/{name} — discard the skill and every stored version.
 import { Readable } from 'node:stream';
-import { discardSkill, importSkill, parseImportMeta } from '@/lib/backend/skills';
+import {
+  discardSkill,
+  importSkill,
+  parseImportMeta,
+  parsePolicy,
+  setSkillPolicy,
+} from '@/lib/backend/skills';
+import { backendOrNull } from '../../lib/backend';
 import { fail, ok } from '../../lib/envelope';
-import { failFromSkills, skillsStoreOrFail } from '../_service';
+import { failFromSkills, readJson, skillsStoreOrFail } from '../_service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,6 +51,7 @@ export async function PUT(
         ? { maxBytes: globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES }
         : {}),
     });
+    if (result.currentChanged) backendOrNull()?.skillsChanged([name]);
     return ok(result);
   } catch (err) {
     return failFromSkills(err, 'skill import failed');
@@ -58,5 +69,22 @@ export async function DELETE(
     return ok({ name, ...(await discardSkill(store, name)) });
   } catch (err) {
     return failFromSkills(err, 'skill discard failed');
+  }
+}
+
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ name: string }> },
+): Promise<Response> {
+  const store = skillsStoreOrFail();
+  if (store instanceof Response) return store;
+  const { name } = await ctx.params;
+  const body = await readJson(req);
+  if (!body || body.policy === undefined)
+    return fail('invalid_request', 'body must be {"policy": "auto"|"manual"}');
+  try {
+    return ok(await setSkillPolicy(store, name, parsePolicy(body.policy)));
+  } catch (err) {
+    return failFromSkills(err, 'skill update failed');
   }
 }

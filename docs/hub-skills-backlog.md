@@ -129,6 +129,51 @@ review items marked must-fix before a remote hub serves skills.
 Deferred, with reason (in Open items): excluding `skills/` from config-volume
 syncs and static bakes once the library is on.
 
+## Phase 5 — implementation plan (2026-11-23)
+
+In the plan doc's Phase 5 section. Built: origin/policy/pending on `meta.json`;
+hub-side git and marketplace fetch (`skill-sources.ts`); per-box served-set
+records written by the relay on `skills.get`; `skills.sync` fan-out over
+`Provider.exec`; the `/api/v1` routes; `agentbox skills add | import [--link] |
+unlink | refresh | update | diff | policy | ls`; the PC relay's linked-folder
+watcher.
+
+## Open items from Phase 5
+
+- **No periodic refresh.** A git or marketplace skill is re-fetched only by
+  `agentbox skills refresh` (or `POST /skills/{name}/refresh`). A hub timer
+  (`refreshAllSkills` exists) with a config key is the follow-up.
+- **The box record is written when the relay SERVES the set, not when ctl has
+  installed it.** A box whose sync then fails reads as current. A
+  `skills.report` RPC from ctl after a pass would make it exact (needs a new
+  image).
+- **`boxes/<boxId>/skills.json` is not removed on destroy.** A few hundred bytes
+  per destroyed box; the fan-out skips it (the box no longer resolves).
+- **The fan-out is over `Provider.exec`, not `CloudBoxPoller`** (the poller has
+  no host→box channel). Cost: one provider exec per behind running box; a
+  cloud SDK exec (e2b/vercel/daytona) is slower than a docker exec. Fine at
+  personal scale.
+- **Selecting fan-out targets reads one custody record per live box.** Fine for
+  tens of boxes; cache if a hub grows to hundreds.
+- **Linked uploads from another PC are accepted.** The open question (refuse a
+  folder source from a different `machineId`?) stays open; the hub currently
+  takes the latest upload from any PC, and its origin then names that PC.
+- **Private git repos on a control box** need git credentials in the hub
+  process's environment (a credential helper or `gh auth setup-git`). Errors
+  come back as the git message. Not configured by `hub deploy`.
+- **Codex marketplaces** (`~/.codex/.tmp/marketplaces`) are not looked up by
+  name; pass the marketplace's URL.
+- **No `skills.update` config key.** Policy is per skill (`agentbox skills
+  policy`), defaulting by origin. A global default would need the hub routes to
+  read config.
+- **`Box.skills` is not on the hub Box payload** (Phase 6: tray badge, box tab).
+  `GET /api/v1/boxes/{id}/skills` carries the same facts.
+- **A refresh that finds a secret-scan hit is reported `blocked`** and not
+  stored; `--allow-findings` on refresh/add overrides it. The findings aren't
+  persisted for the web UI (Phase 6).
+- **Openclaw bots follow the skill's policy** like any box; the plan's open
+  question (always manual for bots) is unanswered.
+
 ## Open items
 
 - **`--link` (a PC folder watched and re-uploaded on change)** is not in

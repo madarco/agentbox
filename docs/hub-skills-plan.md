@@ -702,6 +702,54 @@ and linked-folder watching on the PC relay.
 restart of the box; a git skill's new commit shows as `behind` and applies
 only after approval.
 
+**Implementation plan (2026-11-23).** Source and update side only. Phase 4
+(bindings) is built in parallel, so selection is left as Phase 2 built it.
+
+1. **Meta grows an origin, a policy and a pending version.** `SkillMeta.origin`
+   is `upload | folder (linked, machineId, path) | git (url, ref, path, commit)
+   | marketplace (marketplace, url, plugin, commit)`. `policy` is `auto | manual`
+   and defaults by origin (git and marketplace `manual`). A new version of a
+   `manual` skill is stored as `pending`; `current`, what boxes get, does not
+   move until it is approved. Retention never drops `current` or `pending`.
+2. **Hub-side git** (`apps/hub/lib/backend/skill-sources.ts`): `git init` +
+   `fetch --depth 1 <ref>` into a temp dir (branch, tag or sha), skills found
+   at the path itself or under `<path>/skills/*` / `<path>/*`, normalized and
+   scanned with the same sandbox-core reader the PC uses, imported through
+   `importSkill`. Refresh compares `git ls-remote` with the recorded commit
+   before fetching.
+3. **Marketplaces** are a git source with one more hop: the hub fetches the
+   marketplace repo, reads `.claude-plugin/marketplace.json`, resolves the
+   plugin's source (relative path, `github`, `url`, `git-subdir`) and imports
+   only the plugin's skills. The CLI resolves a marketplace *name* through this
+   PC's `known_marketplaces.json`; a URL or `owner/repo` works anywhere.
+4. **`behind`.** Per skill: a pending version exists. Per box: the relay records
+   the set it served on each `skills.get` in custody
+   (`boxes/<boxId>/skills.json`), and a box is behind on a skill when that
+   record differs from `current` (a box that was paused through an update, or
+   whose sync failed). Recorded at `skills.get`, so Phase 2 images need no ctl
+   change.
+5. **`skills.sync` to running boxes** goes through `Provider.exec`
+   (`agentbox-ctl skills sync`), the cross-provider path the history flush
+   already uses, for docker and every cloud provider alike. Deviation from the
+   text above: `CloudBoxPoller` only drains box→host actions and has no
+   host→box channel, and exec works on every image that has Phase 2's ctl.
+   Triggered after an import that moves `current` of an `auto` skill, after an
+   approval, and on demand. Only boxes whose record holds a behind skill are
+   touched; a box that isn't running catches up at its next boot.
+6. **API**: `POST /skills` (`{git}` or `{marketplace}`), `POST /skills/refresh`,
+   `POST /skills/{name}/refresh`, `POST /skills/{name}/approve`,
+   `PATCH /skills/{name}` (`{policy}`), `GET /skills/{name}/diff`,
+   `GET /boxes/{id}/skills`, `POST /boxes/{id}/skills/sync`. The list rows gain
+   `origin`, `policy`, `pending`.
+7. **CLI**: `agentbox skills add <url>|--marketplace`, `refresh`, `update`
+   (approve pending, then sync; `--box` syncs one box), `diff`, `import
+   <path…> [--link]`, `unlink`.
+8. **Linked folders**: `import --link` records `{name, path, hub}` in
+   `~/.agentbox/skill-links.json`. The PC's relay (never a control box) watches
+   each linked folder and, debounced, runs `agentbox skills import <path>
+   --linked`, which uploads a new version; the hub's auto policy then syncs the
+   running boxes that have it.
+
 ### Phase 6 — web + tray
 
 Skills page grows sources, editor, diff and scan findings (list + discard

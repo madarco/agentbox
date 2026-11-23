@@ -416,6 +416,14 @@ export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.j
 export type { TarFile } from './skills/tar.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {
+  linkSkill,
+  readSkillLinks,
+  skillLinksPath,
+  unlinkSkills,
+  writeSkillLinks,
+} from './skills/links.js';
+export type { SkillLink } from './skills/links.js';
+export {
   authoredTreeHash,
   bakeSkillsStamp,
   isLibraryEligible,

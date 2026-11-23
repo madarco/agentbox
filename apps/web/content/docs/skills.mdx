@@ -118,11 +118,45 @@ agentbox claude --skip-skills daytona             # all but these
 agentbox create --no-skills                       # none
 ```
 
-Without a flag a box gets every library skill. The choice is recorded on the box and applies again when it restarts; a restart also picks up the library's newest versions and drops skills removed from it. To refresh a running box, run `agentbox-ctl skills sync` inside it.
+Without a flag a box gets every library skill. The choice is recorded on the box and applies again when it restarts; a restart also picks up the library's newest versions and drops skills removed from it. Running boxes are updated too (see [Sources and updates](#sources-and-updates)); `agentbox skills update --box <box>` syncs one now, as does `agentbox-ctl skills sync` inside it.
 
 If the hub has no library, or can't be reached, nothing changes: boxes keep receiving your skills from your machine as described in [Keeping boxes in sync](#keeping-boxes-in-sync). Delivery needs a box image from this version or later; an older Docker image or cloud base keeps the old behaviour until it is rebuilt (`agentbox prepare`).
 
 Downloading a skill's files from the hub (`agentbox skills --download` / `--download-all`) is treated like reading custody, so it needs more than the API key the menu-bar app and web UI hold: the admin token, a computer enrolled with [`agentbox hub login`](/docs/deployed-hub), or, on a local hub, a request from the same machine. A computer that only holds the hub's API key (configured with `agentbox hub set-url` and `AGENTBOX_HUB_API_KEY`) can still list the library, but a download is refused (`401`); enroll it with `agentbox hub login` instead. Boxes are unaffected: they fetch their skills over the relay, authenticated as the box.
+
+### Sources and updates
+
+Besides uploads from a PC, the library takes skills from a git repo or a Claude Code plugin marketplace. The **hub** fetches them, so this works the same against a deployed control box, and each skill goes through the same checks as an upload (frontmatter, size cap, secret scan).
+
+```bash
+agentbox skills add owner/repo                         # every skill in skills/<name>/ or <name>/ (a picker on a terminal)
+agentbox skills add https://github.com/o/r.git#skills/foo@v1.2   # one folder, at a tag
+agentbox skills add owner/repo --skill alpha,beta      # only these
+agentbox skills add --marketplace claude-plugins-official --plugin some-plugin   # only that plugin's skills
+agentbox skills import ~/work/my-skill --link          # upload a folder and keep it in sync
+```
+
+A marketplace name is looked up in this PC's `~/.claude/plugins/known_marketplaces.json`; pass its git URL or `owner/repo` instead to name it from anywhere. Plugins themselves are not imported, only their skills.
+
+**Update policy.** Each skill has one:
+
+- `auto` (the default for uploads and linked folders): a new version becomes current right away, and every running box that holds the skill syncs it within seconds. Paused and stopped boxes catch up when they start.
+- `manual` (the default for git and marketplace skills): a new version is fetched and stored but waits as **pending**. Boxes keep the version they have until you approve it.
+
+```bash
+agentbox skills refresh                 # re-fetch every git/marketplace skill
+agentbox skills --list                  # STATUS shows "update pending"
+agentbox skills diff some-skill         # what the pending version changes, file by file
+agentbox skills update some-skill       # shows the diff, asks, then applies it and syncs boxes
+agentbox skills update --all --yes      # apply every pending update without asking
+agentbox skills policy some-skill auto  # or switch a skill's policy
+```
+
+A force-pushed branch shows up as a new pending version like any other commit; nothing third-party changes in a box without an approval.
+
+**Linked folders** are for writing a skill: `agentbox skills import <path> --link` uploads the folder and records it in `~/.agentbox/skill-links.json`. From then on this PC's relay (or local hub) watches the folder and uploads a new version a moment after each save, and running boxes pick it up. `agentbox skills unlink <name>` stops watching; the hub keeps the skill.
+
+**What a box holds.** `agentbox skills ls --box <box>` lists the library skills a box was last given, and marks each one `behind` when the box holds an older version than the library's (for example a box that was paused through an update). An updated skill is active from the agent's next session: Codex, OpenCode and Pi read their skills when a session starts, OpenClaw reloads them on its own.
 
 ### Cloud bases go stale when your skills change
 

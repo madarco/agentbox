@@ -367,9 +367,10 @@ export { collectHostSecrets } from './history/host-secrets.js';
 export { runHistoryRpc } from './history/rpc.js';
 export {
   SKILL_BLOB_CHUNK_BYTES,
+  boxSkillsRecordPath,
   parseSkillSelection,
   resolveBoxSkills,
   runSkillsRpc,
   selectSkills,
 } from './skills-rpc.js';
-export type { BoxSkill, SkillsGetResult } from './skills-rpc.js';
+export type { BoxSkill, BoxSkillsRecord, SkillsGetResult } from './skills-rpc.js';

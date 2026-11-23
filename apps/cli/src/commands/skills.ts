@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { withHubClient } from '../control-plane/with-hub.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import type { HubApiClient } from '../control-plane/hub-api-client.js';
+import { skillsSubcommands } from './skills-updates.js';
 import { discoverLocalSkills, type LocalSkill } from '@agentbox/sandbox-core';
 import {
   compareSkills,
@@ -45,6 +46,11 @@ export function formatBytes(n: number): string {
 }
 
 function statusCell(r: SkillRow): string {
+  const base = baseStatus(r);
+  return r.hub?.pending ? `${base}, update pending` : base;
+}
+
+function baseStatus(r: SkillRow): string {
   switch (r.status) {
     case 'same':
       return 'same';
@@ -428,3 +434,5 @@ export const skillsCommand = new Command('skills')
       }
     });
   });
+
+for (const sub of skillsSubcommands) skillsCommand.addCommand(sub);

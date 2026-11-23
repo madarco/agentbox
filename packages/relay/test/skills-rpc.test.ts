@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { FsCustodyStore } from '../src/custody/fs-store.js';
 import {
   SKILL_BLOB_CHUNK_BYTES,
+  boxSkillsRecordPath,
   parseSkillSelection,
   resolveBoxSkills,
   runSkillsRpc,
@@ -133,5 +134,27 @@ describe('skills.blob', () => {
       1,
     );
     expect((await blob(undefined, { name: 'one', version: sha('a'), offset: 0 })).exitCode).toBe(0);
+  });
+});
+
+describe('served-set record (Phase 5)', () => {
+  it('records what skills.get served a box, rewriting only on change', async () => {
+    const store = await library([{ name: 'a', version: sha('a'), bytes: Buffer.from('A') }]);
+    await runSkillsRpc(store, undefined, 'skills.get', {}, { boxId: 'box1', now: new Date(1000) });
+    const first = await store.get(boxSkillsRecordPath('box1'));
+    expect(JSON.parse(first!.data.toString('utf8'))).toEqual({
+      at: new Date(1000).toISOString(),
+      skills: { a: sha('a') },
+    });
+    await runSkillsRpc(store, undefined, 'skills.get', {}, { boxId: 'box1', now: new Date(2000) });
+    const again = await store.get(boxSkillsRecordPath('box1'));
+    expect(JSON.parse(again!.data.toString('utf8')).at).toBe(new Date(1000).toISOString());
+  });
+
+  it('records nothing without a box id or a library', async () => {
+    const store = await library([{ name: 'a', version: sha('a'), bytes: Buffer.from('A') }]);
+    await runSkillsRpc(store, undefined, 'skills.get', {});
+    await runSkillsRpc(store, undefined, 'skills.get', {}, { boxId: '../x' });
+    expect(await store.list('boxes')).toEqual([]);
   });
 });

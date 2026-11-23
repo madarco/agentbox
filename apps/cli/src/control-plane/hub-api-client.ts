@@ -750,6 +750,82 @@ export interface HubApiSkill {
   updatedAt: string;
   source: { host?: string; machineId?: string; path?: string };
   versions: number;
+  /** Absent from hubs before Phase 5 (reads as an upload). */
+  origin?: HubApiSkillOrigin;
+  policy?: 'auto' | 'manual';
+  /** A newer version waiting for approval: the skill is behind. */
+  pending?: { version: string; uploadedAt: string; size: number; files: number; commit?: string };
+}
+
+export type HubApiSkillOrigin =
+  | { kind: 'upload' }
+  | { kind: 'folder'; linked: true; path: string; host?: string; machineId?: string }
+  | { kind: 'git'; url: string; ref?: string; path?: string; commit: string }
+  | {
+      kind: 'marketplace';
+      marketplace: string;
+      url: string;
+      ref?: string;
+      plugin: string;
+      commit: string;
+    };
+
+export interface HubApiSkillCandidate {
+  name: string;
+  description: string;
+  path: string;
+  size: number;
+  files: number;
+  problems: string[];
+  findings: { rule: string; path: string; line: number }[];
+}
+
+export interface HubApiSkillAddResult {
+  commit: string;
+  candidates: HubApiSkillCandidate[];
+  imported: {
+    name: string;
+    version: string;
+    changed: boolean;
+    held: boolean;
+    skill: HubApiSkill;
+  }[];
+  skipped: { name: string; reason: string }[];
+}
+
+export interface HubApiSkillRefresh {
+  name: string;
+  status: 'up-to-date' | 'pending' | 'applied' | 'blocked' | 'failed' | 'not-refreshable';
+  from?: string;
+  to?: string;
+  commit?: string;
+  reason?: string;
+}
+
+export interface HubApiSkillDiff {
+  name: string;
+  from: string;
+  to: string;
+  files: {
+    path: string;
+    status: 'added' | 'removed' | 'modified';
+    modeOnly?: boolean;
+    binary?: boolean;
+    before?: string;
+    after?: string;
+  }[];
+}
+
+export interface HubApiBoxSkills {
+  boxId: string;
+  recordedAt?: string;
+  skills: { name: string; version: string; current?: string; pending?: string; behind: boolean }[];
+}
+
+export interface HubApiSkillSync {
+  boxId: string;
+  status: 'synced' | 'failed' | 'not-running';
+  detail?: string;
 }
 
 export interface HubApiSkillsListing {
@@ -765,6 +841,8 @@ export interface HubApiSkillUploadMeta {
   size: number;
   files: number;
   source?: { host?: string; machineId?: string; path?: string };
+  /** A linked-folder upload (`agentbox skills import --link`). */
+  linked?: boolean;
 }
 
 export const SUPPORTED_HUB_API_VERSIONS = ['v1'] as const;
@@ -1304,7 +1382,13 @@ export class HubApiClient {
     name: string,
     tarball: Buffer,
     meta: HubApiSkillUploadMeta,
-  ): Promise<{ name: string; version: string; changed: boolean; skill: HubApiSkill }> {
+  ): Promise<{
+    name: string;
+    version: string;
+    changed: boolean;
+    held?: boolean;
+    skill: HubApiSkill;
+  }> {
     const res = await this.fetchImpl(`${this.base}/api/v1/skills/${encodeURIComponent(name)}`, {
       method: 'PUT',
       headers: {
@@ -1347,6 +1431,57 @@ export class HubApiClient {
 
   discardSkill(name: string): Promise<{ name: string; removed: number }> {
     return this.request('DELETE', `/skills/${encodeURIComponent(name)}`);
+  }
+
+  /** The hub fetches a git repo or a marketplace plugin and imports its skills. */
+  addSkills(body: {
+    git?: { url: string; ref?: string; path?: string };
+    marketplace?: { marketplace: string; url: string; ref?: string; plugin: string };
+    skills?: string[];
+    policy?: 'auto' | 'manual';
+    allowFindings?: boolean;
+    dryRun?: boolean;
+  }): Promise<HubApiSkillAddResult> {
+    return this.request('POST', '/skills', body, { timeoutMs: 300_000 });
+  }
+
+  refreshSkill(name: string, opts: { allowFindings?: boolean } = {}): Promise<HubApiSkillRefresh> {
+    return this.request('POST', `/skills/${encodeURIComponent(name)}/refresh`, opts, {
+      timeoutMs: 300_000,
+    });
+  }
+
+  approveSkill(
+    name: string,
+  ): Promise<{ name: string; from: string; to: string; skill: HubApiSkill }> {
+    return this.request('POST', `/skills/${encodeURIComponent(name)}/approve`, {});
+  }
+
+  setSkillPolicy(name: string, policy: 'auto' | 'manual'): Promise<HubApiSkill> {
+    return this.request('PATCH', `/skills/${encodeURIComponent(name)}`, { policy });
+  }
+
+  skillDiff(name: string, opts: { from?: string; to?: string } = {}): Promise<HubApiSkillDiff> {
+    const q = new URLSearchParams();
+    if (opts.from) q.set('from', opts.from);
+    if (opts.to) q.set('to', opts.to);
+    const qs = q.toString();
+    return this.request('GET', `/skills/${encodeURIComponent(name)}/diff${qs ? `?${qs}` : ''}`);
+  }
+
+  boxSkills(boxId: string): Promise<HubApiBoxSkills> {
+    return this.request('GET', `/boxes/${encodeURIComponent(boxId)}/skills`);
+  }
+
+  syncBoxSkills(boxId: string): Promise<HubApiSkillSync> {
+    return this.request(
+      'POST',
+      `/boxes/${encodeURIComponent(boxId)}/skills/sync`,
+      {},
+      {
+        timeoutMs: 180_000,
+      },
+    );
   }
 
   // ── session history ──

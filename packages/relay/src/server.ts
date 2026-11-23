@@ -1215,7 +1215,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       // The box's share of the skills library: unprompted, box-scoped by its
       // registration's selection, not worktree-scoped.
       if (body.method.startsWith('skills.')) {
-        send(res, 200, await runSkillsRpc(custody, reg.skills, body.method, body.params));
+        send(
+          res,
+          200,
+          await runSkillsRpc(custody, reg.skills, body.method, body.params, {
+            boxId: reg.boxId,
+          }),
+        );
         return;
       }
       if (body.method === 'agents.list') {
@@ -1273,7 +1279,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             originUrl: reg.originUrl,
             boxAgents: registrationAgents(reg),
             history: historyRpc(reg),
-            skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
+            skills: (method, params) =>
+              runSkillsRpc(custody, reg.skills, method, params, { boxId: reg.boxId }),
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -2052,7 +2059,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                         (await store.getBox(reg.boxId).catch(() => undefined)) ?? reg,
                       ),
                       history: historyRpc(reg),
-                      skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
+                      skills: (method, params) =>
+                        runSkillsRpc(custody, reg.skills, method, params, { boxId: reg.boxId }),
                       log,
                     });
                     await respond(result);
