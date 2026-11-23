@@ -18,6 +18,7 @@ export type {
   MemoryOrigin,
   MemoryPutParams,
   MemoryPutResult,
+  MemorySeedFile,
   MemorySeedReply,
   ParseState,
   RawChunk,

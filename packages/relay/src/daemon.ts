@@ -15,6 +15,7 @@ import { HostSessionWatcher, defaultHostSinkResolver } from './history/host-watc
 import { existsSync, realpathSync } from 'node:fs';
 import { execa } from 'execa';
 import { drainCpOutbox } from './cp-outbox-drain.js';
+import { registrationAgents } from './registration-to-record.js';
 import {
   boxWorkspacePath,
   cacheCpSources,
@@ -284,6 +285,7 @@ export async function executeHostReachAction(
     route?.role === 'origin' &&
     route.box?.originMachineId !== undefined &&
     route.box.originMachineId === (deps.machineId ?? tryGetMachineId)();
+  const routeAgents = route?.box ? registrationAgents(route.box) : undefined;
   const ephemeral =
     !owner && route && folder && route.box?.backend
       ? {
@@ -292,7 +294,7 @@ export async function executeHostReachAction(
           autoApproveSafeHostActions: isOrigin ? route.box.autoApproveSafeHostActions : false,
           // So `agents.list` answers for the box's own agent (a service agent's
           // units go only to a box that names it).
-          ...(route.box.agent && route.box.agent !== 'none' ? { agents: [route.box.agent] } : {}),
+          ...(routeAgents ? { agents: routeAgents } : {}),
         }
       : null;
   if (!owner && !ephemeral) {
