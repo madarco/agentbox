@@ -65,10 +65,13 @@ the ctl credential watcher ran on hetzner/DO even when it was turned off.
 - The wake path reads `box.credentialSync` from config (the same rule the resume-time
   credential reconcile uses), so a `--no-credential-sync` create override is lost on a
   VPS wake. Fixing it means persisting the resolved value on the box record.
-- On vercel/e2b/daytona, when the upload falls back to `/tmp`, the SDK may write the
-  staging copy with its default mode for the moment before `install` moves it. Those providers already hold
-  the same values in every process's environ, so the file adds nothing an in-box
-  process couldn't already read.
+- On vercel/e2b/daytona the SDK upload writes the staging copy with its default
+  mode (0644) for the moment before the in-box step chowns it to the box user and
+  chmods it 600. Those providers already hold the same values in every process's
+  environ, so the window adds nothing an in-box process couldn't already read. The
+  staging copy is always removed (both `/run/agentbox` and `/tmp` paths), and each
+  write sweeps copies older than a minute that an earlier failed write left behind;
+  this matters on daytona, where `/run` is not tmpfs and a checkpoint would carry one.
 - A wake rebuilds `agent.env` from the env and account store of the process that
   starts the box (normally the hub, which also ran the create). On a VPS, a start from a
   process without the forwarded keys writes the file without them, and the agent comes

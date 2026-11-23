@@ -6,8 +6,10 @@ import type { CloudBackend, CloudHandle } from '@agentbox/core';
 
 /**
  * The agent env a cloud box's launcher sources (`buildCloudAttachInnerCommand`).
- * `/run` is tmpfs, so a VPS power-off empties it; the host rewrites it on every
- * create and wake.
+ * The host rewrites it on every create and wake: on a VPS `/run` is tmpfs and
+ * a power-off empties it. On other providers (daytona) `/run` is not tmpfs, so
+ * a checkpoint can carry the file; the write never leaves a staging copy
+ * beside it.
  */
 export const CLOUD_AGENT_ENV_FILE = '/run/agentbox/agent.env';
 
@@ -96,7 +98,10 @@ export async function writeCloudAgentEnvFile(
     const r = await backend.exec(
       handle,
       `umask 077; ${SUDO_PREFIX}` +
-        `asroot chmod 600 ${remote}; ` +
+        // chown before the chmod: an upload whose best-effort chown failed is
+        // still owned by the SDK user, and a 0600 file it owns is one the box
+        // user's `install` below cannot read.
+        `asroot chown "$(id -un):$(id -gn)" ${remote}; asroot chmod 600 ${remote}; ` +
         // The same mkdir + chown the in-box bootstrap does, so a /run/agentbox
         // recreated by root does not make `install` fail.
         `asroot mkdir -p /run/agentbox && asroot chown "$(id -un):$(id -gn)" /run/agentbox; ` +
@@ -113,7 +118,12 @@ export async function writeCloudAgentEnvFile(
     await rm(dir, { recursive: true, force: true });
     if (!cleaned) {
       try {
-        await backend.exec(handle, `${SUDO_PREFIX}${stagingCleanup(staged)}; true`);
+        // No retries and a short cap: on an unreachable box the default retries
+        // would hold back the real error for minutes.
+        await backend.exec(handle, `${SUDO_PREFIX}${stagingCleanup(staged)}; true`, {
+          noRetry: true,
+          attemptTimeoutMs: 15_000,
+        });
       } catch {
         // best-effort: the write already failed and its error is what surfaces
       }

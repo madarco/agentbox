@@ -151,7 +151,10 @@ describe('writeCloudAgentEnvFile', () => {
     await writeCloudAgentEnvFile(backend, {} as CloudHandle, { GEMINI_API_KEY: SECRET });
     expect(execs).toHaveLength(1);
     const cmd = execs[0]!;
-    // chmod before anything else touches the staging copy
+    // chown to the box user, then chmod, before install reads the staging copy
+    const chown = cmd.indexOf(`asroot chown "$(id -un):$(id -gn)" ${targets[1]}`);
+    expect(chown).toBeGreaterThan(-1);
+    expect(chown).toBeLessThan(cmd.indexOf(`chmod 600 ${targets[1]}`));
     expect(cmd.indexOf(`chmod 600 ${targets[1]}`)).toBeGreaterThan(-1);
     expect(cmd.indexOf(`chmod 600 ${targets[1]}`)).toBeLessThan(cmd.indexOf('install -m 600'));
     expect(cmd).toContain(`rm -f ${targets[0]} ${targets[1]}`);
@@ -178,13 +181,15 @@ describe('writeCloudAgentEnvFile', () => {
   it('still removes both staging paths when every upload throws', async () => {
     const targets: string[] = [];
     const execs: string[] = [];
+    const execOpts: unknown[] = [];
     const backend = {
       async uploadFile(_h: CloudHandle, _l: string, remote: string) {
         targets.push(remote);
         throw new Error(`upload to ${remote} failed`);
       },
-      async exec(_h: CloudHandle, cmd: string) {
+      async exec(_h: CloudHandle, cmd: string, opts?: unknown) {
         execs.push(cmd);
+        execOpts.push(opts);
         return { exitCode: 0, stdout: '', stderr: '' };
       },
     } as unknown as CloudBackend;
@@ -194,6 +199,8 @@ describe('writeCloudAgentEnvFile', () => {
     expect(execs).toHaveLength(1);
     expect(execs[0]).toContain(`rm -f ${targets[0]} ${targets[1]}`);
     expect(execs[0]).not.toContain('install');
+    // an unreachable box must not delay the upload error behind exec retries
+    expect(execOpts[0]).toEqual({ noRetry: true, attemptTimeoutMs: 15_000 });
   });
 
   it('surfaces the upload error, not a failing cleanup exec', async () => {
