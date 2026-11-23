@@ -3,6 +3,8 @@
 // hub token or the hub cookie, JSON 401). Stateless: every reply is one JSON
 // body, never an SSE stream, and there is no session id. Boxes do not come
 // here; they reach the same server through their relay (`agentbox-ctl mcp`).
+import { skillBytesReadAllowed } from '../v1/skills/_service';
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +36,7 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return rpcError(400, -32700, 'parse error');
   }
-  const reply = await mcp.handle(message);
+  const reply = await mcp.handle(message, { skillBytes: skillBytesReadAllowed(req) });
   if (reply === null || reply === undefined) return new Response(null, { status: 202 });
   return Response.json(reply);
 }

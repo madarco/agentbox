@@ -120,7 +120,9 @@ function rowCursorRig() {
         u: Number(r[t.updated]),
         ...(t.parent ? { parent: String(r[t.parent.column]) } : {}),
       })),
-    rows: (t, ids) => tables[t.name]!.filter((r) => ids.includes(String(r[t.id]))),
+    rows: (t, sid, ids) =>
+      tables[t.name]!.filter((r) => r[t.session] === sid && ids.includes(String(r[t.id]))),
+    sessions: () => [],
     close: () => {},
   };
   const files: HistoryRowFiles = {
@@ -130,6 +132,12 @@ function rowCursorRig() {
     },
     writeText: async (p, text) => {
       disk.set(p, text);
+    },
+    rename: async (from, to) => {
+      const v = disk.get(from);
+      if (v === undefined) return;
+      disk.set(to, v);
+      disk.delete(from);
     },
     stamp: async () => stamp,
   };
@@ -220,6 +228,221 @@ describe('HistoryRowCursor', () => {
       validSqliteSource({ db: 'x.db', tables: [{ ...TABLES[0]!, name: 'session; drop' }] }),
     ).toBe(false);
     expect(validSqliteSource({ db: '../x.db', tables: TABLES })).toBe(false);
+    const zstd = { ...TABLES[1]!, zstd: { column: 'blob', into: 'text' } };
+    expect(validSqliteSource({ db: 'x.db', tables: [zstd] })).toBe(true);
+    expect(
+      validSqliteSource({
+        db: 'x.db',
+        tables: [{ ...zstd, zstd: { column: 'blob', into: 'text) --' } }],
+      }),
+    ).toBe(false);
+    expect(
+      validSqliteSource({
+        db: 'x.db',
+        tables: TABLES,
+        sessions: { table: 'session', column: 'id; drop' },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('HistoryRowCursor, a `sessions` source (openclaw)', () => {
+  const SID_A = '7241fdc1-21e3-4d4e-929a-e49794bad4c4';
+  const SID_B = '0bd2a7a0-0e3c-4f55-9a61-5b6f3a4c0d11';
+  const CLAW: ShippedAgent = {
+    agent: 'openclaw',
+    configDir: '/home/vscode/.openclaw',
+    projectKey: '-workspace',
+    spec: {
+      transcripts: [
+        {
+          root: 'agentbox-history',
+          format: 'sqlite',
+          mode: 'snapshot',
+          sessionFiles: ['<sessionId>.jsonl'],
+          sqlite: {
+            db: 'agents/main/agent/openclaw-agent.sqlite',
+            sessions: { table: 'session_windows', column: 'session_id' },
+            tables: [{ name: 'transcript_events', id: 'seq', session: 'session_id', updated: 'c' }],
+          },
+        },
+      ],
+    },
+  };
+
+  it('binds and copies every session in the db, with per-session ids in number order', async () => {
+    const events: Row[] = [
+      { session_id: SID_A, seq: 10, c: 5, event_json: 'a10' },
+      { session_id: SID_A, seq: 9, c: 5, event_json: 'a9' },
+      { session_id: SID_B, seq: 9, c: 5, event_json: 'b9' },
+    ];
+    const bindings: HistoryBinding[] = [
+      { ts: '', boxId: 'b1', agent: 'openclaw', sessionId: SID_A },
+    ];
+    const bound: string[] = [];
+    const disk = new Map<string, string>();
+    const cursor = new HistoryRowCursor({
+      agents: [CLAW],
+      boxId: 'b1',
+      readBindings: async () => bindings,
+      bind: (agent, sid) => {
+        bound.push(`${agent}:${sid}`);
+      },
+      open: () => ({
+        versions: (t, sid) =>
+          events
+            .filter((r) => r.session_id === sid)
+            .map((r) => ({ id: String(r[t.id]), u: Number(r[t.updated]) })),
+        rows: (t, sid, ids) =>
+          events.filter((r) => r.session_id === sid && ids.includes(String(r[t.id]))),
+        sessions: () => [SID_A, SID_B, 'bad id'],
+        close: () => {},
+      }),
+      files: {
+        readText: async (p) => disk.get(p) ?? null,
+        append: async (p, text) => {
+          disk.set(p, (disk.get(p) ?? '') + text);
+        },
+        writeText: async (p, text) => {
+          disk.set(p, text);
+        },
+        rename: async (from, to) => {
+          const v = disk.get(from);
+          if (v === undefined) return;
+          disk.set(to, v);
+          disk.delete(from);
+        },
+        stamp: async () => 's1',
+      },
+      now: () => 100,
+    });
+    await cursor.pass();
+    // Only the unbound, well-formed session is bound; both are copied.
+    expect(bound).toEqual([`openclaw:${SID_B}`]);
+    const out = (sid: string) =>
+      (disk.get(`/home/vscode/.openclaw/agentbox-history/${sid}.jsonl`) ?? '')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => (JSON.parse(l) as { row: { event_json: string } }).row.event_json);
+    expect(out(SID_A)).toEqual(['a9', 'a10']);
+    expect(out(SID_B)).toEqual(['b9']);
+  });
+
+  it('moves aside an output inherited from another box (restore, checkpoint) and copies only new rows', async () => {
+    const dir = '/home/vscode/.openclaw/agentbox-history';
+    const events: Row[] = [
+      { session_id: SID_A, seq: 0, c: 5, event_json: 'old0' },
+      { session_id: SID_A, seq: 1, c: 6, event_json: 'old1' },
+      { session_id: SID_A, seq: 2, c: 7, event_json: 'new2' },
+    ];
+    const run = async (boxId: string, disk: Map<string, string>, log: string[]) => {
+      const cursor = new HistoryRowCursor({
+        agents: [CLAW],
+        boxId,
+        readBindings: async () => [],
+        bind: (_a, sid) => {
+          log.push(`bind:${sid}:${disk.has(`${dir}/${sid}.jsonl`) ? 'file' : 'nofile'}`);
+        },
+        open: () => ({
+          versions: (t, sid) =>
+            events
+              .filter((r) => r.session_id === sid)
+              .map((r) => ({ id: String(r[t.id]), u: Number(r[t.updated]) })),
+          rows: (t, sid, ids) =>
+            events.filter((r) => r.session_id === sid && ids.includes(String(r[t.id]))),
+          sessions: () => [SID_A],
+          close: () => {},
+        }),
+        files: {
+          readText: async (p) => disk.get(p) ?? null,
+          append: async (p, text) => {
+            disk.set(p, (disk.get(p) ?? '') + text);
+            log.push(`append:${p.slice(dir.length + 1)}`);
+          },
+          writeText: async (p, text) => {
+            disk.set(p, text);
+          },
+          rename: async (from, to) => {
+            const v = disk.get(from);
+            if (v === undefined) return;
+            disk.set(to, v);
+            disk.delete(from);
+          },
+          stamp: async () => 's1',
+        },
+        now: () => 100,
+      });
+      await cursor.pass();
+    };
+    const rows = (disk: Map<string, string>, p: string) =>
+      (disk.get(p) ?? '')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => (JSON.parse(l) as { row: { event_json: string } }).row.event_json);
+    const out = `${dir}/${SID_A}.jsonl`;
+
+    // The original box copies seq 0-1 (seq 2 does not exist yet).
+    const disk = new Map<string, string>();
+    const saved = events.pop()!;
+    await run('box-old', disk, []);
+    expect(rows(disk, out)).toEqual(['old0', 'old1']);
+    expect(JSON.parse(disk.get(`${dir}/${SID_A}.cursor.json`)!)).toMatchObject({ box: 'box-old' });
+
+    // Its volume / disk lands in a new box, which then gets a new row.
+    events.push(saved);
+    const log: string[] = [];
+    await run('box-new', disk, log);
+    expect(rows(disk, `${out}.from-box-old`)).toEqual(['old0', 'old1']);
+    expect(rows(disk, out)).toEqual(['new2']);
+    expect(JSON.parse(disk.get(`${dir}/${SID_A}.cursor.json`)!)).toMatchObject({ box: 'box-new' });
+    // Bound only once the inherited file is out of the way.
+    expect(log).toEqual([`append:${SID_A}.jsonl`, `bind:${SID_A}:file`]);
+
+    // The same box again: nothing moves, nothing is re-copied.
+    const again: string[] = [];
+    await run('box-new', disk, again);
+    expect(rows(disk, out)).toEqual(['new2']);
+    expect(again.filter((l) => l.startsWith('append'))).toEqual([]);
+  });
+
+  it('adopts a cursor written before it named its box', async () => {
+    const dir = '/home/vscode/.openclaw/agentbox-history';
+    const disk = new Map<string, string>([
+      [
+        `${dir}/${SID_A}.jsonl`,
+        '{"t":"transcript_events","id":"0","u":5,"row":{"event_json":"x"}}\n',
+      ],
+      [
+        `${dir}/${SID_A}.cursor.json`,
+        JSON.stringify({ v: 1, rows: { transcript_events: { '0': 5 } } }),
+      ],
+    ]);
+    const cursor = new HistoryRowCursor({
+      agents: [CLAW],
+      boxId: 'b1',
+      readBindings: async () => [{ ts: '', boxId: 'b1', agent: 'openclaw', sessionId: SID_A }],
+      open: () => ({
+        versions: () => [{ id: '0', u: 5 }],
+        rows: () => [],
+        sessions: () => [SID_A],
+        close: () => {},
+      }),
+      files: {
+        readText: async (p) => disk.get(p) ?? null,
+        append: async () => {},
+        writeText: async (p, text) => {
+          disk.set(p, text);
+        },
+        rename: async () => {
+          throw new Error('must not move its own file');
+        },
+        stamp: async () => 's1',
+      },
+      now: () => 100,
+    });
+    expect((await cursor.pass()).errors).toEqual([]);
+    expect(disk.has(`${dir}/${SID_A}.jsonl`)).toBe(true);
+    expect(JSON.parse(disk.get(`${dir}/${SID_A}.cursor.json`)!)).toMatchObject({ box: 'b1' });
   });
 });
 

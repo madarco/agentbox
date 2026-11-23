@@ -4,9 +4,9 @@
 [Phase 0 results](#phase-0-results): **go** on box-local delivery for all five
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
-from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3 and 4
+from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3, 4, 5 and 7
 implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
-they left open); Phases 5+ not started.
+they left open); Phase 6 not started.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -760,6 +760,63 @@ and linked-folder watching on the PC relay.
 restart of the box; a git skill's new commit shows as `behind` and applies
 only after approval.
 
+**Implementation plan (2026-11-23).** Source and update side only. Phase 4
+(bindings) is built in parallel, so selection is left as Phase 2 built it.
+
+1. **Meta grows an origin, a policy and a pending version.** `SkillMeta.origin`
+   is `upload | folder (linked, machineId, path) | git (url, ref, path, commit)
+   | marketplace (marketplace, url, plugin, commit)`. `policy` is `auto | manual`
+   and defaults by origin (git and marketplace `manual`). A new version of a
+   `manual` skill is stored as `pending`; `current`, what boxes get, does not
+   move until it is approved. Retention never drops `current` or `pending`.
+2. **Hub-side git** (`apps/hub/lib/backend/skill-sources.ts`): `git init` +
+   `fetch --depth 1 <ref>` into a temp dir (branch, tag or sha), skills found
+   at the path itself or under `<path>/skills/*` / `<path>/*`, normalized and
+   scanned with the same sandbox-core reader the PC uses, imported through
+   `importSkill`. Refresh compares `git ls-remote` with the recorded commit
+   before fetching.
+3. **Marketplaces** are a git source with one more hop: the hub fetches the
+   marketplace repo, reads `.claude-plugin/marketplace.json`, resolves the
+   plugin's source (relative path, `github`, `url`, `git-subdir`) and imports
+   only the plugin's skills. The CLI resolves a marketplace *name* through this
+   PC's `known_marketplaces.json`; a URL or `owner/repo` works anywhere.
+4. **`behind`.** Per skill: a pending version exists. Per box: the relay records
+   the set it served on each `skills.get` in custody
+   (`boxes/<boxId>/skills.json`), and a box is behind on a skill when that
+   record differs from `current` (a box that was paused through an update, or
+   whose sync failed). Recorded at `skills.get`, so Phase 2 images need no ctl
+   change.
+5. **`skills.sync` to running boxes** goes through `Provider.exec`
+   (`agentbox-ctl skills sync`), the cross-provider path the history flush
+   already uses, for docker and every cloud provider alike. Deviation from the
+   text above: `CloudBoxPoller` only drains box→host actions and has no
+   host→box channel, and exec works on every image that has Phase 2's ctl.
+   Triggered after an import that moves `current` of an `auto` skill, after an
+   approval, and on demand. Only boxes whose record holds a behind skill are
+   touched; a box that isn't running catches up at its next boot.
+6. **API**: `POST /skills` (`{git}` or `{marketplace}`), `POST /skills/refresh`,
+   `POST /skills/{name}/refresh`, `POST /skills/{name}/approve`,
+   `PATCH /skills/{name}` (`{policy}`), `GET /skills/{name}/diff`,
+   `GET /boxes/{id}/skills`, `POST /boxes/{id}/skills/sync`. The list rows gain
+   `origin`, `policy`, `pending`.
+7. **CLI**: `agentbox skills add <url>|--marketplace`, `refresh`, `update`
+   (approve pending, then sync; `--box` syncs one box), `diff`, `import
+   <path…> [--link]`, `unlink`.
+8. **Linked folders**: `import --link` records `{name, path, hub}` in
+   `~/.agentbox/skill-links.json`. The PC's relay (never a control box) watches
+   each linked folder and, debounced, runs `agentbox skills import <path>
+   --linked`, which uploads a new version; the hub's auto policy then syncs the
+   running boxes that have it.
+
+**Status: implemented 2026-11-23**, live-checked on a docker box (isolated hub,
+image built from this branch). A git skill's new commit showed as `update
+pending` with its diff, and the running box kept the old text until `agentbox
+skills update` applied it. A linked-folder edit was uploaded by the relay and
+reached the running box, with no restart in either case. A discard removed the
+skill from the running box. The cloud leg was not run (no base reachable from the
+test box carries Phase 2's ctl); it rides the same `Provider.exec` path. Open
+items are in [`hub-skills-backlog.md`](./hub-skills-backlog.md).
+
 ### Phase 6 — web + tray
 
 Skills page grows sources, editor, diff and scan findings (list + discard
@@ -777,6 +834,67 @@ proxy (depends on the history plan's Phase 6 MCP server existing).
 
 **Done:** a skill written by an agent inside a box lands in the library after
 one approval and appears in the next box.
+
+**Implementation plan (2026-11-23):**
+
+1. **Proposals, hub side** (`apps/hub/lib/backend/skill-proposals.ts`). `POST
+   /api/v1/skills/{name}/propose`: the same tarball body + meta header as the
+   `PUT`, plus the box it came from. Unlike the `PUT`, the hub reads the tarball
+   itself (the sandbox-core tar reader, in the hub server process): it
+   re-derives the tree hash, reads `SKILL.md` frontmatter (name must match,
+   description required), refuses reserved names, and runs the secret scan, so
+   the approver sees the hub's own findings and a `SKILL.md` preview rather than
+   what the uploader claims. A version equal to the library's current is
+   answered `unchanged` with no prompt. Otherwise it parks one approval in the
+   relay's prompt mailbox (`askMcpApproval`, default no, 24 h), under the box's
+   id, and answers `pending` at once. The tarball waits in hub memory until the
+   answer (bounded count); approval imports it as a new version through
+   `importSkill`, unless the library's current moved meanwhile (then nothing is
+   written, as with `memory_propose`). The route reaches the handler through
+   `globalThis`, like the MCP route, so the relay stays out of Next's bundle.
+2. **`agentbox download <agent>`** (claude, codex, opencode, pi, openclaw): before
+   its own pull (which may copy a box skill into the PC's folders), it reads the agent's in-box skill dirs (the agent's
+   `skills.dirs` that sit under its box config dir, so the docker volume
+   transport reaches them on a stopped box too), skipping symlinked entries
+   (carried copies), reserved names, skills this PC has with the same tree hash
+   and skills the library already has at that version. Each remaining skill is
+   proposed. `--no-propose` skips the step. No local confirm: the hub approval
+   is the one gate. `agentbox-ctl download <agent>` in a docker box runs the
+   same command on the host, so an in-box agent reaches it too.
+3. **MCP skills tool set** (`apps/hub/lib/backend/mcp-skills.ts`), appended to
+   the Phase 6 core: `skills_list` (name, description, version, size,
+   `installed`), `skill_get` (`SKILL.md` plus the file list; `path` reads one
+   more text file, paged), `skills_propose_install`. A box sees only the
+   skills its bindings resolve to (box > project > workspace > global); a hub
+   caller sees the whole library. The relay adds the box's skill context to
+   `McpBoxScope` (`skills: {boxId, projectKey, workspaceId(), selection}`, from
+   the registration only, the same context `skills.get` uses).
+4. **Install = a box binding.** `skills_propose_install` takes a visible skill
+   the box's create flags left out, asks one approval, and on yes writes a
+   box-scope `include` binding. For that to win, a box binding now outranks the
+   create flags (box binding > flags > project > workspace > global): a later,
+   explicit per-box decision beats the create-time one. The agent then runs
+   `agentbox-ctl skills sync` (Phase 5 owns pushing syncs).
+5. **Docs:** public skills page (proposals, MCP tools), CLI reference
+   (`--no-propose`), OpenAPI, backlog.
+
+**Status: implemented 2026-11-23**, live-checked on an isolated hub (scratch
+HOME, port 18797) with docker boxes on this branch's hub and CLI: in box B
+(created with `--skip-skills p7-demo`) a skill was written as the box user into
+`~/.claude/skills/p7-demo`; `agentbox download claude p7b -y` proposed it and the
+hub parked one approval (`1 file(s), 126 B; secret scan: clean`) while the
+library stayed empty; answering it yes stored version `e0c780ff0155` with source
+`box p7b`. From inside box B, `agentbox-ctl mcp` listed the three skills tools
+next to the history ones, `skills_list` showed `p7-demo` with `installed: false`,
+`skill_get` returned its SKILL.md, and `skills_propose_install` answered
+`pending`; once approved, a box binding was written and `agentbox-ctl skills
+sync` linked it into `/etc/claude-code/.claude/skills`. Box C, created next with
+no flags, had it linked at boot and Claude's `system/init` listed it. The
+agent's write was simulated with `docker exec` (no model turn). Deviations: the
+propose step runs **before** the agent's pull (the pull copies a box skill into
+the PC's folders, after which it reads as carried from there); `download
+opencode` proposes too; a box binding outranks the create flags. See
+[`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 Stage 2 (team libraries) is not a phase here. It follows the multi-user work
 and only adds `team_id` scope plus admin publishing to this schema.

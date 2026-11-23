@@ -175,6 +175,48 @@ export async function resolveBoxSkills(
   return { library: true, skills };
 }
 
+/**
+ * Where the relay records the set it last served a box: `{at, skills: {name:
+ * version}}`. The hub compares it with each skill's current version to tell a
+ * box that is `behind` (it slept through an update, or its sync failed) and to
+ * pick the boxes an update should reach (docs/hub-skills-plan.md, Phase 5).
+ */
+export function boxSkillsRecordPath(boxId: string): string {
+  return `boxes/${boxId}/skills.json`;
+}
+
+export interface BoxSkillsRecord {
+  at: string;
+  skills: Record<string, string>;
+}
+
+const BOX_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+
+async function recordServed(
+  custody: CustodyStore,
+  boxId: string,
+  set: SkillsGetResult,
+  now: Date,
+): Promise<void> {
+  if (!BOX_ID_RE.test(boxId) || boxId === '.' || boxId === '..') return;
+  const skills: Record<string, string> = {};
+  for (const s of set.skills) skills[s.name] = s.version;
+  const path = boxSkillsRecordPath(boxId);
+  // Content-skip: an unchanged set rewrites nothing, so `at` is when the set
+  // last CHANGED, not the last boot.
+  const prev = await custody.get(path).catch(() => null);
+  if (prev) {
+    try {
+      const old = JSON.parse(prev.data.toString('utf8')) as BoxSkillsRecord;
+      if (JSON.stringify(old.skills) === JSON.stringify(skills)) return;
+    } catch {
+      // rewrite a corrupt record
+    }
+  }
+  const body: BoxSkillsRecord = { at: now.toISOString(), skills };
+  await custody.put(path, Buffer.from(JSON.stringify(body), 'utf8'));
+}
+
 function ok(payload: unknown): HostActionResult {
   return { exitCode: 0, stdout: JSON.stringify(payload), stderr: '' };
 }
@@ -191,10 +233,17 @@ export async function runSkillsRpc(
   selection: SkillSelection | undefined,
   method: string,
   params: unknown,
-  box: BoxSkillContext = {},
+  box: BoxSkillContext & { now?: Date } = {},
 ): Promise<HostActionResult> {
   try {
-    if (method === 'skills.get') return ok(await resolveBoxSkills(custody, selection, box));
+    if (method === 'skills.get') {
+      const set = await resolveBoxSkills(custody, selection, box);
+      if (custody && set.library && box.boxId) {
+        // Best-effort: losing the record only hides `behind`; never fail the box's pull.
+        await recordServed(custody, box.boxId, set, box.now ?? new Date()).catch(() => undefined);
+      }
+      return ok(set);
+    }
     if (method === 'skills.blob') {
       const p = (params ?? {}) as { name?: unknown; version?: unknown; offset?: unknown };
       if (typeof p.name !== 'string' || !NAME_RE.test(p.name)) return refuse('bad name');

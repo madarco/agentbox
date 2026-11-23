@@ -227,7 +227,7 @@ agentbox sessions host deny ~/code/private-thing
 agentbox sessions host allow            # the current repo
 ```
 
-The hub records the transcript of every claude, codex, pi and opencode session your boxes run (and, opt-in, the claude sessions you run on your PCs: see below), attributed to its box, and keeps it after the box is destroyed (see [`history.*`](/docs/configuration#history--session-history) for the opt-out and retention). `sessions` reads that record through the hub's [`/api/v1/history`](/docs/api#history) routes. A session is named by its id, by an id prefix of at least 8 characters, or by `<agent>:<id>`. `show` prints the box, the files (the main transcript plus one per subagent), tool counts and the first 40 transcript rows (`--turns <n>`, or `--all`). `download` writes each file to `<dir>/<sessionId>/<path>`, where `path` is the agent-relative path (`projects/-workspace/<id>.jsonl`, `projects/-workspace/<id>/subagents/…`), so a `diff -r` against the box's `~/.claude/` lines up (codex: `sessions/YYYY/MM/DD/rollout-…jsonl` under `~/.codex/`; pi: `sessions/--workspace--/…jsonl` under `~/.pi/agent/`). An opencode session lives in a sqlite database, so what is recorded and downloaded is `agentbox-history/<id>.jsonl`: one JSON line per session, message and part row, written in the box as the rows settle. The bytes are what the box shipped: known secrets were masked before they left the machine, with the length kept. Reads go to the configured hub (a [control box](/docs/deployed-hub) when one is set); `--local` reads this machine's hub instead.
+The hub records the transcript of every claude, codex, pi, opencode and openclaw session your boxes run (and, opt-in, the claude sessions you run on your PCs: see below), attributed to its box, and keeps it after the box is destroyed (see [`history.*`](/docs/configuration#history--session-history) for the opt-out and retention). `sessions` reads that record through the hub's [`/api/v1/history`](/docs/api#history) routes. A session is named by its id, by an id prefix of at least 8 characters, or by `<agent>:<id>`. `show` prints the box, the files (the main transcript plus one per subagent), tool counts and the first 40 transcript rows (`--turns <n>`, or `--all`). `download` writes each file to `<dir>/<sessionId>/<path>`, where `path` is the agent-relative path (`projects/-workspace/<id>.jsonl`, `projects/-workspace/<id>/subagents/…`), so a `diff -r` against the box's `~/.claude/` lines up (codex: `sessions/YYYY/MM/DD/rollout-…jsonl` under `~/.codex/`; pi: `sessions/--workspace--/…jsonl` under `~/.pi/agent/`). An opencode session lives in a sqlite database, so what is recorded and downloaded is `agentbox-history/<id>.jsonl`: one JSON line per session, message and part row, written in the box as the rows settle. An openclaw session is the same shape: `agentbox-history/<id>.jsonl` under `~/.openclaw/`, one line per session-window and transcript-event row (compressed events are decompressed in the box). The bytes are what the box shipped: known secrets were masked before they left the machine, with the length kept. Reads go to the configured hub (a [control box](/docs/deployed-hub) when one is set); `--local` reads this machine's hub instead.
 
 | Command             | Useful flags                                                                                                                                 |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -335,6 +335,8 @@ agents' own MCP config (claude `~/.claude.json`, codex `~/.codex/config.toml`, o
 | `memory_list`     | The repo's agent memory files on the hub.                                                             |
 | `memory_get`      | One memory file (`version` optional).                                                                 |
 | `memory_propose`  | New content for a memory file. It waits in the hub's approvals; nothing is written until you approve. |
+
+The same server also serves the skills library (`skills_list`, `skill_get`, `skills_propose_install`), limited to the skills the box's bindings allow; see [skills](/docs/skills#library-skills-for-agents-mcp).
 
 In a box, every tool is limited to the box's own repository: an agent sees the sessions and memory
 of earlier boxes of the same repo, never another project's. The box never holds the hub token:
@@ -447,7 +449,7 @@ agentbox services restart 1                # restart every service
 agentbox services restart 1 web            # restart one service
 ```
 
-`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download pi`, `download openclaw`, `download config`. The agent subcommands work on every provider (docker reads the config volume, cloud reads the live box) and can propagate the pulled items to your other boxes with `--propagate project|all|none` — see [sync and git](/docs/sync-and-git). `download openclaw` is the exception: it pulls only the gateway's agent definitions (its config and state are that box's identity), and takes no `--propagate` — see [OpenClaw](/docs/openclaw#state-sync-and-clones). `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
+`download` pulls `/workspace` back into your host workspace, honouring `.gitignore`. It has typed subcommands for agent state: `download env`, `download claude`, `download codex`, `download opencode`, `download pi`, `download openclaw`, `download config`. The agent subcommands work on every provider (docker reads the config volume, cloud reads the live box) and can propagate the pulled items to your other boxes with `--propagate project|all|none` — see [sync and git](/docs/sync-and-git). `download claude|codex|opencode|pi|openclaw` also proposes skills an agent wrote in the box to the hub's skills library, one approval each (`--no-propose` skips it; see [skills](/docs/skills#skills-written-in-a-box)). `download openclaw` is the exception: it pulls only the gateway's agent definitions (its config and state are that box's identity), and takes no `--propagate` — see [OpenClaw](/docs/openclaw#state-sync-and-clones). `cp` copies files or directories in either direction, like `docker cp`. `git` runs git/gh operations against the box from the host through the relay, so push and fetch use your host credentials and the box never sees them.
 
 `upload` is `download`'s mirror: it pushes the host workspace into a **live** box. A git workspace merges your branch into the box's and overlays your uncommitted/untracked changes; a non-git one gets a plain file overlay. **The box wins every conflict** — a file the box changed is left alone and reported, and no branch is ever reset. `--include-node-modules` pushes `node_modules` too (non-git workspaces only). The push runs on the hub (`POST /boxes/{id}/upload`), which also starts the box if it is paused. Because the hub reads the workspace off its **own** disk, a box owned by a [deployed control box](/docs/deployed-hub) is refused rather than uploaded from the wrong tree — run `agentbox upload` there, or move specific files with `agentbox cp`.
 
@@ -783,6 +785,16 @@ agentbox skills --list [--json]
 agentbox skills --upload <names> | --upload-all [--allow-findings]
 agentbox skills --download <names> | --download-all [--yes]
 agentbox skills --discard <names> --yes
+agentbox skills add <url>[#path][@ref] [--skill <names>] [--policy auto|manual]
+agentbox skills add --marketplace <name|url> --plugin <plugin>
+agentbox skills import <path...> [--link]   # --link: re-upload on every change
+agentbox skills unlink [names...]
+agentbox skills refresh [names...]          # re-fetch git/marketplace skills
+agentbox skills update [names...] | --all [--yes]   # approve pending updates
+agentbox skills update --box <box>          # sync a running box now
+agentbox skills diff <name> [--from <v>] [--to <v>]
+agentbox skills policy <name> auto|manual
+agentbox skills ls --box <box> [--behind]
 agentbox skills enable|disable <names...> [--project [url] | --workspace [ref]] [--clear]
 agentbox skills bindings [--json]       # per-workspace / per-project skill bindings
 

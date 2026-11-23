@@ -449,6 +449,8 @@ export const openclawSpec: AgentSyncSpec = {
         'state',
         'migration',
         'tmp',
+        // The history row cursor's per-session output (box-written).
+        'agentbox-history',
       ],
     },
     // Relocated under the state root rather than given its own `boxDir`: one
@@ -460,6 +462,45 @@ export const openclawSpec: AgentSyncSpec = {
       relocToSubpath: OPENCLAW_XDG_SUBPATH,
     },
   ],
+  // Session history (docs/agent-history-plan.md, Phase 3b). Transcripts live in
+  // the default agent's sqlite db; the box's row cursor copies each session's
+  // rows into `agentbox-history/<sessionId>.jsonl`, decoding the zstd-compressed
+  // events. No hook reports a session id, but the volume is always this box's
+  // own (a service agent isolates), so every session in the db is copied and
+  // bound. Rows are copied once quiet: a window row changes all through a turn.
+  history: {
+    transcripts: [
+      {
+        root: 'agentbox-history',
+        format: 'sqlite',
+        mode: 'snapshot',
+        sessionFiles: ['<sessionId>.jsonl'],
+        sqlite: {
+          db: 'agents/main/agent/openclaw-agent.sqlite',
+          sessions: { table: 'session_windows', column: 'session_id' },
+          tables: [
+            {
+              name: 'session_windows',
+              id: 'session_id',
+              session: 'session_id',
+              updated: 'updated_at',
+              settleMs: 20_000,
+            },
+            {
+              name: 'transcript_events',
+              id: 'seq',
+              session: 'session_id',
+              updated: 'created_at',
+              // After the window row, so lineage is in the file's head.
+              parent: { column: 'session_id', table: 'session_windows' },
+              zstd: { column: 'event_zstd', into: 'event_json' },
+              settleMs: 20_000,
+            },
+          ],
+        },
+      },
+    ],
+  },
   // NO `credential`: openclaw has no host-side credential to sync. Its gateway
   // token is generated per box by `openclaw onboard` and must never leave that
   // box, so there is no host backup to read, nothing to push at create, no

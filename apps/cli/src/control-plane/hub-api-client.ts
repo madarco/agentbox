@@ -750,6 +750,82 @@ export interface HubApiSkill {
   updatedAt: string;
   source: { host?: string; machineId?: string; path?: string };
   versions: number;
+  /** Absent from hubs before Phase 5 (reads as an upload). */
+  origin?: HubApiSkillOrigin;
+  policy?: 'auto' | 'manual';
+  /** A newer version waiting for approval: the skill is behind. */
+  pending?: { version: string; uploadedAt: string; size: number; files: number; commit?: string };
+}
+
+export type HubApiSkillOrigin =
+  | { kind: 'upload' }
+  | { kind: 'folder'; linked: true; path: string; host?: string; machineId?: string }
+  | { kind: 'git'; url: string; ref?: string; path?: string; commit: string }
+  | {
+      kind: 'marketplace';
+      marketplace: string;
+      url: string;
+      ref?: string;
+      plugin: string;
+      commit: string;
+    };
+
+export interface HubApiSkillCandidate {
+  name: string;
+  description: string;
+  path: string;
+  size: number;
+  files: number;
+  problems: string[];
+  findings: { rule: string; path: string; line: number }[];
+}
+
+export interface HubApiSkillAddResult {
+  commit: string;
+  candidates: HubApiSkillCandidate[];
+  imported: {
+    name: string;
+    version: string;
+    changed: boolean;
+    held: boolean;
+    skill: HubApiSkill;
+  }[];
+  skipped: { name: string; reason: string }[];
+}
+
+export interface HubApiSkillRefresh {
+  name: string;
+  status: 'up-to-date' | 'pending' | 'applied' | 'blocked' | 'failed' | 'not-refreshable';
+  from?: string;
+  to?: string;
+  commit?: string;
+  reason?: string;
+}
+
+export interface HubApiSkillDiff {
+  name: string;
+  from: string;
+  to: string;
+  files: {
+    path: string;
+    status: 'added' | 'removed' | 'modified';
+    modeOnly?: boolean;
+    binary?: boolean;
+    before?: string;
+    after?: string;
+  }[];
+}
+
+export interface HubApiBoxSkills {
+  boxId: string;
+  recordedAt?: string;
+  skills: { name: string; version: string; current?: string; pending?: string; behind: boolean }[];
+}
+
+export interface HubApiSkillSync {
+  boxId: string;
+  status: 'synced' | 'failed' | 'not-running';
+  detail?: string;
 }
 
 export interface HubApiSkillsListing {
@@ -791,6 +867,24 @@ export interface HubApiSkillUploadMeta {
   size: number;
   files: number;
   source?: { host?: string; machineId?: string; path?: string };
+  /** A linked-folder upload (`agentbox skills import --link`). */
+  linked?: boolean;
+}
+
+/** `POST /api/v1/skills/{name}/propose` metadata (Phase 7). */
+export interface HubApiSkillProposalMeta {
+  box: { id: string; name: string };
+  agent?: string;
+  source?: { host?: string; machineId?: string; path?: string };
+}
+
+export interface HubApiSkillProposal {
+  name: string;
+  /** Tree hash the hub derived from the tarball. */
+  version: string;
+  status: 'pending' | 'unchanged';
+  isNew: boolean;
+  findings: { rule: string; path: string; line: number }[];
 }
 
 export const SUPPORTED_HUB_API_VERSIONS = ['v1'] as const;
@@ -1412,7 +1506,13 @@ export class HubApiClient {
     name: string,
     tarball: Buffer,
     meta: HubApiSkillUploadMeta,
-  ): Promise<{ name: string; version: string; changed: boolean; skill: HubApiSkill }> {
+  ): Promise<{
+    name: string;
+    version: string;
+    changed: boolean;
+    held?: boolean;
+    skill: HubApiSkill;
+  }> {
     const res = await this.fetchImpl(`${this.base}/api/v1/skills/${encodeURIComponent(name)}`, {
       method: 'PUT',
       headers: {
@@ -1453,8 +1553,97 @@ export class HubApiClient {
     };
   }
 
+  /**
+   * Propose a skill read from a box for the library (Phase 7). The hub checks
+   * the tarball itself and parks one approval; nothing is stored until a human
+   * approves it.
+   */
+  async proposeSkill(
+    name: string,
+    tarball: Buffer,
+    meta: HubApiSkillProposalMeta,
+  ): Promise<HubApiSkillProposal> {
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/skills/${encodeURIComponent(name)}/propose`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/gzip',
+          'X-AgentBox-Skill-Proposal': Buffer.from(JSON.stringify(meta), 'utf8').toString('base64'),
+        },
+        body: new Uint8Array(tarball),
+      },
+    );
+    return this.parseRaw(res);
+  }
+
   discardSkill(name: string): Promise<{ name: string; removed: number }> {
     return this.request('DELETE', `/skills/${encodeURIComponent(name)}`);
+  }
+
+  /** The hub fetches a git repo or a marketplace plugin and imports its skills. */
+  addSkills(body: {
+    git?: { url: string; ref?: string; path?: string };
+    marketplace?: { marketplace: string; url: string; ref?: string; plugin: string };
+    skills?: string[];
+    policy?: 'auto' | 'manual';
+    allowFindings?: boolean;
+    dryRun?: boolean;
+  }): Promise<HubApiSkillAddResult> {
+    return this.request('POST', '/skills', body, { timeoutMs: 300_000 });
+  }
+
+  refreshSkill(name: string, opts: { allowFindings?: boolean } = {}): Promise<HubApiSkillRefresh> {
+    return this.request('POST', `/skills/${encodeURIComponent(name)}/refresh`, opts, {
+      timeoutMs: 300_000,
+    });
+  }
+
+  approveSkill(
+    name: string,
+  ): Promise<{ name: string; from: string; to: string; skill: HubApiSkill }> {
+    return this.request('POST', `/skills/${encodeURIComponent(name)}/approve`, {});
+  }
+
+  setSkillPolicy(name: string, policy: 'auto' | 'manual'): Promise<HubApiSkill> {
+    return this.request('PATCH', `/skills/${encodeURIComponent(name)}`, { policy });
+  }
+
+  /** File content, so elevated like {@link downloadSkill}. */
+  async skillDiff(
+    name: string,
+    opts: { from?: string; to?: string; adminToken?: string } = {},
+  ): Promise<HubApiSkillDiff> {
+    const q = new URLSearchParams();
+    if (opts.from) q.set('from', opts.from);
+    if (opts.to) q.set('to', opts.to);
+    const qs = q.toString();
+    const res = await this.fetchImpl(
+      `${this.base}/api/v1/skills/${encodeURIComponent(name)}/diff${qs ? `?${qs}` : ''}`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'X-Agentbox-Admin-Token': opts.adminToken ?? this.token,
+        },
+      },
+    );
+    return this.parseRaw(res);
+  }
+
+  boxSkills(boxId: string): Promise<HubApiBoxSkills> {
+    return this.request('GET', `/boxes/${encodeURIComponent(boxId)}/skills`);
+  }
+
+  syncBoxSkills(boxId: string): Promise<HubApiSkillSync> {
+    return this.request(
+      'POST',
+      `/boxes/${encodeURIComponent(boxId)}/skills/sync`,
+      {},
+      {
+        timeoutMs: 180_000,
+      },
+    );
   }
 
   // ── skill bindings (Phase 4) ──

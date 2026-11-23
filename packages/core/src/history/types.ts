@@ -46,6 +46,11 @@ export interface AgentHistorySqliteTable {
   parent?: { column: string; table: string };
   /** Write a row only once `updated` is this old (default 0); a final flush ignores it. */
   settleMs?: number;
+  /**
+   * `column` may hold a zstd frame of the text `into` holds otherwise (openclaw
+   * compresses large events): the edge decodes it into `into` before copying.
+   */
+  zstd?: { column: string; into: string };
 }
 
 export interface AgentHistorySqliteSource {
@@ -53,6 +58,12 @@ export interface AgentHistorySqliteSource {
   db: string;
   /** In write order: a parent table before its children. */
   tables: AgentHistorySqliteTable[];
+  /**
+   * Copy EVERY session `column` of `table` lists, not only the bound ones, and
+   * bind each new one to this box. Only for a db that is the box's own (a
+   * per-box volume or disk): an agent with no hook to report its session id.
+   */
+  sessions?: { table: string; column: string };
 }
 
 /**

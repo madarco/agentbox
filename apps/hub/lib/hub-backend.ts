@@ -54,6 +54,7 @@ import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
 import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
+import { createSkillsBackend } from './backend/skills-backend';
 import type { BackendDeps } from './backend/deps';
 import {
   configureBoxPushStat,
@@ -2181,6 +2182,21 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
   const checkouts = createCheckoutBackend(backendDeps);
+  const skills = createSkillsBackend({
+    store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
+    maxTarballBytes: () => globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES,
+    boxIds: async () => [...(await backendDeps.liveBoxIds())],
+    async probeState(id) {
+      const rp = await resolveBoxProvider(id, hydrate);
+      return rp ? rp.provider.probeState(rp.box) : 'missing';
+    },
+    async exec(id, argv) {
+      const rp = await resolveBoxProvider(id, hydrate);
+      if (!rp) throw new Error(`box ${id} not found`);
+      return rp.provider.exec(rp.box, argv, { user: 'vscode' });
+    },
+    log: (m) => console.warn(`[hub] ${m}`),
+  });
   // A box records its account in state.json AND in its relay registration;
   // a Store-only box has only the latter, and must still block `accounts rm`.
   const accounts = createAccountBackend({
@@ -2287,6 +2303,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   }
   const hub: HubBackend = {
     ...checkouts,
+    ...skills,
     ...createHostSessionsBackend(),
     ...accounts,
     ...workspaces,

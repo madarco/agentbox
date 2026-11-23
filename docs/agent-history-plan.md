@@ -2,7 +2,7 @@
 
 **Status:** Phases 1, 2 done (store, archive, ingest, read API + CLI for claude
 in boxes); Phase 3 implemented (codex, pi, opencode transcripts, re-parse job;
-openclaw deferred); Phase 4 (memory, claude), Phase 5 (host sessions), Phase 6 (MCP) and Phase 7 (usage + dashboard) implemented. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
+openclaw in Phase 3b); Phase 4 (memory, claude), Phase 5 (host sessions), Phase 6 (MCP) and Phase 7 (usage + dashboard) implemented. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -379,9 +379,7 @@ Re-parse job (raw → normalized) for parser version bumps.
   `parser_version` is below its module's: clear the projection, stream the raw
   through `parse`, store the end parse state, stamp the version. It runs at hub
   start and in the hourly sweep, inside the ingest queue.
-- **openclaw** is not in this phase (see the backlog): its 2026.11 store is a
-  large schema (`transcript_events` with zstd-compressed event blobs, plus
-  navigation rows) that Phase 0 did not measure.
+- **openclaw** was deferred from this phase and is done in Phase 3b below.
 - **As built:** ctl runs the row cursor in every box; the relay's final docker
   read no longer triggers it itself: the hub's destroy flush runs the box's
   `agentbox-ctl history flush` first and the relay read after it, or after a
@@ -395,7 +393,80 @@ Re-parse job (raw → normalized) for parser version bumps.
   On a copy of that store, bumping all three parsers re-derived every session
   with an identical projection, and a second run found nothing stale.
 
-### Phase 4 — memory in the hub
+#### Phase 3b — openclaw (2026-11-23)
+
+**Measured** (openclaw 2026.11.7, Node 24.22 in a throwaway `node:24` container,
+one `openclaw agent --local` turn against a local mock model; no account used):
+
+- **Where.** `~/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite` (+ WAL,
+  `-shm`, a `.seal` ownership file), per-agent schema 23+, 70 tables. The default
+  agent id is `main`. Older history can move to
+  `agents/<agentId>/sessions/cold/<sha256>.jsonl.zst` (cold archives, after
+  retention), out of the db.
+- **Transcript.** `transcript_events(session_id, seq, event_json TEXT,
+  event_zstd BLOB, created_at, navigation_* …)`, primary key `(session_id,
+  seq)`, `STRICT`. Exactly one of `event_json` / `event_zstd` is set: events of
+  1 KiB–4 MiB that compress by ≥10 % are stored as **a plain zstd frame**
+  (magic `28b52ffd`, level 1, frame checksum), which Node 24's
+  `zlib.zstdDecompressSync` decodes as is. In one turn 3 of 9 events were
+  compressed (the user message, the system-prompt snapshot, the assistant reply).
+  There is no `updated` column; `created_at` is epoch ms. `seq` is per session,
+  not global.
+- **Event format.** pi's session format, v4: a `session` header (`id`, `cwd`),
+  `model_change`, `thinking_level_change`, `custom` / `custom_message`
+  (openclaw-injected runtime context, system prompt), and `message` events whose
+  `message` carries `role`, `content` (string or blocks, `toolCall` blocks),
+  `model`, and on assistant messages `usage` {`input`, `output`, `cacheRead`,
+  `cacheWrite`, `cost`}.
+- **Session id.** `session_windows.session_id`, a uuid (fits the hub's id
+  pattern). A window has `session_key` (`agent:main:main`), `previous_session_id`
+  + `reason` (`reset`, `rollover`, `fork`, `compaction`, …) for lineage, `model`,
+  `display_name`. `session_nodes` maps a key to its current window.
+- **Readable while the daemon writes.** The db is WAL; a `node:sqlite`
+  read-only handle reads it alongside the writer, as for opencode.
+- **No hooks.** openclaw is a daemon with no AgentBox hook to report a session
+  id, but its volume is always per box (service agents isolate,
+  `agent-isolation.ts`) and the push excludes every `*.sqlite*`, so every
+  session in the db is this box's own.
+
+**Feasible with the existing row cursor**, with three small generic additions:
+
+1. **Plan.** `AgentHistorySqliteTable.zstd {column, into}`: ctl's `node:sqlite`
+   row source decodes the blob into the text column (refusing the pass, not
+   dropping the row, when this node has no zstd). `AgentHistorySqliteSource.sessions
+   {table, column}`: the cursor lists every session in the db instead of only
+   bound ones, and appends a binding line for each new one (ctl's
+   `appendHistoryBinding`), so the ctl shipper and the docker relay ship it
+   unchanged. The row source's `rows()` filters by session too (`seq` repeats
+   across sessions).
+2. openclaw's registry row: a `snapshot` source on
+   `agents/main/agent/openclaw-agent.sqlite`, tables `session_windows` (id
+   `session_id`, updated `updated_at`) and `transcript_events` (id `seq`,
+   updated `created_at`, `zstd: event_zstd → event_json`, settle 20 s), output
+   `agentbox-history/<sessionId>.jsonl` (excluded from the push).
+3. `openclawHistoryModule` in `@agentbox/agent-openclaw`: lineage from
+   `previous_session_id`, title/model from the window row, turns, tool calls and
+   usage from the events, injected `custom*` events skipped.
+
+**As built:** as planned, plus a `parent` gate on `transcript_events` →
+`session_windows` (events land after their window row, so the lineage is in
+the file's head), and a frame that fails to decode is copied without its text
+(`event_zstd_error`) rather than retried forever. Each `<sessionId>.cursor.json`
+names the box that wrote it: a box that finds another box's cursor (a restored
+bot backup, a cloud box made from a checkpoint) moves that output to
+`<sessionId>.jsonl.from-<box>`, keeps its row map, and binds the session only
+after, so only rows it copies itself ship under its origin.
+
+**Live check** (docker, isolated hub on a scratch HOME, openclaw 2026.11.7 in
+the box, a mock OpenAI-compatible endpoint in the box, no account): one turn
+through the gateway; the row cursor bound the session, decoded the two
+compressed messages and the relay shipped them. `sessions ls` showed the
+openclaw session with its box, 2 turns and the mock's tokens; `sessions search`
+found both the user and assistant rows. A second turn shipped with no manual
+step within ~2 min (20 s settle + ticks). The first one was nudged with
+`agentbox-ctl history flush`, because the hub was restarted under the box's
+first config fetch. After `destroy` (container and openclaw volume gone) the
+session, 4 turns, was still listed and searchable.
 
 `memory_entries`, seed-from-hub with host fallback, write-back, `agentbox
 memory` commands; extended to every agent that declares memory.
@@ -700,6 +771,82 @@ dimension, keeps usage past transcript retention, and the three surfaces.
   agent over two days (frames through `POST /api/v1/history/chunks`); one
   day's dashboard and `agentbox usage` totals compared with a hand count over
   the seeded files.
+
+### Cloud sign-off (Phases 1-6 + openclaw)
+
+Every phase above was live-checked on docker only. This pass runs the merged
+nightly on real cloud boxes and fixes only what blocks or regressed.
+
+#### Plan (2026-11-23)
+
+- **Hub.** An isolated hub on a scratch `HOME` (`relay.port: 18787`), flipped
+  with `hub expose --bind 127.0.0.1 --tunnel cloudflare` so cloud boxes reach
+  it. Fresh e2b and hetzner bakes from this nightly in that `HOME` (the
+  owner's prepared snapshots predate Phase 1, so their ctl has no shipper and
+  their managed settings no `autoMemoryDirectory`).
+- **Model.** No account: a scripted Anthropic Messages mock runs inside each
+  box on loopback, and claude runs with `ANTHROPIC_BASE_URL` pointing at it.
+  The mock answers `REMEMBER <file> <text>` with a `Write` into the box's
+  memory dir, `FIND <word>` with a call to the `agentbox` MCP server's
+  `sessions_search`, and a tool result with a quote of it. The turns are
+  real claude sessions with real hooks, transcripts, memory files and MCP
+  calls; only the model is scripted. No claude or codex login reaches the
+  scratch `HOME`.
+- **Checks.** (1) box A (hetzner) runs a turn; it ships, shows in
+  `sessions ls`/`search`, and survives `destroy`. (2) box A writes a memory
+  file; fresh box B (e2b, same repo) has it after its seed, and `memory pull`
+  lands it in the scratch `HOME`. (3) box B's claude finds box A's session
+  through `mcp__agentbox__sessions_search`, with no hub token in box B's env
+  or files. (4) one codex session where the box can run it. `agentbox usage`
+  if Phase 7 has merged.
+- **Cleanup.** Destroy every box, the tunnel, the hub, both bakes'
+  snapshots/templates; list each provider for orphans.
+
+#### Fixed: a cloud box's first RPCs read as "older relay"
+
+A cloud box's ctl starts about 10 s before the hub registers the box (box A:
+ctl up at 08:40:16, box record at 08:40:28). Its first `history.memory.seed`
+and `history.config` got `401 unknown box token`. ctl filed every non-zero
+answer that was not a transport error as `unsupported`, the code meant for a
+relay predating the method (that one answers 501), and parked the feature for
+10 minutes. For memory that meant data loss: the late seed replaces the memory
+dir, so whatever claude wrote in those 10 minutes was deleted. History only
+escaped by timing (its first tick came after registration).
+
+`postRpcAwait` now carries the relay's HTTP status on a bodyless answer, and
+`relayNotReady()` (65, 126, or a 401 in ctl's first 5 minutes) is the one
+"ask again soon" test for both the memory seed and the history config fetch.
+A 501 is still `unsupported`, and so is a 401 after the grace window (a box the
+relay will not know again backs off instead of polling every 5 s; from the
+review of this pass). The live check ran the build before the grace window,
+which only changes a 401 past 5 minutes.
+Test: `packages/ctl/test/relay-not-ready.test.ts` (fails without the fix). Live:
+after a re-bake, box A logged `memory: seed: relay unreachable` twice, then
+`seeded claude:0` and the MCP registration within seconds of boot.
+
+#### Results (2026-11-23)
+
+Isolated hub on `:18787`, exposed over a Cloudflare quick tunnel; hetzner
+(`cx23`/`nbg1`) and e2b bakes from this branch; claude 2.1.x and codex 0.171
+against in-box mocks, no account used.
+
+| Check | hetzner | e2b |
+|---|---|---|
+| 1. session ships, `sessions ls`/`search`, survives destroy | pass: box A's turn listed with box, provider, 246/90 tokens; `search MANGO-7713` hit; after `destroy` still listed, and `sessions download` is byte-identical to the transcript copied out of the box before destroy | pass (box B's own turns ship the same way) |
+| 2. memory A → fresh B on another provider, `memory pull` | written in A (`deploy-codeword.md`, v1 origin `hzA`) | seeded into B at boot (`seeded claude:1`); B's own `MEMORY.md` shipped back as v1 origin `e2B`; `memory pull -y` wrote both into the scratch HOME's `~/.claude/projects/-tmp-abc-repo/memory/` |
+| 3. B finds A's session over MCP, no hub token in B | | pass: `mcp__agentbox__sessions_search` from box B returned box A's session `dac52d4f` (box `hzA`, destroyed) with the codeword snippet. None of the hub API key, admin token or auth secret is in box B's environment (shell and every ctl process) or in `/home/vscode`, `/etc/agentbox`, `/run/agentbox`, `/etc/claude-code` |
+| 4. codex | | pass: one `codex exec` turn (hooks on) bound through its `SessionStart` hook, shipped with 77/11 tokens, `search PAPAYA-5521` found both rows |
+
+- MCP registration: ctl wrote `mcpServers.agentbox` into `~/.claude.json` on
+  both providers, and it survived the claude TUI's own start and exit.
+- Phase 7 (`agentbox usage`, #452) had not merged; not checked.
+- vercel was skipped: its auth here is a Vercel CLI session in the owner's
+  HOME, and copying it into a scratch HOME could rotate it. daytona was
+  attempted as the third provider, but its bake from the scratch HOME failed
+  at a seed-layer `chown` that predates history (backlog).
+- Cleanup: every box destroyed, the hetzner bake snapshot deleted, the tunnel
+  and hub stopped; hetzner, e2b and daytona listed clean of anything this pass
+  made. The e2b template is rebuilt by name, so it stays (backlog).
 
 Each phase updates `apps/web/content/docs/` for any new command, flag or key.
 

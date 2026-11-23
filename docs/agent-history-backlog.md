@@ -154,12 +154,47 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
 
 ## Phase 3 (other agents)
 
-- **openclaw.** Not captured. Its 2026.11 store is a per-agent sqlite with a
-  large schema; transcripts look like `transcript_events(session_id, seq,
-  event_json | event_zstd, created_at, …)`, with compressed events the row
-  cursor cannot read as JSON. Its volume is always isolated per box, so it
-  would also need a "every session in the db" mode instead of bindings.
-  Measure it in a live openclaw box first.
+- **openclaw: only the `main` agent.** The row cursor reads
+  `agents/main/agent/openclaw-agent.sqlite`; sessions of any other openclaw agent
+  id (`openclaw agents add`) are not captured. Fix: a `*` in the `sqlite.db`
+  path, one cursor per matching db.
+- **openclaw: an event rewritten in place is not re-copied.** `transcript_events`
+  has no updated column, so the cursor keys a row on `created_at`; the 20 s
+  settle covers a rewrite during a turn, not a later one
+  (`transcript_rewrite_watermarks` suggests rewrites exist). Rewind / reset make
+  a new window instead, which is captured.
+- **openclaw: cold archives.** Old windows can move out of the db into
+  `agents/<id>/sessions/cold/<sha256>.jsonl.zst`. Anything copied before that is
+  kept; a box whose history predates capture (a restored bot) has those events
+  only in the cold files, which are not read.
+- **openclaw: parse state grows with the session.** The parser remembers every
+  projected event `seq` to drop a re-copied row (opencode does the same per
+  part), so a weeks-long daemon session carries tens of thousands of keys in
+  its state. A per-session high-watermark would do, once rows are known to
+  arrive in `seq` order.
+- **openclaw: a shared volume.** Every session in the db is bound to the box
+  that reads it, which is right for the default per-box volume. An explicit
+  `isolate: false` override (warned at create) puts two boxes on one db: both
+  bind every session, and each takes the per-session cursor over from the
+  other (moving the other's output aside), so turns land under both boxes.
+  Restores and boxes made from a checkpoint are handled (the cursor names its
+  box; an inherited output is moved aside and only new rows are copied).
+  `bot clone` never copies the config volume, so it is not affected.
+- **openclaw: redaction misses its own secrets.** The exact-value list does not
+  hold the gateway token, `~/.openclaw/.env` or the host's
+  `~/.agentbox/openclaw/<box>.env` values, and Telegram bot tokens match no
+  format rule. Escaped JSON inside `event_json` also slips past the
+  `KEY: value` rule (as codex's, #447 L2).
+- **openclaw: cost grows with the db.** Every pass lists every session and
+  their row versions; the full `session_windows` row (last-message preview
+  included) is re-copied on every change; whole sessions are held in memory
+  in 200-row batches.
+- **openclaw: the decompressed copy is never cleaned.** `agentbox-history/`
+  (and `*.from-<box>` files after a restore) grows with the db and rides every
+  bot backup.
+- **openclaw: a stopped daemon.** A read-only reader leaves `-shm`/`-wal`
+  behind when openclaw is not running; harmless only while ctl and openclaw
+  run as the same user.
 - **codex `.jsonl` → `.jsonl.zst`.** Codex compresses cold rollouts and the
   shipper does not follow the rename. A rollout compressed before its tail was
   shipped loses that tail (the hub keeps what it has). Boxes ship every 30 s,
@@ -560,3 +595,55 @@ folder). Still open:
       bucket in local time.
     - Host sessions (Phase 5) show account `unknown`; they run on the PC's
       own login, which is the `default` account.
+
+## Cloud sign-off (2026-11-23)
+
+Fixed in this pass: a cloud box's first RPCs got `401 unknown box token`
+(ctl starts before the hub registers the box) and ctl parked memory and history
+for 10 minutes as if the relay lacked the methods; the late memory seed then
+deleted what the agent had written (plan, "Cloud sign-off"). Still open:
+
+- **The seed still replaces a dir the agent already wrote.** The fix closes the
+  401 window, but a box whose hub is unreachable at boot for longer (tunnel
+  down, hub restarting) seeds whenever the relay first answers, and
+  `placeSet` replaces the dir: memory written before that is lost. Merging
+  (keep local paths the seed set does not name, ship them as new versions)
+  would close it without losing the "a checkpoint's carried dir is replaced"
+  property only if the carried dir is told apart, e.g. by the state's box id.
+- **From the review of this pass, not fixed:**
+  - A 401 on a stale-config refresh (or any unreachable answer) drops a
+    working history shipper and row cursor until the next tick rebuilds them
+    (pre-existing for transport errors).
+  - Only a bodyless 401 is recognised; a 401 behind a proxy that returns an
+    `{exitCode}` body, or on the parked `/rpc/status` poll, still reads as
+    `unsupported`.
+  - Other ctl callers (skills sync, tool links, the MCP bridge) log the boot
+    401 as a failure and wait for their next pass; `agents.list` has its own
+    retry schedule. One shared "not registered yet" retry in `relay-rpc.ts`
+    would serve them all.
+  - `memory-sync.ts` `call` and `history-shipper.ts` `rpc` are two timeout
+    wrappers around `postRpcAwait` with different timeout behavior (exit 126
+    vs a thrown `RpcTimeout`).
+- **Not checked live on vercel or daytona.** vercel's auth here is a Vercel CLI
+  session in the owner's HOME (not copied into a scratch HOME). The daytona
+  bake from a scratch HOME failed after ~25 min at the seed layer's
+  `chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex
+  /home/vscode/.local` (`packages/sandbox-daytona/src/prepare.ts`, exit 1,
+  likely a seed path missing on a sparse host config; not a history change).
+  The fix in this pass is in ctl and shared by every cloud provider.
+- **Phase 7 usage on cloud.** #452 had not merged during the pass.
+- **Found while testing, outside history (for their own backlogs):**
+  - `agentbox codex <box>` takes the box name as the initial prompt and
+    creates a new box, and `agentbox codex start <box>` on a box created for
+    claude does not install codex, though `docs/agents.md` ("Adding an agent
+    to a running box") says both do.
+  - `agentbox prepare --provider e2b` from a scratch HOME rebuilds the shared
+    template by name (`agentbox-base:latest`), the same template id the
+    owner's own `e2b-prepared.json` points at. Harmless for a nightly bake, but
+    a scratch-HOME test is not isolated on e2b.
+  - Under `hub expose --tunnel cloudflare`, `hub restart` gets a new quick-tunnel
+    URL; cloud boxes created before it keep the old, dead URL. Known shape of
+    quick tunnels, worth a line in `hub-testing.md`'s gotchas.
+  - Testing inside an AgentBox box: the exposed hub's own creates clone the repo
+    with `git`, which the box's git shim refuses (`git.clone: not yet
+    implemented`); `--local` sidesteps it.

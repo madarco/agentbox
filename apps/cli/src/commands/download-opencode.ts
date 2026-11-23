@@ -5,11 +5,13 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { pullTransportForBox } from './_agent-pull-transport.js';
 import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
+import { PROPOSE_FLAG_HELP, runSkillProposeStep } from './_skill-propose-step.js';
 import { opencodeStagedItems } from '@agentbox/agent-opencode';
 
 interface DownloadOpencodeOpts {
   yes?: boolean;
   dryRun?: boolean;
+  propose?: boolean;
   propagate?: string;
 }
 
@@ -23,6 +25,7 @@ export const downloadOpencodeCommand = new Command('opencode')
   )
   .option('-y, --yes', 'skip the confirmation prompt')
   .option('--dry-run', "list new items and exit; don't write")
+  .option('--no-propose', PROPOSE_FLAG_HELP)
   .option(
     '--propagate <scope>',
     'also copy the pulled items into other boxes: project|all|none (default: ask)',
@@ -36,6 +39,15 @@ export const downloadOpencodeCommand = new Command('opencode')
       // agent's docker config VOLUME mounted at its box path (so the box can be
       // stopped — no unpause/start dance).
       const { transport } = await pullTransportForBox(box, 'opencode');
+      // Proposals first: the pull below may copy a box-written skill into this
+      // PC's folders, after which it would read as a copy carried from here.
+      await runSkillProposeStep({
+        box,
+        agent: 'opencode',
+        transport,
+        propose: opts.propose,
+        dryRun: opts.dryRun,
+      });
       const pull = (dryRun: boolean): Promise<{ newItems: string[] }> =>
         agentPull('opencode', transport, { dryRun });
 

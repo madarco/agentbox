@@ -249,10 +249,12 @@ export function resolveBindings(
 }
 
 /**
- * The full resolution: bindings, then the box's create flags on top, which are
- * the most specific choice there is. `--no-skills` → none; `--skills a,b` →
- * exactly those (an explicit list overrides any binding); `--skip-skills`
- * subtracts from the bound set.
+ * The full resolution: bindings, then the box's create flags on top.
+ * `--no-skills` → none; `--skills a,b` → exactly those (an explicit list
+ * overrides project, workspace and global bindings); `--skip-skills` subtracts
+ * from the bound set. A BOX binding outranks the flags (hub-skills Phase 7): it
+ * is a later decision about this one box (an API edit, or an approved MCP
+ * install), so it beats the one made at create.
  */
 export function resolveSkillDecisions(
   names: readonly string[],
@@ -265,6 +267,7 @@ export function resolveSkillDecisions(
   const include = selection.include ? new Set(selection.include) : null;
   const exclude = new Set(selection.exclude ?? []);
   return bound.map((r) => {
+    if (r.from === 'box') return r;
     if (selection.none) return { ...r, included: false, from: 'flags' as const };
     // `--skills a,b --skip-skills b` is a: the subtraction applies to the list too.
     if (exclude.has(r.name)) return { ...r, included: false, from: 'flags' as const };

@@ -5091,6 +5091,56 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/skills': {
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Box id',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Library skills on a box',
+          description:
+            'The set this hub last served the box: `{boxId, recordedAt?, skills: [{name, version, current?, pending?, behind}]}`. `behind` = the box holds something other than current (it slept through an update or its sync failed).',
+          responses: {
+            '200': {
+              description: 'The box skills',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/boxes/{id}/skills/sync': {
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Box id',
+          },
+        ],
+        post: {
+          tags: ['Skills'],
+          summary: "Sync a box's skills now",
+          description:
+            "Runs `agentbox-ctl skills sync` in the box over the provider's exec. Answers `{boxId, status: synced|failed|not-running, detail?}`; a box that is not running is not woken. Backs `agentbox skills update --box`.",
+          responses: {
+            '200': {
+              description: 'The outcome',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/skills': {
         get: {
           tags: ['Skills'],
@@ -5105,6 +5155,26 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        post: {
+          tags: ['Skills'],
+          summary: 'Add skills from a git repo or a marketplace plugin',
+          description:
+            "The HUB fetches the source. Body: `{git: {url, ref?, path?}}` (url: https, ssh, git@host:path or owner/repo; `file:///` only from loopback on a local hub) or `{marketplace: {marketplace, url, ref?, plugin}}` (the marketplace repo; only the plugin's skills are imported), plus `skills?` (names; default every skill found), `policy?` (`auto`|`manual`; default `manual` for both sources), `allowFindings?`, `dryRun?`. Each skill goes through the PC upload's normalization, size cap and secret scan. Answers `{commit, candidates, imported, skipped}`. Backs `agentbox skills add`.",
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object' } } },
+          },
+          responses: {
+            '200': {
+              description: 'Added',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
             '503': errorResponse,
           },
         },
@@ -5123,7 +5193,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Store a version of a skill',
           description:
-            'Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). The version becomes current; the newest 5 are kept. Streamed into custody and capped by the hub custody blob cap. The first import ever marks the library seeded. Backs `agentbox skills --upload` and the automatic first seed.',
+            "Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). Under the skill's `auto` policy the version becomes current and running boxes behind on it sync; under `manual` it waits as `pending`. `linked: true` in the metadata marks a PC's linked-folder upload. The newest 5 versions are kept, never dropping current or pending. Streamed into custody and capped by the hub custody blob cap. The first import ever marks the library seeded. Backs `agentbox skills --upload` and the automatic first seed.",
           parameters: [
             {
               name: 'X-AgentBox-Skill-Meta',
@@ -5149,6 +5219,21 @@ export function buildOpenApi(): Record<string, unknown> {
             '503': errorResponse,
           },
         },
+        patch: {
+          tags: ['Skills'],
+          summary: "Set a skill's update policy",
+          description:
+            'Body `{policy: "auto"|"manual"}`. `auto`: a new version becomes current and running boxes sync. `manual`: it waits as `pending` until approved.',
+          responses: {
+            '200': {
+              description: 'The skill row',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
         delete: {
           tags: ['Skills'],
           summary: 'Discard a skill',
@@ -5166,6 +5251,98 @@ export function buildOpenApi(): Record<string, unknown> {
                   },
                 },
               },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/refresh': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name',
+          },
+        ],
+        post: {
+          tags: ['Skills'],
+          summary: 'Re-fetch a git or marketplace skill',
+          description:
+            "The hub fetches the skill's upstream. A changed tree lands as `pending` under the `manual` policy (the git/marketplace default: the skill is behind until approved) or becomes current under `auto`, which syncs the running boxes behind on it. Body: `{allowFindings?}`. Answers `{name, status: up-to-date|pending|applied|blocked|failed|not-refreshable, from?, to?, commit?, reason?}`. Backs `agentbox skills refresh`.",
+          responses: {
+            '200': {
+              description: 'The outcome',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '401': errorResponse,
+            '404': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/approve': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name',
+          },
+        ],
+        post: {
+          tags: ['Skills'],
+          summary: 'Apply a pending update',
+          description:
+            'The pending version becomes current and every running box behind on the skill runs `agentbox-ctl skills sync`. Answers `{name, from, to, skill}`. `400` when nothing is pending. Backs `agentbox skills update`.',
+          responses: {
+            '200': {
+              description: 'Applied',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/diff': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name',
+          },
+          {
+            name: 'from',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Version (default: current, or the one before it)',
+          },
+          {
+            name: 'to',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Version (default: pending, else current)',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Diff two versions of a skill',
+          description:
+            'Answers `{name, from, to, files: [{path, status: added|removed|modified, modeOnly?, binary?, before?, after?}]}`; text bodies over 256 KiB and binary files are named without content. Backs `agentbox skills diff`.',
+          responses: {
+            '200': {
+              description: 'The diff',
+              content: { 'application/json': { schema: { type: 'object' } } },
             },
             '400': errorResponse,
             '401': errorResponse,
@@ -5203,6 +5380,54 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+          },
+        },
+      },
+      '/skills/{name}/propose': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name (must match the SKILL.md frontmatter)',
+          },
+        ],
+        post: {
+          tags: ['Skills'],
+          summary: 'Propose a skill written in a box for the library',
+          description:
+            "Body: the skill's gzip tarball. `X-AgentBox-Skill-Proposal`: base64 JSON `{ box: {id, name}, agent?, source?: {host?, machineId?, path?} }`. The hub reads the tarball itself (tree hash, frontmatter, secret scan) and parks ONE approval (default no, 24 h) under the box's id in `/api/v1/approvals`; nothing is stored until it is approved. `unchanged` = the library's current version is already this tree. Backs the propose step of `agentbox download <agent>`.",
+          responses: {
+            '200': {
+              description: 'Proposal state',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      version: { type: 'string', description: 'Tree hash the hub derived' },
+                      status: { type: 'string', enum: ['pending', 'unchanged'] },
+                      isNew: { type: 'boolean' },
+                      findings: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            rule: { type: 'string' },
+                            path: { type: 'string' },
+                            line: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '503': errorResponse,
           },
         },
       },

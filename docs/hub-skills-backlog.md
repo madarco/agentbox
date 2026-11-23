@@ -170,6 +170,107 @@ keeps the library copy, pi and openclaw keep the carried one.
    opencode, pi and openclaw skills ONLY from that volume. Retiring it now would
    drop them. Revisit with the carry-exclusion item.
 7. **Docs**: public skills page (every agent), plan status.
+## Phase 5 — implementation plan (2026-11-23)
+
+In the plan doc's Phase 5 section. Built: origin/policy/pending on `meta.json`;
+hub-side git and marketplace fetch (`skill-sources.ts`); per-box served-set
+records written by the relay on `skills.get`; `skills.sync` fan-out over
+`Provider.exec`; the `/api/v1` routes; `agentbox skills add | import [--link] |
+unlink | refresh | update | diff | policy | ls`; the PC relay's linked-folder
+watcher.
+
+## Open items from Phase 5
+
+Fixed in the PR from the `/code-review medium` and the live check: the diff
+route returned skill content on the plain API key (now the tarball's elevated
+read); a discard didn't sync running boxes; a policy set on a pre-Phase-5 skill
+was dropped on the next upload (skipping approval); approval kept the old
+description; marketplace `skills` paths replaced `skills/` instead of adding to
+it; `diff --from/--to` refused the 12-character versions the CLI prints;
+`git@host:repo.git` was split at the user's `@`; the parent `skills` command's
+`--yes` / `--allow-findings` swallowed the subcommands' flags; a loopback
+`file://` source was refused before the allowance applied.
+
+- **No periodic refresh.** A git or marketplace skill is re-fetched only by
+  `agentbox skills refresh` (or `POST /skills/{name}/refresh`). A hub timer
+  (`refreshAllSkills` exists) with a config key is the follow-up.
+- **The box record is written when the relay SERVES the set, not when ctl has
+  installed it.** A box whose sync then fails reads as current. A
+  `skills.report` RPC from ctl after a pass would make it exact (needs a new
+  image).
+- **`boxes/<boxId>/skills.json` is not removed on destroy.** A few hundred bytes
+  per destroyed box; the fan-out skips it (the box no longer resolves).
+- **The fan-out is over `Provider.exec`, not `CloudBoxPoller`** (the poller has
+  no host→box channel). Cost: one provider exec per behind running box; a
+  cloud SDK exec (e2b/vercel/daytona) is slower than a docker exec. Fine at
+  personal scale.
+- **Selecting fan-out targets reads one custody record per live box.** Fine for
+  tens of boxes; cache if a hub grows to hundreds.
+- **Linked uploads from another PC are accepted.** The open question (refuse a
+  folder source from a different `machineId`?) stays open; the hub currently
+  takes the latest upload from any PC, and its origin then names that PC.
+- **Private git repos on a control box** need git credentials in the hub
+  process's environment (a credential helper or `gh auth setup-git`). Errors
+  come back as the git message. Not configured by `hub deploy`.
+- **Codex marketplaces** (`~/.codex/.tmp/marketplaces`) are not looked up by
+  name; pass the marketplace's URL.
+- **No `skills.update` config key.** Policy is per skill (`agentbox skills
+  policy`), defaulting by origin. A global default would need the hub routes to
+  read config.
+- **`Box.skills` is not on the hub Box payload** (Phase 6: tray badge, box tab).
+  `GET /api/v1/boxes/{id}/skills` carries the same facts.
+- **A refresh that finds a secret-scan hit is reported `blocked`** and not
+  stored; `--allow-findings` on refresh/add overrides it. The findings aren't
+  persisted for the web UI (Phase 6).
+- **A brand-new library skill doesn't reach running boxes** (from the Phase 5
+  `/code-review`). The fan-out targets boxes whose served record holds a behind
+  skill, and a new skill is in no record yet; boxes get it at their next start
+  or with `agentbox skills update --box`. Phase 4's bindings decide which boxes
+  should get it, so the push belongs there.
+- **Refresh clones once per skill** (from the review). A marketplace plugin with
+  N skills fetches the marketplace and plugin repos N times, and marketplace
+  refreshes skip the `ls-remote` short-circuit. Group by `(url, ref)`.
+- **Openclaw bots follow the skill's policy** like any box; the plan's open
+  question (always manual for bots) is unanswered.
+
+### From the independent review of PR #455 (2026-11-23)
+
+Fixed in the PR: a skill folder, the `skills/` folder, a `SKILL.md` or
+`.claude-plugin/marketplace.json` symlinked out of a git/marketplace checkout
+was followed, so a third-party repo could make the hub import files from its
+own disk (each is now resolved and skipped or refused when it lands outside the
+checkout). A Phase 7 box proposal over a git/marketplace skill switched it to
+`upload`/`auto` and ended tracking: it is now refused (change it upstream, or
+discard the skill first). An approved proposal over an upload or linked skill
+keeps the skill's origin and policy, becomes current even under `manual` (the
+approval was for that exact version), and syncs running boxes.
+
+- **L2: git LFS smudge runs.** The hub's fetch runs with the global git-lfs
+  filter, and a repo's `.lfsconfig` can point the LFS endpoint anywhere. Fix:
+  `GIT_LFS_SKIP_SMUDGE=1` plus empty `filter.lfs.*` on every hub git call.
+- **L3: no size cap on the fetch.** The temp checkout and the in-memory read of
+  a repo are unbounded; only each skill is capped. Cap the checkout (or
+  `--filter=blob:limit`) and fail early.
+- **L4: credentials in a git URL** are stored on the origin and returned by
+  `GET /skills`. Owner decision: keep as is, the same as repo URLs elsewhere.
+- **L5: a marketplace.json inherits the caller's `file://` allowance**, and a
+  plugin's `url` can make the hub ssh to any host with the hub owner's keys.
+  Restrict plugin sources to https (and the marketplace's own host) unless the
+  caller asked otherwise.
+- **L6: approval is not tied to the reviewed version.** `skills update` shows
+  the diff, then approves whatever is pending at that moment; a refresh in
+  between swaps it. Pass the reviewed version to `POST /approve` and refuse a
+  mismatch.
+- **L7: `add` replaces a same-named local skill without a diff.** A git skill
+  named like an upload makes the new version current (an explicit add is its
+  own approval) with no prompt showing what changes.
+- **L8: sync timeout and paused boxes.** The 120 s timeout stops waiting but
+  not the exec itself; a paused or snapshot-resumed box never re-pulls (ctl
+  pulls at boot only), so it stays `behind` until a restart or
+  `skills update --box`.
+- **L9: the plan's Phase 5 API list names `POST /skills/refresh`**, which
+  doesn't exist; refresh is per skill (`POST /skills/{name}/refresh`), and the
+  CLI loops over names.
 
 ## Phase 4 — implementation plan (2026-11-23)
 
@@ -224,6 +325,79 @@ resolver is in `@agentbox/core` (a hub route can't bundle `@agentbox/relay`).
 - **`enable --workspace` with a skill not disabled globally** changes nothing;
   the CLI prints a hint rather than offering a "workspace only" mode. Revisit if
   users trip on it.
+
+## Phase 7 — implementation plan (2026-11-23)
+
+See the plan doc's Phase 7 section. Deviation from the plan text: a box binding
+now outranks the create flags (box binding > flags > project > workspace >
+global), so an approved `skills_propose_install` can widen a box created with
+`--skills` / `--skip-skills` / `--no-skills`.
+
+## From Phase 7 (2026-11-23)
+
+Fixed from the `/code-review medium`: the proposal's tar read had no unpacked
+cap (a small gzip could inflate into hub memory); a stale carried copy matching
+an OLDER library version was proposed as "a new version" (any kept version now
+answers `unchanged`); runtime artifacts (`__pycache__`, `node_modules`) made a
+carried skill look edited (the PC-side skip compares authored-file hashes); the
+pending approval kept the unpacked files alive; `skills_propose_install` had no
+dedupe; `download opencode` lacked the step; a proposal in the hub's startup
+window answered `pending` with no prompt ever shown (the handler is published
+only once the prompt mailbox exists). Still open:
+
+- **From the PR #453 review (fixed there):** a box with `autoApproveHostActions`
+  approved its own proposals and installs (now `noAutoApprove` on both asks); box
+  stdout names reached host paths before any check, in the propose step and in
+  the shared agent-pull inventory parsers (now one safe segment each); the
+  approval showed no file list or diff (now added/modified/removed paths and a
+  `SKILL.md` diff vs the current version); hub-scope MCP `skill_get` bypassed the
+  custody byte-read gate (now required, carried on `McpHubScope.skillBytes`).
+- **From the PR #453 review, open:**
+  - one box can fill all 20 global pending proposal slots (~2 GB of hub memory);
+    cap per box;
+  - the CLI's hub calls in the propose step have no timeout and run before the
+    pull, so a hung hub delays the download;
+  - on docker the transport reads the SHARED claude config volume, so a skill
+    written by one box is attributed to whichever box the download names;
+  - a box can fill host disk through the staged pull, and a `/dev/zero`-style
+    SKILL.md makes the CLI read until the size cap (stream with a cap per file);
+  - `skill_get` runs `gunzipSync` on the hub event loop per call (cache or
+    stream);
+  - a proposal with secret-scan findings can still be approved (shown, not
+    blocked, as for uploads);
+  - a late install approval can re-enable a skill the user excluded for that box
+    after the request (the binding write doesn't re-check);
+  - skills excluded by the box's create flags are still readable through MCP
+    (visible = bindings only, by design of `skills_propose_install`);
+  - a PC that holds the admin token sends only its API key from `agentbox mcp`,
+    so `skill_get` from a host agent on a remote hub needs an enrolled device.
+- **Two proposals of different versions of one skill are both parked.**
+  Approving the second after the first lands logs "not applied: the library's
+  version changed" and the approver sees nothing. Replace the earlier pending
+  proposal per name, or surface the outcome as a notice.
+- **Pending proposals live in hub memory** (up to 20, each up to the custody blob
+  cap compressed). A hub restart drops them along with the prompt mailbox.
+- **The CLI's library skip compares raw tree hashes** (the library stores raw
+  trees); the hub answers `unchanged` for any kept version. A carried copy the
+  agent ran (with `__pycache__`) and that this PC no longer has as-is is still
+  proposed; the approver sees it. Strip runtime dirs at proposal time.
+- **`agentbox-ctl download <agent>` reaches the propose step only on docker**
+  (the box-initiated `download.claude` RPC shells the host CLI; on cloud only
+  `download.workspace` is routed, a pre-existing gap). From a cloud box, run
+  `agentbox download <agent> <box>` on the PC.
+- **opencode's in-box `.claude/skills` and `~/.agents/skills` are not read**:
+  only skill dirs under the agent's own box config dir are, because the docker
+  transport mounts that dir alone.
+- **A box skill already downloaded to this PC is never proposed** (it reads as a
+  copy carried from here), e.g. one pulled by an older CLI or with
+  `--no-propose`. Upload it with `agentbox skills --upload <name>`, or compare
+  against the box's carried set instead of the PC's folders.
+- **An approved MCP install needs `agentbox-ctl skills sync`** in the box; pushing
+  the sync is Phase 5.
+- **MCP `skills_list` re-implements the library listing** (`libraryNames` next to
+  `listSkills`) to avoid hashing; fold together with the L1 stat-only listing.
+- **Box bindings of destroyed boxes** (now also written by approved installs)
+  are never removed (Phase 4 item).
 
 ## Open items
 
