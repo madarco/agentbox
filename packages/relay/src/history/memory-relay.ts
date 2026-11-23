@@ -121,6 +121,11 @@ export class MemoryRelay {
     return { key, root };
   }
 
+  /** The repo key and origin a box's MCP scope is built from (Phase 6). */
+  async boxIdentity(reg: BoxRegistration): Promise<{ repoKey: string | null; origin: MemoryOrigin }> {
+    return { repoKey: (await this.keyOf(reg)).key, origin: this.origin(reg) };
+  }
+
   private origin(reg: BoxRegistration): MemoryOrigin {
     const hostId = tryGetMachineId();
     return {

@@ -162,6 +162,13 @@ export const codexSpec: AgentSyncSpec = {
   // The hub's skills library: codex reads `/etc/codex/skills` as its `admin`
   // scope, unprefixed (measured, Phase 0); `/etc` is box-local, never the shared
   // config volume.
+  // AgentBox MCP server (docs/agent-history-plan.md, Phase 6), written by ctl.
+  mcp: {
+    file: '~/.codex/config.toml',
+    format: 'toml',
+    serversPath: ['mcp_servers'],
+    entry: 'stdio',
+  },
   skills: {
     dirs: ['.codex/skills', '.agents/skills'],
     inject: { kind: 'dir', path: '/etc/codex/skills' },

@@ -245,6 +245,9 @@ export const claudeSpec: AgentSyncSpec = {
   // managed-settings dir with no flag and no name prefix (measured, Phase 0), and
   // `/etc/claude-code` is in the container layer / VM disk, never the shared
   // config volume, so each box gets only its own selection.
+  // AgentBox MCP server (docs/agent-history-plan.md, Phase 6): user scope in
+  // ~/.claude.json (the symlink to the volume's _claude.json), written by ctl.
+  mcp: { file: '~/.claude.json', format: 'json', serversPath: ['mcpServers'], entry: 'stdio' },
   skills: {
     dirs: ['.claude/skills'],
     inject: { kind: 'dir', path: '/etc/claude-code/.claude/skills' },

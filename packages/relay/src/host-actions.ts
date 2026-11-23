@@ -111,6 +111,8 @@ export interface CloudActionExecutorDeps {
    * Absent on a path that cannot ingest (the multi-PC host-reach executor).
    */
   history?: (method: string, params: unknown) => Promise<HostActionResult>;
+  /** The hub's MCP server (`mcp.message`) for this box, bound to its registration. */
+  mcp?: (method: string, params: unknown) => Promise<HostActionResult>;
   /**
    * The box's share of the skills library (`skills.*`), bound to its
    * registration's selection. Absent on a path with no library: the box then
@@ -430,6 +432,10 @@ export async function executeCloudAction(
       ),
       stderr: '',
     };
+  }
+  if (action.method.startsWith('mcp.')) {
+    if (deps.mcp) return deps.mcp(action.method, action.params);
+    return { exitCode: 64, stdout: '', stderr: 'AgentBox MCP is not served on this path\n' };
   }
   if (action.method.startsWith('skills.')) {
     if (deps.skills) return deps.skills(action.method, action.params);

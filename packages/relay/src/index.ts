@@ -365,6 +365,7 @@ export {
 export { dockerHistorySource, untarSingleFile } from './history/docker-source.js';
 export { collectHostSecrets } from './history/host-secrets.js';
 export { runHistoryRpc } from './history/rpc.js';
+export { askMcpApproval, MCP_APPROVAL_TTL_MS, runMcpRpc } from './mcp-rpc.js';
 export {
   SKILL_BLOB_CHUNK_BYTES,
   parseSkillSelection,

@@ -1,3 +1,4 @@
+import { parseAgentMcpSpec, type AgentMcpSpec } from '@agentbox/core';
 import { postRpcAwait } from './relay-rpc.js';
 import { agentUnitsFromWire, type AgentUnits } from './agent-units.js';
 import { WATCHED_CREDENTIALS, type WatchedCredential } from './credentials-watcher.js';
@@ -55,6 +56,7 @@ interface WireAgent {
   service?: unknown;
   configRender?: unknown;
   skills?: unknown;
+  mcp?: unknown;
 }
 
 /**
@@ -111,7 +113,11 @@ export interface AgentDescriptors {
    * that declares a `dir` injection (`AgentSyncSpec.skills`). Deduplicated.
    */
   skillDirs: readonly string[];
+  /** Where to register the AgentBox MCP server, one per agent that declares it. */
+  mcpTargets: readonly AgentMcpTarget[];
 }
+
+export type AgentMcpTarget = AgentMcpSpec & { agent: string };
 
 /**
  * Narrow the wire payload, dropping anything malformed rather than throwing.
@@ -139,6 +145,7 @@ export function parseAgentDescriptors(
   const units: AgentUnits[] = [];
   const renders: AgentRenderDescriptor[] = [];
   const skillDirs = new Set<string>();
+  const mcpTargets: AgentMcpTarget[] = [];
   const warn = onWarn ?? ((m: string) => process.stderr.write(`agentbox-ctl: ${m}\n`));
   for (const raw of agents as WireAgent[]) {
     const id = typeof raw?.id === 'string' ? raw.id : null;
@@ -164,6 +171,8 @@ export function parseAgentDescriptors(
     ) {
       skillDirs.add(inject.path);
     }
+    const mcp = parseAgentMcpSpec(raw.mcp);
+    if (mcp) mcpTargets.push({ ...mcp, agent: id });
 
     // An agent is probed for activity only if it says it reports any. A row with
     // no `activitySource` has no hooks, no plugin and no scraper, so probing its
@@ -194,7 +203,7 @@ export function parseAgentDescriptors(
   // empty on their own (a host whose agents all opt out of activity), but not
   // when the credentials were unusable too.
   if (files.length === 0) return null;
-  return { files, sessions, units, renders, skillDirs: [...skillDirs] };
+  return { files, sessions, units, renders, skillDirs: [...skillDirs], mcpTargets };
 }
 
 /**
@@ -232,6 +241,7 @@ export async function fetchWatchList(): Promise<
     units: [],
     renders: [],
     skillDirs: [],
+    mcpTargets: [],
   } satisfies AgentDescriptors;
   try {
     const timeout = new Promise<'timeout'>((resolve) => {
@@ -252,6 +262,7 @@ export async function fetchWatchList(): Promise<
       units: parsed.units,
       renders: parsed.renders,
       skillDirs: parsed.skillDirs,
+      mcpTargets: parsed.mcpTargets,
       source: 'host',
     };
   } catch {
