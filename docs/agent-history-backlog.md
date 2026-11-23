@@ -188,3 +188,91 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
 - **Boxes built before Phase 3** bind claude sessions only. Codex, pi and
   opencode report their session ids from hooks baked into the image (docker)
   or the provider's base snapshot (clouds); rebuild or re-bake to capture them.
+
+## Phase 4 (memory in the hub)
+
+- **Boxes from older images or snapshots.** Memory sync needs the managed
+  settings key (`autoMemoryDirectory`) and the ctl `MemoryLoop`, both baked in.
+  An older box keeps the old behaviour: it is seeded from the host into
+  `-workspace/memory` at create (docker volume rekey, cloud dynamic seed), and
+  nothing ships its writes. Those two legacy seeds stay until old bakes are
+  gone; then delete them. Cloud bases must be re-prepared to get sync.
+- **No offline host fallback on cloud.** The create used to push the host copy
+  straight into the box. Now it arrives via `history.memory.seed`, so a cloud
+  box whose relay never answers at boot has no memory until it does. ctl
+  retries every 5 s. Restoring a create-time push would race the hub seed
+  (see the plan), so it needs a "seeded" handshake first.
+- **No sync down into a running box.** A box seeds once. Another box's newer
+  version reaches it only on the next box, and a later local edit overwrites
+  the newer version (last writer wins, so the older edit is kept as a version
+  and is reversible). A pull on each pass, for files unchanged locally, would
+  fix it.
+- **Paused docker box at destroy.** The in-box flush needs a running box, so
+  up to 15 s of memory writes made just before a pause are lost if the box is
+  then destroyed without being resumed. The transcript flush covers paused
+  boxes with a helper container; memory could do the same.
+- **Repo key of a remote-hub box.** The relay keys by the registration's
+  `originUrl`, falling back to `local:<machine>:<projectRoot>`. A box with no
+  origin whose project folder the hub machine does not know gets no key, so
+  write-back is off for it.
+- **Only claude.** codex memory exists but was empty in Phase 0, openclaw's
+  lives in the workspace repo, and pi and opencode have none. Each needs a
+  `history.memory` block and (codex) a per-box location.
+- **Live check covered docker only.** The "fresh box B on another provider"
+  leg of the plan's Done is unit-tested (`MemoryRelay` and `MemorySync` are
+  provider-agnostic), not run live: e2b was off-limits this phase.
+- **From the Phase 4 review, not fixed:**
+  - *`local:` key spelling.* For a repo with no origin, the CLI keys by the
+    realpath of the git toplevel, while the relay uses the registration's
+    `hostMainRepo` as given. A symlinked path (macOS `/var`) or a linked
+    worktree names a different key, and `memory ls` finds nothing.
+  - *Version scan per put.* `append` loads a path's full version list to read
+    the last row. Add a `latestOf` repo method (`ORDER BY version DESC LIMIT 1`)
+    before memory files reach thousands of versions.
+  - *Two copies of claude's project-key rule.* `hostProjectKey('dashed-path')`
+    in core duplicates `encodeClaudeProjectsKey` in sandbox-core. Make
+    sandbox-core use the core helper.
+- **From the Phase 4 live check (docker, isolated hub):**
+  - *claude honouring `autoMemoryDirectory` is not yet observed live.* The
+    box's claude login had expired, so the memory file was written as the box
+    user in claude's place. Seed, write-back, the destroy, box B and `pull`
+    were all real. claude 2.1.323's own code reads the key from policy
+    settings. Re-check with a logged-in turn.
+  - *Seeded by a hubless relay.* Box A's first boot reached a standalone
+    `agentbox-relay` (no hub) that the hub replaced a minute later. It got
+    the host copy, and write-back stayed off for the 10-minute backoff,
+    then shipped normally. A box seeded that way misses the hub's newer
+    versions. Re-asking for the seed when write-back first succeeds would
+    fix it.
+  - *Transcripts have the same `originUrl` gap.* A registration re-pushed
+    after a relay restart has no `originUrl`, so `HistoryRelay` stamps no
+    `projectRepoUrl` on that box's sessions. Memory now reads the folder's
+    `origin` (fixed in this phase); transcripts should do the same.
+- **From the review of #443 (2026-11-22), deferred:**
+  - *A late seed deletes box-local writes (3).* When the seed is delayed
+    (relay unreachable, older relay backoff) and claude writes memory first,
+    `placeSet` removes those never-baselined files. The same happens on a ctl
+    restart after a checkpoint dropped the state while write-back was off.
+    Fix: keep local files absent from the set, with no baseline, so the next
+    pass ships them.
+  - *A failed scan becomes a mass tombstone (4).* A readdir error on the
+    memory dir (or the dir removed) makes one pass ship every baseline path
+    as deleted. Report a root readdir failure from `scanMemoryDir` and skip
+    deletions that pass. The host-as-writer fix (#2) at least lets an edited
+    host file bring a path back.
+  - *Host import stored unredacted (5).* `memorySeed` stores host files byte
+    for byte; puts are redacted. Pass `hostFiles` through `deps.redact` in
+    `MemoryRelay.seed`, and compare the host-version sha on the redacted
+    bytes.
+  - *Smaller items (6):*
+    - A path live as both a file (`sub`) and a dir (`sub/x`) makes every
+      later seed throw ENOTDIR and retry forever. Skip the conflicting
+      entries, or refuse the put.
+    - `pull` in a linked worktree lands in the worktree's key, not the
+      main repo's. Use the parent of `--git-common-dir`.
+    - Leftover `*.agentbox-tmp` / `*.agentbox-part` files after a crash are
+      scanned and shipped. Skip those suffixes.
+    - The docker destroy's in-box flush exits non-zero on pre-Phase-1
+      images: one harmless log line.
+    - A seed reply of 1000 x 256 KB could exceed the cloud bridge's body cap
+      and fail forever. Real sets are KBs.

@@ -232,6 +232,57 @@ The hub records the transcript of every claude, codex, pi and opencode session y
 
 All four take `--local`.
 
+## Agent memory
+
+```bash
+# This repo's memory files on the hub (latest version of each)
+agentbox memory ls
+agentbox memory ls --all-repos
+
+# One file, and its history
+agentbox memory show MEMORY.md
+agentbox memory versions MEMORY.md
+agentbox memory show MEMORY.md --version 2
+
+# Bring the hub's latest into this PC's ~/.claude/projects/<project>/memory/
+agentbox memory pull --dry-run
+agentbox memory pull
+```
+
+The hub keeps claude's auto-memory per repo, with every version. A box's claude writes memory to a
+dir on the box's own disk; when the box starts, `agentbox-ctl` fills that dir with the hub's latest
+set for the box's repo. The copy in the hub machine's own `~/.claude/projects/<project>/memory/`
+(the folder the box was created from) counts as one more writer. A host file is added to the set
+when the hub has not seen it before, or when it has changed since the hub last took it. An unchanged
+host file never replaces a newer version a box wrote. Every change the box's claude makes ships back as a new version within about 15 seconds, and
+again when the box is destroyed. When two boxes edit the same file, the last write wins and
+both versions are kept.
+
+So memory written in one box is in the next box of the same repo, on any provider, and
+survives the box. A project with [`history.capture`](/docs/configuration#history--session-history)
+`false` still gets the host copy at create, but nothing is stored on the hub. Boxes need an image or
+snapshot built with this release.
+
+The repo defaults to the current folder's `origin` (`--repo <url>` picks another; any spelling of
+the URL works). `pull` writes the hub's files into this PC's memory dir for the current git
+toplevel, and refuses outside a git checkout unless `--dir <folder>` names the project. A
+`--repo` that is not that folder's repo is refused unless `--dir` is also given. `pull` first
+prints the plan: files to add, files to update, files the hub has deleted, and files only on
+this PC (always left alone). It then asks before changing anything. Without a terminal it
+refuses unless you pass `-y`. Files it overwrites or deletes are first copied to
+`~/.agentbox/memory-backups/<agent>/<project>/<time>/`. `--prune` deletes only files whose
+latest hub version is a deletion, never files the hub has not seen. `--dry-run` prints the plan
+and stops. The files come from box agents and your PC's claude reads them, so review the plan.
+
+| Command           | Useful flags                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `memory ls`       | `--all-repos`, `--repo <url>`, `--agent <id>`, `--json`                                         |
+| `memory versions` | `<path>`, `--repo <url>`, `--agent <id>`, `--json`                                              |
+| `memory show`     | `<path>`, `--version <n>`, `--repo <url>`, `--agent <id>`, `--json`                             |
+| `memory pull`     | `--dir <folder>`, `--prune`, `--dry-run`, `-y, --yes`, `--repo <url>`, `--agent <id>`, `--json` |
+
+All four take `--local`.
+
 ## Lifecycle
 
 ```bash

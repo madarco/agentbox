@@ -379,6 +379,10 @@ export async function ensureClaudeVolume(
     }
     const rsyncFlags = `--copy-unsafe-links ${rsyncExcludes.join(' ')}`;
     // Rekey the host project's memory/ -> /dst/projects/-workspace/memory.
+    // Only boxes from images baked before Phase 4 of docs/agent-history-plan.md
+    // read this dir: newer ones write memory to a per-box dir
+    // (`autoMemoryDirectory`) that ctl seeds from the hub. Drop this once those
+    // images are gone (backlog).
     // The key is [A-Za-z0-9-] only (encodeClaudeProjectsKey), so it's shell-safe
     // to interpolate. Empty snippet when no workspace or the helper finds no
     // host memory dir (the `[ -d ... ]` guard).

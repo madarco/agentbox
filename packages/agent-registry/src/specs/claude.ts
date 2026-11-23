@@ -140,6 +140,17 @@ export const claudeSpec: AgentSyncSpec = {
         sessionFiles: ['<sessionId>.jsonl', '<sessionId>/subagents/*.jsonl'],
       },
     ],
+    // Auto-memory: a MEMORY.md index plus one markdown file per fact. The box
+    // dir is set by `autoMemoryDirectory` in the baked managed settings, so it
+    // is per box even on the shared docker volume.
+    memory: [
+      {
+        boxDir: '/home/vscode/.local/share/agentbox/memory/claude',
+        hostRoot: 'projects/<projectKey>/memory',
+        scope: 'project',
+        hostKey: 'dashed-path',
+      },
+    ],
   },
   credential: {
     boxRelPath: '.credentials.json',

@@ -74,7 +74,11 @@ describe('openclaw-agentbox-env', () => {
     // would silently drop a user's own extraDirs on the second boot.
     expect(script).toContain('openclaw config patch --stdin');
     expect(script).toContain(OPENCLAW_CONFIG_MERGE_PROGRAM.trim());
-    expect(script).toContain('/opt/agentbox/skills .agentbox/AGENTS.md');
+    // The skill dirs ride as one colon-separated list: AgentBox's own skills and
+    // the box-local copy of the hub's skills library.
+    expect(script).toContain(
+      '/opt/agentbox/skills:/home/vscode/.local/share/agentbox/skills .agentbox/AGENTS.md',
+    );
   });
 
   it("reads the current values through openclaw's own reader, not the file", () => {
@@ -104,7 +108,7 @@ describe('openclaw-agentbox-env', () => {
       'BOOTSTRAP.md',
       'MEMORY.md',
     ];
-    const ctxArg = /\/opt\/agentbox\/skills (\S+)/.exec(script)?.[1];
+    const ctxArg = /\/opt\/agentbox\/skills:\S+ (\S+)/.exec(script)?.[1];
     expect(ctxArg, 'the context path is not passed to the merge').toBeDefined();
     expect(canonical).toContain(ctxArg!.split('/').pop());
   });

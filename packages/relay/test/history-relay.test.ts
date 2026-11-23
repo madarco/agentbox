@@ -255,7 +255,7 @@ describe('HistoryRelay', () => {
 
 describe('runHistoryRpc without a hub', () => {
   it('answers disabled with exit 0 so the shipper can tell it from a transport error', async () => {
-    const r = await runHistoryRpc(null, reg(), 'history.chunk', {});
+    const r = await runHistoryRpc(null, null, reg(), 'history.chunk', {});
     expect(r.exitCode).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ ok: false, code: 'disabled' });
   });

@@ -71,6 +71,7 @@ import { doctorCommand } from './commands/doctor.js';
 import { toolsCommand } from './commands/tools.js';
 import { skillsCommand } from './commands/skills.js';
 import { sessionsCommand } from './commands/sessions.js';
+import { memoryCommand } from './commands/memory.js';
 import { isFirstRun } from './lib/first-run.js';
 import { printCliError } from './lib/print-cli-error.js';
 import { gitCommand } from './commands/git.js';
@@ -289,6 +290,7 @@ program.addCommand(doctorCommand);
 program.addCommand(toolsCommand);
 program.addCommand(skillsCommand);
 program.addCommand(sessionsCommand);
+program.addCommand(memoryCommand);
 
 program.configureHelp({ visibleCommands: () => [] });
 program.addHelpText('after', () => '\n' + buildCompactHelp(program));

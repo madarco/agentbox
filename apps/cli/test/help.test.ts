@@ -34,6 +34,7 @@ import { gitCommand } from '../src/commands/git.js';
 import { hubCommand } from '../src/commands/hub.js';
 import { skillsCommand } from '../src/commands/skills.js';
 import { sessionsCommand } from '../src/commands/sessions.js';
+import { memoryCommand } from '../src/commands/memory.js';
 import { inboundCommand } from '../src/commands/inbound.js';
 import { installCommand } from '../src/commands/install.js';
 import { listCommand } from '../src/commands/list.js';
@@ -112,6 +113,7 @@ function buildProgram(): Command {
     hubCommand,
     skillsCommand,
     sessionsCommand,
+    memoryCommand,
     daytonaCommand,
     hetznerCommand,
     dockerCommand,

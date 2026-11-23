@@ -53,6 +53,7 @@ import {
 } from './lib/peer';
 import { createDeviceService, type DeviceService } from './lib/backend/devices';
 import { createHistoryService, type HistoryService } from './lib/backend/history';
+import { createMemoryService, type MemoryService } from './lib/backend/history-memory';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -126,6 +127,11 @@ async function openHistoryService(dbPath: string, archiveDir: string): Promise<H
     retentionDays: Math.max(1, retentionDays),
     log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
   });
+}
+
+async function openMemoryService(dbPath: string): Promise<MemoryService> {
+  const { openSqliteMemoryRepo } = await import('./lib/history-sqlite');
+  return createMemoryService({ repo: await openSqliteMemoryRepo(dbPath) });
 }
 
 /** Parse a positive-int env override; undefined (→ the relay's default) if unset or junk. */
@@ -264,6 +270,16 @@ async function main(): Promise<void> {
   );
   globalThis.__AGENTBOX_HUB_HISTORY = history;
   history?.start();
+  // Agent memory (Phase 4), same db file, own connection.
+  const memory = history
+    ? await openMemoryService(HISTORY_DB_PATH).catch((e: unknown) => {
+        process.stdout.write(
+          `agentbox-hub: agent memory disabled — ${e instanceof Error ? e.message : String(e)}\n`,
+        );
+        return undefined;
+      })
+    : undefined;
+  globalThis.__AGENTBOX_HUB_MEMORY = memory;
 
   const daemon = await startRelayDaemon({
     port,
@@ -274,6 +290,7 @@ async function main(): Promise<void> {
     adminToken,
     ...(llmProxyPort !== undefined ? { llmProxyPort } : {}),
     ...(history ? { history } : {}),
+    ...(memory ? { memory } : {}),
     // A device token is accepted wherever a PC used the shared admin token.
     ...(devices ? { deviceAuth: relayDeviceAuth(devices) } : {}),
     // Custody carries project seed tars, which dwarf the relay's 1 MiB

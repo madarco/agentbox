@@ -84,7 +84,7 @@ const captureCache = new Map<string, { at: number; value: boolean }>();
  * the box record's `projectRoot` (a cloud box re-registered after a restart
  * carries no worktrees).
  */
-async function projectRootOf(reg: BoxRegistration): Promise<string | null> {
+export async function projectRootOf(reg: BoxRegistration): Promise<string | null> {
   const fromReg = reg.worktrees?.[0]?.hostMainRepo;
   if (fromReg) return fromReg;
   try {
@@ -141,6 +141,11 @@ export class HistoryRelay {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /** Exact host-secret redaction, for memory files on their way to the store. */
+  async redact(bytes: Uint8Array): Promise<Uint8Array> {
+    return (await this.hostRedactor()).redact(bytes).bytes;
   }
 
   private async hostRedactor(): Promise<Redactor> {
@@ -286,9 +291,6 @@ export class HistoryRelay {
     // A paused/stopped box writes nothing new; reading it costs a helper
     // container per file op, so only a destroy's final flush does that.
     if (!final && !entry.source.isRunning()) return null;
-    // A destroy: let the box's row cursor write its last sqlite rows (it
-    // otherwise waits for rows to settle) before the final read.
-    if (final && entry.source.isRunning()) await entry.source.flushInBox().catch(() => undefined);
     const stats = await entry.shipper.pass({ final });
     if (stats.frames > 0 || stats.errors.length > 0) {
       this.deps.log(

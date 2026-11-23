@@ -159,6 +159,13 @@ export const codexSpec: AgentSyncSpec = {
         "Named LLM account new boxes of this agent run on (`agentbox accounts` lists them; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
     },
   ],
+  // The hub's skills library: codex reads `/etc/codex/skills` as its `admin`
+  // scope, unprefixed (measured, Phase 0); `/etc` is box-local, never the shared
+  // config volume.
+  skills: {
+    dirs: ['.codex/skills', '.agents/skills'],
+    inject: { kind: 'dir', path: '/etc/codex/skills' },
+  },
   caps: { resume: true, teleport: 'full', activitySource: ['hooks', 'scraper'] },
   // Box->host: a flat list under the single config root.
   pull: { items: [{ group: 'data', names: ['config.toml', 'auth.json', 'prompts'] }] },

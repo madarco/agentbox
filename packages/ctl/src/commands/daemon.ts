@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { HistoryLoop } from '../history-shipper.js';
+import { MemoryLoop } from '../memory-sync.js';
 import { describeSkillsSync, syncBoxSkills } from '../skills-sync.js';
 import { DEFAULT_BOX_RELAY_PORT, startRelayServer, type RelayServerHandle } from '@agentbox/relay';
 import { loadConfig, type CtlConfig } from '../config.js';
@@ -369,11 +370,17 @@ export const daemonCommand = new Command('daemon')
         ? null
         : new HistoryLoop({ log: (line) => process.stderr.write(`agentbox-ctl: ${line}\n`) });
     historyLoop?.start();
+    const memoryLoop =
+      process.env.AGENTBOX_HISTORY === '0'
+        ? null
+        : new MemoryLoop({ log: (line) => process.stderr.write(`agentbox-ctl: ${line}\n`) });
+    memoryLoop?.start();
 
     const shutdown = async (signal: string): Promise<void> => {
       shuttingDown = true;
       process.stdout.write(`agentbox-ctl: ${signal} — shutting down\n`);
       historyLoop?.stop();
+      memoryLoop?.stop();
       if (codexScraper) codexScraper.stop();
       if (claudeScraper) claudeScraper.stop();
       if (credentialsWatcher) {

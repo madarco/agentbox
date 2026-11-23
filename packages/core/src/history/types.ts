@@ -50,9 +50,31 @@ export interface AgentHistorySqliteSource {
   tables: AgentHistorySqliteTable[];
 }
 
+/**
+ * One memory location an agent declares (docs/agent-history-plan.md, Phase 4).
+ * Every regular file under it is a memory file, keyed by its path below the dir.
+ */
+export interface AgentHistoryMemory {
+  /**
+   * Absolute in-box dir. Per box on every provider (the box's own disk), never
+   * on a shared config volume: a shared dir cannot attribute a write.
+   */
+  boxDir: string;
+  /** The host's copy, relative to the agent's host config dir; `<projectKey>` as below. */
+  hostRoot: string;
+  /** `project`: one set per repo. `global`: one set per agent (none declared yet). */
+  scope: 'project' | 'global';
+  /**
+   * How the agent spells a host project folder in `<projectKey>`:
+   * `dashed-path` = the absolute path with every non-alphanumeric char as `-`.
+   */
+  hostKey: 'dashed-path';
+}
+
 /** Data-only `history` block on `AgentSyncSpec`. */
 export interface AgentHistorySpec {
   transcripts: AgentHistoryTranscripts[];
+  memory?: AgentHistoryMemory[];
 }
 
 /** Where a frame came from. The relay overwrites `boxId` from the box's auth. */
@@ -188,4 +210,73 @@ export interface AgentHistoryModule {
   readonly parserVersion: number;
   parse(chunk: RawChunk, state: ParseState): { records: HistoryRecord[]; state: ParseState };
   identify(head: Uint8Array, path: string): HistoryIdentity | null;
+}
+
+/** One memory file on the wire. `content` is base64; absent on a tombstone. */
+export interface MemoryFileWire {
+  path: string;
+  content?: string;
+  sha256: string;
+  deleted?: boolean;
+}
+
+/**
+ * `memory.seed` reply. `files` is the set to place in the box (the hub's latest
+ * plus host-only paths); `writeBack` says whether `memory.put` will be stored.
+ */
+export interface MemorySeedReply {
+  agents: Array<{
+    agent: string;
+    /** Absolute in-box memory dir (`<projectKey>` resolved). */
+    boxDir: string;
+    scope: 'project' | 'global';
+    /** null: nothing known (no hub copy, no host copy). Leave the box dir alone. */
+    files: MemoryFileWire[] | null;
+  }>;
+  writeBack: boolean;
+  reason?: string;
+}
+
+/** `memory.put` params: one changed (or deleted) memory file of one agent. */
+export interface MemoryPutParams {
+  agent: string;
+  path: string;
+  /** base64 raw bytes; absent when `deleted`. */
+  content?: string;
+  deleted?: boolean;
+}
+
+export type MemoryPutResult =
+  | { ok: true; version: number; changed: boolean }
+  | { ok: false; code: 'disabled' | 'invalid' | 'unavailable'; message: string };
+
+/** Where a memory version came from. `boxId` null for a host import. */
+export interface MemoryOrigin {
+  boxId: string | null;
+  boxName?: string;
+  provider?: string;
+  hostId?: string;
+}
+
+/** The hub's memory store, as the relay sees it (in-process). */
+export interface HistoryMemorySink {
+  /**
+   * The latest version of every live path for `(repoKey, agent, scope)`, after
+   * importing `hostFiles` for paths the store has never seen.
+   */
+  memorySeed(input: {
+    repoKey: string;
+    agent: string;
+    scope: 'project' | 'global';
+    hostFiles: Array<{ path: string; bytes: Uint8Array }>;
+    origin: MemoryOrigin;
+  }): Promise<Array<{ path: string; bytes: Uint8Array; sha256: string }>>;
+  memoryPut(input: {
+    repoKey: string;
+    agent: string;
+    scope: 'project' | 'global';
+    path: string;
+    bytes: Uint8Array | null;
+    origin: MemoryOrigin;
+  }): Promise<{ version: number; changed: boolean }>;
 }

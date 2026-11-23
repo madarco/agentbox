@@ -1,5 +1,6 @@
 export type {
   AgentHistoryModule,
+  AgentHistoryMemory,
   AgentHistorySpec,
   AgentHistorySqliteSource,
   AgentHistorySqliteTable,
@@ -10,8 +11,14 @@ export type {
   HistoryIdentity,
   HistoryIngestResult,
   HistoryIngestSink,
+  HistoryMemorySink,
   HistoryOrigin,
   HistoryRecord,
+  MemoryFileWire,
+  MemoryOrigin,
+  MemoryPutParams,
+  MemoryPutResult,
+  MemorySeedReply,
   ParseState,
   RawChunk,
 } from './types.js';
@@ -63,3 +70,11 @@ export {
   parseJsonlChunk,
   type JsonObject,
 } from './jsonl.js';
+export {
+  MEMORY_FILE_MAX_BYTES,
+  MEMORY_MAX_FILES,
+  MEMORY_STATE_FILE,
+  hostProjectKey,
+  hostMemoryDir,
+  safeMemoryPath,
+} from './memory.js';

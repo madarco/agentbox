@@ -13,6 +13,7 @@ import type {
   HistorySessionRow,
   NewChunk,
 } from './backend/history';
+import type { MemoryRepo, MemoryVersionRow } from './backend/history-memory';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS history_sessions (
@@ -644,6 +645,147 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
           snippet: String(r.snip ?? ''),
         }),
       );
+    },
+  };
+}
+
+const MEMORY_SCHEMA = `
+CREATE TABLE IF NOT EXISTS history_memory (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_key TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  path TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0,
+  content BLOB,
+  box_id TEXT, box_name TEXT, provider TEXT, host_id TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE (repo_key, agent, scope, path, version)
+);
+`;
+
+function toMemory(r: Row): MemoryVersionRow {
+  return {
+    id: n(r.id),
+    repoKey: String(r.repo_key),
+    agent: String(r.agent),
+    scope: r.scope === 'global' ? 'global' : 'project',
+    path: String(r.path),
+    version: n(r.version),
+    sha256: String(r.sha256),
+    size: n(r.size),
+    deleted: n(r.deleted) === 1,
+    boxId: s(r.box_id),
+    boxName: s(r.box_name),
+    provider: s(r.provider),
+    hostId: s(r.host_id),
+    createdAt: n(r.created_at),
+  };
+}
+
+const MEMORY_COLS =
+  'id, repo_key, agent, scope, path, version, sha256, size, deleted, box_id, box_name, provider, host_id, created_at';
+
+/** Memory versions in `history.db`, on their own connection (WAL). */
+export async function openSqliteMemoryRepo(path: string): Promise<MemoryRepo> {
+  const { DatabaseSync } = await import('node:sqlite');
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path) as unknown as Db;
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA busy_timeout = 5000');
+  db.exec(MEMORY_SCHEMA);
+  return {
+    async latest(k) {
+      return (
+        db
+          .prepare(
+            `SELECT ${MEMORY_COLS} FROM history_memory m
+             WHERE repo_key = ? AND agent = ? AND scope = ?
+               AND version = (SELECT MAX(version) FROM history_memory x
+                 WHERE x.repo_key = m.repo_key AND x.agent = m.agent AND x.scope = m.scope AND x.path = m.path)
+             ORDER BY path`,
+          )
+          .all(k.repoKey, k.agent, k.scope) as Row[]
+      ).map(toMemory);
+    },
+    async versions(k, p) {
+      return (
+        db
+          .prepare(
+            `SELECT ${MEMORY_COLS} FROM history_memory
+             WHERE repo_key = ? AND agent = ? AND scope = ? AND path = ? ORDER BY version`,
+          )
+          .all(k.repoKey, k.agent, k.scope, p) as Row[]
+      ).map(toMemory);
+    },
+    async content(id) {
+      const r = db.prepare('SELECT content FROM history_memory WHERE id = ?').get(id) as
+        | Row
+        | undefined;
+      return r?.content ? Buffer.from(r.content as Uint8Array) : null;
+    },
+    async insert(row, content) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const max = db
+          .prepare(
+            'SELECT MAX(version) AS v FROM history_memory WHERE repo_key = ? AND agent = ? AND scope = ? AND path = ?',
+          )
+          .get(row.repoKey, row.agent, row.scope, row.path) as Row | undefined;
+        const version = n(max?.v) + 1;
+        const r = db
+          .prepare(
+            `INSERT INTO history_memory (repo_key, agent, scope, path, version, sha256, size, deleted, content,
+               box_id, box_name, provider, host_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            row.repoKey,
+            row.agent,
+            row.scope,
+            row.path,
+            version,
+            row.sha256,
+            row.size,
+            row.deleted ? 1 : 0,
+            content,
+            row.boxId,
+            row.boxName,
+            row.provider,
+            row.hostId,
+            row.createdAt,
+          );
+        db.exec('COMMIT');
+        return { ...row, id: Number(r.lastInsertRowid), version };
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
+    },
+    async sets() {
+      return (
+        db
+          .prepare(
+            `SELECT repo_key, agent, scope, COUNT(*) AS versions, MAX(created_at) AS updated,
+               (SELECT COUNT(*) FROM history_memory l
+                 WHERE l.repo_key = m.repo_key AND l.agent = m.agent AND l.scope = m.scope AND l.deleted = 0
+                   AND l.version = (SELECT MAX(version) FROM history_memory x
+                     WHERE x.repo_key = l.repo_key AND x.agent = l.agent AND x.scope = l.scope AND x.path = l.path)
+               ) AS files
+             FROM history_memory m GROUP BY repo_key, agent, scope ORDER BY updated DESC`,
+          )
+          .all() as Row[]
+      ).map((r) => ({
+        repoKey: String(r.repo_key),
+        agent: String(r.agent),
+        scope: r.scope === 'global' ? ('global' as const) : ('project' as const),
+        files: n(r.files),
+        versions: n(r.versions),
+        updatedAt: n(r.updated),
+      }));
     },
   };
 }

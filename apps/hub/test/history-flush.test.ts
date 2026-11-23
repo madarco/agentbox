@@ -24,6 +24,23 @@ describe('flushBoxHistory', () => {
     expect(order).toEqual(['flush started', 'timeout', 'settled', 'returned']);
   });
 
+  it('runs the docker in-box flush before the relay read (the row cursor writes first)', async () => {
+    const order: string[] = [];
+    await flushBoxHistory(box('docker'), {
+      relayHistory: {
+        flushBox: async () => void order.push('relay read'),
+        settleBox: async () => undefined,
+      },
+      exec: async () => {
+        order.push('in-box flush');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      probeState: async () => 'running',
+      log: () => {},
+    });
+    expect(order).toEqual(['in-box flush', 'relay read']);
+  });
+
   it('settles after a successful docker flush too', async () => {
     let settled = false;
     await flushBoxHistory(box('docker'), {
@@ -52,5 +69,22 @@ describe('flushBoxHistory', () => {
     await flushBoxHistory(box('e2b'), deps('running'));
     expect(execs).toEqual([['agentbox-ctl', 'history', 'flush']]);
     expect(settled).toBe(false);
+  });
+
+  it('also runs the in-box flush (memory) for a running docker box, not for a paused one', async () => {
+    const execs: string[][] = [];
+    const deps = (state: string) => ({
+      relayHistory: { flushBox: async () => null, settleBox: async () => undefined },
+      exec: async (_b: BoxRecord, argv: string[]) => {
+        execs.push(argv);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      probeState: async () => state,
+      log: () => {},
+    });
+    await flushBoxHistory(box('docker'), deps('paused'));
+    expect(execs).toEqual([]);
+    await flushBoxHistory(box('docker'), deps('running'));
+    expect(execs).toEqual([['agentbox-ctl', 'history', 'flush']]);
   });
 });

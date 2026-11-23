@@ -29,7 +29,13 @@
  * fingerprint and stale every provider's base snapshot.
  */
 
-import { BOX_HOME, BOX_USER, IDENTITY_RULES_SENTINEL, agentDirPrelude } from '@agentbox/core';
+import {
+  BOX_HOME,
+  BOX_SKILLS_LIBRARY_DIR,
+  BOX_USER,
+  IDENTITY_RULES_SENTINEL,
+  agentDirPrelude,
+} from '@agentbox/core';
 import type { AgentSyncSpec } from '@agentbox/core';
 import { codexSpec } from './codex.js';
 
@@ -125,7 +131,7 @@ const CTX_REL_PATH = '.agentbox/AGENTS.md';
  * so the exit code alone cannot separate a fresh box from a broken config.
  */
 export const OPENCLAW_CONFIG_MERGE_PROGRAM = `
-const [skillDir, ctxPath, rawDirs, rawEntries, rawHooksEnabled] = process.argv.slice(2);
+const [skillDirs, ctxPath, rawDirs, rawEntries, rawHooksEnabled] = process.argv.slice(2);
 const read = (s) => {
   try {
     return JSON.parse(s);
@@ -138,7 +144,14 @@ const withMember = (arr, v) =>
 const entry = read(rawEntries)?.['bootstrap-extra-files'] ?? {};
 process.stdout.write(
   JSON.stringify({
-    skills: { load: { extraDirs: withMember(read(rawDirs), skillDir) } },
+    skills: {
+      load: {
+        extraDirs: skillDirs
+          .split(':')
+          .filter(Boolean)
+          .reduce((arr, d) => withMember(arr, d), read(rawDirs)),
+      },
+    },
     hooks: {
       internal: {
         enabled: read(rawHooksEnabled) === false ? false : true,
@@ -364,7 +377,7 @@ function buildAgentboxContextScript(): string {
     '  cat > "$PROG" <<\'AGENTBOX_MERGE_EOF\'',
     OPENCLAW_CONFIG_MERGE_PROGRAM.trim(),
     'AGENTBOX_MERGE_EOF',
-    `  node "$PROG" ${AGENTBOX_SKILLS_DIR} ${CTX_REL_PATH} "$DIRS" "$ENTRIES" "$HOOKS" |`,
+    `  node "$PROG" ${AGENTBOX_SKILLS_DIR}:${BOX_SKILLS_LIBRARY_DIR} ${CTX_REL_PATH} "$DIRS" "$ENTRIES" "$HOOKS" |`,
     '    openclaw config patch --stdin >/dev/null || true',
     '  rm -f "$PROG" || true',
     'fi',
@@ -585,6 +598,14 @@ export const openclawSpec: AgentSyncSpec = {
     applyCmd: 'openclaw config patch --stdin',
     dryRunFlag: '--dry-run',
     validate: 'openclaw config validate',
+  },
+  // The hub's skills library: the `openclaw-agentbox-env` boot task merges the
+  // box-local library dir into `skills.load.extraDirs` next to AgentBox's own
+  // skills dir. openclaw watches its skill dirs, so skills ctl installs after
+  // that task ran still load (measured, Phase 0: a missing dir is no error).
+  skills: {
+    dirs: ['.openclaw/skills', '.agents/skills'],
+    inject: { kind: 'config', jsonPath: ['skills', 'load', 'extraDirs'] },
   },
   caps: {
     surface: 'service',
