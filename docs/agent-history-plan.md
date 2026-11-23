@@ -579,6 +579,16 @@ project, without the hub token in the box.
   pi has no MCP client; openclaw is left for later (backlog). The entry is the
   same command in every box, so a shared docker config file is harmless: each
   box's `agentbox-ctl mcp` authenticates as that box.
+- **Live check (2026-11-23, docker in a box, isolated hub on :18787).** ctl
+  wrote `mcpServers.agentbox` into box A's `~/.claude.json`. One `claude -p`
+  turn in box A ("The deploy codeword for this project is MANGO-7713.") shipped
+  with the repo URL; box A was destroyed. In box B of the same repo,
+  `claude -p` with only the `mcp__agentbox__*` tools found the session with
+  `sessions_search` and quoted the sentence, its id and box. The hub token was
+  in neither box B's environment nor its files. A `memory_propose` from box B
+  parked an approval in `/api/v1/approvals`; answering it stored version 1 with
+  origin `mcp-b`. `POST /api/mcp` answered `initialize` and `tools/call` with
+  the hub token and 401 without.
 
 ### Phase 7 — usage + dashboard
 
