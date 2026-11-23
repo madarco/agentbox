@@ -200,7 +200,13 @@ export function defaultHostSinkResolver(opts: {
       if (!bearer) {
         return { target: null, reason: `no credential for ${url} (run \`agentbox hub login\`)` };
       }
-      return { target: url, sink: httpHistorySink(url, () => bearer) };
+      // Resolved per request: the shipper (and its sink) outlives this pass,
+      // and a re-login replaces the device token.
+      const target = url;
+      return {
+        target,
+        sink: httpHistorySink(target, () => hubBearerFor(target, 'api', { configuredUrl: target })),
+      };
     }
     if (opts.local) return { target: 'local', sink: opts.local };
     return { target: null, reason: 'this relay runs without a hub and no control box is set' };
