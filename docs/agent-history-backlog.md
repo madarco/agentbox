@@ -272,3 +272,13 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   caller's origin").
 - **`PC` column shows a machine-id prefix,** not the device label the hub has
   in its devices table.
+- **Per-pass cost with the feature off (review of this phase).** Every 60 s the
+  watcher loads the effective config of every known folder, even when nothing
+  is allowed, and lists each allowed project dir twice. Cheap at tens of
+  folders. Skip folders with no project override while the global toggle is
+  off, and count sessions from the shipper's own listing.
+- **`sessions host` acts locally, not through `/api/v1/history/host`** (review
+  of this phase). Deliberate: the watcher and its config are this PC's, and a
+  PC on a remote hub may run no local hub to ask. Both paths share
+  `host-settings.ts`, so the rules cannot drift; only the folder argument is
+  resolved by the CLI (project root of the cwd).

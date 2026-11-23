@@ -338,7 +338,12 @@ export class HostSessionWatcher {
         p.bytes += st.bytes;
         status.bytesShipped += st.bytes;
         status.errors.push(...st.errors.slice(0, 5));
-        if (st.disabled) status.errors.push(`${p.folder}: the hub refused (disabled)`);
+        if (st.disabled) {
+          status.errors.push(`${p.folder}: the hub refused (disabled)`);
+          // A disabled shipper never asks again; drop it so the next pass does.
+          this.shippers.delete(key);
+          live.delete(key);
+        }
         const root = join(
           a.hostConfigDir,
           a.spec.transcripts[0]!.root.replace(/<projectKey>/g, projectKey),

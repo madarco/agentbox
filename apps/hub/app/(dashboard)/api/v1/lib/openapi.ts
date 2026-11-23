@@ -25,7 +25,10 @@ const hostSessionsViewSchema = {
           repoUrl: { type: 'string' },
           mode: { type: 'string', enum: ['allow', 'deny', 'inherit'] },
           allowed: { type: 'boolean' },
-          reason: { type: 'string', enum: ['project', 'global', 'history.capture off', 'off'] },
+          reason: {
+            type: 'string',
+            enum: ['project', 'global', 'history.capture off', 'config unreadable', 'off'],
+          },
         },
       },
     },
@@ -1951,7 +1954,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['History'],
           summary: 'Toggle host sessions',
           description:
-            "Turn the watcher on or off (`enabled`, the global key), and/or allow, deny or reset one project folder (`project`). Writes this hub machine's config; the watcher applies it on its next pass. Answers the updated view.",
+            "Turn the watcher on or off (`enabled`, the global key), and/or allow, deny or reset one project folder (`project`). Writes this hub machine's config; the watcher applies it on its next pass. Refused (403) for a device-token caller: only the hub owner decides what this machine ships. Answers the updated view.",
           requestBody: {
             required: true,
             content: {
@@ -1980,6 +1983,7 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             '400': errorResponse,
             '401': errorResponse,
+            '403': errorResponse,
           },
         },
       },

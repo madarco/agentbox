@@ -21,7 +21,7 @@ export interface HostProjectDecision {
   mode: HostProjectMode;
   allowed: boolean;
   /** `project` (its own value decided), `global`, `history.capture off`, or `off`. */
-  reason: 'project' | 'global' | 'history.capture off' | 'off';
+  reason: 'project' | 'global' | 'history.capture off' | 'config unreadable' | 'off';
 }
 
 export interface HostDecisions {
@@ -30,32 +30,39 @@ export interface HostDecisions {
   projects: HostProjectDecision[];
 }
 
-/** The global toggle plus every known folder's decision. */
+/**
+ * The global toggle plus every known folder's decision. Only the user's own
+ * layers count (this machine's global config, the folder's project config): a
+ * checked-in agentbox.yaml `defaults` must never opt a user's PC sessions in.
+ * A folder whose config cannot be read is denied (fail closed).
+ */
 export async function hostProjectDecisions(
   folders: ReadonlyArray<{ folder: string; originUrl?: string }>,
 ): Promise<HostDecisions> {
   const global = await loadEffectiveConfig(homedir()).catch(() => null);
-  const enabled = global?.effective.history.hostSessions === true;
+  const enabled = global?.layers.global.values.history?.hostSessions === true;
   const projects: HostProjectDecision[] = [];
   for (const f of folders) {
     const loaded = await loadEffectiveConfig(f.folder).catch(() => null);
-    const h = loaded?.effective.history;
     const own = loaded?.layers.project.values.history?.hostSessions;
     const mode: HostProjectMode = own === true ? 'allow' : own === false ? 'deny' : 'inherit';
-    const capture = h ? h.capture !== false : true;
-    const value = h ? h.hostSessions === true : enabled;
+    // history.capture is an opt-OUT, so honouring it from any layer only denies more.
+    const capture = loaded ? loaded.effective.history.capture !== false : false;
+    const value = own ?? enabled;
     projects.push({
       folder: f.folder,
       ...(f.originUrl ? { repoUrl: f.originUrl } : {}),
       mode,
       allowed: capture && value,
-      reason: !capture
-        ? 'history.capture off'
-        : mode !== 'inherit'
-          ? 'project'
-          : value
-            ? 'global'
-            : 'off',
+      reason: !loaded
+        ? 'config unreadable'
+        : !capture
+          ? 'history.capture off'
+          : mode !== 'inherit'
+            ? 'project'
+            : value
+              ? 'global'
+              : 'off',
     });
   }
   return { enabled, projects };

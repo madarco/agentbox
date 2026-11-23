@@ -4,6 +4,7 @@
 // PUT body: `{enabled?: boolean, project?: {folder, mode: allow|deny|inherit}}`;
 // answers the updated view. The watcher picks a change up on its next pass.
 import { parseHostSessionsPatch } from '@/lib/backend/history-host-patch';
+import { DEVICE_ID_HEADER } from '@/lib/peer';
 import { backendOrNull } from '../../lib/backend';
 import { fail, ok } from '../../lib/envelope';
 import { readJson } from '../../lib/validate';
@@ -22,6 +23,12 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PUT(req: Request): Promise<Response> {
+  // The setting decides what this machine's transcripts the hub ingests, and
+  // writing a project key registers the folder: the owner's call, not an
+  // enrolled PC's.
+  if ((req.headers.get(DEVICE_ID_HEADER) ?? '').trim()) {
+    return fail('forbidden', "only the hub owner can change this machine's host sessions");
+  }
   const body = await readJson(req);
   if (!body.ok) return fail('invalid_request', body.message);
   const patch = parseHostSessionsPatch(body.value);

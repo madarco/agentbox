@@ -5,7 +5,7 @@
  */
 import { mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { execa } from 'execa';
+import { findProjectRoot } from '@agentbox/config';
 import {
   hostProjectDecisions,
   knownProjectFolders,
@@ -209,13 +209,13 @@ sessionsCommand
     });
   });
 
-/** The folder `allow|deny|inherit` acts on: `dir`, else the cwd's git toplevel, else the cwd. */
+/**
+ * The folder `allow|deny|inherit` acts on: the project root of `dir` (default:
+ * the cwd), resolved the way registered projects are, so the setting lands on
+ * the folder the watcher lists.
+ */
 async function hostFolderArg(dir: string | undefined): Promise<string> {
-  const base = resolve(dir ?? process.cwd());
-  const r = await execa('git', ['-C', base, 'rev-parse', '--show-toplevel'], {
-    reject: false,
-  }).catch(() => null);
-  return r && r.exitCode === 0 && r.stdout.trim() ? r.stdout.trim() : base;
+  return (await findProjectRoot(resolve(dir ?? process.cwd()))).root;
 }
 
 const HOST_ACTIONS = ['status', 'on', 'off', 'allow', 'deny', 'inherit'] as const;
@@ -226,7 +226,7 @@ sessionsCommand
     "This PC's own (non-box) agent sessions: show the watcher's status, turn it on/off, or allow/deny one project",
   )
   .argument('[action]', `${HOST_ACTIONS.join(' | ')} (default status)`, 'status')
-  .argument('[dir]', 'project folder for allow/deny/inherit (default: the current repo)')
+  .argument('[dir]', 'project folder for allow/deny/inherit (default: the current project)')
   .option('--json', 'print JSON (status)')
   .action(async (action: string, dir: string | undefined, opts: { json?: boolean }) => {
     if (!(HOST_ACTIONS as readonly string[]).includes(action)) {
