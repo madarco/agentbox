@@ -797,7 +797,12 @@ against in-box mocks, no account used.
   both providers, and it survived the claude TUI's own start and exit.
 - Phase 7 (`agentbox usage`, #452) had not merged; not checked.
 - vercel was skipped: its auth here is a Vercel CLI session in the owner's
-  HOME, and copying it into a scratch HOME could rotate it.
+  HOME, and copying it into a scratch HOME could rotate it. daytona was
+  attempted as the third provider, but its bake from the scratch HOME failed
+  at a seed-layer `chown` that predates history (backlog).
+- Cleanup: every box destroyed, the hetzner bake snapshot deleted, the tunnel
+  and hub stopped; hetzner, e2b and daytona listed clean of anything this pass
+  made. The e2b template is rebuilt by name, so it stays (backlog).
 
 Each phase updates `apps/web/content/docs/` for any new command, flag or key.
 

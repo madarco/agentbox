@@ -556,9 +556,12 @@ deleted what the agent had written (plan, "Cloud sign-off"). Still open:
     wrappers around `postRpcAwait` with different timeout behavior (exit 126
     vs a thrown `RpcTimeout`).
 - **Not checked live on vercel or daytona.** vercel's auth here is a Vercel CLI
-  session in the owner's HOME (not copied into a scratch HOME); daytona's bake
-  from this branch was slow; see the plan for whether it finished. The fix is
-  in ctl and shared by every cloud provider.
+  session in the owner's HOME (not copied into a scratch HOME). The daytona
+  bake from a scratch HOME failed after ~25 min at the seed layer's
+  `chown -R vscode:vscode /home/vscode/.claude /home/vscode/.codex
+  /home/vscode/.local` (`packages/sandbox-daytona/src/prepare.ts`, exit 1,
+  likely a seed path missing on a sparse host config; not a history change).
+  The fix in this pass is in ctl and shared by every cloud provider.
 - **Phase 7 usage on cloud.** #452 had not merged during the pass.
 - **Found while testing, outside history (for their own backlogs):**
   - `agentbox codex <box>` takes the box name as the initial prompt and
