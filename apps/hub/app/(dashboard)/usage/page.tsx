@@ -77,7 +77,7 @@ function shortRepo(url: string): string {
 
 function keyLabel(dim: Dim, g: Group): string {
   const k = g.keys[dim];
-  if (k === null || k === undefined) return 'unknown';
+  if (k === null || k === undefined) return dim === 'box' ? 'no box (host session)' : 'unknown';
   if (dim === 'box') return g.labels.box ?? k;
   if (dim === 'project') return shortRepo(k);
   if (dim === 'host') return k.slice(0, 12);

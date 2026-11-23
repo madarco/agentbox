@@ -420,15 +420,22 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   }
 
   async function ingestOne(frame: HistoryFrame): Promise<HistoryIngestResult> {
-    const boxId = frame.origin?.boxId ?? '';
-    if (!boxId || !frame.agent || !frame.path) {
-      return { ok: false, code: 'invalid', message: 'frame needs origin.boxId, agent and path' };
+    const host = frame.origin?.kind === 'host';
+    const boxId = host ? '' : (frame.origin?.boxId ?? '');
+    const hostId = frame.origin?.hostId ?? '';
+    if ((host ? !hostId : !boxId) || !frame.agent || !frame.path) {
+      return {
+        ok: false,
+        code: 'invalid',
+        message: 'frame needs origin.boxId (or kind host + hostId), agent and path',
+      };
     }
     const data = Buffer.from(frame.data, 'base64');
     if (data.length === 0 || data.length > MAX_FRAME_BYTES) {
       return { ok: false, code: 'invalid', message: 'frame data is empty or too large' };
     }
-    const originKey = `box:${boxId}`;
+    // A host session (Phase 5) is keyed by the PC that ran it.
+    const originKey = host ? `host:${hostId}` : `box:${boxId}`;
     const mod = agentHistoryModule(frame.agent);
     let file = await repo.getFile(originKey, frame.agent, frame.path);
 
@@ -451,14 +458,14 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       if (id && sessionKey) {
         const existing = await repo.getSession(sessionKey);
         const o = frame.origin;
-        const account = existing?.account ?? (await accountFor(o.boxId, frame.agent));
+        const account = existing?.account ?? (host ? null : await accountFor(o.boxId, frame.agent));
         await repo.upsertSession({
           key: sessionKey,
           agent: frame.agent,
           sessionId: id.sessionId,
-          boxId: existing?.boxId ?? o.boxId,
-          boxName: existing?.boxName ?? o.boxName ?? null,
-          provider: existing?.provider ?? o.provider ?? null,
+          boxId: existing?.boxId ?? (host ? null : o.boxId),
+          boxName: existing?.boxName ?? (host ? null : (o.boxName ?? null)),
+          provider: existing?.provider ?? (host ? 'host' : (o.provider ?? null)),
           hostId: existing?.hostId ?? o.hostId ?? null,
           projectRepoUrl: existing?.projectRepoUrl ?? o.projectRepoUrl ?? null,
           account,
