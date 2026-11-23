@@ -1,5 +1,6 @@
 export type {
   AgentHistoryModule,
+  AgentHistoryMemory,
   AgentHistorySpec,
   AgentHistoryTranscripts,
   HistoryBinding,
@@ -8,8 +9,14 @@ export type {
   HistoryIdentity,
   HistoryIngestResult,
   HistoryIngestSink,
+  HistoryMemorySink,
   HistoryOrigin,
   HistoryRecord,
+  MemoryFileWire,
+  MemoryOrigin,
+  MemoryPutParams,
+  MemoryPutResult,
+  MemorySeedReply,
   ParseState,
   RawChunk,
 } from './types.js';
@@ -40,3 +47,11 @@ export {
 } from './shipper.js';
 export { HISTORY_BINDINGS_FILE, bindingsForBox, parseBindingLog } from './bindings.js';
 export { HISTORY_MAX_FRAME_BYTES, parseHistoryFrame } from './frame.js';
+export {
+  MEMORY_FILE_MAX_BYTES,
+  MEMORY_MAX_FILES,
+  MEMORY_STATE_FILE,
+  hostProjectKey,
+  hostMemoryDir,
+  safeMemoryPath,
+} from './memory.js';

@@ -2,6 +2,7 @@ import type { Store } from '@agentbox/relay';
 import type { HubBackend } from './lib/boxes/backend-types';
 import type { DeviceService } from './lib/backend/devices';
 import type { HistoryService } from './lib/backend/history';
+import type { MemoryService } from './lib/backend/history-memory';
 
 declare global {
   // Set by the custom server (server.ts) after the relay daemon is constructed,
@@ -20,6 +21,10 @@ declare global {
   // server on `node:sqlite`; the /api/v1/history routes reach it through here.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_HISTORY: HistoryService | undefined;
+
+  // Agent memory versions (docs/agent-history-plan.md, Phase 4), in history.db.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_MEMORY: MemoryService | undefined;
 
   // Host-facing backend (box list + lifecycle). Set by the custom server; Next's
   // source.ts / actions.ts reach the Node/docker toolchain only through this, so

@@ -247,6 +247,20 @@ session id, an id prefix of at least 8 characters, or `<agent>:<id>`. An ambiguo
 | `GET /history/search`               | `{ hits: [{ session: { id, agent, boxName, title }, role, ts, snippet }] }`, best first. `?q=` is plain words (all must match; no query syntax), `?limit=` (default 20, max 200). Matches are in `[brackets]` in the snippet.                           |
 | `POST /history/chunks`              | Ingest one transcript frame from a relay or shipper. Accepted only at the offset the hub holds for that file, otherwise `{ ok: false, code: "offset_mismatch", offset, sha256 }` tells the shipper where to resume. See the OpenAPI spec.               |
 
+**Agent memory.** The memory files boxes' agents write (today: claude), kept per repo with every
+version. Boxes seed from it and ship each change back over the relay, so these routes are
+read-only. `repo` is a git remote URL in any spelling, or its key (`github.com/owner/repo`). `agent`
+defaults to `claude` and `scope` to `project`. A file is `{ path, version, sha256, size, deleted,
+updatedAt, origin: { boxId, boxName, provider, hostId } }`. `origin.provider` is `host` for a file
+imported from the hub machine's own agent dir.
+
+| Method + path                  | Description                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `GET /history/memory`          | `{ repoKey, agent, scope, files }`: the latest version of every live file. Deleted paths are left out unless `?deleted=1`. |
+| `GET /history/memory/repos`    | `{ sets: [{ repoKey, agent, scope, files, versions, updatedAt }] }`, newest write first.                                   |
+| `GET /history/memory/versions` | `{ path, versions }`: every version of `?path=`, oldest first, deletions included. `404` for a path never written.         |
+| `GET /history/memory/file`     | `{ file, content }`: `?path=` at `?version=` (default: the latest), `content` base64. `404` when deleted or absent.        |
+
 ### Workspaces
 
 A workspace groups one or more projects, owning a task list and its manager sessions. It is

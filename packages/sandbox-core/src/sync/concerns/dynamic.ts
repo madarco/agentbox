@@ -38,7 +38,11 @@ export const BOX_WORKFLOWS_DIR = '/home/vscode/.claude/workflows';
 /** In-box path of the per-box dynamic-sync manifest (rides along in checkpoints). */
 export const BOX_DYNAMIC_SYNC_MANIFEST = '/home/vscode/.agentbox/dynamic-sync.json';
 
-/** In-box destination for the current project's rekeyed memory. */
+/**
+ * In-box destination for the current project's rekeyed memory. Read only by a
+ * claude from a snapshot baked before Phase 4 of docs/agent-history-plan.md;
+ * newer ones use a per-box dir that ctl seeds from the hub (backlog: drop).
+ */
 export const BOX_MEMORY_DIR = `${BOX_CLAUDE_PROJECT_DIR}/memory`;
 
 export type DynamicSyncSetName = 'workflows' | 'memory';
