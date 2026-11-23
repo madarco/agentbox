@@ -1718,7 +1718,8 @@ export function buildOpenApi(): Record<string, unknown> {
               name: 'project',
               in: 'query',
               schema: { type: 'string' },
-              description: 'Substring of the repo URL.',
+              description:
+                'A repo URL or `host/owner/repo` key matches that repo exactly (ssh and https alike); other text is a substring of the repo URL.',
             },
             { name: 'host', in: 'query', schema: { type: 'string' }, description: 'Machine id.' },
             { name: 'model', in: 'query', schema: { type: 'string' } },

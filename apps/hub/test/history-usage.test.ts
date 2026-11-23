@@ -199,6 +199,45 @@ describe('usage (Phase 7)', () => {
     }
   });
 
+  it('filters a project by its key exactly, a bare fragment by substring', async () => {
+    const { svc, ship } = await setup();
+    const tokens = (n: number) => [{ id: 'm', ts: day1, model: 'x', in: n, out: 0 }];
+    await ship(
+      { boxId: 'b1', repo: 'git@github.com:madarco/agentbox.git' },
+      'claude',
+      'r1',
+      tokens(100),
+    );
+    await ship(
+      { boxId: 'b2', repo: 'https://github.com/madarco/agentbox-tray' },
+      'claude',
+      'r2',
+      tokens(10),
+    );
+    await ship(
+      { boxId: 'b3', repo: 'git@github.com:madarco/agentbox-test-repo' },
+      'claude',
+      'r3',
+      tokens(1),
+    );
+    await ship({ boxId: 'b4', repo: '/home/u/agentbox' }, 'claude', 'r4', tokens(1000));
+    await ship({ boxId: 'b5', repo: '/home/u/agentbox2' }, 'claude', 'r5', tokens(10000));
+    const total = async (project: string) =>
+      (await svc.usage({ by: [], tzOffsetMin: 0, limit: 10, project })).totals.inputTokens;
+    // What the page sends from a By-project row, and the URL spellings.
+    expect(await total('github.com/madarco/agentbox')).toBe(100);
+    expect(await total('https://github.com/madarco/agentbox')).toBe(100);
+    expect(await total('git@github.com:madarco/agentbox.git')).toBe(100);
+    expect(await total('/home/u/agentbox')).toBe(1000);
+    // A fragment is a substring search, as documented.
+    expect(await total('madarco/agentbox')).toBe(111);
+    // The group keys round-trip through the filter.
+    const groups = await svc.usage({ by: ['project'], tzOffsetMin: 0, limit: 10 });
+    for (const g of groups.groups) {
+      expect(await total(g.keys.project!)).toBe(g.inputTokens);
+    }
+  });
+
   it('backfills the account of sessions stored before the box was known', async () => {
     const accounts: Record<string, string> = {};
     const { svc, ship, repo } = await setup(accounts);

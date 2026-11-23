@@ -117,6 +117,9 @@ export interface HistorySearchHit {
   snippet: string;
 }
 
+/** One `history_usage` row, opaque to the service (snapshot and restore only). */
+export type StoredUsageRow = Record<string, unknown>;
+
 /** Usage dimensions, for grouping and filtering (`GET /api/v1/usage`). */
 export const USAGE_DIMENSIONS = [
   'day',
@@ -229,6 +232,10 @@ export interface HistoryRepo {
     limit: number,
   ): Promise<Array<{ key: string; boxId: string; agent: string }>>;
   setSessionAccount(key: string, account: string): Promise<void>;
+  /** A session's usage rows as stored, for a re-parse to put back if it fails. */
+  usageRowsOf(key: string): Promise<StoredUsageRow[]>;
+  /** Replace a session's usage rows with `rows`, atomically. */
+  replaceUsage(key: string, rows: StoredUsageRow[]): Promise<void>;
   usage(q: UsageQuery): Promise<UsageReport>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
@@ -550,6 +557,9 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   async function reparseSession(key: string, mod: AgentHistoryModule): Promise<boolean> {
     const session = await repo.getSession(key);
     const files = await repo.filesOfSession(key);
+    // Usage outlives the transcript (Decision 3): a failed re-parse must not
+    // lose the rows the previous parser stored.
+    const usageBefore = await repo.usageRowsOf(key);
     for (const f of files) await repo.clearFileRecords(f.id);
     await repo.clearSessionTitle(key);
     let ok = true;
@@ -570,6 +580,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       }
       await repo.updateFile(f.id, { parseState: state });
     }
+    if (!ok) await repo.replaceUsage(key, usageBefore);
     // Keep the session's activity time: a re-parse is not activity (ordering,
     // retention).
     await repo.refreshSessionTotals(key, session?.updatedAt ?? now());

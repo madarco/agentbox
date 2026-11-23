@@ -225,6 +225,21 @@ function migrateUsage(db: Db): void {
   db.exec('CREATE INDEX IF NOT EXISTS history_usage_ts ON history_usage(ts_ms)');
 }
 
+/**
+ * The repo key a `project` filter names exactly: a URL (scheme, scp `user@host:`)
+ * or a `host.tld/owner/repo` key, as the Usage page sends from a row. A bare
+ * fragment (`owner/repo`, `api`) returns undefined and stays a substring match.
+ * A local repo's path or `local:` key is returned as is.
+ */
+export function projectKeyOf(value: string): string | undefined {
+  const v = value.trim();
+  // A local repo is stored by its path (no key without a machine id).
+  if (v.startsWith('/') || v.startsWith('local:')) return v;
+  const urlish = /^[a-z][a-z0-9+.-]*:\/\//i.test(v) || /^[^/\s]+@[^/\s]+:/.test(v);
+  const keyish = /^[^/\s]*\.[^/\s]+\/[^/\s]+\/\S+$/.test(v);
+  return urlish || keyish ? repoKey(v) : undefined;
+}
+
 /** A usage row's time: its own, else its session's last activity, else ingest time. */
 const USAGE_TIME = `COALESCE(u.ts_ms,
   CAST(ROUND((julianday(s.last_ts) - 2440587.5) * 86400000) AS INTEGER), s.updated_at)`;
@@ -282,11 +297,17 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
     args.push(q.box, q.box);
   }
   if (q.project !== undefined) {
-    const like = `%${q.project.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    where.push(
-      "(s.project_repo_url LIKE ? ESCAPE '\\' OR s.project_key LIKE ? ESCAPE '\\' OR s.project_key = ?)",
-    );
-    args.push(like, like, repoKey(q.project) ?? q.project);
+    const exact = projectKeyOf(q.project);
+    if (exact) {
+      // A repo (URL or `host/owner/repo` key) names one project: a substring
+      // would also count `owner/repo-tray`.
+      where.push('COALESCE(s.project_key, s.project_repo_url) = ?');
+      args.push(exact);
+    } else {
+      const like = `%${q.project.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      where.push("(s.project_repo_url LIKE ? ESCAPE '\\' OR s.project_key LIKE ? ESCAPE '\\')");
+      args.push(like, like);
+    }
   }
   if (q.sinceMs !== undefined) {
     where.push(`${USAGE_TIME} >= ?`);
@@ -673,6 +694,20 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
           )
           .all(afterKey, limit) as Row[]
       ).map((r) => ({ key: String(r.key), boxId: String(r.box_id), agent: String(r.agent) }));
+    },
+    async usageRowsOf(key) {
+      return db.prepare('SELECT * FROM history_usage WHERE session_key = ?').all(key) as Row[];
+    },
+    async replaceUsage(key, rows) {
+      tx(() => {
+        db.prepare('DELETE FROM history_usage WHERE session_key = ?').run(key);
+        for (const r of rows) {
+          const cols = Object.keys(r);
+          db.prepare(
+            `INSERT INTO history_usage (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+          ).run(...cols.map((c) => r[c]));
+        }
+      });
     },
     async setSessionAccount(key, account) {
       db.prepare('UPDATE history_sessions SET account = ? WHERE key = ? AND account IS NULL').run(

@@ -450,3 +450,28 @@ folder). Still open:
   - *Shared shapes copied.* `shortRepo` and the dimension list exist in the CLI
     (`usage-format.ts`), the hub backend and the page. A nested GitLab path
     (`group/sub/repo`) shortens to `sub/repo` in both copies.
+- **From the review of #452 (2026-11-23), deferred:**
+  - *L1: the `ts_ms` fill runs once.* It runs only in the migration that adds
+    the column, so a crash between the two statements, or an older hub writing
+    to a migrated db, leaves rows with no `ts_ms` for good (they fall back to
+    the session's last activity). Fill `ts_ms IS NULL AND ts IS NOT NULL` on
+    every open.
+  - *L2: the Usage page's cost.* It refreshes every 30 s even in a hidden tab.
+    At 1M usage rows its 8 queries take about 5.7 s, because the time filter is
+    an expression the `ts_ms` index cannot serve. That stalls the hub process,
+    which also runs the relay. Pause on `document.hidden`, and filter on
+    `ts_ms` directly with the fallback only for rows without one (or a daily
+    rollup).
+  - *L3: a huge duration is a 500.* `since=100000000000d` makes an invalid
+    date and the route answers 500 instead of `invalid_request`. Bound the
+    duration.
+  - *L5: a purged session that is shipped again keeps its v1 usage.* The
+    re-parse skips purged sessions; when the file comes back, its new rows are
+    `INSERT OR IGNORE`d next to the old ones, so v1's copied usage stays.
+  - *L6: smaller items.*
+    - `project_key` is computed once; a change to `repoKey`'s rules needs a
+      recompute.
+    - A date-only `--since 2026-11-22` starts at UTC midnight, while days
+      bucket in local time.
+    - Host sessions (Phase 5) show account `unknown`; they run on the PC's
+      own login, which is the `default` account.
