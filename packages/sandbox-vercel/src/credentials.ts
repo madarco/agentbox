@@ -32,7 +32,14 @@ function exitOnCancel<T>(v: T | symbol): T {
 }
 import { hasUsableCredentials } from './sdk.js';
 import { cliStorePaths, isNearExpiry, readCliAuth, readCliCurrentTeam } from './cli-store.js';
-import { detectSbx, installSbx, installSbxHint, loginSbx, resetSbxCache } from './sbx-cli.js';
+import {
+  detectSbx,
+  installSbx,
+  installSbxHint,
+  loginSbx,
+  MIN_SBX_MAJOR,
+  resetSbxCache,
+} from './sbx-cli.js';
 import { createProject, getUser, listProjects, type VercelProject } from './vercel-rest.js';
 
 const DASHBOARD_TOKENS_URL = 'https://vercel.com/account/settings/tokens';
@@ -295,6 +302,32 @@ async function ensureSbxInstalled(): Promise<{ bin: string } | null> {
       return null;
     }
     sp.stop(`Installed sandbox CLI${det.version ? ` ${det.version}` : ''}.`);
+  } else if (det.outdated) {
+    // An old CLI breaks interactive attach on newer Node (see MIN_SBX_MAJOR).
+    // Login itself still works on it, so a declined update is a warning only.
+    const doUpdate = exitOnCancel(
+      await confirm({
+        message: `The Vercel sandbox CLI ${det.version ?? ''} is older than ${MIN_SBX_MAJOR}.x and breaks interactive attach on newer Node. Update it now? (${installSbxHint()})`,
+        initialValue: true,
+      }),
+    );
+    if (doUpdate) {
+      const sp = spinner();
+      sp.start('Updating the Vercel sandbox CLI…');
+      const ok = await installSbx();
+      resetSbxCache();
+      det = await detectSbx();
+      if (!ok || det.outdated) {
+        sp.stop('Update failed.');
+        log.warn(`Could not update the sandbox CLI — run \`${installSbxHint()}\` manually.`);
+      } else {
+        sp.stop(`Updated sandbox CLI${det.version ? ` to ${det.version}` : ''}.`);
+      }
+    } else {
+      log.warn(
+        `Update it with \`${installSbxHint()}\` before using \`agentbox shell|claude|codex|opencode\` on Vercel boxes.`,
+      );
+    }
   }
   return det.bin ? { bin: det.bin } : null;
 }

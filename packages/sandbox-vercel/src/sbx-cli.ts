@@ -29,6 +29,33 @@ export interface SbxState {
   bin?: string;
   /** Version string, when installed. */
   version?: string;
+  /**
+   * The installed CLI is older than `MIN_SBX_MAJOR`. Such a build breaks on
+   * newer Node — see `MIN_SBX_MAJOR`.
+   */
+  outdated?: boolean;
+}
+
+/**
+ * Oldest Sandbox CLI major we drive. sbx 3.x bundles undici 7.26; under Node 26
+ * its dispatcher makes the built-in fetch skip content decoding, so every large
+ * (compressed) response fails with "Sandbox API request failed … 200 OK".
+ */
+export const MIN_SBX_MAJOR = 4;
+
+/** Parse the major out of `sbx --version` output (`3.0.1`, `sandbox/4.13.0`, …). */
+export function parseSbxMajor(version: string | undefined): number | null {
+  const m = /(\d+)\.\d+(?:\.\d+)?/.exec(version ?? '');
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * True when `version` is below `MIN_SBX_MAJOR`. An unparsable version is not
+ * called outdated: a future output format must not lock users out of attach.
+ */
+export function isSbxOutdated(version: string | undefined): boolean {
+  const major = parseSbxMajor(version);
+  return major !== null && major < MIN_SBX_MAJOR;
 }
 
 let cached: SbxState | null = null;
@@ -43,7 +70,8 @@ export async function detectSbx(): Promise<SbxState> {
     try {
       const r = await execa(bin, ['--version'], { reject: false });
       if (r.exitCode === 0) {
-        cached = { installed: true, bin, version: (r.stdout ?? '').trim() || undefined };
+        const version = (r.stdout ?? '').trim() || undefined;
+        cached = { installed: true, bin, version, outdated: isSbxOutdated(version) };
         return cached;
       }
     } catch {
@@ -59,15 +87,18 @@ export function resetSbxCache(): void {
   cached = null;
 }
 
-/** Command the user should run to install the Sandbox CLI. */
+/** Command the user should run to install or update the Sandbox CLI. */
 export function installSbxHint(): string {
-  return 'npm install -g sandbox';
+  return 'npm install -g sandbox@latest';
 }
 
-/** Install the Sandbox CLI globally (`npm install -g sandbox`). Never throws. */
+/**
+ * Install or update the Sandbox CLI globally (`npm install -g sandbox@latest`).
+ * `@latest` so an update past an outdated install actually moves. Never throws.
+ */
 export async function installSbx(): Promise<boolean> {
   try {
-    const r = await execa('npm', ['install', '-g', 'sandbox'], { reject: false });
+    const r = await execa('npm', ['install', '-g', 'sandbox@latest'], { reject: false });
     return r.exitCode === 0;
   } catch {
     return false;

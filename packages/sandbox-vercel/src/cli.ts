@@ -54,7 +54,7 @@ async function printStatus(): Promise<void> {
     const det = await detectSbx();
     lines.push('  auth:   Vercel CLI (sandbox) login');
     lines.push(
-      `  cli:    ${det.installed ? `installed${det.version ? ` ${det.version}` : ''}` : `not installed — run \`${installSbxHint()}\``}`,
+      `  cli:    ${det.installed ? `installed${det.version ? ` ${det.version}` : ''}${det.outdated ? ` (outdated — run \`${installSbxHint()}\`)` : ''}` : `not installed — run \`${installSbxHint()}\``}`,
     );
     if (s.cli) {
       if (!s.cli.loggedIn) {

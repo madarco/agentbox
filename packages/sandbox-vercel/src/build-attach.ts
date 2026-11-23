@@ -2,12 +2,15 @@
  * `buildVercelAttach` — the Vercel provider's override of `Provider.buildAttach`.
  *
  * Vercel has no SSH, so the cloud scaffold's `ssh … -t '<cmd>'` argv is unusable.
- * Instead we drive the official Vercel Sandbox CLI (`sbx`/`sandbox`), which has a
- * real interactive PTY (`sbx exec -i`) and streams non-interactive output live —
- * giving a proper terminal with none of the old send-keys/capture-pane polling.
+ * Two transports:
+ *   - Interactive shell/agent attaches drive the official Vercel Sandbox CLI
+ *     (`sbx`/`sandbox`), which has a real interactive PTY (`sbx exec -i`).
+ *   - The detached pre-start and `logs` run through our own `exec-helper.cjs`
+ *     on the in-process `@vercel/sandbox` SDK, so the agent start does not
+ *     depend on the host CLI's version (sbx 3.x fails under Node 26).
  *
- * Argv shape (validated against sbx 3.0.1):
- *   sbx exec --sudo [-i] --project <p> --scope <team> <name>
+ * Interactive argv shape:
+ *   sbx exec --sudo -i --project <p> --scope <team> <name>
  *       -- sudo -u vscode -H bash -lc '<inner>'
  *
  * Notes:
@@ -15,14 +18,15 @@
  *     as root) and then `sudo -u vscode -H` so tmux/agents run as the box user in
  *     /workspace. Passing `sudo -u vscode …` directly as sbx's argv (not wrapped
  *     in an outer `bash -lc`) avoids a double-`bash -lc` re-parse.
- *   - `-i` only for interactive shell/agent attaches; detached pre-start and logs
- *     run non-interactively (live stdout stream).
  *   - The access token is passed via the child env (`VERCEL_AUTH_TOKEN`), never in
  *     argv, so it can't leak through `ps`. project/scope are not secret → flags.
  *   - `<inner>` is the shared cloud `renderInnerCommand` (same tmux ensure +
  *     footer-aware config + `exec tmux attach` used by hetzner/daytona).
  */
 
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   type AttachKind,
   type AttachSpec,
@@ -30,8 +34,26 @@ import {
   type BuildAttachOptions,
 } from '@agentbox/core';
 import { hostTermForCloud, renderInnerCommand } from '@agentbox/sandbox-cloud';
-import { detectSbx } from './sbx-cli.js';
+import { detectSbx, installSbxHint, MIN_SBX_MAJOR } from './sbx-cli.js';
 import { ensureFreshCredentials, resolveCredentials } from './sdk.js';
+
+const SELF = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Resolve `exec-helper.cjs`. The published CLI stages it at
+ * `runtime/vercel/exec-helper.cjs`, the hub standalone next to its server
+ * bundle, and a dev build leaves it in this package's `dist/`.
+ */
+export function resolveExecHelperPath(): string {
+  const candidates = [
+    resolve(SELF, 'exec-helper.cjs'),
+    resolve(SELF, 'vercel-exec-helper.cjs'),
+    resolve(SELF, '..', 'dist', 'exec-helper.cjs'),
+    resolve(SELF, '..', 'runtime', 'vercel', 'exec-helper.cjs'),
+    resolve(SELF, '..', '..', 'runtime', 'vercel', 'exec-helper.cjs'),
+  ];
+  return candidates.find((p) => existsSync(p)) ?? candidates[0]!;
+}
 
 export async function buildVercelAttach(
   box: BoxRecord,
@@ -43,19 +65,8 @@ export async function buildVercelAttach(
     throw new Error(`vercel box ${box.name} has no sandboxId — record is malformed`);
   }
 
-  const det = await detectSbx();
-  if (!det.installed || !det.bin) {
-    throw new Error(
-      'Vercel interactive attach needs the Vercel `sandbox` CLI — run ' +
-        '`agentbox vercel login` (it installs it) or `npm install -g sandbox`.',
-    );
-  }
-
-  await ensureFreshCredentials();
-  const { token, teamId, projectId } = resolveCredentials();
-
   // Interactive (real PTY) only for live shell/agent attaches. Detached
-  // pre-start and logs stream non-interactively.
+  // pre-start and logs run on the SDK helper.
   const interactive = (kind === 'shell' || kind === 'agent') && !opts?.detached;
 
   // `sbx exec` (unlike `ssh -t`) forwards neither TERM nor the locale, so the
@@ -66,15 +77,56 @@ export async function buildVercelAttach(
   // renderInnerCommand's TERM guard downgrades to xterm-256color when it
   // doesn't, so an exotic host TERM (e.g. xterm-ghostty) never breaks attach.
   // hostTermForCloud sanitizes to a safe terminfo name — required because this
-  // value is interpolated into the bash -lc prelude below.
+  // value is interpolated into the bash -lc prelude below. The SDK helper path
+  // gets the same prelude: the detached session it creates is the one the
+  // later interactive attach joins.
   const envPrelude = `export LANG=C.UTF-8 LC_ALL=C.UTF-8 TERM=${hostTermForCloud()}; `;
   const inner = envPrelude + renderInnerCommand(kind, opts);
+
+  if (!interactive) {
+    const helper = resolveExecHelperPath();
+    if (!existsSync(helper)) {
+      throw new Error(
+        `vercel exec helper not found at ${helper} — rebuild the CLI (\`pnpm -w build\`) ` +
+          'so packages/sandbox-vercel/dist/exec-helper.cjs is generated.',
+      );
+    }
+    await ensureFreshCredentials();
+    const { token, teamId, projectId } = resolveCredentials();
+    return {
+      argv: [process.execPath, helper, '--sandbox-id', sandboxId, '--user', 'vscode'],
+      env: {
+        VERCEL_AUTH_TOKEN: token,
+        AGENTBOX_VERCEL_TEAM_ID: teamId,
+        AGENTBOX_VERCEL_PROJECT_ID: projectId,
+        AGENTBOX_VERCEL_INNER_CMD: inner,
+      },
+    };
+  }
+
+  const det = await detectSbx();
+  if (!det.installed || !det.bin) {
+    throw new Error(
+      'Vercel interactive attach needs the Vercel `sandbox` CLI — run ' +
+        `\`agentbox vercel login\` (it installs it) or \`${installSbxHint()}\`.`,
+    );
+  }
+  if (det.outdated) {
+    throw new Error(
+      `The Vercel \`sandbox\` CLI on this machine is ${det.version ?? 'too old'}; interactive attach ` +
+        `needs ${MIN_SBX_MAJOR}.x or newer (older builds fail on newer Node with ` +
+        `"Sandbox API request failed"). Update it with \`${installSbxHint()}\` or \`agentbox vercel login\`.`,
+    );
+  }
+
+  await ensureFreshCredentials();
+  const { token, teamId, projectId } = resolveCredentials();
 
   const argv = [
     det.bin,
     'exec',
     '--sudo',
-    ...(interactive ? ['-i'] : []),
+    '-i',
     '--project',
     projectId,
     '--scope',

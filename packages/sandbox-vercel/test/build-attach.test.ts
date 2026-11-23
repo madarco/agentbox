@@ -4,7 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // and offline. renderInnerCommand is mocked to a sentinel — its real output is
 // the shared cloud tmux snippet, covered by the cloud package's own tests.
 const detectSbx = vi.fn();
-vi.mock('../src/sbx-cli.js', () => ({ detectSbx: (...a: unknown[]) => detectSbx(...a) }));
+vi.mock('../src/sbx-cli.js', () => ({
+  detectSbx: (...a: unknown[]) => detectSbx(...a),
+  installSbxHint: () => 'npm install -g sandbox@latest',
+  MIN_SBX_MAJOR: 4,
+}));
+// The SDK exec helper is a build output; pretend it exists so the argv is built.
+vi.mock('node:fs', async (orig) => ({
+  ...(await orig<typeof import('node:fs')>()),
+  existsSync: () => true,
+}));
 vi.mock('../src/sdk.js', () => ({
   ensureFreshCredentials: () => Promise.resolve(),
   resolveCredentials: () => ({ token: 'vca_tok', teamId: 'team_1', projectId: 'prj_1' }),
@@ -76,19 +85,37 @@ describe('buildVercelAttach', () => {
     expect(spec.env).toEqual({ VERCEL_AUTH_TOKEN: 'vca_tok' });
   });
 
-  it('omits -i for the detached pre-start path', async () => {
+  it('refuses an outdated sbx for the interactive attach with the update command', async () => {
+    detectSbx.mockResolvedValue({ installed: true, bin: 'sbx', version: '3.0.1', outdated: true });
+    await expect(buildVercelAttach(boxWith('box-1'), 'agent', { command: 'x' })).rejects.toThrow(
+      /3\.0\.1.*4\.x.*npm install -g sandbox@latest/s,
+    );
+  });
+
+  it('runs the detached pre-start on the SDK helper, not sbx, even with an outdated sbx', async () => {
+    detectSbx.mockResolvedValue({ installed: true, bin: 'sbx', version: '3.0.1', outdated: true });
     const spec = await buildVercelAttach(boxWith('box-1'), 'agent', {
       command: 'x',
       detached: true,
     });
-    expect(spec.argv).not.toContain('-i');
-    expect(spec.argv).toContain('--sudo');
-    expect(spec.argv[spec.argv.length - 1]).toBe(`${PRELUDE}INNER(agent)`);
+    expect(spec.argv[0]).toBe(process.execPath);
+    expect(spec.argv[1]).toMatch(/exec-helper\.cjs$/);
+    expect(spec.argv.slice(2)).toEqual(['--sandbox-id', 'box-1', '--user', 'vscode']);
+    expect(spec.env).toEqual({
+      VERCEL_AUTH_TOKEN: 'vca_tok',
+      AGENTBOX_VERCEL_TEAM_ID: 'team_1',
+      AGENTBOX_VERCEL_PROJECT_ID: 'prj_1',
+      AGENTBOX_VERCEL_INNER_CMD: `${PRELUDE}INNER(agent)`,
+    });
+    // The token never rides argv.
+    expect(spec.argv.join(' ')).not.toContain('vca_tok');
+    expect(detectSbx).not.toHaveBeenCalled();
   });
 
-  it('omits -i for logs (non-interactive stream)', async () => {
+  it('runs logs on the SDK helper too', async () => {
     const spec = await buildVercelAttach(boxWith('box-1'), 'logs', { service: 'web' });
-    expect(spec.argv).not.toContain('-i');
-    expect(spec.argv[spec.argv.length - 1]).toBe(`${PRELUDE}INNER(logs)`);
+    expect(spec.argv[1]).toMatch(/exec-helper\.cjs$/);
+    expect(spec.env?.AGENTBOX_VERCEL_INNER_CMD).toBe(`${PRELUDE}INNER(logs)`);
+    expect(detectSbx).not.toHaveBeenCalled();
   });
 });
