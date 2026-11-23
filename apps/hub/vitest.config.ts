@@ -6,6 +6,7 @@ import { defineConfig } from 'vitest/config';
 // prefixed and the vite-stripped spelling to a shim that `createRequire`s the
 // real builtin at runtime.
 const NODE_SQLITE_SHIM = fileURLToPath(new URL('./test/_node-sqlite-shim.ts', import.meta.url));
+const HUB_ROOT = fileURLToPath(new URL('./', import.meta.url));
 
 // Unit tests here are PURE (no docker, no network, no Next runtime): the pure
 // presentation/logic helpers in `lib/` (project naming, seed/custody + system
@@ -21,6 +22,12 @@ export default defineConfig({
     include: ['lib/**/*.test.ts', 'test/**/*.test.ts'],
     environment: 'node',
     setupFiles: ['./test/setup.ts'],
-    alias: { 'node:sqlite': NODE_SQLITE_SHIM, sqlite: NODE_SQLITE_SHIM },
+    alias: [
+      { find: 'node:sqlite', replacement: NODE_SQLITE_SHIM },
+      { find: 'sqlite', replacement: NODE_SQLITE_SHIM },
+      // The app's `@/` path alias (tsconfig `paths`), so a test can load a route
+      // that imports through it. A regex: a bare `@` key would catch `@agentbox/*`.
+      { find: /^@\//, replacement: HUB_ROOT },
+    ],
   },
 });
