@@ -16,6 +16,7 @@ import { repoKeyAtEdge } from '@agentbox/sandbox-core';
 import { withHubClient } from '../control-plane/with-hub.js';
 import { pickWorkspace, workspaceHub } from '../lib/workspace-ref.js';
 import { gitToplevel } from '../lib/memory-local.js';
+import { SKILL_NAME_RE } from '../lib/skills/selection.js';
 import type {
   HubApiClient,
   HubApiSkillBindingMode,
@@ -28,8 +29,6 @@ interface BindOpts {
   workspace?: string | true;
   clear?: boolean;
 }
-
-const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 async function originOf(cwd: string): Promise<string | undefined> {
   const top = await gitToplevel(cwd);
@@ -93,7 +92,7 @@ function describeTarget(t: HubApiSkillBindingTarget): string {
 
 function bindAction(mode: HubApiSkillBindingMode) {
   return async (names: string[], opts: BindOpts): Promise<void> => {
-    const bad = names.filter((n) => !NAME_RE.test(n));
+    const bad = names.filter((n) => !SKILL_NAME_RE.test(n));
     if (bad.length > 0) {
       process.stderr.write(`invalid skill name(s): ${bad.join(', ')}\n`);
       process.exitCode = 1;

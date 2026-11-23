@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import {
-  dropSkillBindings,
   getSkillBindings,
   parseBindingChanges,
   parseBindingTarget,
@@ -113,12 +112,16 @@ describe('skill bindings backend', () => {
     ]);
   });
 
-  it('reports no library before the first import, and drops a discarded skill', async () => {
+  it('reports no library before the first import', async () => {
+    expect((await previewSkillSet(memStore(), {})).library).toBe(false);
+  });
+
+  it('refuses to write over a bindings file it cannot read', async () => {
     const store = memStore();
-    expect((await previewSkillSet(store, {})).library).toBe(false);
-    await seed(store, 'alpha');
-    await putSkillBindings(store, { scope: 'box', scopeId: 'box1' }, { alpha: 'exclude' });
-    await dropSkillBindings(store, 'alpha');
-    expect((await getSkillBindings(store)).box).toEqual({});
+    await store.put('skills/.bindings.json', Buffer.from('{broken'));
+    await expect(
+      putSkillBindings(store, { scope: 'global' }, { alpha: 'exclude' }),
+    ).rejects.toThrow(/not valid JSON/);
+    expect((await store.get('skills/.bindings.json'))!.data.toString()).toBe('{broken');
   });
 });

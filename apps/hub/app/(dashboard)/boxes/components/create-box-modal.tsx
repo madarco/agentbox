@@ -744,7 +744,7 @@ function CreateBoxModal({
           size?: string;
           promptAnswers?: PromptAnswer[];
           accounts?: Record<string, string>;
-          skills?: { none?: boolean; include?: string[] };
+          skills?: { none?: boolean; include?: string[]; exclude?: string[] };
         } = {};
         // Only an explicit pick: silence lets the hub apply `<agent>.account`.
         // Never with a restore, which hides the picker: the bundle decides.
@@ -755,12 +755,17 @@ function CreateBoxModal({
         // against the question the create actually asks, so a stale one is
         // refused rather than applied to a different question.
         if (promptAnswers.length > 0) opts.promptAnswers = promptAnswers;
-        // Only a set the user changed: it becomes the box's explicit list,
+        // Only a set the user changed. Unticking alone becomes a skip list, so
+        // the bindings keep deciding everything else (a skill added later still
+        // arrives); ticking one the bindings leave out needs the explicit list,
         // which wins over every binding. Never with a restore (the bundle decides).
         if (skillPreview && skillPicks && !restoring) {
           const chosen = skillPreview.filter(skillChecked).map((r) => r.name);
-          const changed = skillPreview.some((r) => skillChecked(r) !== r.included);
-          if (changed) opts.skills = chosen.length > 0 ? { include: chosen } : { none: true };
+          const added = skillPreview.some((r) => skillChecked(r) && !r.included);
+          const dropped = skillPreview.filter((r) => !skillChecked(r) && r.included);
+          if (chosen.length === 0) opts.skills = { none: true };
+          else if (added) opts.skills = { include: chosen };
+          else if (dropped.length > 0) opts.skills = { exclude: dropped.map((r) => r.name) };
         }
         // Sent only when it differs from what the API would derive on its own.
         // Silence is not `false`: it lets the hub's `box.persistent` decide,

@@ -61,6 +61,13 @@ describe('skill bindings', () => {
     // An explicit list wins over a binding.
     expect(resolveSkillNames(names, doc, {}, { include: ['alpha'] })).toEqual(['alpha']);
     expect(resolveSkillNames(names, doc, {}, { exclude: ['beta'] })).toEqual(['gamma']);
+    // The Phase 2 semantics: a skip applies to an explicit list too.
+    expect(
+      resolveSkillNames(names, doc, {}, { include: ['alpha', 'beta'], exclude: ['beta'] }),
+    ).toEqual(['alpha']);
+    expect(resolveSkillNames(names, emptyBindings(), {}, { include: ['gamma', 'zeta'] })).toEqual([
+      'gamma',
+    ]);
   });
 
   it('clears a binding with null and drops an emptied scope', () => {
@@ -102,6 +109,16 @@ describe('skill bindings', () => {
     );
     const bad = { get: async () => ({ data: Buffer.from('{not json') }), put: async () => null };
     expect(await readBindings(bad)).toEqual(emptyBindings());
+    // A writer must not build on a read that failed.
+    await expect(readBindings(bad, { strict: true })).rejects.toThrow(/not valid JSON/);
+    const failing = {
+      get: async () => {
+        throw new Error('EIO');
+      },
+      put: async () => null,
+    };
+    expect(await readBindings(failing)).toEqual(emptyBindings());
+    await expect(readBindings(failing, { strict: true })).rejects.toThrow('EIO');
     expect(SKILL_BINDINGS_PATH).toBe('skills/.bindings.json');
   });
 });

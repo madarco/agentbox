@@ -3,10 +3,10 @@
 //        description, size, files, source). Streamed straight into custody,
 //        capped by AGENTBOX_CUSTODY_MAX_BLOB_BYTES.
 // DELETE /api/v1/skills/{name} — discard the skill and every stored version,
-//        and forget its skill bindings.
+//        Its skill bindings stay, so a global `disable` still holds if a skill
+//        of the same name is imported again.
 import { Readable } from 'node:stream';
 import { discardSkill, importSkill, parseImportMeta } from '@/lib/backend/skills';
-import { dropSkillBindings } from '@/lib/backend/skill-bindings';
 import { fail, ok } from '../../lib/envelope';
 import { failFromSkills, skillsStoreOrFail } from '../_service';
 
@@ -57,11 +57,7 @@ export async function DELETE(
   if (store instanceof Response) return store;
   const { name } = await ctx.params;
   try {
-    const out = await discardSkill(store, name);
-    // A binding naming a skill the library no longer holds selects nothing, so
-    // a failure here is not worth failing the discard over.
-    await dropSkillBindings(store, name).catch(() => undefined);
-    return ok({ name, ...out });
+    return ok({ name, ...(await discardSkill(store, name)) });
   } catch (err) {
     return failFromSkills(err, 'skill discard failed');
   }

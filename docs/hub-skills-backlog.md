@@ -199,6 +199,15 @@ resolver is in `@agentbox/core` (a hub route can't bundle `@agentbox/relay`).
   relay's custody, so the remote hub's bindings don't apply to it either.
 - **Tray**: the create sheet has no Skills picker yet (Phase 6, with the other
   tray surfaces).
+- **Review (medium), not fixed:** each `skills.blob` chunk now also reads the
+  bindings file and, with workspace bindings, scans the workspace records (adds
+  to L1 of #441: resolve once per sync); a workspace lookup that throws resolves
+  the box without its workspace bindings, silently (log it); `enable|disable`
+  makes three sequential hub calls (parallelize, read only the global scope for
+  the hint).
+- **Discard keeps bindings** (on purpose, from the review): a global `disable`
+  must survive a discard + re-import. Bindings for skills that never come back
+  stay in the file; `agentbox skills bindings` shows them.
 - **`enable --workspace` with a skill not disabled globally** changes nothing;
   the CLI prints a hint rather than offering a "workspace only" mode. Revisit if
   users trip on it.

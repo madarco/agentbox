@@ -370,7 +370,6 @@ export {
   parseSkillSelection,
   resolveBoxSkills,
   runSkillsRpc,
-  selectSkills,
   skillContextForRegistration,
 } from './skills-rpc.js';
 export type { BoxSkill, BoxSkillContext, SkillsGetResult } from './skills-rpc.js';

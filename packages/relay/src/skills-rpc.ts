@@ -130,21 +130,6 @@ export function parseSkillSelection(raw: unknown): SkillSelection | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** Apply a selection to the library's names. */
-export function selectSkills(names: readonly string[], sel: SkillSelection | undefined): string[] {
-  if (sel?.none) return [];
-  let out = [...names];
-  if (sel?.include) {
-    const want = new Set(sel.include);
-    out = out.filter((n) => want.has(n));
-  }
-  if (sel?.exclude) {
-    const drop = new Set(sel.exclude);
-    out = out.filter((n) => !drop.has(n));
-  }
-  return out;
-}
-
 async function readMeta(custody: CustodyStore, name: string): Promise<Meta | null> {
   const found = await custody.get(`${SCOPE}/${name}/meta.json`).catch(() => null);
   if (!found) return null;

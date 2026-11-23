@@ -14,7 +14,6 @@ import {
   readBindings,
   resolveBindings,
   scopeIdProblem,
-  withoutSkill,
   type SkillBindingMap,
   type SkillBindingMode,
   type SkillBindingScope,
@@ -100,22 +99,13 @@ export function putSkillBindings(
 ): Promise<SkillBindingMap> {
   return serialized(async () => {
     const next = applyBindingChanges(
-      await readBindings(store),
+      await readBindings(store, { strict: true }),
       target.scope,
       target.scopeId,
       changes,
     );
     await writeBindings(store, next);
     return bindingsAt(next, target.scope, target.scopeId);
-  });
-}
-
-/** Forget a discarded skill everywhere it was bound. Best-effort for the caller. */
-export function dropSkillBindings(store: SkillsStore, name: string): Promise<void> {
-  return serialized(async () => {
-    const doc = await readBindings(store);
-    const next = withoutSkill(doc, name);
-    if (next !== doc) await writeBindings(store, next);
   });
 }
 

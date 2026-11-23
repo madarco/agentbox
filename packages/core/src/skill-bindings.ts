@@ -125,12 +125,30 @@ export interface BindingsStore {
   put(path: string, data: Buffer): Promise<unknown>;
 }
 
-export async function readBindings(store: BindingsStore): Promise<SkillBindingsDoc> {
-  const found = await store.get(SKILL_BINDINGS_PATH).catch(() => null);
+/**
+ * Read the stored bindings. A reader (`skills.get`) tolerates a failed read or a
+ * corrupt file as "nothing bound", so a box still boots. A writer passes
+ * `strict`: writing on top of a read that failed would replace every binding
+ * with the one being changed.
+ */
+export async function readBindings(
+  store: BindingsStore,
+  opts: { strict?: boolean } = {},
+): Promise<SkillBindingsDoc> {
+  let found: { data: Buffer } | null;
+  try {
+    found = await store.get(SKILL_BINDINGS_PATH);
+  } catch (err) {
+    if (opts.strict) throw err;
+    return emptyBindings();
+  }
   if (!found) return emptyBindings();
   try {
     return parseBindings(JSON.parse(found.data.toString('utf8')));
-  } catch {
+  } catch (err) {
+    if (opts.strict) {
+      throw new Error(`${SKILL_BINDINGS_PATH} is not valid JSON; fix or delete it`, { cause: err });
+    }
     return emptyBindings();
   }
 }
@@ -230,8 +248,9 @@ export function resolveSkillDecisions(
   const exclude = new Set(selection.exclude ?? []);
   return bound.map((r) => {
     if (selection.none) return { ...r, included: false, from: 'flags' as const };
-    if (include) return { ...r, included: include.has(r.name), from: 'flags' as const };
+    // `--skills a,b --skip-skills b` is a: the subtraction applies to the list too.
     if (exclude.has(r.name)) return { ...r, included: false, from: 'flags' as const };
+    if (include) return { ...r, included: include.has(r.name), from: 'flags' as const };
     return r;
   });
 }

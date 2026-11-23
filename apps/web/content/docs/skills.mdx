@@ -145,7 +145,7 @@ agentbox skills bindings [--json]                     # list every binding
 
 For each skill the most specific choice wins: the create flags above, then the project, then the workspace, then a global binding. A skill bound nowhere is in every box. `--project` with no value uses this folder's `origin` remote; a project is keyed by its repo, not a folder, so the same repo checked out on two PCs gets the same set. `--workspace` with no value uses the [workspace](/docs/cli#workspaces--tasks) containing this folder, or takes its id or name. Enabling a skill for one workspace or project only narrows anything if it is disabled globally; the command says so when it isn't.
 
-In the hub web UI, the create form's **Advanced** section lists the library skills ticked as the bindings resolve for the chosen project. Leave it alone and the bindings decide; change a tick and the box gets exactly the ticked set.
+In the hub web UI, the create form's **Advanced** section lists the library skills ticked as the bindings resolve for the chosen project. Leave it alone and the bindings decide. Unticking a skill skips just that one; ticking one the bindings leave out gives the box exactly the ticked set.
 
 A running box applies binding changes when it restarts or on `agentbox-ctl skills sync`.
 

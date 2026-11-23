@@ -8,7 +8,6 @@ import {
   parseSkillSelection,
   resolveBoxSkills,
   runSkillsRpc,
-  selectSkills,
   skillContextForRegistration,
 } from '../src/skills-rpc.js';
 
@@ -57,10 +56,6 @@ describe('skill selection', () => {
     });
     expect(parseSkillSelection({})).toBeUndefined();
     expect(parseSkillSelection('nope')).toBeUndefined();
-    expect(selectSkills(['a', 'b', 'c'], undefined)).toEqual(['a', 'b', 'c']);
-    expect(selectSkills(['a', 'b', 'c'], { exclude: ['b'] })).toEqual(['a', 'c']);
-    expect(selectSkills(['a', 'b', 'c'], { include: ['c', 'z'] })).toEqual(['c']);
-    expect(selectSkills(['a', 'b'], { none: true })).toEqual([]);
   });
 });
 
