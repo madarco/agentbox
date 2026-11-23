@@ -114,4 +114,24 @@ describe('readLocalSkill never reads a SKILL.md that is not a regular file', () 
     const skill = await readLocalSkill('z', dir, { maxBytes: 1024 });
     expect(skill.problems).toContain('SKILL.md is not a regular file');
   }, 5_000);
+
+  it('refuses a SKILL.md that links out of the skill, and names an oversized one', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'agentbox-skillmd-'));
+    await writeFile(join(base, 'outside.md'), '---\nname: y\ndescription: x\n---\n');
+    const linked = join(base, 'y');
+    await mkdir(linked);
+    await symlink(join(base, 'outside.md'), join(linked, 'SKILL.md'));
+    expect((await readLocalSkill('y', linked)).problems).toContain(
+      'SKILL.md links outside the skill',
+    );
+    const big = join(base, 'big');
+    await mkdir(big);
+    await writeFile(
+      join(big, 'SKILL.md'),
+      `---\nname: big\ndescription: x\n---\n${'a'.repeat(4096)}`,
+    );
+    expect((await readLocalSkill('big', big, { maxBytes: 1024 })).problems).toContain(
+      'SKILL.md is over the 1024-byte cap',
+    );
+  });
 });

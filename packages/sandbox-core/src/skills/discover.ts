@@ -10,7 +10,7 @@
  */
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { parseSkillFrontmatter } from './frontmatter.js';
 import { scanSkillFiles, type SecretFinding } from './scan.js';
 import { readSkillTree, SkillTooLargeError, treeHash, type SkillFile } from './tree.js';
@@ -70,18 +70,28 @@ async function exists(p: string): Promise<boolean> {
 }
 
 /**
- * SKILL.md's text, or '' when it can't be read safely. Only a regular file is
- * read, and only up to `maxBytes`: a SKILL.md that is a link to `/dev/zero` or a
- * FIFO (both easy to plant in a box) would otherwise be read forever.
+ * SKILL.md's text, or '' when it can't be read safely: only a regular file
+ * inside the skill, up to `maxBytes`. A SKILL.md that is a link to `/dev/zero`
+ * or a FIFO (both easy to plant in a box) would otherwise be read forever, and
+ * one linking out of the skill would read a file the skill doesn't hold.
  */
-async function readSkillMd(path: string, skill: LocalSkill, maxBytes?: number): Promise<string> {
+async function readSkillMd(dir: string, skill: LocalSkill, maxBytes?: number): Promise<string> {
+  const path = join(dir, 'SKILL.md');
   const st = await stat(path).catch(() => null);
   if (!st) return '';
   if (!st.isFile()) {
     skill.problems.push('SKILL.md is not a regular file');
     return '';
   }
-  if (maxBytes !== undefined && st.size > maxBytes) return '';
+  const [real, root] = await Promise.all([realpath(path), realpath(dir)]).catch(() => ['', '']);
+  if (!real || !real.startsWith(root + sep)) {
+    skill.problems.push('SKILL.md links outside the skill');
+    return '';
+  }
+  if (maxBytes !== undefined && st.size > maxBytes) {
+    skill.problems.push(`SKILL.md is over the ${String(maxBytes)}-byte cap`);
+    return '';
+  }
   return readFile(path, 'utf8').catch(() => '');
 }
 
@@ -106,7 +116,7 @@ export async function readLocalSkill(
   if (!SKILL_NAME_RE.test(name)) {
     skill.problems.push('name must be lowercase letters, digits and hyphens (max 64)');
   }
-  const fm = parseSkillFrontmatter(await readSkillMd(join(dir, 'SKILL.md'), skill, opts.maxBytes));
+  const fm = parseSkillFrontmatter(await readSkillMd(dir, skill, opts.maxBytes));
   if (!fm) {
     skill.problems.push('SKILL.md has no frontmatter');
   } else {

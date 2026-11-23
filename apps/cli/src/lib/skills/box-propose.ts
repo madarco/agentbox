@@ -62,31 +62,37 @@ const LIST_SCRIPT = (dir: string): string =>
   `for d in '${dir}'/*/; do d="\${d%/}"; [ -L "$d" ] && continue; [ -f "$d/SKILL.md" ] && basename "$d"; done; true`;
 
 /**
- * Checked IN the box before a skill is pulled out of it: the first entry that is
- * not a plain file or directory (a link, FIFO, device or socket), and the bytes
- * of its files. Prints `<bad path or empty>\t<bytes>`.
+ * Checked IN the box before a skill is pulled out of it, as a courtesy that
+ * keeps an honest too-big skill in the box: the first entry that is neither a
+ * plain file, a directory nor a link (a FIFO, device or socket), and the bytes
+ * of its files, skipping what a skill never carries (`.git`, `.DS_Store`). Prints
+ * `<bad path or empty>\t<bytes>`, or nothing when `find` can't run (GNU `-printf`
+ * / `-quit` missing), which refuses. The box answers this, so the real limits
+ * are host-side: `pullTree`'s `maxBytes` and `readLocalSkill`.
  */
 export const PROBE_SCRIPT = (dir: string): string =>
   `d='${dir}'; ` +
-  `bad=$(find "$d" -mindepth 1 ! -type f ! -type d -print -quit 2>/dev/null); ` +
-  `bytes=$(find "$d" -type f -printf '%s\\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s}'); ` +
-  `printf '%s\\t%s\\n' "$bad" "\${bytes:-0}"`;
+  `bad=$(find "$d" -mindepth 1 \\( -name .git -o -name .DS_Store \\) -prune -o ! -type f ! -type d ! -type l -print -quit) || exit 3; ` +
+  `sizes=$(find "$d" \\( -name .git -o -name .DS_Store \\) -prune -o -type f -printf '%s\\n') || exit 3; ` +
+  `bytes=$(printf '%s\\n' "$sizes" | awk '{s+=$1} END {printf "%d", s}'); ` +
+  `printf '%s\\t%s\\n' "$bad" "$bytes"`;
 
 /**
- * Why a probed box skill must not be pulled, or null. A box skill may hold only
- * plain files and folders (a carried skill's links are the PC's business, and a
- * link or FIFO planted in a box is how a read never ends), within `maxBytes`.
+ * Why a probed box skill must not be pulled, or null. Links are allowed (the
+ * host resolves them and drops any that leave the skill); FIFOs, devices and
+ * sockets are not, nor a skill over `maxBytes`.
  */
 export function probeRefusal(stdout: string, dir: string, maxBytes: number): string | null {
   // Not trim(): a clean probe's line STARTS with the tab of an empty path.
   const line = stdout.replace(/\n+$/, '').split('\n').at(-1) ?? '';
+  if (!line.includes('\t')) return 'it could not be checked in the box';
   const [bad = '', rawBytes = ''] = line.split('\t');
   if (bad) {
     const rel = bad.startsWith(`${dir}/`) ? bad.slice(dir.length + 1) : bad;
-    return `holds ${rel.slice(0, 120)}, which is not a plain file or folder (links, FIFOs and devices are not proposed)`;
+    return `holds ${rel.slice(0, 120)}, which is not a plain file, folder or link (FIFOs and devices are not proposed)`;
   }
   const bytes = Number(rawBytes);
-  if (!Number.isFinite(bytes) || rawBytes === '') return 'its size could not be read in the box';
+  if (!Number.isFinite(bytes) || rawBytes === '') return 'it could not be checked in the box';
   if (bytes > maxBytes) {
     return `${String(bytes)} bytes, over the ${String(maxBytes)}-byte cap for a proposed skill`;
   }
@@ -166,7 +172,12 @@ export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<B
         await mkdir(dest, { recursive: true });
         let skill: LocalSkill;
         try {
-          await opts.transport.pullTree(boxDir, dest);
+          // The cap the probe can't guarantee (the box answered it), enforced
+          // here on what actually crosses to this machine. Tar framing on top.
+          await opts.transport.pullTree(boxDir, dest, {
+            exclude: ['.git'],
+            maxBytes: maxBytes + 1024 * 1024,
+          });
           skill = await readLocalSkill(name, dest, { maxBytes });
         } catch (err) {
           out.push({

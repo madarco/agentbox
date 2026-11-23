@@ -111,7 +111,16 @@ export interface SyncTransport {
   pushFile(hostSrcPath: string, boxDestPath: string, opts?: PushOptions): Promise<void>;
 
   // ---- box → host (first-class, not an afterthought) ----
-  pullTree(boxSrcDir: string, hostDestDir: string, opts?: { exclude?: string[] }): Promise<void>;
+  /**
+   * Copy a box dir into a host dir. `maxBytes` caps the tar that crosses to the
+   * host, enforced HOST-side (a box controls anything it reports about itself):
+   * over it, nothing is extracted and this throws {@link PullTooLargeError}.
+   */
+  pullTree(
+    boxSrcDir: string,
+    hostDestDir: string,
+    opts?: { exclude?: string[]; maxBytes?: number },
+  ): Promise<void>;
   pullFile(boxSrcPath: string, hostDestPath: string): Promise<void>;
   /** Read a single box file as text; null when absent. The `cat`-based extract. */
   readText(boxPath: string): Promise<string | null>;
@@ -124,4 +133,15 @@ export interface SyncTransport {
    * the snapshot at `prepare` time, so `caps.helperContainer` is false there.
    */
   seedVolumeFromHost?(volume: string, sources: VolumeHostSource[]): Promise<void>;
+}
+
+/** A {@link SyncTransport.pullTree} whose tar went over its `maxBytes`. */
+export class PullTooLargeError extends Error {
+  constructor(
+    readonly boxSrcDir: string,
+    readonly maxBytes: number,
+  ) {
+    super(`${boxSrcDir} is over ${String(maxBytes)} bytes; not copied`);
+    this.name = 'PullTooLargeError';
+  }
 }

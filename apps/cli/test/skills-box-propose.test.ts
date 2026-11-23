@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,17 +62,35 @@ describe('box skill probe (before anything leaves the box)', () => {
     expect(probe(skillDir())).toBeNull();
   });
 
-  it('refuses a SKILL.md that links to /dev/zero (a read that never ends)', () => {
+  it('leaves links to the host checks (readLocalSkill / readSkillTree)', () => {
     const d = skillDir();
     rmSync(join(d, 'SKILL.md'));
     symlinkSync('/dev/zero', join(d, 'SKILL.md'));
-    expect(probe(d)).toMatch(/holds SKILL\.md, which is not a plain file or folder/);
+    // The probe lets a link through; a SKILL.md linked to /dev/zero is refused
+    // host-side by readLocalSkill (packages/sandbox-core skills-concern test).
+    expect(probe(d)).toBeNull();
+  });
+
+  it("doesn't count .git toward the cap, as the library doesn't", () => {
+    const d = skillDir();
+    mkdirSync(join(d, '.git'));
+    writeFileSync(join(d, '.git', 'pack'), Buffer.alloc(4096));
+    expect(probe(d, 1024)).toBeNull();
+  });
+
+  it('refuses when find cannot run in the box (fails closed)', () => {
+    const d = skillDir();
+    const r = spawnSync('sh', ['-c', `PATH=/nonexistent; ${PROBE_SCRIPT(d)}`], {
+      encoding: 'utf8',
+    });
+    expect(r.status).not.toBe(0);
+    expect(probeRefusal(r.stdout, d, 8 * 1024 * 1024)).toMatch(/could not be checked/);
   });
 
   it('refuses a FIFO', () => {
     const d = skillDir();
     execFileSync('mkfifo', [join(d, 'pipe')]);
-    expect(probe(d)).toMatch(/holds pipe/);
+    expect(probe(d)).toMatch(/holds pipe, which is not a plain file, folder or link/);
   });
 
   it('refuses a skill over the cap before pulling it', () => {
@@ -82,6 +100,6 @@ describe('box skill probe (before anything leaves the box)', () => {
   });
 
   it('refuses when the probe printed nothing it can read', () => {
-    expect(probeRefusal('', '/x', 10)).toMatch(/could not be read/);
+    expect(probeRefusal('', '/x', 10)).toMatch(/could not be checked/);
   });
 });

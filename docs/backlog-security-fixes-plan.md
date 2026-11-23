@@ -145,6 +145,23 @@ the hub and the CLI. No config key: the caps are fixed (a real skill is a few KB
 bigger one goes in from a PC with `agentbox skills`), and `readLocalSkill` now refuses a
 `SKILL.md` that is not a regular file. The original proposal follows.
 
+What the review of that change moved or left:
+
+- The in-box probe is a courtesy (the box answers it). The real limits are host-side:
+  `SyncTransport.pullTree` takes `maxBytes` (docker: execa `maxBuffer`; cloud: an in-box
+  size check before the download, then the downloaded tar's own size before extracting),
+  and `readLocalSkill` / `readSkillTree` never read a special file or a link out of the
+  skill. The probe allows links (the host resolves them) and skips `.git` / `.DS_Store`,
+  as the library does.
+- LATER: the per-box cap keys on the box id the caller names in the proposal header. The
+  caller is a PC holding a hub credential, not the box, so this is not a box-reachable
+  bypass; tie the id to an authenticated box identity when boxes propose directly.
+- LATER: the probe is one extra `exec` per box skill; it could ride the listing exec.
+- LATER: on cloud, a box racing the in-box size check could swap the tar before the
+  download; the post-download size check stops the extract, not the download itself.
+- The caps are fixed constants (no config key): a skill bigger than 8 MiB goes into the
+  library from a PC with `agentbox skills`.
+
 ### Proposal
 
 Verified on nightly. Hub: `createSkillProposals` keeps each pending proposal's

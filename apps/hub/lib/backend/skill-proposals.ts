@@ -16,9 +16,9 @@ import {
   SkillTarError,
   treeHash,
   type SecretFinding,
+  SKILL_PROPOSAL_LIMITS,
   type TarFile,
 } from '@agentbox/sandbox-core';
-import { SKILL_PROPOSAL_LIMITS } from '@agentbox/sandbox-core';
 import {
   importSkill,
   originOf,
@@ -45,6 +45,8 @@ export interface SkillProposalDeps {
   maxBytes?: number;
   /** Cap on every waiting proposal's tarball together (bytes). */
   maxTotalBytes?: number;
+  /** Cap on unpacking the library's current version for the diff (custody's blob cap). */
+  libraryMaxBytes?: number;
 }
 
 export interface SkillProposalInput {
@@ -70,6 +72,8 @@ export interface SkillProposalResult {
 }
 
 const PREVIEW_CHARS = 1_500;
+/** Tar headers and gzip overhead on top of a skill's own bytes. */
+const TAR_SLACK = 1024 * 1024;
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${String(n)} B`;
@@ -209,7 +213,9 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     const { name, tarball } = input;
     const problem = skillNameProblem(name);
     if (problem) throw new SkillsError('invalid_request', problem);
-    if (tarball.length > maxBytes) {
+    // The files are capped at `maxBytes` unpacked; the tarball gets room for
+    // tar framing on top, so a skill the CLI accepted is not refused here.
+    if (tarball.length > maxBytes + TAR_SLACK) {
       throw new SkillsError(
         'invalid_request',
         `skill '${name}' is ${fmtBytes(tarball.length)}, over the ${fmtBytes(maxBytes)} cap for a proposed skill`,
@@ -255,59 +261,66 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     const refusal = overCap(input.box.id, tarball.length);
     if (refusal) throw new SkillsError('conflict', refusal);
     waiting.set(key, { boxId: input.box.id, bytes: tarball.length });
-
-    const scanLine =
-      findings.length > 0
-        ? `secret scan: ${String(findings.length)} finding(s): ${findings
-            .slice(0, 3)
-            .map((f) => `${f.rule} in ${f.path}:${String(f.line)}`)
-            .join(', ')}`
-        : 'secret scan: clean';
-    const text = skillMd.data.toString('utf8');
-    const baseCurrent = prev?.current ?? null;
-    // What the approver needs: every file that differs from the current
-    // version, not just SKILL.md (a changed script under an unchanged SKILL.md
-    // must not look identical).
-    const current = baseCurrent
-      ? await readVersionFiles(deps.store, name, baseCurrent, undefined)
-      : null;
-    const changes = current ? diffFiles(current, files) : null;
-    const changeLine = !prev
-      ? `new skill: ${String(files.length)} file(s)`
-      : changes
-        ? `vs current ${baseCurrent!.slice(0, 12)}: ${String(changes.added.length)} added, ${String(changes.modified.length)} modified, ${String(changes.removed.length)} removed`
-        : `vs current ${baseCurrent!.slice(0, 12)}: its files could not be read; every file is listed`;
-    const listing = changes
-      ? [
-          ...changes.added.map((p) => `+ ${p}`),
-          ...changes.modified.map((p) => `~ ${p}`),
-          ...changes.removed.map((p) => `- ${p}`),
-        ]
-      : files.map((f) => `  ${f.path} (${fmtBytes(f.data.length)})`);
-    const oldMd = current?.get('SKILL.md');
-    const mdSection = !prev
-      ? `SKILL.md:\n${clip(text, PREVIEW_CHARS)}`
-      : oldMd === undefined
-        ? `SKILL.md (new file):\n${clip(text, PREVIEW_CHARS)}`
-        : oldMd.equals(skillMd.data)
-          ? 'SKILL.md: unchanged'
-          : `SKILL.md diff:\n${clip(lineDiff(oldMd.toString('utf8'), text), PREVIEW_CHARS)}`;
-    const summary = [
-      scanLine,
-      changeLine,
-      clip(listing.join('\n'), LISTING_CHARS),
-      '',
-      mdSection,
-    ].join('\n');
+    // The slot is freed when the approval settles; anything that throws before
+    // the approval exists must free it here, or it leaks until a restart.
     // Only these reach the approval callback, so the unpacked files can be freed.
     const fileCount = files.length;
-    const approved = deps.approve(input.box.id, {
-      message: `Box ${input.box.name} proposes ${prev ? 'a new version of' : 'a new'} library skill ${name}`,
-      detail: `${changeLine}, ${fmtBytes(size)}; ${scanLine} — ${description.slice(0, 200)}`,
-      summary,
-      command: 'skills_propose',
-      noAutoApprove: true,
-    });
+    const baseCurrent = prev?.current ?? null;
+    let approved: Promise<boolean>;
+    try {
+      const scanLine =
+        findings.length > 0
+          ? `secret scan: ${String(findings.length)} finding(s): ${findings
+              .slice(0, 3)
+              .map((f) => `${f.rule} in ${f.path}:${String(f.line)}`)
+              .join(', ')}`
+          : 'secret scan: clean';
+      const text = skillMd.data.toString('utf8');
+      // What the approver needs: every file that differs from the current
+      // version, not just SKILL.md (a changed script under an unchanged SKILL.md
+      // must not look identical).
+      const current = baseCurrent
+        ? await readVersionFiles(deps.store, name, baseCurrent, deps.libraryMaxBytes)
+        : null;
+      const changes = current ? diffFiles(current, files) : null;
+      const changeLine = !prev
+        ? `new skill: ${String(files.length)} file(s)`
+        : changes
+          ? `vs current ${baseCurrent!.slice(0, 12)}: ${String(changes.added.length)} added, ${String(changes.modified.length)} modified, ${String(changes.removed.length)} removed`
+          : `vs current ${baseCurrent!.slice(0, 12)}: its files could not be read; every file is listed`;
+      const listing = changes
+        ? [
+            ...changes.added.map((p) => `+ ${p}`),
+            ...changes.modified.map((p) => `~ ${p}`),
+            ...changes.removed.map((p) => `- ${p}`),
+          ]
+        : files.map((f) => `  ${f.path} (${fmtBytes(f.data.length)})`);
+      const oldMd = current?.get('SKILL.md');
+      const mdSection = !prev
+        ? `SKILL.md:\n${clip(text, PREVIEW_CHARS)}`
+        : oldMd === undefined
+          ? `SKILL.md (new file):\n${clip(text, PREVIEW_CHARS)}`
+          : oldMd.equals(skillMd.data)
+            ? 'SKILL.md: unchanged'
+            : `SKILL.md diff:\n${clip(lineDiff(oldMd.toString('utf8'), text), PREVIEW_CHARS)}`;
+      const summary = [
+        scanLine,
+        changeLine,
+        clip(listing.join('\n'), LISTING_CHARS),
+        '',
+        mdSection,
+      ].join('\n');
+      approved = deps.approve(input.box.id, {
+        message: `Box ${input.box.name} proposes ${prev ? 'a new version of' : 'a new'} library skill ${name}`,
+        detail: `${changeLine}, ${fmtBytes(size)}; ${scanLine} — ${description.slice(0, 200)}`,
+        summary,
+        command: 'skills_propose',
+        noAutoApprove: true,
+      });
+    } catch (err) {
+      waiting.delete(key);
+      throw err;
+    }
     // Not awaited: the caller learns `pending` now; a human decides later.
     void approved
       .then(async (yes) => {
@@ -353,5 +366,5 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     return { ...base, status: 'pending' };
   }
 
-  return { propose, pending: () => waiting.size, maxBytes };
+  return { propose, pending: () => waiting.size, maxBytes: maxBytes + TAR_SLACK };
 }

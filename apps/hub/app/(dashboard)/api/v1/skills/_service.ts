@@ -36,6 +36,15 @@ export function skillsStoreOrFail(): SkillsStore | Response {
 
 export function failFromSkills(err: unknown, fallback: string): Response {
   if (err instanceof SkillsError) return fail(err.code, err.message);
+  // The proposals store is built by server.ts, not this bundle, so its
+  // SkillsError is another module's class: match it by name (like the custody
+  // errors below), or every refusal from it answers 500.
+  if (err instanceof Error && err.name === 'SkillsError') {
+    const code = (err as { code?: unknown }).code;
+    if (code === 'invalid_request' || code === 'not_found' || code === 'conflict') {
+      return fail(code, err.message);
+    }
+  }
   const msg = err instanceof Error ? err.message : fallback;
   // Matched by name so the store's error class never has to be imported here.
   if (err instanceof Error && err.name === 'CustodyTooLargeError') {

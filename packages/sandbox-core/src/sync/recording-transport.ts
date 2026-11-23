@@ -90,7 +90,7 @@ export function makeRecordingTransport(
     async pullTree(
       boxSrcDir: string,
       hostDestDir: string,
-      o?: { exclude?: string[] },
+      o?: { exclude?: string[]; maxBytes?: number },
     ): Promise<void> {
       push('pullTree', { boxSrcDir, hostDestDir, opts: o });
     },

@@ -31,6 +31,7 @@ import type {
   TransportCaps,
   VolumeHostSource,
 } from '@agentbox/core';
+import { PullTooLargeError } from '@agentbox/core';
 import { hostRsyncStep } from './agents/shared.js';
 
 export interface DockerSyncTransportInit {
@@ -245,7 +246,7 @@ function makeTransport(runner: DockerRunner, image: string | undefined): SyncTra
     async pullTree(
       boxSrcDir: string,
       hostDestDir: string,
-      opts?: { exclude?: string[] },
+      opts?: { exclude?: string[]; maxBytes?: number },
     ): Promise<void> {
       const tarArgs = ['tar', '-C', boxSrcDir];
       for (const ex of opts?.exclude ?? []) tarArgs.push(`--exclude=${ex}`);
@@ -253,7 +254,15 @@ function makeTransport(runner: DockerRunner, image: string | undefined): SyncTra
       const packed = await execa('docker', runner.argv(tarArgs, { readOnly: true }), {
         encoding: 'buffer',
         reject: false,
+        // The tar is buffered here: past the cap execa stops reading and fails.
+        ...(opts?.maxBytes !== undefined ? { maxBuffer: opts.maxBytes } : {}),
       });
+      if (opts?.maxBytes !== undefined && (packed as { isMaxBuffer?: boolean }).isMaxBuffer) {
+        throw new PullTooLargeError(boxSrcDir, opts.maxBytes);
+      }
+      if (opts?.maxBytes !== undefined && (packed.stdout as Buffer).length > opts.maxBytes) {
+        throw new PullTooLargeError(boxSrcDir, opts.maxBytes);
+      }
       if (packed.exitCode !== 0) {
         throw new Error(
           `docker tar of ${boxSrcDir} failed: ${String(packed.stderr).slice(0, 300)}`,

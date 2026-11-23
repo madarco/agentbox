@@ -131,4 +131,19 @@ describe('skill proposal caps', () => {
       'pending',
     );
   });
+
+  it('frees the slot when asking for the approval throws', async () => {
+    const proposals = createSkillProposals({
+      store: memStore(),
+      approve: () => {
+        throw new Error('no such box in the prompt mailbox');
+      },
+      maxPendingPerBox: 1,
+    });
+    const box = { id: 'b1', name: 'one' };
+    await expect(proposals.propose({ name: 'a', tarball: skill('a'), box })).rejects.toThrow(
+      /no such box/,
+    );
+    expect(proposals.pending()).toBe(0);
+  });
 });
