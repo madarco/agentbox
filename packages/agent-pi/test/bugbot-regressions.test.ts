@@ -64,7 +64,9 @@ describe('the docker launch carries the registry launchFlags', () => {
     // must -- which is what this had wrong.
     expect(resolveAgentSpec('pi').launchFlags).toContain('-a');
     const src = await readFile(new URL('../src/docker-sync.ts', import.meta.url), 'utf8');
-    expect(src).toMatch(/const flags = PI_SPEC\.launchFlags \?\? \[\];/);
+    // Through `agentLaunchFlags`: the declared flags plus the skills `flag`
+    // injection (`--skill <library>`).
+    expect(src).toMatch(/const flags = agentLaunchFlags\(PI_SPEC\);/);
     expect(src).toMatch(/\[PI_SPEC\.binary, \.\.\.flags, \.\.\.opts\.piArgs\]/);
   });
 });

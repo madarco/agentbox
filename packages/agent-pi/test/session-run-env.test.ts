@@ -33,3 +33,20 @@ describe('startPiSession passes boxRunEnv to the tmux session', () => {
     }
   });
 });
+
+describe('startPiSession creates the --skill dir before launching', () => {
+  beforeEach(() => {
+    execaMock.mockReset();
+    execaMock.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('runs mkdir -p on the library dir, then execs pi with --skill', async () => {
+    // pi >= 0.84 warns "skill path does not exist" on every launch otherwise.
+    await startPiSession({ container: 'c', piArgs: [], sessionName: 'pi' });
+    const argv = execaMock.mock.calls[0]![1] as string[];
+    const cmd = argv.find((a) => a.includes('--skill'));
+    expect(cmd).toMatch(
+      /^mkdir -p \/home\/vscode\/\.local\/share\/agentbox\/skills 2>\/dev\/null; exec pi -a --skill /,
+    );
+  });
+});

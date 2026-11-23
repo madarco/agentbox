@@ -27,15 +27,17 @@
  */
 import { execFile } from 'node:child_process';
 import { lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
-import { homedir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { BOX_SKILLS_LIBRARY_DIR } from '@agentbox/core';
 import { readTar, treeHash } from '@agentbox/sandbox-core';
 import { postRpcAwait } from './relay-rpc.js';
 
 const execFileP = promisify(execFile);
 
-export const SKILLS_LIBRARY_DIR = join(homedir(), '.local', 'share', 'agentbox', 'skills');
+/** The canonical tree; the same path every agent's `env` / `flag` / `config` injection names. */
+export const SKILLS_LIBRARY_DIR = BOX_SKILLS_LIBRARY_DIR;
 const MANIFEST_NAME = '.manifest.json';
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SHA_RE = /^[0-9a-f]{64}$/;

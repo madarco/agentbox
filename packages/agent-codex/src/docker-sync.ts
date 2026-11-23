@@ -21,6 +21,7 @@ import {
   DOCKER_HOST_ALIAS,
   requireAgentCredential,
   type LoopbackEndpoint,
+  agentLaunchFlags,
 } from '@agentbox/core';
 import {
   mergeCodexConfigForBox,
@@ -633,7 +634,7 @@ export interface StartCodexSessionOptions {
 
 export async function startCodexSession(opts: StartCodexSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CODEX_SESSION;
-  const flags = resolveAgentSpec('codex').launchFlags ?? [];
+  const flags = agentLaunchFlags(resolveAgentSpec('codex'));
   const cmd = await withSessionLlmProxy(
     'codex',
     opts.container,

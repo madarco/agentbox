@@ -42,6 +42,32 @@ function run(rawDirs: string, rawEntries = '', rawHooksEnabled = ''): Merged {
 const entryOf = (r: Merged) => r.hooks.internal.entries['bootstrap-extra-files']!;
 
 describe('the openclaw config merge', () => {
+  it('unions every dir of a colon-separated list (AgentBox skills + the library), idempotently', () => {
+    const dirs = `${SKILL_DIR}:/home/vscode/.local/share/agentbox/skills`;
+    const once = execFileSync(
+      process.execPath,
+      [
+        (() => {
+          const d = mkdtempSync(join(tmpdir(), 'openclaw-merge-'));
+          const p = join(d, 'merge.cjs');
+          writeFileSync(p, OPENCLAW_CONFIG_MERGE_PROGRAM, 'utf8');
+          return p;
+        })(),
+        dirs,
+        CTX_PATH,
+        JSON.stringify(['/home/vscode/my-skills', SKILL_DIR]),
+        '',
+        '',
+      ],
+      { encoding: 'utf8' },
+    );
+    expect((JSON.parse(once) as Merged).skills.load.extraDirs).toEqual([
+      '/home/vscode/my-skills',
+      SKILL_DIR,
+      '/home/vscode/.local/share/agentbox/skills',
+    ]);
+  });
+
   it('asserts both keys on a box where neither is set', () => {
     const r = run('');
     expect(r.skills.load.extraDirs).toEqual([SKILL_DIR]);

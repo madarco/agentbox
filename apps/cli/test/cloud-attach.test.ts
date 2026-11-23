@@ -95,6 +95,16 @@ describe('buildCloudAttachInnerCommand', () => {
     expect(decodeArgs(cmd)).toEqual(args);
   });
 
+  it('creates the --skill dir before execing pi, and nothing extra for other agents', () => {
+    // pi >= 0.84 warns "skill path does not exist" on every launch otherwise;
+    // this also covers a box restored from a snapshot older than ctl's sync.
+    const mk = 'mkdir -p /home/vscode/.local/share/agentbox/skills 2>/dev/null; ';
+    const pi = buildCloudAttachInnerCommand('pi');
+    expect(pi).toContain(mk);
+    expect(pi.indexOf(mk)).toBeLessThan(pi.indexOf('exec pi'));
+    expect(buildCloudAttachInnerCommand('codex')).not.toContain('mkdir -p');
+  });
+
   it("prepends the agent's declared launchFlags, before its own args", () => {
     // Codex will not load the hooks.json its `seeds` declaration places without
     // these. The cloud launcher used to run the bare binary, so a cloud codex

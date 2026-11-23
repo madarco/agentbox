@@ -23,7 +23,7 @@
  * parser warns on unknown keys instead of failing.
  */
 
-import type { AgentConfigRenderSpec, AgentServiceSpec } from '@agentbox/core';
+import type { AgentConfigRenderSpec, AgentServiceSpec, AgentSkillsSpec } from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from './registry.js';
 
 /** One file ctl watches in the box, and what the host should do when it changes. */
@@ -52,10 +52,12 @@ export interface AgentWatchDescriptor {
 export interface AgentDescriptor {
   id: string;
   /**
-   * Where ctl links the box's library skills for this agent (`AgentSyncSpec.skills`).
-   * Absent = this agent gets none.
+   * How the box's library skills reach this agent (`AgentSyncSpec.skills`).
+   * ctl acts only on a `dir` injection (it links); a `flag` is applied host-side
+   * at launch and a `config` by the agent's own boot task, and an older ctl
+   * ignores any kind it doesn't know. Absent = none.
    */
-  skills?: { inject: { kind: 'dir'; path: string } };
+  skills?: { inject: AgentSkillsSpec['inject'] };
   /** Files to watch in-box, with their intent. */
   watch: readonly AgentWatchDescriptor[];
   /**
