@@ -1,8 +1,14 @@
-import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { existingPathsIn, rsyncPullToHost } from '../src/sync/concerns/workspace-files.js';
+import {
+  DOWNLOAD_BACKUPS_KEEP,
+  downloadBackupDir,
+  existingPathsIn,
+  pruneDownloadBackups,
+  rsyncPullToHost,
+} from '../src/sync/concerns/workspace-files.js';
 
 /**
  * Stage 2, run against the real rsync — including the one macOS ships (2.6.9),
@@ -73,5 +79,37 @@ describe('rsyncPullToHost', { timeout: 30_000 }, () => {
   it('existingPathsIn keeps a symlink without following it', async () => {
     const { scratch } = dirs({ 'real.txt': 'r' });
     expect(await existingPathsIn(scratch, ['real.txt', 'nope.txt'])).toEqual(['real.txt']);
+  });
+});
+
+describe('download backups', { timeout: 30_000 }, () => {
+  it('keeps every file the pull replaces, and only those', async () => {
+    // A box's download overwrote the PC's uncommitted edits with nothing kept.
+    const { scratch, dest } = dirs({ 'edited.ts': 'box', 'same.ts': 'same', 'new.ts': 'n' });
+    writeFileSync(join(dest, 'edited.ts'), 'my uncommitted edit');
+    writeFileSync(join(dest, 'same.ts'), 'same');
+    const home = mkdtempSync(join(tmpdir(), 'agentbox-home-'));
+    const backupDir = downloadBackupDir('box-1', { home });
+    await rsyncPullToHost({ scratchDir: scratch, destDir: dest, fileList: null, backupDir });
+    expect(readFileSync(join(dest, 'edited.ts'), 'utf8')).toBe('box');
+    expect(readFileSync(join(backupDir, 'edited.ts'), 'utf8')).toBe('my uncommitted edit');
+    expect(readdirSync(backupDir)).toEqual(['edited.ts']);
+    expect(
+      backupDir.startsWith(join(home, '.agentbox', 'boxes', 'box-1', 'download-backups')),
+    ).toBe(true);
+  });
+
+  it('keeps only the newest backups', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'agentbox-home-'));
+    const t0 = Date.UTC(2026, 0, 1);
+    const stamps = Array.from({ length: DOWNLOAD_BACKUPS_KEEP + 2 }, (_, i) =>
+      downloadBackupDir('b', { home, now: new Date(t0 + i * 1000) }),
+    );
+    for (const s of stamps) mkdirSync(s, { recursive: true });
+    await pruneDownloadBackups(stamps.at(-1)!);
+    const left = readdirSync(dirname(stamps[0]!));
+    expect(left).toHaveLength(DOWNLOAD_BACKUPS_KEEP);
+    expect(left).not.toContain(basename(stamps[0]!));
+    expect(left).toContain(basename(stamps.at(-1)!));
   });
 });

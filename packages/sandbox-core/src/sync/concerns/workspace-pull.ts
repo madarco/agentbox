@@ -202,6 +202,8 @@ export interface PullWorkspaceArgs extends StageWorkspaceArgs {
   dryRun?: boolean;
   /** Default false. Reuse whatever is already in `scratchDir` (and its sidecar). */
   noRefresh?: boolean;
+  /** Keep the files the pull replaces here (see `RsyncPullArgs.backupDir`). */
+  backupDir?: string;
 }
 
 export interface PullWorkspaceResult {
@@ -232,6 +234,7 @@ export async function pullWorkspaceToHost(args: PullWorkspaceArgs): Promise<Pull
     excludes: workspaceExcludes({ includeNodeModules: args.includeNodeModules }),
     dryRun: args.dryRun,
     skipPaths: args.skipPaths,
+    ...(args.backupDir ? { backupDir: args.backupDir } : {}),
   });
   return {
     hostPath: args.destDir,

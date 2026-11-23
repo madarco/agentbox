@@ -1807,45 +1807,23 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       ) {
         const params = body.params as DownloadRpcParams | undefined;
         const kind = parseDownloadKind(body.method);
-        // `download.workspace` lands under the box's project folder (contained by
-        // construction), so it auto-approves under the safe flag. The env/config/
-        // claude kinds land in ~/.agentbox / ~/.claude (outside the project) and
-        // keep prompting.
-        const dlWorkspace = await boxWorkspacePath(reg.boxId);
-        const dlAuto =
-          kind === 'workspace' &&
-          (await canAutoApproveTransfer({
-            enabled: reg.autoApproveSafeHostActions !== false,
-            workspacePath: dlWorkspace,
-            hostPaths: dlWorkspace ? [dlWorkspace] : [],
-            checkSecret: false,
-          }));
-        if (dlAuto) {
-          prompts.noteAutoApprove(
-            reg.boxId,
-            {
-              kind: 'confirm',
-              message: `download (${kind}) from ${reg.name}`,
-              detail: params?.hostPath ?? '(default host location)',
-              context: { command: body.method, argv: params?.hostPath ? [params.hostPath] : [] },
-            },
-            'safe: contained download',
-          );
-        } else {
-          const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
-            kind: 'confirm',
-            message: `Allow download (${kind}) from ${reg.name}?`,
-            detail: params?.hostPath ?? '(default host location)',
-            defaultAnswer: 'n',
-            context: {
-              command: body.method,
-              argv: params?.hostPath ? [params.hostPath] : [],
-            },
-          });
-          if (verdict.answer !== 'y') {
-            send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
-            return;
-          }
+        // Always asked, even `download.workspace` under
+        // `box.autoApproveSafeHostActions`: it lands in the user's own project and
+        // the box decides what overwrites it. The host CLI keeps every replaced
+        // file under ~/.agentbox/boxes/<id>/download-backups/.
+        const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
+          kind: 'confirm',
+          message: `Allow download (${kind}) from ${reg.name}?`,
+          detail: params?.hostPath ?? '(default host location)',
+          defaultAnswer: 'n',
+          context: {
+            command: body.method,
+            argv: params?.hostPath ? [params.hostPath] : [],
+          },
+        });
+        if (verdict.answer !== 'y') {
+          send(res, 500, { exitCode: 10, stdout: '', stderr: 'denied by user\n' });
+          return;
         }
         const result = await handleDownloadRpc(reg, kind);
         const status = result.exitCode === 0 ? 200 : 500;

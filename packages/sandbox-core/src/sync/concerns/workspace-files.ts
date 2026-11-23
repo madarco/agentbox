@@ -26,8 +26,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import { lstat, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, readdir, readFile, rm } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { execa } from 'execa';
 import { LIVE_DATABASE_EXCLUDES } from '@agentbox/core';
 import { classifyUntrackedOverlay } from './git.js';
@@ -491,6 +492,42 @@ export interface RsyncPullArgs {
    * Exact, root-anchored matches.
    */
   skipPaths?: readonly string[];
+  /**
+   * Keep every file the pull REPLACES under this dir, at its relative path
+   * (`rsync --backup --backup-dir`). Files rsync leaves alone are not copied.
+   * Absolute; see {@link downloadBackupDir}.
+   */
+  backupDir?: string;
+}
+
+/** How many `download-backups/<stamp>` dirs a box keeps. */
+export const DOWNLOAD_BACKUPS_KEEP = 5;
+
+/**
+ * Where a download into the user's project keeps the files it overwrote:
+ * `~/.agentbox/boxes/<boxId>/download-backups/<stamp>`. On the host and outside
+ * the project, so nothing the box writes can reach or replace it.
+ */
+export function downloadBackupDir(boxId: string, opts: { home?: string; now?: Date } = {}): string {
+  const stamp = (opts.now ?? new Date()).toISOString().replace(/[:.]/g, '-');
+  const safeId = boxId.replace(/[^A-Za-z0-9._-]/g, '_');
+  return join(opts.home ?? homedir(), '.agentbox', 'boxes', safeId, 'download-backups', stamp);
+}
+
+/**
+ * Drop all but the newest {@link DOWNLOAD_BACKUPS_KEEP} backups next to
+ * `backupDir` (stamps sort by time). Best-effort: a failure leaves extra
+ * backups, never fewer.
+ */
+export async function pruneDownloadBackups(
+  backupDir: string,
+  keep: number = DOWNLOAD_BACKUPS_KEEP,
+): Promise<void> {
+  const parent = dirname(backupDir);
+  const stamps = (await readdir(parent).catch(() => [] as string[])).sort();
+  for (const old of stamps.slice(0, Math.max(0, stamps.length - keep))) {
+    await rm(join(parent, old), { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /**
@@ -584,10 +621,15 @@ export async function rsyncPullToHost(
   const changes = parseItemizedChanges(dry.stdout);
   if (args.dryRun) return { changes, applied: false, missing };
 
-  const real = await execa('rsync', [...baseArgs, src, dst], { reject: false, input });
+  const backupArgs = args.backupDir ? ['--backup', `--backup-dir=${args.backupDir}`] : [];
+  const real = await execa('rsync', [...baseArgs, ...backupArgs, src, dst], {
+    reject: false,
+    input,
+  });
   if (real.exitCode !== 0) {
     throw new Error(`rsync into ${args.destDir} failed: ${real.stderr || real.stdout}`);
   }
+  if (args.backupDir) await pruneDownloadBackups(args.backupDir);
   return { changes, applied: true, missing };
 }
 

@@ -461,6 +461,8 @@ export interface PullOptions {
   noRefresh?: boolean;
   /** Default false. Run rsync with --dry-run; return the change list without writing. */
   dryRun?: boolean;
+  /** Keep the files the pull replaces here (see `RsyncPullArgs.backupDir`). */
+  backupDir?: string;
   /**
    * Extra env/config files to pull, selected by these basename globs via an
    * in-box `find` (heavy dirs pruned). Composes WITH gitignore selection: the
@@ -572,6 +574,7 @@ export async function pullToHost(
     excludes,
     dryRun: opts.dryRun,
     skipPaths: opts.skipPaths,
+    ...(opts.backupDir ? { backupDir: opts.backupDir } : {}),
   });
   return { hostPath: destDir, changes, applied, usedGitignore, missing };
 }
