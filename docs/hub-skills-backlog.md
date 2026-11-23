@@ -282,8 +282,10 @@ section, `GET|PUT /skills/{name}/skill-md`, `GET /skill-status`, and
 
 ## From Phase 6 (2026-11-23)
 
-- **The diff and the editor don't work in the web UI of a password (control-box)
-  hub.** Both read skill content, so they take custody's elevated read (admin
+- **FIXED (#460): the diff and the editor didn't work in the web UI of a
+  password (control-box) hub.** The owner approved a signed-in session as a
+  skill-content reader (`lib/skill-auth.ts`); custody keeps its stricter rule.
+  Original note: Both read skill content, so they take custody's elevated read (admin
   token, device token, or loopback on a token hub). A browser session on a
   password hub has none of these, so Review update shows `unauthorized` and the
   editor can't load. Owner decision: should a better-auth session count as the
@@ -319,8 +321,7 @@ section, `GET|PUT /skills/{name}/skill-md`, `GET /skill-status`, and
   refuses on a mismatch (pinning `ref` to the sha would freeze later refreshes).
 - **On a non-local hub, Review update still offers Approve when the diff
   couldn't be read** (`unauthorized`). Approve is pinned to the version shown in
-  the header, but the user hasn't seen its content. Goes with the session-as-
-  elevated-read decision above.
+  the header, but the user hasn't seen its content. Mostly moot since #460 (a signed-in session reads the diff); still applies to an API-key-only client.
 - **LATER (independent review of #458):**
   - Approve is clickable before the diff and scan have loaded
     (`update-dialog.tsx`); disable it while `!diff`.

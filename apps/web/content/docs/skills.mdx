@@ -153,7 +153,7 @@ A running box applies binding changes when it restarts or on `agentbox-ctl skill
 
 If the hub has no library, or can't be reached, nothing changes: boxes keep receiving your skills from your machine as described in [Keeping boxes in sync](#keeping-boxes-in-sync). Delivery needs a box image from this version or later; an older Docker image or cloud base keeps the old behaviour until it is rebuilt (`agentbox prepare`).
 
-Downloading a skill's files from the hub (`agentbox skills --download` / `--download-all`) is treated like reading custody, so it needs more than the API key the menu-bar app and web UI hold: the admin token, a computer enrolled with [`agentbox hub login`](/docs/deployed-hub), or, on a local hub, a request from the same machine. A computer that only holds the hub's API key (configured with `agentbox hub set-url` and `AGENTBOX_HUB_API_KEY`) can still list the library, but a download is refused (`401`); enroll it with `agentbox hub login` instead. Boxes are unaffected: they fetch their skills over the relay, authenticated as the box.
+Downloading a skill's files from the hub (`agentbox skills --download` / `--download-all`) is treated like reading custody, so it needs more than the API key the menu-bar app and web UI hold: the admin token, a computer enrolled with [`agentbox hub login`](/docs/deployed-hub), or, on a local hub, a request from the same machine. A computer that only holds the hub's API key (configured with `agentbox hub set-url` and `AGENTBOX_HUB_API_KEY`) can still list the library, but a download is refused (`401`); enroll it with `agentbox hub login` instead. In the hub web UI, the owner signed in on a deployed hub may read a skill's content (its update diff and `SKILL.md`); the API key alone still can't. Boxes are unaffected: they fetch their skills over the relay, authenticated as the box.
 
 ### Sources and updates
 
@@ -226,7 +226,7 @@ The hub web UI's **Skills** page covers everything above that doesn't need a PC'
 - **Skill proposals from boxes** (see [Skills written in a box](#skills-written-in-a-box)) are listed at the top of the page with Approve and Deny, next to the same entries in **Approvals**.
 - **Discard** deletes a skill and its versions after a confirm.
 
-Reading a skill's content (the update diff and the editor) takes the same access as downloading a skill. On a local hub, open the web UI from the same machine; on a [deployed control box](/docs/deployed-hub) the diff and editor need the admin token, so review updates there with `agentbox skills diff` / `update` from an enrolled PC.
+Reading a skill's content (the update diff and the editor) takes the same access as downloading a skill. On a local hub, open the web UI from the same machine; on a [deployed control box](/docs/deployed-hub) sign in as the owner, and the diff and the editor work. The hub API key alone (what the menu-bar app holds) still can't read skill content.
 
 Each **box's page** has a **Skills** section: the library skills the box was last given, with their versions and a `behind` mark when the box holds an older version than the library's; **Sync now** (a running box pulls its set at once); and an on / off / inherit choice per library skill for that box alone. That choice is a box binding, so it outranks the create flags and the project, workspace and global bindings; sync the box (or restart it) to apply it.
 

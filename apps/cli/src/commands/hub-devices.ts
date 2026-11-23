@@ -40,7 +40,7 @@ interface WireDevice {
 
 async function call<T>(
   url: string,
-  init: { method?: string; token?: string; body?: unknown } = {},
+  init: { method?: string; token?: string; body?: unknown; adminToken?: string } = {},
 ): Promise<{ status: number; body: T & ApiError }> {
   const res = await fetch(url, {
     method: init.method ?? 'GET',
@@ -48,6 +48,7 @@ async function call<T>(
       accept: 'application/json',
       ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}),
       ...(init.token ? { authorization: `Bearer ${init.token}` } : {}),
+      ...(init.adminToken ? { 'x-agentbox-admin-token': init.adminToken } : {}),
     },
     ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     signal: AbortSignal.timeout(15_000),
@@ -222,6 +223,28 @@ async function target(): Promise<{ url: string; token: string; mode: 'local' | '
 }
 let lastTarget: { url: string; mode: 'local' | 'remote' } | undefined;
 
+/**
+ * The admin token the owner actions (approve, deny, revoke or rename another
+ * device) need on top of the API key. The machine that ran `agentbox hub setup` /
+ * `hub expose` has it in its control-plane env file.
+ */
+async function ownerAdminToken(): Promise<string | undefined> {
+  const { loadControlPlaneEnv } = await import('../control-plane/env-file.js');
+  loadControlPlaneEnv();
+  return process.env.AGENTBOX_RELAY_ADMIN_TOKEN || undefined;
+}
+
+/** A 403 on an owner action: say where it can be done instead. */
+function failOwner(status: number, body: ApiError, what: string): void {
+  fail(status, body);
+  if (status === 403) {
+    log.info(
+      `To ${what}, sign in to the hub's web UI and use its Devices page, or run this on the ` +
+        'machine that ran `agentbox hub setup` (it holds the admin token).',
+    );
+  }
+}
+
 function fail(status: number, body: ApiError): void {
   log.error(`${body.error?.message ?? 'request failed'} (${String(status)})`);
   if (status === 401) log.info(hubUnauthorizedHint(lastTarget?.url, lastTarget?.mode ?? 'remote'));
@@ -262,17 +285,21 @@ const devicesListSub = new Command('list')
   });
 
 const devicesApproveSub = new Command('approve')
-  .description('Approve an enrollment code (needs the owner API key, not a device token)')
+  .description(
+    'Approve an enrollment code (needs the admin token, held by the machine that ran `hub setup`)',
+  )
   .argument('<code>', 'the XXXX-XXXX code `hub login` printed')
   .action(async (code: string) => {
     try {
       const t = await target();
+      const adminToken = await ownerAdminToken();
       const res = await call<{ device: WireDevice }>(`${t.url}/api/v1/devices/approve`, {
         method: 'POST',
         token: t.token,
         body: { userCode: code },
+        ...(adminToken ? { adminToken } : {}),
       });
-      if (res.status !== 200) return fail(res.status, res.body);
+      if (res.status !== 200) return failOwner(res.status, res.body, `approve ${code}`);
       log.success(`Approved ${res.body.device.label} (${res.body.device.id}).`);
     } catch (err) {
       handleLifecycleError(err);
@@ -285,11 +312,13 @@ const devicesRevokeSub = new Command('revoke')
   .action(async (id: string) => {
     try {
       const t = await target();
+      const adminToken = await ownerAdminToken();
       const res = await call(`${t.url}/api/v1/devices/${encodeURIComponent(id)}/revoke`, {
         method: 'POST',
         token: t.token,
+        ...(adminToken ? { adminToken } : {}),
       });
-      if (res.status !== 200) return fail(res.status, res.body);
+      if (res.status !== 200) return failOwner(res.status, res.body, `revoke ${id}`);
       log.success(`Revoked ${id}.`);
     } catch (err) {
       handleLifecycleError(err);
@@ -303,12 +332,14 @@ const devicesRenameSub = new Command('rename')
   .action(async (id: string, label: string) => {
     try {
       const t = await target();
+      const adminToken = await ownerAdminToken();
       const res = await call(`${t.url}/api/v1/devices/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         token: t.token,
         body: { label },
+        ...(adminToken ? { adminToken } : {}),
       });
-      if (res.status !== 200) return fail(res.status, res.body);
+      if (res.status !== 200) return failOwner(res.status, res.body, `rename ${id}`);
       log.success(`Renamed ${id} to ${label}.`);
     } catch (err) {
       handleLifecycleError(err);

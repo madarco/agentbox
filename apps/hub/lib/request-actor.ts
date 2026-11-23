@@ -32,22 +32,38 @@ export function requestActor(req: Request): RequestActor {
   return parseActor(req.headers.get(ACTOR_HEADER));
 }
 
-/**
- * Whether the caller may enroll a new device. Not a device: a stolen laptop must
- * not be able to mint itself a spare token before it is revoked. The owner's
- * browser session and the operator's API key may. (No devices exist on a hub
- * without the password profile, so other actors never reach this.)
- */
-export function canApproveDevices(actor: RequestActor): boolean {
-  return actor.kind === 'session' || actor.kind === 'api-key';
+/** What the caller proved beyond its actor (the admin token, checked by the route). */
+export interface OwnerProof {
+  adminToken: boolean;
 }
 
 /**
- * Whether the caller may revoke or rename device `id`: the owner may touch any
- * device; a device only itself (`agentbox hub logout`). A stolen laptop must not
- * be able to lock the owner's other computers out.
+ * Whether the caller may enroll a new device (approve, deny, list pending). A
+ * signed-in owner session may; so may the API key, but only together with the
+ * admin token: the key alone travels to the tray and every thin client, and an
+ * enrolled device's token is an elevated credential (custody byte reads), so
+ * the key must not be able to mint one. Never a device: a stolen laptop must not
+ * mint itself a spare token before it is revoked. (No devices exist on a hub
+ * without the password profile, so other actors never reach this.)
  */
-export function canManageDevice(actor: RequestActor, id: string): boolean {
-  if (canApproveDevices(actor)) return true;
+export function canApproveDevices(
+  actor: RequestActor,
+  proof: OwnerProof = { adminToken: false },
+): boolean {
+  return actor.kind === 'session' || (actor.kind === 'api-key' && proof.adminToken);
+}
+
+/**
+ * Whether the caller may revoke or rename device `id`: the owner (as for
+ * {@link canApproveDevices}) may touch any device; a device only itself
+ * (`agentbox hub logout`). A stolen laptop must not be able to lock the owner's
+ * other computers out.
+ */
+export function canManageDevice(
+  actor: RequestActor,
+  id: string,
+  proof: OwnerProof = { adminToken: false },
+): boolean {
+  if (canApproveDevices(actor, proof)) return true;
   return actor.kind === 'device' && actor.deviceId === id;
 }
