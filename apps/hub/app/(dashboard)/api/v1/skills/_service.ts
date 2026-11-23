@@ -47,3 +47,22 @@ export function failFromSkills(err: unknown, fallback: string): Response {
   if (err instanceof Error && err.name === 'CustodyPathError') return fail('invalid_request', msg);
   return fail('internal', msg);
 }
+
+/**
+ * `file:///` git sources read the hub's own disk, so only a loopback caller on
+ * a local (non-password) hub may name one: that caller already owns the disk.
+ */
+export function fileGitAllowed(req: Request): boolean {
+  return req.headers.get(PEER_LOOPBACK_HEADER) === '1' && authMode() !== 'password';
+}
+
+export async function readJson(req: Request): Promise<Record<string, unknown> | null> {
+  const body = (await req.json().catch(() => null)) as unknown;
+  return body && typeof body === 'object' && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : null;
+}
+
+export function stringList(v: unknown): string[] | undefined {
+  return Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : undefined;
+}

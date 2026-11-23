@@ -1,5 +1,6 @@
 import type { HostSessionsBackend } from '../backend/history-host';
 import type { AddBoxAgentResult } from '../backend/box-agents';
+import type { SkillsBackend } from '../backend/skills-backend';
 import type {
   HubState,
   ManagerView,
@@ -558,6 +559,7 @@ export interface HubBackend
     TimelineBackend,
     CheckoutBackend,
     AccountBackend,
+    SkillsBackend,
     HostSessionsBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
   // backend — so the backend produces everything else. `live` (opt-in, expensive
