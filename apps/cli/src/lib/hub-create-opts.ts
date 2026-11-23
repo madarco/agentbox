@@ -56,15 +56,25 @@ export interface HubCreateOptsInput {
     borrowCredentials?: readonly string[];
     /** Named LLM account per agent (`--account`), already resolved locally. */
     accounts?: Readonly<Record<string, string>>;
+    /** `--llm-proxy`, else the project's `llm.proxy` (resolved here: the hub has no project config). */
+    llmProxy?: 'off' | 'forward';
     sessionName?: string;
     /** Library skill selection from `--skills` / `--skip-skills` / `--no-skills`. */
     skills?: SkillSelection;
   };
 }
 
+/**
+ * The wire bag. `llmProxy` travels as a MODE: the hub resolves the upstream
+ * from its own address (the job record's `llmProxy` is that resolved record).
+ */
+export type HubWireCreateOpts = Omit<CreateJobRequestOpts, 'llmProxy'> & {
+  llmProxy?: 'off' | 'forward';
+};
+
 export interface HubCreateOpts {
   /** The bag to send. Empty means the caller omits `opts` entirely. */
-  opts: CreateJobRequestOpts;
+  opts: HubWireCreateOpts;
   /** House-style "ignored" lines; the caller `log.warn`s each. Never throws. */
   warnings: string[];
 }
@@ -166,7 +176,7 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
   const location = typeof sizing.location === 'string' ? sizing.location : undefined;
   const inbound = typeof sizing.inbound === 'string' ? sizing.inbound : undefined;
 
-  const opts: CreateJobRequestOpts = {
+  const opts: HubWireCreateOpts = {
     // Absent means "the control box decides", so only what was actually asked
     // for is sent — sending `false` everywhere would override its own config.
     ...(snapshot ? { snapshot } : {}),
@@ -183,6 +193,7 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
     ...(resolved.accounts && Object.keys(resolved.accounts).length > 0
       ? { accounts: { ...resolved.accounts } }
       : {}),
+    ...(resolved.llmProxy ? { llmProxy: resolved.llmProxy } : {}),
     ...(flags.useBranch ? { useBranch: flags.useBranch } : {}),
     ...(resolved.sessionName ? { sessionName: resolved.sessionName } : {}),
     ...(resolved.skills ? { skills: resolved.skills } : {}),

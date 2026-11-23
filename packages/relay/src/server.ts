@@ -26,7 +26,7 @@ import { describeCpCacheEntries, lookupCpCache, serveCpFromCache } from './cp-ca
 import { cpOutboxPrefix, listCpOutbox, parkCpOutbox, removeCpOutboxItem } from './cp-outbox.js';
 import { HubNotifier } from './hub-notifier.js';
 import { BoxNotices } from './notices.js';
-import { buildAgentDescriptors } from '@agentbox/sandbox-core';
+import { buildAgentDescriptors, isValidLlmProxyUpstream } from '@agentbox/sandbox-core';
 import { registrationAgents } from './registration-to-record.js';
 import { mergeRegistrationOrigin } from './registration-origin.js';
 import {
@@ -106,7 +106,7 @@ import {
   CredentialsFanout,
   stateBoxAccount,
 } from './credentials-fanout.js';
-import type { HistoryIngestSink } from '@agentbox/core';
+import type { HistoryIngestSink, LlmProxyRecord } from '@agentbox/core';
 import { HistoryRelay } from './history/history-relay.js';
 import { runHistoryRpc } from './history/rpc.js';
 import { BoxStatusStore, isValidBoxStatus, normalizeBoxStatus } from './status-store.js';
@@ -1972,6 +1972,9 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             ? body.agent
             : (existingReg?.agent ?? undefined),
         accounts: sanitizeAccounts(body.accounts),
+        // Kept from the stored registration when a re-register omits it, like
+        // `agent`: a relaunch from a record that predates it must not strip it.
+        llmProxy: sanitizeLlmProxy(body.llmProxy) ?? existingReg?.llmProxy,
         projectSlug:
           typeof body.projectSlug === 'string' && body.projectSlug.length > 0
             ? body.projectSlug
@@ -3355,6 +3358,17 @@ function parseReachPrompt(raw: unknown): Omit<PromptAskEvent, 'id'> | null {
 }
 
 /** A registration's `accounts`, kept only when it is `{ agent: account-id }`. */
+/** A registration's `llmProxy`, kept only when it is `{ mode: 'forward', upstream: host:port }`. */
+function sanitizeLlmProxy(raw: unknown): LlmProxyRecord | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  return r.mode === 'forward' &&
+    typeof r.upstream === 'string' &&
+    isValidLlmProxyUpstream(r.upstream)
+    ? { mode: 'forward', upstream: r.upstream }
+    : undefined;
+}
+
 function sanitizeAccounts(raw: unknown): Record<string, string> | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, string> = {};

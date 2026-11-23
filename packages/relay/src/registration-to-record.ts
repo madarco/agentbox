@@ -160,6 +160,10 @@ export function registrationToBoxRecord(
     ...((reg.accounts ?? existing?.accounts)
       ? { accounts: reg.accounts ?? existing?.accounts }
       : {}),
+    // The hub egress proxy too, or an adopted box's agent would run direct.
+    ...((reg.llmProxy ?? existing?.llmProxy)
+      ? { llmProxy: reg.llmProxy ?? existing?.llmProxy }
+      : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
     ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,

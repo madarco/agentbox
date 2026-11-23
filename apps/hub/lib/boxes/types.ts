@@ -192,6 +192,12 @@ export interface Box {
     label?: string;
     kind?: 'login' | 'setup-token' | 'api-key';
   }>;
+  /**
+   * The hub egress proxy this box's agents use (`{ mode: 'forward', upstream }`,
+   * `upstream` = the hub proxy's `host:port` as the box dials it); absent = LLM
+   * traffic goes direct. Fixed at create. Read-only. (llm-accounts Phase 7.)
+   */
+  llmProxy?: { mode: 'forward'; upstream: string };
   // Sync federation shape ('cloud' | 'control-plane'); a hub-created box is
   // 'control-plane'. Absent for docker.
   topology?: string;

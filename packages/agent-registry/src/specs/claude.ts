@@ -158,6 +158,9 @@ export const claudeSpec: AgentSyncSpec = {
   // holders of the account the way a login refresh does.
   accountKinds: ['login', 'setup-token', 'api-key'],
   accountEnv: { 'api-key': 'ANTHROPIC_API_KEY', 'setup-token': 'CLAUDE_CODE_OAUTH_TOKEN' },
+  // Inference + account calls, OAuth refresh, claude.ai MCP connectors, login
+  // (measured in llm-accounts Phase 0 (c); `claude.ai` from code).
+  llmHosts: ['api.anthropic.com', 'platform.claude.com', 'mcp-proxy.anthropic.com', 'claude.ai'],
   forwardedEnvKeys: [
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',

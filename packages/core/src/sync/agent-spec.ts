@@ -866,6 +866,14 @@ export interface AgentSyncSpec {
    * pasted kind in `accountKinds`.
    */
   accountEnv?: Readonly<Partial<Record<Exclude<LlmAccountKind, 'login'>, string>>>;
+  /**
+   * The hosts this agent's model traffic goes to — inference, OAuth refresh,
+   * the account calls (llm-accounts Phase 7). With `llm.proxy: forward` these,
+   * and only these, leave through the hub's CONNECT proxy; telemetry and tool
+   * traffic go direct. Plain hostnames (port 443 is implied), measured live in
+   * Phase 0 (c). Absent = the agent's traffic is never proxied.
+   */
+  llmHosts?: readonly string[];
   /** Host env keys forwarded into the box so an env-authed agent finds its creds. */
   forwardedEnvKeys: readonly string[];
   /**

@@ -263,6 +263,18 @@ export {
   resolveModelAuthIngest,
   resolveModelAuthSources,
 } from './borrowed-credentials.js';
+export {
+  LLM_SPLIT_PROXY_PORT,
+  LLM_SPLIT_PROXY_SCRIPT,
+  isValidLlmProxyUpstream,
+  llmProxyLaunchPreamble,
+  resolveLlmProxyRecord,
+  allAgentLlmHosts,
+  llmProxyCredential,
+  llmProxyListenerEnabled,
+  LLM_PROXY_HMAC_LABEL,
+  type LlmProxyConfig,
+} from './llm-split-proxy.js';
 export * from './sync/index.js';
 export * from './sync/agent-pull-module.js';
 export {

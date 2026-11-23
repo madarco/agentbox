@@ -157,6 +157,12 @@ A box carries its accounts as `accounts` (`{ "claude": "work" }`, fixed at
 create) and `accountsInfo` (`[{ agent, account, label?, kind? }]`); create a
 box on one with `opts.accounts` on `POST /boxes`.
 
+`opts.llmProxy` (`"off"` or `"forward"`) on `POST /boxes` is the API version of
+`--llm-proxy`. The hub resolves the upstream from its own `llm.proxyPort` /
+`llm.proxyUrl`, and a box created that way carries `llmProxy`
+(`{ mode: "forward", upstream }`). See
+[route LLM traffic through the hub](/docs/run-an-agent#route-llm-traffic-through-the-hub).
+
 ### Devices
 
 Computers enrolled on a deployed or exposed hub with `agentbox hub login`. A device's `id` is its machine id (`~/.agentbox/machine-id`). A local hub has no devices and answers `503`.

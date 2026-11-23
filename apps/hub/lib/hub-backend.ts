@@ -37,6 +37,7 @@ import {
   type BoxRecord,
   type CloudSandboxSummary,
   type ExecResult,
+  type LlmProxyRecord,
   type PromptAnswer,
   type Provider,
   primaryAgent,
@@ -135,6 +136,7 @@ import {
   listProviderDescriptors,
   resolveProviderDescriptor,
   readAccounts,
+  resolveLlmProxyRecord,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
@@ -510,6 +512,7 @@ function mapBox(
     ...(b.agents && b.agents.length > 0 ? { agents: [...b.agents] } : {}),
     borrowedCredentials: b.borrowedCredentials,
     ...(b.accounts ? { accounts: { ...b.accounts } } : {}),
+    ...(b.llmProxy ? { llmProxy: { ...b.llmProxy } } : {}),
     topology: b.cloud?.topology,
   };
 }
@@ -642,6 +645,7 @@ function mapRegistrationToBox(reg: BoxRegistration): Box {
     // looked agentless and its gateway was never started.
     ...(reg.agent && reg.agent !== 'none' ? { agents: [reg.agent] } : {}),
     ...(reg.accounts ? { accounts: { ...reg.accounts } } : {}),
+    ...(reg.llmProxy ? { llmProxy: { ...reg.llmProxy } } : {}),
     // A control box only knows a registered box through the plane, so it is by
     // definition a control-plane-topology box.
     topology: 'control-plane',
@@ -2247,6 +2251,19 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     }
     const mapped = controlPlaneCreateRequest(input, repoUrl);
     if (!mapped.ok) return { ok: false, error: mapped.error };
+    // The hub egress proxy: the client sends a mode, the upstream is THIS
+    // hub's address (llm-accounts Phase 7). No project config here: the mode
+    // falls back to this hub's own global `llm.proxy`.
+    try {
+      const llmProxy = resolveLlmProxyRecord(
+        mapped.request.provider ?? 'docker',
+        (await loadEffectiveConfig(os.homedir())).effective.llm,
+        input.opts?.llmProxy,
+      );
+      if (llmProxy) mapped.request.opts = { ...mapped.request.opts, llmProxy };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
     if (mapped.dropped.length > 0) {
       // Says so out loud rather than building a box that quietly is not what was
       // asked for. Reaches a CLI as a job-log warning; a client that shows no
@@ -2748,6 +2765,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
+        // The hub egress proxy (llm-accounts Phase 7): the mode is the client's
+        // or the project's; port and URL are THIS hub's (global config only).
+        let llmProxy: LlmProxyRecord | undefined;
+        try {
+          llmProxy = resolveLlmProxyRecord(
+            provider,
+            (await loadEffectiveConfig(os.homedir())).effective.llm,
+            o.llmProxy ?? (await loadEffectiveConfig(workspace)).effective.llm.proxy,
+          );
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
         // Declined after a re-review: withdraw the standing approval, or the
         // next create would silently copy what the user just refused.
         if (gated.carryDeclined && !isHubWorkerClone(workspace)) {
@@ -2829,6 +2858,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             carry: gated.carry as QueueJobCreateOpts['carry'],
             borrowCredentials: gated.borrowCredentials,
             ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+            ...(llmProxy ? { llmProxy } : {}),
             // Restore only. Not reachable from the wire — `parseCreateBox` does
             // not accept it — so a plain create cannot ask the worker to push an
             // arbitrary directory into a box's agent config dir.

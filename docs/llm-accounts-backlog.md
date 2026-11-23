@@ -278,3 +278,70 @@ naming the file, like `GET`, instead of a bare 500.
 - **(f) `custody-client.ts` (~311) reads the machine id before the account
   loop**, so a failure reading it also skips the DEFAULT-login push. Read it
   lazily inside the loop (or catch it), so the default push never depends on it.
+
+## From Phase 7 (hub egress proxy, `forward`)
+
+- **No live egress check from a real cloud box yet.** It needs the hub's
+  `llm.proxyPort` published on a public address (`llm.proxyUrl`); the local
+  chain was verified live (plan, Phase 7 item 8). Steps are in the #PR body.
+- **The split proxy is started at agent launch, not supervised.** If it dies
+  mid-session the agent gets a refused connection (claude retries those
+  silently). A relaunch restarts it. Move it under ctl's supervisor when the
+  image next changes.
+- **The hub allowlist is the union of every agent's `llmHosts`**, not the
+  box's own agents: a claude box's token can tunnel to `chatgpt.com`, and an
+  installed plugin agent (`agentbox agent add`) can add any syntactically valid
+  host to it (Phase 7 review). The plugin is user-installed, but narrow the
+  allowlist by the registration's agents and keep plugin hosts behind an
+  explicit grant. The list is also read once per process: a plugin added after
+  the hub started is not allowed until a restart.
+- **A failed proxy auth is not throttled** (Phase 7 review). The listener only
+  runs after a global opt-in, but a reachable `llm.proxyPort` allows unlimited
+  token guesses. Rate-limit 407s per peer.
+- **A cloned box (`clone-create`) does not carry `llmProxy`** and goes direct.
+  (Adopt/relaunch carry it since the #446 review: it rides the registration.)
+- **A control-box create resolves the mode from that hub's global
+  `llm.proxy`** when the client sends none: it has no project config. The CLI
+  sends `forward` when the project says so; a project's explicit `off` against
+  a hub whose global is `forward` still lands on `forward`.
+- **Agents without `llmHosts` (opencode, pi, plugins, the openclaw service
+  units) are never proxied**, even in a box recorded `forward`, and nothing
+  warns at create (Phase 7 review). Documented; warn, or refuse `forward` for
+  such an agent, once more agents can declare hosts.
+- **No UI for it**: the web create dialog has no LLM-proxy toggle and the
+  tray shows nothing; `Box.llmProxy` is in the payload for both.
+- **Successful tunnels are not logged or counted**; only refusals are.
+
+### From the #446 review
+
+Fixed in #446: B1 (`llmProxy` rides the registration, adopt and the hub
+payload; a foreground create that asked for `forward` refuses to attach a box
+without it) and B2 (a proxy-only HMAC credential replaces the relay token on
+the unencrypted hub leg).
+
+- **L1 An older hub silently drops `opts.llmProxy`**, so `forward` becomes
+  direct with no warning on the `-i` / web paths (the foreground adopt path now
+  refuses). Report unknown create opts back, or check `Box.llmProxy` after.
+- **L2 `withSessionLlmProxy` fails open** when `state.json` cannot be read: the
+  docker session starts unproxied. Refuse the launch instead when the read
+  fails.
+- **L3 (docs fixed)** The Phase 7 docs said the relay token never enters the
+  agent's env; `AGENTBOX_RELAY_TOKEN` is in the container / provision env
+  (pre-existing). The wording now only claims the token never goes to the
+  proxy.
+- **L4 Tunnels outlive a revoked token**, there is no idle timeout, and a
+  client closing during the auth lookup leaks the upstream socket. Track
+  tunnels per box (close on forget), add an idle timeout, destroy on client
+  close before connect.
+- **L5 The listener binds `0.0.0.0` even docker-only** (LAN exposure once
+  opted in). Bind the docker bridge / loopback when no `llm.proxyUrl` is set.
+- **L6 `llmHostsProblem` accepts IP literals**, so a plugin agent could add
+  `127.0.0.1` and open the hub's loopback through the proxy. Refuse IPs and
+  single-label names; resolve and refuse private addresses at connect.
+- **L7 Provider SDK republish**: community providers on the old SDK have no
+  `llmProxy` on `CreateBoxRequest` / the attach preamble, so their boxes go
+  direct. Republish (additive, no `SDK_API_VERSION` bump).
+- **L8 `create-action.ts` (~648-649) spreads `localLlmProxy()` twice** in the
+  queued-create opts. Harmless (memoized, same value); drop one.
+- **L9 A project-level `llm.proxyPort` / `llm.proxyUrl` is silently ignored**
+  (they are global-only by design). Warn when a project config sets them.

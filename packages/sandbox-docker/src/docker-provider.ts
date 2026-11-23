@@ -83,6 +83,7 @@ export const dockerProvider: Provider = {
       // control-plane create arrives only as a CreateBoxRequest.
       ...(req.skills ? { skills: req.skills } : {}),
       ...(req.accounts ? { accounts: req.accounts } : {}),
+      ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
       claudeConfig: po.claudeConfig,
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,

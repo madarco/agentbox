@@ -313,6 +313,12 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     }
     out.accounts = accounts;
   }
+  if (v.llmProxy !== undefined) {
+    if (v.llmProxy !== 'off' && v.llmProxy !== 'forward') {
+      return { ok: false, message: "opts.llmProxy must be 'off' or 'forward'" };
+    }
+    out.llmProxy = v.llmProxy;
+  }
   // promptAnswers: PromptAnswer[] — the client's answers to create-preflight.
   // Only the shape is checked here; the backend matches each id against the
   // question it actually asks, and refuses a stale one.

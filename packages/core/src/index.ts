@@ -16,6 +16,7 @@ export type {
   DockerBoxFields,
   FindBoxResult,
   GitWorktreeRecord,
+  LlmProxyRecord,
   ProviderName,
   SshTargetRecord,
   StateFile,

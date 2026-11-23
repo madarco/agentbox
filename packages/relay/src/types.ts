@@ -6,6 +6,7 @@ import type {
   PromptDetail,
   PromptKind as CorePromptKind,
   SkillSelection,
+  LlmProxyRecord,
 } from '@agentbox/core';
 
 export type { SkillSelection };
@@ -138,6 +139,12 @@ export interface BoxRegistration {
    */
   accounts?: Record<string, string>;
   /**
+   * The hub egress proxy the box was created with (`BoxRecord.llmProxy`;
+   * llm-accounts Phase 7). Carried so a PC that adopts or relaunches the box
+   * starts its agent behind the proxy instead of silently direct.
+   */
+  llmProxy?: LlmProxyRecord;
+  /**
    * Custody `projects/<slug>` key of the box's project (owner__repo). Links a
    * registration to its seed material and secrets without re-deriving the slug
    * from `originUrl` on every consumer.
@@ -260,6 +267,8 @@ export interface RegisterBoxBody {
   agent?: string;
   /** Named LLM account per agent (see `BoxRegistration.accounts`). */
   accounts?: Record<string, string>;
+  /** The hub egress proxy (see `BoxRegistration.llmProxy`). */
+  llmProxy?: LlmProxyRecord;
   /** Custody `projects/<slug>` key of the box's project. */
   projectSlug?: string;
   /** Alias-expanded repo key, computed by the registering machine. */

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_AGENT_SPECS } from '../src/index.js';
-import { accountEnvProblem, accountKindsProblem, agentSpecProblem } from '../src/plugin-agents.js';
+import {
+  accountEnvProblem,
+  accountKindsProblem,
+  agentSpecProblem,
+  llmHostsProblem,
+} from '../src/plugin-agents.js';
 import { exampleSpec } from '../src/specs/example.js';
 
 describe('accountKinds on the built-in rows', () => {
@@ -89,5 +94,31 @@ describe('accountEnvProblem (Phase 3)', () => {
     expect(accountEnvProblem({ login: 'X' }, ['login'])).toMatch(/not a pasted kind/);
     expect(accountEnvProblem({ 'api-key': 'my-key' }, ['api-key'])).toMatch(/UPPER_SNAKE/);
     expect(accountEnvProblem({}, ['setup-token'])).toMatch(/'setup-token'/);
+  });
+});
+
+describe('llmHostsProblem (Phase 7)', () => {
+  it('every built-in row passes, and claude/codex declare their model hosts', () => {
+    for (const spec of BUILTIN_AGENT_SPECS) {
+      if (spec.llmHosts) expect(llmHostsProblem(spec.llmHosts), spec.id).toBeNull();
+    }
+    const byId = new Map(BUILTIN_AGENT_SPECS.map((s) => [s.id, s]));
+    expect(byId.get('claude')?.llmHosts).toContain('api.anthropic.com');
+    expect(byId.get('codex')?.llmHosts).toContain('chatgpt.com');
+  });
+  it('refuses wildcards, ports, schemes and uppercase: the hub allowlist is built from these', () => {
+    expect(llmHostsProblem(['api.example.com'])).toBeNull();
+    for (const bad of [
+      '*.example.com',
+      'api.example.com:443',
+      'https://api.example.com',
+      'API.example.com',
+      'localhost',
+      '',
+    ]) {
+      expect(llmHostsProblem([bad]), bad).toMatch(/llmHosts/);
+    }
+    expect(llmHostsProblem('api.example.com')).toMatch(/array/);
+    expect(agentSpecProblem({ ...exampleSpec, llmHosts: ['*.evil.com'] })).toMatch(/llmHosts/);
   });
 });

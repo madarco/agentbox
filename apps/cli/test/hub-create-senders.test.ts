@@ -27,7 +27,8 @@ describe('one builder feeds every hub-routed create', () => {
     for (const parts of senders) {
       const s = src(...parts);
       const builds = s.includes('buildHubCreateOpts(');
-      const forwards = s.includes('opts?: CreateJobRequestOpts');
+      // The built bag's type: `buildHubCreateOpts`' wire shape (llmProxy as a mode).
+      const forwards = s.includes('opts?: HubWireCreateOpts');
       expect(builds || forwards, `${parts.join('/')} hand-rolls its hub opts`).toBe(true);
     }
   });

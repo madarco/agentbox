@@ -10,7 +10,10 @@ import { dockerField } from '@agentbox/core';
 import {
   accountEnvPolicy,
   applyAccountEnv,
+  allAgentLlmHosts,
   boxAccount,
+  findAgentSpec,
+  llmProxyLaunchPreamble,
   NO_ACCOUNT_ENV,
   readState,
   resolveAgentSpec,
@@ -54,4 +57,28 @@ export async function boxAccountForContainer(
   const box = state.boxes.find((b) => dockerField(b, 'container') === container);
   const account = boxAccount(box, agent);
   return account === 'default' ? undefined : account;
+}
+
+/**
+ * Prefix `cmd` (a tmux session command) with the LLM split-proxy preamble when
+ * the box running as `container` was created with `llm.proxy: forward` and
+ * `agent` declares model hosts (llm-accounts Phase 7); `cmd` unchanged
+ * otherwise. The proxy is recorded on the box at create, never read from
+ * current config.
+ */
+export async function withSessionLlmProxy(
+  agent: string,
+  container: string,
+  cmd: string,
+): Promise<string> {
+  let box;
+  try {
+    box = (await readState()).boxes.find((b) => dockerField(b, 'container') === container);
+  } catch {
+    return cmd;
+  }
+  if (!box?.llmProxy || !findAgentSpec(agent)?.llmHosts?.length) return cmd;
+  // Every agent's hosts: one split proxy serves the whole box (see the cloud seam).
+  const preamble = llmProxyLaunchPreamble(box.llmProxy, allAgentLlmHosts());
+  return preamble ? `${preamble}exec ${cmd}` : cmd;
 }

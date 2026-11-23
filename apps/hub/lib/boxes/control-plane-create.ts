@@ -72,6 +72,8 @@ export interface ControlPlaneCreateInput {
     skills?: { none?: boolean; include?: string[]; exclude?: string[] };
     /** Named LLM account per agent — a selection, never a secret. */
     accounts?: Record<string, string>;
+    /** `--llm-proxy`: a mode; this hub resolves the upstream. */
+    llmProxy?: 'off' | 'forward';
   };
 }
 
@@ -131,6 +133,8 @@ const HOST_LOCAL_OPT_KEYS = new Set([
   'remoteHost',
   'resync',
   'dangerouslySkipPermissions',
+  // A mode the hub resolves into a record itself (llm-accounts Phase 7).
+  'llmProxy',
 ]);
 
 /**

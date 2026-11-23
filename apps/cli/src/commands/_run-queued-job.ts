@@ -388,6 +388,8 @@ async function runDockerJob(
     ...(opts.accounts && Object.keys(opts.accounts).length > 0
       ? { accounts: { ...opts.accounts } }
       : {}),
+    // The hub egress proxy, resolved at enqueue (llm-accounts Phase 7).
+    ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
     // The agent's own `box.isolate<Agent>Config` accessor, through its CLI
     // module — the same one `create-action` uses — instead of a switch over
     // three named options. An agent this build has no module for (a service
@@ -666,6 +668,8 @@ async function runCloudJob(
     ...(opts.accounts && Object.keys(opts.accounts).length > 0
       ? { accounts: { ...opts.accounts } }
       : {}),
+    // The hub egress proxy, resolved at enqueue (llm-accounts Phase 7).
+    ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
     // `--build` (allowPull:false) + registry, credential-sync, bundle depth, and
     // the push mode: the foreground `create` conversion routes cloud creates
     // through this worker, so each must ride the job to match the old inline path.

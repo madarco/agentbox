@@ -37,6 +37,7 @@ import type {
   GitWorktreeRecord,
   InboundPolicy,
   InspectedBox,
+  LlmProxyRecord,
   Provider,
   ProviderCheckpoint,
   ProviderSync,
@@ -416,6 +417,7 @@ export function createCloudProvider(
       agent: primaryAgent(box),
       ...(box.skills ? { skills: box.skills } : {}),
       ...(box.accounts ? { accounts: box.accounts } : {}),
+      ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
     });
   }
 
@@ -670,6 +672,7 @@ export function createCloudProvider(
             webPort: box.cloud.webPort,
             agent: primaryAgent(box),
             ...(box.accounts ? { accounts: box.accounts } : {}),
+            ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
           });
         } catch {
@@ -697,6 +700,7 @@ export function createCloudProvider(
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
           agent: primaryAgent(box),
           ...(box.accounts ? { accounts: box.accounts } : {}),
+          ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
         });
       } catch {
         // best-effort
@@ -771,10 +775,12 @@ export function createCloudProvider(
       const timeoutMs =
         typeof timeoutOverride === 'number' && timeoutOverride >= 0 ? timeoutOverride : undefined;
       const networkPolicyOpt = req.providerOptions?.['networkPolicy'];
-      const networkPolicy =
+      const networkPolicy = withLlmProxyHost(
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
           ? networkPolicyOpt.trim()
-          : undefined;
+          : undefined,
+        req.llmProxy,
+      );
       // Generic VM-size string, resolved per-provider by the call site
       // (`resolveBoxSize` + `--size` flag). Each backend interprets it natively
       // (hetzner: server type; daytona: cpu-mem-disk GB; vercel: vCPUs);
@@ -1357,6 +1363,7 @@ export function createCloudProvider(
                 // the box's first boot got no service units (no gateway).
                 agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
                 ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+                ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
                 projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
@@ -1451,6 +1458,7 @@ export function createCloudProvider(
               ...(req.requester ? { requester: req.requester } : {}),
               agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
               ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+              ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
             });
           } catch (err) {
             log(
@@ -1488,6 +1496,7 @@ export function createCloudProvider(
                 ),
               }
             : {}),
+          ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
@@ -2245,4 +2254,20 @@ export function emptyCloudStats(provider: string): BoxResourceStats {
     limits: { memoryBytes: null, cpus: null, pidsLimit: null, disk: null },
     warnings: [],
   };
+}
+
+/**
+ * A sandbox network allowlist (vercel's `networkPolicy`) must let the box reach
+ * the hub's LLM proxy, or a `forward` box could reach nothing that matters.
+ * Unset / `allow-all` already does; `deny-all` is left as asked (the box was
+ * meant to be offline). Exported for tests.
+ */
+export function withLlmProxyHost(
+  policy: string | undefined,
+  llmProxy: LlmProxyRecord | undefined,
+): string | undefined {
+  if (!policy || !llmProxy || policy === 'allow-all' || policy === 'deny-all') return policy;
+  const host = llmProxy.upstream.slice(0, llmProxy.upstream.lastIndexOf(':'));
+  const entries = policy.split(',').map((s) => s.trim());
+  return entries.includes(host) ? policy : [...entries, host].join(',');
 }

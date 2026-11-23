@@ -259,6 +259,24 @@ export function accountEnvProblem(rawEnv: unknown, rawKinds: unknown): string | 
   return null;
 }
 
+const HOSTNAME_RE =
+  /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
+ * `llmHosts` are exact lowercase hostnames: the hub's proxy allowlist is built
+ * from them, so a wildcard or a host:port would widen it beyond what the agent
+ * declared.
+ */
+export function llmHostsProblem(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return '`llmHosts` must be an array of hostnames';
+  for (const h of raw as unknown[]) {
+    if (typeof h !== 'string' || !HOSTNAME_RE.test(h)) {
+      return `\`llmHosts\` entries must be plain lowercase hostnames (got ${JSON.stringify(h)})`;
+    }
+  }
+  return null;
+}
+
 function cloneProblem(raw: unknown): string | null {
   if (raw === null || typeof raw !== 'object') return '`clone` must be an object';
   const clone = raw as Record<string, unknown>;
@@ -357,6 +375,7 @@ export function agentSpecProblem(raw: unknown): string | null {
       ? null
       : accountKindsProblem(spec.accountKinds, spec.credential !== undefined)) ??
     accountEnvProblem(spec.accountEnv, spec.accountKinds) ??
+    (spec.llmHosts === undefined ? null : llmHostsProblem(spec.llmHosts)) ??
     staticPathsProblem(spec.staticPaths);
   if (shape !== null) return shape;
   // A spec that isn't JSON-round-trippable cannot reach a box: it travels to

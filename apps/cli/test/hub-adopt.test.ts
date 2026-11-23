@@ -389,3 +389,17 @@ describe('hubBoxToRegistration keeps a service agent (agentless-start fix)', () 
     expect(hubBoxToRegistration(box, () => 't').agent).toBeUndefined();
   });
 });
+
+describe('hubBoxToRegistration keeps the LLM proxy (#446 review B1)', () => {
+  const box = {
+    id: 'b1',
+    name: 'p',
+    provider: 'hetzner',
+    sandboxId: 's1',
+  } as unknown as Parameters<typeof hubBoxToRegistration>[0];
+  it('carries llmProxy, so the adopted record starts its agent behind the proxy', () => {
+    const llmProxy = { mode: 'forward' as const, upstream: 'hub.example.com:8790' };
+    expect(hubBoxToRegistration({ ...box, llmProxy }, () => 't').llmProxy).toEqual(llmProxy);
+    expect('llmProxy' in hubBoxToRegistration(box, () => 't')).toBe(false);
+  });
+});
