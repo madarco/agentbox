@@ -63,12 +63,17 @@ export async function POST(
     ...(shortStr(src.path, 512) ? { path: shortStr(src.path, 512)! } : {}),
   };
   if (!req.body) return fail('invalid_request', 'expected a tarball request body');
-  const max = globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES ?? DEFAULT_MAX_BYTES;
+  // The smaller of custody's blob cap and the proposal cap: a proposal's
+  // tarball waits in memory until someone answers it.
+  const max = Math.min(
+    globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES ?? DEFAULT_MAX_BYTES,
+    proposals.maxBytes,
+  );
   const tarball = await readCapped(req.body, max);
   if (!tarball) {
     return fail(
       'invalid_request',
-      `the skill is over ${String(max)} bytes. Raise AGENTBOX_CUSTODY_MAX_BLOB_BYTES on this hub to accept it.`,
+      `the skill is over ${String(max)} bytes, the cap for a skill proposed from a box. Add a skill that large from a PC with \`agentbox skills\` instead.`,
     );
   }
   try {

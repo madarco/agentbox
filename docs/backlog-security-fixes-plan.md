@@ -137,7 +137,15 @@ LATER (from the independent review of #456):
 - Clone: `autoApproveHostActions` / `autoApproveSafeHostActions` ride the registration
   from config, not a create option, so a clone takes the hub's current config.
 
-## Item 12 proposal: planted skills exhausting hub memory / host disk (not implemented)
+## Item 12: planted skills exhausting hub memory / host disk
+
+Approved and implemented after #456 on `fix/skill-proposal-caps`: the limits live in
+`SKILL_PROPOSAL_LIMITS` (`packages/sandbox-core/src/skills/proposal-limits.ts`), shared by
+the hub and the CLI. No config key: the caps are fixed (a real skill is a few KB; a
+bigger one goes in from a PC with `agentbox skills`), and `readLocalSkill` now refuses a
+`SKILL.md` that is not a regular file. The original proposal follows.
+
+### Proposal
 
 Verified on nightly. Hub: `createSkillProposals` keeps each pending proposal's
 **compressed** tarball in memory until the answer (up to 24 h), with one global cap of

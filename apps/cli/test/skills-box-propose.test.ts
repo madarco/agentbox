@@ -1,5 +1,15 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { boxSkillDirs, describeBoxSkillOutcomes, stagedSkillDir } from '../src/lib/skills/box-propose.js';
+import {
+  boxSkillDirs,
+  describeBoxSkillOutcomes,
+  PROBE_SCRIPT,
+  probeRefusal,
+  stagedSkillDir,
+} from '../src/lib/skills/box-propose.js';
 
 describe('box skill proposals', () => {
   it("maps each agent's skill dirs to box paths its config dir holds", () => {
@@ -32,5 +42,46 @@ describe('box skill proposals', () => {
     for (const bad of ['../../../home/u/.ssh', '..', 'a/b', 'UPPER', '', '-x']) {
       expect(() => stagedSkillDir('/tmp/stage', 1, bad)).toThrow(/not a valid skill name/);
     }
+  });
+});
+
+// The in-box probe, run for real with this machine's sh/find/awk (a box runs the
+// same GNU tools). No HOME is touched: everything is under a fresh temp dir.
+describe('box skill probe (before anything leaves the box)', () => {
+  const probe = (dir: string, max = 8 * 1024 * 1024): string | null =>
+    probeRefusal(execFileSync('sh', ['-c', PROBE_SCRIPT(dir)], { encoding: 'utf8' }), dir, max);
+  const skillDir = (): string => {
+    const d = join(mkdtempSync(join(tmpdir(), 'agentbox-probe-')), 'my-skill');
+    mkdirSync(join(d, 'scripts'), { recursive: true });
+    writeFileSync(join(d, 'SKILL.md'), '---\nname: my-skill\ndescription: x\n---\n');
+    writeFileSync(join(d, 'scripts', 'run.sh'), 'echo hi\n');
+    return d;
+  };
+
+  it('passes a skill of plain files and folders', () => {
+    expect(probe(skillDir())).toBeNull();
+  });
+
+  it('refuses a SKILL.md that links to /dev/zero (a read that never ends)', () => {
+    const d = skillDir();
+    rmSync(join(d, 'SKILL.md'));
+    symlinkSync('/dev/zero', join(d, 'SKILL.md'));
+    expect(probe(d)).toMatch(/holds SKILL\.md, which is not a plain file or folder/);
+  });
+
+  it('refuses a FIFO', () => {
+    const d = skillDir();
+    execFileSync('mkfifo', [join(d, 'pipe')]);
+    expect(probe(d)).toMatch(/holds pipe/);
+  });
+
+  it('refuses a skill over the cap before pulling it', () => {
+    const d = skillDir();
+    writeFileSync(join(d, 'big.bin'), Buffer.alloc(2048));
+    expect(probe(d, 1024)).toMatch(/over the 1024-byte cap for a proposed skill/);
+  });
+
+  it('refuses when the probe printed nothing it can read', () => {
+    expect(probeRefusal('', '/x', 10)).toMatch(/could not be read/);
   });
 });

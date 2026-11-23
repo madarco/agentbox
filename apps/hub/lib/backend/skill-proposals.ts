@@ -5,7 +5,8 @@
 // the approver sees the hub's own tree hash, frontmatter check, secret scan and
 // SKILL.md preview, not what the uploader claims. The tarball waits in memory
 // until the answer (an unanswered approval resolves to no after a day, and a
-// hub restart drops it with the prompt mailbox).
+// hub restart drops it with the prompt mailbox), so that memory is capped:
+// `SKILL_PROPOSAL_LIMITS` per box, per hub, per proposal and in total.
 import { Readable } from 'node:stream';
 import type { McpApprovalRequest } from '@agentbox/core';
 import {
@@ -17,6 +18,7 @@ import {
   type SecretFinding,
   type TarFile,
 } from '@agentbox/sandbox-core';
+import { SKILL_PROPOSAL_LIMITS } from '@agentbox/sandbox-core';
 import {
   importSkill,
   originOf,
@@ -35,10 +37,14 @@ export interface SkillProposalDeps {
   log?: (line: string) => void;
   /** An approved proposal moved these skills' current version: sync running boxes. */
   changed?: (names: string[]) => void;
-  /** Proposals waiting for an answer at once (their tarballs are held in memory). */
+  /** Proposals waiting for an answer at once, across every box (tarballs held in memory). */
   maxPending?: number;
-  /** Cap on a skill's unpacked bytes (custody's blob cap, by default unbounded here). */
+  /** Proposals one box may have waiting at once. */
+  maxPendingPerBox?: number;
+  /** Cap on one proposal: its tarball, and the skill's files unpacked (bytes). */
   maxBytes?: number;
+  /** Cap on every waiting proposal's tarball together (bytes). */
+  maxTotalBytes?: number;
 }
 
 export interface SkillProposalInput {
@@ -63,7 +69,6 @@ export interface SkillProposalResult {
   findings: SecretFinding[];
 }
 
-const DEFAULT_MAX_PENDING = 20;
 const PREVIEW_CHARS = 1_500;
 
 function fmtBytes(n: number): string {
@@ -157,6 +162,8 @@ export interface SkillProposals {
   propose(input: SkillProposalInput): Promise<SkillProposalResult>;
   /** Proposals waiting for an answer. */
   pending(): number;
+  /** The largest proposal tarball accepted (bytes): a route stops reading past it. */
+  readonly maxBytes: number;
 }
 
 /**
@@ -175,17 +182,42 @@ function refuseTracked(meta: Awaited<ReturnType<typeof readSkillMeta>>, name: st
 }
 
 export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
-  const maxPending = deps.maxPending ?? DEFAULT_MAX_PENDING;
-  /** `<name>@<version>` of every proposal waiting for an answer. */
-  const waiting = new Set<string>();
+  const maxPending = deps.maxPending ?? SKILL_PROPOSAL_LIMITS.total;
+  const maxPerBox = deps.maxPendingPerBox ?? SKILL_PROPOSAL_LIMITS.perBox;
+  const maxBytes = deps.maxBytes ?? SKILL_PROPOSAL_LIMITS.maxBytes;
+  const maxTotalBytes = deps.maxTotalBytes ?? SKILL_PROPOSAL_LIMITS.totalBytes;
+  /** Every proposal waiting for an answer, by `<name>@<version>`: whose, and its held bytes. */
+  const waiting = new Map<string, { boxId: string; bytes: number }>();
+
+  /** Why one more proposal from `boxId` of `bytes` can't wait, or null. */
+  function overCap(boxId: string, bytes: number): string | null {
+    const mine = [...waiting.values()].filter((w) => w.boxId === boxId).length;
+    if (mine >= maxPerBox) {
+      return `this box already has ${String(mine)} skill proposals waiting for an answer (max ${String(maxPerBox)}); answer them in the hub's approvals first`;
+    }
+    if (waiting.size >= maxPending) {
+      return `${String(waiting.size)} skill proposals are already waiting for an answer on this hub (max ${String(maxPending)}); answer them first`;
+    }
+    const held = [...waiting.values()].reduce((n, w) => n + w.bytes, 0);
+    if (held + bytes > maxTotalBytes) {
+      return `the skill proposals waiting for an answer already hold ${fmtBytes(held)} (max ${fmtBytes(maxTotalBytes)} together); answer them first`;
+    }
+    return null;
+  }
 
   async function propose(input: SkillProposalInput): Promise<SkillProposalResult> {
     const { name, tarball } = input;
     const problem = skillNameProblem(name);
     if (problem) throw new SkillsError('invalid_request', problem);
+    if (tarball.length > maxBytes) {
+      throw new SkillsError(
+        'invalid_request',
+        `skill '${name}' is ${fmtBytes(tarball.length)}, over the ${fmtBytes(maxBytes)} cap for a proposed skill`,
+      );
+    }
     let files;
     try {
-      files = readTar(tarball, deps.maxBytes !== undefined ? { maxBytes: deps.maxBytes } : {});
+      files = readTar(tarball, { maxBytes });
     } catch (err) {
       if (err instanceof SkillTarError) throw new SkillsError('invalid_request', err.message);
       throw err;
@@ -220,13 +252,9 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     const key = `${name}@${version}`;
     // The same proposal again (a second download) waits on the first prompt.
     if (waiting.has(key)) return { ...base, status: 'pending' };
-    if (waiting.size >= maxPending) {
-      throw new SkillsError(
-        'invalid_request',
-        `${String(waiting.size)} skill proposals are already waiting for an answer; answer them first`,
-      );
-    }
-    waiting.add(key);
+    const refusal = overCap(input.box.id, tarball.length);
+    if (refusal) throw new SkillsError('conflict', refusal);
+    waiting.set(key, { boxId: input.box.id, bytes: tarball.length });
 
     const scanLine =
       findings.length > 0
@@ -241,7 +269,7 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     // version, not just SKILL.md (a changed script under an unchanged SKILL.md
     // must not look identical).
     const current = baseCurrent
-      ? await readVersionFiles(deps.store, name, baseCurrent, deps.maxBytes)
+      ? await readVersionFiles(deps.store, name, baseCurrent, undefined)
       : null;
     const changes = current ? diffFiles(current, files) : null;
     const changeLine = !prev
@@ -325,5 +353,5 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     return { ...base, status: 'pending' };
   }
 
-  return { propose, pending: () => waiting.size };
+  return { propose, pending: () => waiting.size, maxBytes };
 }

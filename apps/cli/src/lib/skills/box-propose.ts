@@ -20,6 +20,7 @@ import {
   discoverLocalSkills,
   readLocalSkill,
   resolveAgentSpec,
+  SKILL_PROPOSAL_LIMITS,
   writeTar,
   type LocalSkill,
 } from '@agentbox/sandbox-core';
@@ -60,6 +61,38 @@ export function stagedSkillDir(stage: string, n: number, name: string): string {
 const LIST_SCRIPT = (dir: string): string =>
   `for d in '${dir}'/*/; do d="\${d%/}"; [ -L "$d" ] && continue; [ -f "$d/SKILL.md" ] && basename "$d"; done; true`;
 
+/**
+ * Checked IN the box before a skill is pulled out of it: the first entry that is
+ * not a plain file or directory (a link, FIFO, device or socket), and the bytes
+ * of its files. Prints `<bad path or empty>\t<bytes>`.
+ */
+export const PROBE_SCRIPT = (dir: string): string =>
+  `d='${dir}'; ` +
+  `bad=$(find "$d" -mindepth 1 ! -type f ! -type d -print -quit 2>/dev/null); ` +
+  `bytes=$(find "$d" -type f -printf '%s\\n' 2>/dev/null | awk '{s+=$1} END {printf "%d", s}'); ` +
+  `printf '%s\\t%s\\n' "$bad" "\${bytes:-0}"`;
+
+/**
+ * Why a probed box skill must not be pulled, or null. A box skill may hold only
+ * plain files and folders (a carried skill's links are the PC's business, and a
+ * link or FIFO planted in a box is how a read never ends), within `maxBytes`.
+ */
+export function probeRefusal(stdout: string, dir: string, maxBytes: number): string | null {
+  // Not trim(): a clean probe's line STARTS with the tab of an empty path.
+  const line = stdout.replace(/\n+$/, '').split('\n').at(-1) ?? '';
+  const [bad = '', rawBytes = ''] = line.split('\t');
+  if (bad) {
+    const rel = bad.startsWith(`${dir}/`) ? bad.slice(dir.length + 1) : bad;
+    return `holds ${rel.slice(0, 120)}, which is not a plain file or folder (links, FIFOs and devices are not proposed)`;
+  }
+  const bytes = Number(rawBytes);
+  if (!Number.isFinite(bytes) || rawBytes === '') return 'its size could not be read in the box';
+  if (bytes > maxBytes) {
+    return `${String(bytes)} bytes, over the ${String(maxBytes)}-byte cap for a proposed skill`;
+  }
+  return null;
+}
+
 export type BoxSkillOutcome =
   | { name: string; status: 'pending' | 'unchanged'; isNew: boolean; findings: number }
   | { name: string; status: 'skipped'; reason: string }
@@ -82,6 +115,8 @@ export interface ProposeBoxSkillsOptions {
 export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<BoxSkillOutcome[]> {
   const dirs = boxSkillDirs(opts.agent);
   if (dirs.length === 0) return [];
+  // The hub refuses a bigger one anyway; refusing it here keeps it in the box.
+  const maxBytes = Math.min(opts.maxBytes, SKILL_PROPOSAL_LIMITS.maxBytes);
   const [listing, local] = await Promise.all([
     opts.client.listSkills(),
     discoverLocalSkills({ home: opts.home, maxBytes: opts.maxBytes }).catch(() => []),
@@ -114,12 +149,25 @@ export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<B
         if (seen.has(name)) continue;
         seen.add(name);
         if (name === 'agentbox' || name.startsWith('agentbox-')) continue;
+        const boxDir = posix.join(dir, name);
+        // Before anything leaves the box: no links or special files, and a size
+        // the hub would accept, so a planted skill can fill neither this disk
+        // nor a read that never ends.
+        const probe = await opts.transport.exec(['sh', '-c', PROBE_SCRIPT(boxDir)]);
+        const refusal =
+          probe.exitCode === 0
+            ? probeRefusal(probe.stdout, boxDir, maxBytes)
+            : 'it could not be checked in the box';
+        if (refusal) {
+          out.push({ name, status: 'skipped', reason: refusal });
+          continue;
+        }
         const dest = stagedSkillDir(stage, seen.size, name);
         await mkdir(dest, { recursive: true });
         let skill: LocalSkill;
         try {
-          await opts.transport.pullTree(posix.join(dir, name), dest);
-          skill = await readLocalSkill(name, dest, { maxBytes: opts.maxBytes });
+          await opts.transport.pullTree(boxDir, dest);
+          skill = await readLocalSkill(name, dest, { maxBytes });
         } catch (err) {
           out.push({
             name,

@@ -69,6 +69,22 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * SKILL.md's text, or '' when it can't be read safely. Only a regular file is
+ * read, and only up to `maxBytes`: a SKILL.md that is a link to `/dev/zero` or a
+ * FIFO (both easy to plant in a box) would otherwise be read forever.
+ */
+async function readSkillMd(path: string, skill: LocalSkill, maxBytes?: number): Promise<string> {
+  const st = await stat(path).catch(() => null);
+  if (!st) return '';
+  if (!st.isFile()) {
+    skill.problems.push('SKILL.md is not a regular file');
+    return '';
+  }
+  if (maxBytes !== undefined && st.size > maxBytes) return '';
+  return readFile(path, 'utf8').catch(() => '');
+}
+
 /** Read one skill directory into a {@link LocalSkill} (no discovery rules applied). */
 export async function readLocalSkill(
   name: string,
@@ -90,7 +106,7 @@ export async function readLocalSkill(
   if (!SKILL_NAME_RE.test(name)) {
     skill.problems.push('name must be lowercase letters, digits and hyphens (max 64)');
   }
-  const fm = parseSkillFrontmatter(await readFile(join(dir, 'SKILL.md'), 'utf8').catch(() => ''));
+  const fm = parseSkillFrontmatter(await readSkillMd(join(dir, 'SKILL.md'), skill, opts.maxBytes));
   if (!fm) {
     skill.problems.push('SKILL.md has no frontmatter');
   } else {

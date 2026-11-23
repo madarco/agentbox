@@ -422,9 +422,6 @@ async function main(): Promise<void> {
     store: custody,
     approve: (boxId, req) =>
       askMcpApproval(daemon.handle.prompts, daemon.handle.subscribers, boxId, req),
-    // Unpacked bytes a proposal may expand to: custody's blob cap, so a small
-    // gzip can't inflate into the hub's memory.
-    maxBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES) ?? 100 * 1024 * 1024,
     log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
     // The backend is built just below; an approval lands long after.
     changed: (names) => globalThis.__AGENTBOX_HUB_BACKEND?.skillsChanged(names),

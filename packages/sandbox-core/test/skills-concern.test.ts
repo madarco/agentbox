@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readLocalSkill } from '../src/skills/discover.js';
 import { makeRecordingTransport } from '../src/sync/recording-transport.js';
 import { seedAgentsVolume } from '../src/sync/concerns/skills.js';
 
@@ -103,4 +104,14 @@ describe('skills concern — seedAgentsVolume', () => {
       seedAgentsVolume({ transport: noVol, volume: 'v', hostAgents, syncFromHost: true }),
     ).rejects.toThrow(/seedVolumeFromHost/);
   });
+});
+
+describe('readLocalSkill never reads a SKILL.md that is not a regular file', () => {
+  it('flags a SKILL.md linked to /dev/zero instead of reading it forever', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'agentbox-skillmd-')), 'z');
+    await mkdir(dir);
+    await symlink('/dev/zero', join(dir, 'SKILL.md'));
+    const skill = await readLocalSkill('z', dir, { maxBytes: 1024 });
+    expect(skill.problems).toContain('SKILL.md is not a regular file');
+  }, 5_000);
 });

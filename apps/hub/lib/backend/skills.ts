@@ -159,7 +159,7 @@ export const RESERVED_SKILL_PREFIX = 'agentbox-';
 
 export class SkillsError extends Error {
   constructor(
-    readonly code: 'invalid_request' | 'not_found',
+    readonly code: 'invalid_request' | 'not_found' | 'conflict',
     message: string,
   ) {
     super(message);
