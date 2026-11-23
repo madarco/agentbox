@@ -1153,8 +1153,11 @@ function CreateBoxModal({
                   ) : null}
                   {/* Library skills, prefilled from the hub's skill bindings for
                       this project and workspace. */}
+                  {/* A group, not <Field>: that is a <label>, and nesting the
+                      checkboxes' own labels inside it is invalid. */}
                   {skillPreview && !restoring ? (
-                    <Field label="Skills">
+                    <div role="group" aria-label="Skills" className="flex flex-col gap-1.5">
+                      <span className="text-xs font-medium text-secondary-foreground">Skills</span>
                       <div className="flex max-h-40 flex-col gap-1.5 overflow-y-auto">
                         {skillPreview.map((row) => (
                           <label key={row.name} className="flex items-start gap-2.5">
@@ -1187,7 +1190,7 @@ function CreateBoxModal({
                           </label>
                         ))}
                       </div>
-                    </Field>
+                    </div>
                   ) : null}
                   {agent !== 'none' ? (
                     <Field label="Initial prompt (optional)">
