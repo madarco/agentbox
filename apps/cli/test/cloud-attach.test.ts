@@ -33,7 +33,7 @@ describe('buildCloudAttachInnerCommand', () => {
     // cloud attach is never blank), then `exec`s the binary so it keeps PID 2.
     const cmd = buildCloudAttachInnerCommand('claude');
     expect(cmd).toBe(
-      `bash -lc 'printf "  agentbox: starting claude (first paint may take a few seconds)...\\r\\n"; exec claude'`,
+      `bash -lc 'printf "  agentbox: starting claude (first paint may take a few seconds)...\\r\\n"; if [ -r /run/agentbox/agent.env ]; then set -a; . /run/agentbox/agent.env; set +a; fi; exec claude'`,
     );
     expect(buildCloudAttachInnerCommand('codex', [])).toContain('exec codex');
   });

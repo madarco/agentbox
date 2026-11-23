@@ -72,6 +72,13 @@ export interface KickCloudBootstrapArgs {
    * Omitted = `gh`, matching the config default.
    */
   hubGitAuth?: HubGitAuthMode;
+  /**
+   * `box.credentialSync`. False exports AGENTBOX_CREDENTIAL_SYNC=0 to the ctl
+   * daemon, which is the only way it reaches a VPS box: there the flag rode
+   * cloud-init box.env alone, which this kick overwrites and the daemon (a
+   * non-login `bash -c`) never sources anyway. Omitted = enabled.
+   */
+  credentialSync?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -100,6 +107,7 @@ export function buildBootstrapEnv(args: KickCloudBootstrapArgs): {
     `AGENTBOX_BOX_KIND=cloud`,
     `AGENTBOX_LAUNCH_DOCKERD=${args.launchDockerd ? '1' : '0'}`,
   ];
+  if (args.credentialSync === false) env.push(`AGENTBOX_CREDENTIAL_SYNC=0`);
   if (args.relayUrl) env.push(`AGENTBOX_RELAY_URL=${quoteShellArgv([args.relayUrl])}`);
   if (args.relayToken) env.push(`AGENTBOX_RELAY_TOKEN=${quoteShellArgv([args.relayToken])}`);
   if (args.bridgeToken) env.push(`AGENTBOX_BRIDGE_TOKEN=${quoteShellArgv([args.bridgeToken])}`);
@@ -115,8 +123,7 @@ export function buildBootstrapEnv(args: KickCloudBootstrapArgs): {
   if (args.clone) {
     env.push(`AGENTBOX_CLONE_URL=${quoteShellArgv([args.clone.authedUrl])}`);
     env.push(`AGENTBOX_ORIGIN_URL=${quoteShellArgv([args.clone.originUrl])}`);
-    if (args.clone.branch)
-      env.push(`AGENTBOX_CLONE_BRANCH=${quoteShellArgv([args.clone.branch])}`);
+    if (args.clone.branch) env.push(`AGENTBOX_CLONE_BRANCH=${quoteShellArgv([args.clone.branch])}`);
     if (args.clone.depth !== undefined)
       env.push(`AGENTBOX_CLONE_DEPTH=${quoteShellArgv([String(args.clone.depth)])}`);
   }

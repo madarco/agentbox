@@ -85,6 +85,7 @@ import {
   ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
   reconcileAgentCredentials,
+  buildCloudAgentEnv,
 } from './sync/agent-credentials.js';
 import { seedAgentStaticForCreate } from './sync/agent-static.js';
 import {
@@ -102,6 +103,7 @@ import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
+import { writeCloudAgentEnvFile } from './agent-env-file.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
 import { adminCustodySink, pushProjectSeedToCustody, SEED_PUSH_MS } from './custody-seed.js';
@@ -609,6 +611,10 @@ export function createCloudProvider(
     // resume — /workspace already exists. dockerd/VNC are best-effort inside the
     // bootstrap; a dead ctl daemon throws and fails start (matching the previous
     // behavior, where the ctl relaunch was the one un-caught step).
+    // Read from config, the same rule the credential reconcile below follows.
+    const credentialSync = await loadEffectiveConfig(box.workspacePath)
+      .then((c) => c.effective.box.credentialSync)
+      .catch(() => true);
     await kickCloudBootstrap({
       backend,
       handle: h,
@@ -628,7 +634,20 @@ export function createCloudProvider(
       gitPushMode: box.cloud?.gitPushMode,
       hubGitAuth: box.cloud?.hubGitAuth,
       boxHost: deriveCloudBoxHost(box.name, webPreview?.url),
+      credentialSync,
     });
+    // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
+    // on every wake. Best-effort, like the reconcile below: a box that comes up
+    // without it still runs, its agent just lacks the forwarded keys.
+    try {
+      await writeCloudAgentEnvFile(
+        backend,
+        h,
+        await buildCloudAgentEnv(box.agents, box.accounts ?? {}),
+      );
+    } catch {
+      // best-effort
+    }
     // Re-register on resume. A control-plane box registers on the plane (with
     // its origin URL, needed for lease minting); a classic-cloud box registers
     // on the host relay so its CloudBoxPoller picks up the fresh preview
@@ -1191,8 +1210,13 @@ export function createCloudProvider(
           gitPushMode: req.gitPushMode,
           hubGitAuth: req.hubGitAuth,
           boxHost: deriveCloudBoxHost(name, webPreview?.url),
+          credentialSync: !credentialSyncOff,
           onLog: log,
         });
+        // The agents' env (forwarded keys, a named account's token, run-env) in
+        // a 0600 file the launcher sources: a VPS has no sandbox-wide env to
+        // carry it, and the SDK providers get the same values either way.
+        await writeCloudAgentEnvFile(backend, handle, agentVolumes.env);
 
         // Portless host alias + in-VPS mirror. Default-on for backends whose
         // `previewUrl()` returns a loopback URL (Hetzner); naturally skipped
