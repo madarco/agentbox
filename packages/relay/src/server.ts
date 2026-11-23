@@ -15,7 +15,7 @@ import {
   refreshCloudPreviewUrl,
   resolveHostPath,
 } from './host-actions.js';
-import { canAutoApproveTransfer } from './safe-transfer.js';
+import { canAutoApproveTransfer, workspaceDownloadWarning } from './safe-transfer.js';
 import { offerBrowserOpen } from './open-link.js';
 import { HostActionQueue } from './host-action-queue.js';
 import { HostReachQueue, type HostReachTried, type HostReachUnreachable } from './host-reach.js';
@@ -1809,12 +1809,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         const kind = parseDownloadKind(body.method);
         // Always asked, even `download.workspace` under
         // `box.autoApproveSafeHostActions`: it lands in the user's own project and
-        // the box decides what overwrites it. The host CLI keeps every replaced
-        // file under ~/.agentbox/boxes/<id>/download-backups/.
+        // the box decides what overwrites it. The prompt says so, and where.
         const verdict = await askPrompt(prompts, subscribers, reg.boxId, {
           kind: 'confirm',
           message: `Allow download (${kind}) from ${reg.name}?`,
-          detail: params?.hostPath ?? '(default host location)',
+          detail:
+            kind === 'workspace'
+              ? workspaceDownloadWarning(await boxWorkspacePath(reg.boxId))
+              : (params?.hostPath ?? '(default host location)'),
           defaultAnswer: 'n',
           context: {
             command: body.method,

@@ -96,4 +96,15 @@ describe('planCredentialPush', () => {
     expect(forced[0]!.action).toBe('upload');
     expect(reads).toEqual([]);
   });
+
+  it('uploads as before when custody cannot be read (a PC with only the API key)', async () => {
+    const item = { path, data: Buffer.from(claude(NOW + 1)) };
+    const plan = await planCredentialPush(
+      [item],
+      [entry(path, claude(NOW + 9000))],
+      () => Promise.reject(new Error('custody get failed (401)')),
+      { now: NOW },
+    );
+    expect(plan[0]).toMatchObject({ action: 'upload', reason: 'changed' });
+  });
 });

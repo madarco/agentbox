@@ -22,10 +22,12 @@ Plan:
   `Sec-Fetch-Site: same-origin` or the `Origin` host equals the request host. No Origin
   and no Sec-Fetch-Site on a cookie POST is refused too: every browser sends one of them
   on a POST, and nothing else carries the cookie.
-- `proxy.ts` renders the refusal as a JSON 403 `csrf_rejected` and stamps
-  `x-agentbox-cookie-auth: 1` on allowed cookie requests (overwriting a client copy).
-- `readJson` refuses a non-empty body whose Content-Type is not `application/json`
-  when that header is set. Bearer callers (CLI, tray) are unchanged.
+- On the API surface (`/api/v1`, `/api/mcp`, …) a cookie write with a body must
+  also be `application/json` (415 otherwise). Not on page routes: a Next server
+  action posts `text/plain`, and Next checks an action's Origin itself.
+- `proxy.ts` renders the refusals (403 `csrf_rejected`, 415). Bearer callers (CLI,
+  tray) are unchanged. With auth off, a request that carries browser provenance must
+  still be same-origin.
 - `/api/mcp` (POST) and `/api/events` (GET) go through the same gate: covered.
 - Tests: gate truth table (bearer POST without Origin allowed; cookie POST from
   `127.0.0.1:<box port>` refused; same-origin allowed; `null` origin refused; GET untouched;
@@ -40,17 +42,16 @@ reasoning only about escaping the folder and exfiltration. Overwriting the proje
 itself was not considered, so there is no real reason. The docker relay path
 auto-approved it the same way.
 
-Plan (owner decision: always ask, back up what is overwritten):
+Plan (owner decision: always ask; no backups, which grow over time and are a
+liability):
 - Both relay paths (`server.ts` docker, `host-actions.ts` cloud) always prompt for
-  `download.workspace`.
-- `rsyncPullToHost` (shared stage 2) takes `backupDir`: `rsync --backup --backup-dir`,
-  so only files it actually replaces are kept, at their relative paths.
-- `downloadBackupDir(boxId)` → `~/.agentbox/boxes/<id>/download-backups/<stamp>/`: on the
-  host, outside the project (the box can't reach it). The 5 newest are kept.
-- The cloud relay path stops untarring over the project. It unpacks into a temporary
-  folder and runs the same `rsyncPullToHost` with the backup dir (the same everything-but-`.git` scope as before). The CLI `agentbox download` (which the docker relay path runs)
-  passes the backup dir too, so every provider gets backups.
-- Tests: rsync backup keeps the replaced file; approval is no longer auto.
+  `download.workspace`; with no one to ask it is refused.
+- The approval (`workspaceDownloadWarning`) says it OVERWRITES files in the named
+  project path with the box's copies, that nothing is backed up, and that `.git` is
+  never touched.
+- The cloud relay path keeps its direct untar (everything but `.git`, as before): with
+  no backups, a temp unpack plus a two-pass `rsync --checksum` only cost time.
+- Tests: approval is no longer auto, the prompt carries the warning and the path.
 
 ### 9. The PC's stale login overwrites the control box's refreshed one
 
@@ -102,14 +103,25 @@ changes the result (it fails when a field is classified `carry` but never wired)
 ### 3. (dropped) and 12. (proposal), see below.
 
 Done when: a cookie POST from a box origin is a 403 and the web UI still works; a
-workspace download from a cloud box prompts and leaves the overwritten files under
-`download-backups/`; a stale PC claude login is not pushed over a newer custody copy;
+workspace download from a cloud box waits for an approval that names the project and
+says it overwrites; a stale PC claude login is not pushed over a newer custody copy;
 a clone of a `--no-skills --llm-proxy forward` box keeps both.
 
 ## Deferred (backlog)
 
-- `cp.toHost` contained in the project still auto-approves and overwrites without a
-  backup (same reasoning as #2, but a named single path the agent asked for). Not in
+LATER (from the independent review of #456):
+
+- CSRF: the `Origin` fallback (used when a browser sends no `Sec-Fetch-Site`)
+  refuses cookie writes behind a plain-HTTP proxy that rewrites `Host` without
+  setting `X-Forwarded-Host` (a bare nginx `proxy_pass`).
+- Credential freshness edge cases, both escaped with `hub credentials push --force`:
+  - the PC switched accounts: for codex, compare `tokens.account_id` first (a
+    different account is not an older copy of the same login);
+  - same expiry, different content (e.g. an added `mcpOAuth` entry) is now
+    skipped as "custody copy is newer".
+
+- `cp.toHost` contained in the project still auto-approves and overwrites (same
+  reasoning as #2, but a named single path the agent asked for). Not in
   this batch.
 - Clone: `credentialSync`, `dangerouslySkipPermissions`, DigitalOcean's `project` and
   the other `providerOptions` (`timeoutMs`, `networkPolicy`) are not recorded on the

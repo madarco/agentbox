@@ -29,6 +29,7 @@ const write = {
   secFetchSite: null as string | null,
   contentType: 'application/json' as string | null,
   hasBody: true,
+  surface: 'api' as const,
 };
 
 describe('gateCredential', () => {
@@ -147,5 +148,23 @@ describe('csrfOutcome', () => {
     expect(csrfOutcome({ ...cookie, host: 'hub.example.com, 10.0.0.2:8787' })).toBe('ok');
     expect(csrfOutcome({ ...cookie, host: 'hub.example.com:443' })).toBe('ok');
     expect(csrfOutcome({ ...cookie, host: 'hub.example.com:8443' })).toBe('cross-site');
+  });
+
+  it('lets a same-origin Next server action through (text/plain body, page route)', () => {
+    // Next 16 posts a server action as a string body with no content type, so
+    // the browser sends text/plain; requiring JSON there broke every UI write.
+    const action = {
+      ...write,
+      credential: 'cookie' as const,
+      surface: 'page' as const,
+      contentType: 'text/plain;charset=UTF-8',
+      secFetchSite: 'same-origin',
+      origin: `http://${HUB}`,
+    };
+    expect(csrfOutcome(action)).toBe('ok');
+    // ...but a page-route write from a box's web port is still refused.
+    expect(
+      csrfOutcome({ ...action, secFetchSite: 'same-site', origin: 'http://127.0.0.1:32768' }),
+    ).toBe('cross-site');
   });
 });

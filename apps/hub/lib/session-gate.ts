@@ -156,8 +156,8 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * hub's own pages: `Sec-Fetch-Site: same-origin`, or an `Origin` whose host is
  * the request's own host. Neither header present is refused too: every browser
  * sends at least one on a POST, and nothing but a browser holds the cookie.
- * Bearer and `?token=` callers never reach the check. A body on such a write
- * must also be JSON (`not-json`). With no credential at all (auth off), a
+ * Bearer and `?token=` callers never reach the check. On the API surface a
+ * body on such a write must also be JSON (`not-json`). With no credential at all (auth off), a
  * request that says it came from a browser page must still be same-origin.
  */
 export function csrfOutcome(a: {
@@ -168,6 +168,8 @@ export function csrfOutcome(a: {
   host: string | null;
   contentType: string | null;
   hasBody: boolean;
+  /** `api` (`/api/v1`, `/api/mcp`, …) or a page route (Next server actions). */
+  surface: GateSurface;
 }): 'ok' | 'cross-site' | 'not-json' {
   if (a.credential === 'bearer' || a.credential === 'query') return 'ok';
   if (SAFE_METHODS.has(a.method.toUpperCase())) return 'ok';
@@ -180,9 +182,12 @@ export function csrfOutcome(a: {
     return sameOrigin(a) ? 'ok' : 'cross-site';
   }
   if (!sameOrigin(a)) return 'cross-site';
-  // Belt and braces: the hub's pages send every body as JSON, and a JSON content
-  // type is exactly what a no-preflight ("simple") cross-site request cannot set.
-  if (a.hasBody && !isJsonContentType(a.contentType)) return 'not-json';
+  // Belt and braces on the API surface: its browser callers send every body as
+  // JSON, and a JSON content type is exactly what a no-preflight ("simple")
+  // cross-site request cannot set. NOT on page routes: a Next server action
+  // posts a string body with no content type (text/plain), and Next checks an
+  // action's Origin itself.
+  if (a.surface === 'api' && a.hasBody && !isJsonContentType(a.contentType)) return 'not-json';
   return 'ok';
 }
 

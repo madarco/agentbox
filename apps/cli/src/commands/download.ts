@@ -1,6 +1,5 @@
 import { confirm, isCancel, log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BoxRecord } from '@agentbox/core';
 import {
@@ -13,7 +12,6 @@ import {
 } from '@agentbox/sandbox-docker';
 import {
   agentWorkspaceArtifactPaths,
-  downloadBackupDir,
   isAgentWorkspaceArtifact,
   parseItemizedEntries,
   pullWorkspaceToHost,
@@ -122,9 +120,6 @@ export const downloadCommand = new Command('download')
       // out over the provider seam. Both then run the SAME host-side rsync
       // (`rsyncPullToHost`), which is what gives a cloud box `--dry-run`, the
       // itemized change list, and gitignore/exclude selection.
-      // Into the user's own project, every file the pull replaces is kept first
-      // (a `--backup` target is a fresh dir with nothing to lose).
-      const backupDir = target ? undefined : downloadBackupDir(box.id);
       let pull: (o: {
         dryRun: boolean;
         noRefresh: boolean;
@@ -146,7 +141,6 @@ export const downloadCommand = new Command('download')
             dryRun: o.dryRun,
             noRefresh: o.noRefresh,
             skipPaths: o.skipPaths,
-            ...(backupDir ? { backupDir } : {}),
           });
       } else {
         const insp = await inspectBox(box.id);
@@ -169,7 +163,6 @@ export const downloadCommand = new Command('download')
             envPatterns,
             noRefresh: o.noRefresh,
             skipPaths: o.skipPaths,
-            ...(backupDir ? { backupDir } : {}),
           });
           return {
             hostPath: r.hostPath,
@@ -259,10 +252,6 @@ export const downloadCommand = new Command('download')
           `${target ? 'to' : 'in'} ${result.hostPath}` +
           `${result.usedGitignore ? '' : ' (exclude-list mode)'}\n`,
       );
-
-      if (backupDir && existsSync(backupDir)) {
-        process.stdout.write(`kept the replaced files in ${backupDir}\n`);
-      }
 
       if (target) {
         const { manifest, pruned, wroteGitignore } = await runBackup({

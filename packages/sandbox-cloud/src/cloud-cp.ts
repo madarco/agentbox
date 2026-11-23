@@ -27,7 +27,6 @@ import {
 } from 'node:path';
 import { posix } from 'node:path';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { rsyncPullToHost } from '@agentbox/sandbox-core';
 import { bashScript, quoteShellArg } from './shell.js';
 
 const REMOTE_UP_TAR = '/tmp/agentbox-cp-up.tar.gz';
@@ -134,22 +133,16 @@ async function uploadOneToCloudBox(
 
 /**
  * Pull the *contents* of an in-sandbox directory into a host directory —
- * `/workspace/*` → `<hostDst>/*`, not `<hostDst>/<srcBasename>/*`. Used by the
- * box-initiated `agentbox-ctl download`; `downloadFromCloudBox` preserves the
- * source basename for `docker cp` parity.
- *
- * The tarball is unpacked into a temp dir first, never straight over
- * `hostDst`: the landing is the shared `rsyncPullToHost`, which with
- * `backupDir` keeps every file it replaces there first. That copy also never writes through a symlink
- * the destination already has.
+ * `/workspace/*` → `<hostDst>/*`, not `<hostDst>/<srcBasename>/*`. Used by
+ * `agentbox download` (the bulk workspace pull); `downloadFromCloudBox`
+ * preserves the source basename for `docker cp` parity.
  */
 export async function pullCloudDirContents(
   backend: CloudBackend,
   handle: CloudHandle,
   boxSrcDir: string,
   hostDstDir: string,
-  opts: { backupDir?: string } = {},
-): Promise<CloudCpResult & { changes?: string[] }> {
+): Promise<CloudCpResult> {
   const dstAbs = hostResolve(hostDstDir);
   mkdirSync(dstAbs, { recursive: true });
 
@@ -175,24 +168,14 @@ export async function pullCloudDirContents(
       throw new Error(`cloud workspace pack failed: ${r.stderr || r.stdout}`);
     }
     await backend.downloadFile(handle, REMOTE_DOWN_TAR, localTar);
-    const unpacked = hostJoin(stage, 'workspace');
-    mkdirSync(unpacked);
-    await execa('tar', ['-xzf', localTar, '-C', unpacked, '--exclude=.git', '--no-same-owner']);
+    await execa('tar', ['-xzf', localTar, '-C', dstAbs, '--exclude=.git']);
     await backend.exec(handle, `rm -f ${quoteShellArg(REMOTE_DOWN_TAR)}`).catch(() => {
       /* best-effort */
     });
-    const { changes } = await rsyncPullToHost({
-      scratchDir: unpacked,
-      destDir: dstAbs,
-      fileList: null,
-      // The scope this path always had: everything but `.git`.
-      excludes: ['.git'],
-      ...(opts.backupDir ? { backupDir: opts.backupDir } : {}),
-    });
-    return { finalPath: dstAbs, changes };
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
+  return { finalPath: dstAbs };
 }
 
 async function downloadOneFromCloudBox(

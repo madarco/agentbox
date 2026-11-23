@@ -325,6 +325,11 @@ describe('executeHostReachAction', () => {
     for (let i = 0; i < 50 && d.prompts.size() === 0; i++)
       await new Promise((r) => setTimeout(r, 10));
     expect(d.prompts.size()).toBe(1);
+    // The prompt says it overwrites, where, and that .git is left alone.
+    const detail = String((d.prompts.all()[0]!.ev as { detail?: string }).detail);
+    expect(detail).toContain('OVERWRITES');
+    expect(detail).toContain(dir);
+    expect(detail).toContain('.git is never touched');
     expect(adopted).toEqual([]);
     d.prompts.resolve(d.prompts.all()[0]!.id, 'y');
     const r = await p;

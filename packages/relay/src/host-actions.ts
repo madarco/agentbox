@@ -51,7 +51,6 @@ import {
   pluginForProvider,
   readState,
   detectGitRepos,
-  downloadBackupDir,
 } from '@agentbox/sandbox-core';
 import {
   checkoutGuards,
@@ -94,7 +93,7 @@ import {
   runGrantedTool,
   toolRequestsEnabled,
 } from './host-tools.js';
-import { canAutoApproveTransfer } from './safe-transfer.js';
+import { canAutoApproveTransfer, workspaceDownloadWarning } from './safe-transfer.js';
 import { recordAgents } from './registration-to-record.js';
 import { offerBrowserOpen } from './open-link.js';
 import type {
@@ -981,7 +980,6 @@ export interface CloudCpModule {
     handle: CloudHandle,
     boxSrc: string,
     hostDst: string,
-    opts?: { backupDir?: string },
   ): Promise<{ finalPath: string }>;
 }
 
@@ -1272,7 +1270,7 @@ async function runDownloadRpc(
     const verdict = await askPrompt(deps.prompts, deps.subscribers, deps.boxId, {
       kind: 'confirm',
       message: `Allow download (${kind}) from ${deps.boxName ?? deps.boxId}?`,
-      detail: params.hostPath ?? '(default host location)',
+      detail: workspaceDownloadWarning(hostDst),
       defaultAnswer: 'n',
       context: {
         command: action.method,
@@ -1309,16 +1307,8 @@ async function runDownloadRpc(
   const handle: CloudHandle = cloudHandleOf(resolved);
   const cp = await loadCloudCp();
   try {
-    const backupDir = downloadBackupDir(deps.boxId);
-    const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst, {
-      backupDir,
-    });
-    const kept = existsSync(backupDir) ? `kept the replaced files in ${backupDir}\n` : '';
-    return {
-      exitCode: 0,
-      stdout: `${result.finalPath}\n${kept}`,
-      stderr: '',
-    };
+    const result = await cp.pullCloudDirContents(backend, handle, '/workspace', hostDst);
+    return { exitCode: 0, stdout: `${result.finalPath}\n`, stderr: '' };
   } catch (err) {
     return {
       exitCode: 1,

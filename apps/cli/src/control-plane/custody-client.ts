@@ -339,7 +339,9 @@ export async function planCredentialPush(
   return Promise.all(
     plan.map(async (d, i): Promise<PushDecision> => {
       if (d.action !== 'upload' || d.reason !== 'changed') return d;
-      const remote = await getRemote(d.path);
+      // A PC holding only the hub API key may push but not read custody (401):
+      // with nothing to compare, keep the old always-upload.
+      const remote = await getRemote(d.path).catch(() => null);
       if (remote === null) return d;
       const agent = d.path.split('/')[1] ?? '';
       const v = credentialPushVerdict(

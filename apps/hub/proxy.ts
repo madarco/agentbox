@@ -212,6 +212,7 @@ function render(
         hasBody:
           request.headers.has('transfer-encoding') ||
           Number(request.headers.get('content-length') ?? '0') > 0,
+        surface: input.surface,
       });
       if (csrf !== 'ok') return csrfRefusal(csrf);
       // Tell the route who is calling. Always set, so a client-sent copy of the
