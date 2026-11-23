@@ -93,6 +93,16 @@ export const opencodeSpec: AgentSyncSpec = {
       label: 'the agentbox-state plugin',
     },
   ],
+  // The hub's skills library: opencode scans `~/.opencode/skills` whatever
+  // OPENCODE_CONFIG_DIR says, and nothing else uses that dir in a box (the config
+  // volume is under ~/.local/share/opencode). Not OPENCODE_CONFIG_CONTENT
+  // `skills.paths`: a config layer REPLACES the user's own `skills.paths` array
+  // (measured, opencode 1.19.6), and it would need env delivery the VPS
+  // providers' box.env drops.
+  skills: {
+    dirs: ['.config/opencode/skills', '.claude/skills', '.agents/skills'],
+    inject: { kind: 'dir', path: '/home/vscode/.opencode/skills' },
+  },
   caps: {
     resume: false,
     teleport: 'stub',

@@ -157,6 +157,14 @@ export const piSpec: AgentSyncSpec = {
   // interactive launch into a repo carrying a `.pi/` dir blocks on a
   // "trust project-local files?" dialog that nothing on the host can answer.
   launchFlags: ['-a'],
+  // The hub's skills library: `--skill <dir>` adds a dir of skills to pi's own
+  // discovery (measured, Phase 0). pi >= 0.84 warns "skill path does not exist"
+  // on every launch when the dir is missing (0.73.1 did not), so both launchers
+  // create it first (`agentLaunchPrelude`).
+  skills: {
+    dirs: ['.pi/agent/skills', '.agents/skills'],
+    inject: { kind: 'flag', argv: ['--skill', '{dir}'] },
+  },
   caps: {
     resume: true,
     teleport: 'full',

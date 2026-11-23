@@ -774,11 +774,65 @@ export interface AgentSkillsSpec {
   /** User skill dirs on a PC, relative to the home dir (discovery). */
   dirs: readonly string[];
   /**
-   * `dir`: ctl symlinks each library skill into this absolute box-local
-   * directory (created with `sudo -n` when root-owned). Phase 3 adds the other
-   * shapes measured in Phase 0 (a launch flag, an env var, a config key).
+   * How the box's library ({@link BOX_SKILLS_LIBRARY_DIR}) reaches the agent,
+   * measured per agent in docs/hub-skills-plan.md (Phase 0 and Phase 3). `{dir}`
+   * in an argv is replaced with that path. The injection is unconditional; a
+   * `flag` one's launch creates the dir first ({@link agentLaunchPrelude}),
+   * because pi warns when it is missing.
+   *
+   * - `dir`: ctl symlinks each library skill into this absolute box-local
+   *   directory (created with `sudo -n` when root-owned). Additive to the
+   *   agent's other skill dirs, and applied on every provider by ctl itself.
+   *   claude, codex, opencode (`~/.opencode/skills`: an env/config-layer
+   *   injection would REPLACE a user's own `skills.paths`, measured).
+   * - `flag`: argv appended to the agent's `launchFlags` by
+   *   {@link agentLaunchFlags}. pi (`--skill {dir}`).
+   * - `config`: a config array the agent's OWN boot task merges `{dir}` into
+   *   (nothing generic writes another agent's config format). openclaw
+   *   (`skills.load.extraDirs`).
    */
-  inject: { kind: 'dir'; path: string };
+  inject:
+    | { kind: 'dir'; path: string }
+    | { kind: 'flag'; argv: readonly string[] }
+    | { kind: 'config'; jsonPath: readonly string[] };
+}
+
+/**
+ * Where ctl keeps the box's library skills (one directory per skill): box-local,
+ * owned by the box user, never on a shared docker volume.
+ */
+export const BOX_SKILLS_LIBRARY_DIR = '/home/vscode/.local/share/agentbox/skills';
+
+const fillDir = (v: string): string => v.split('{dir}').join(BOX_SKILLS_LIBRARY_DIR);
+
+/**
+ * The argv prepended to every launch: the declared `launchFlags` plus the
+ * library injection when it is a `flag` one.
+ */
+export function agentLaunchFlags(spec: Pick<AgentSyncSpec, 'launchFlags' | 'skills'>): string[] {
+  const inject = spec.skills?.inject;
+  // A plugin agent's spec is snapshotted without validating `skills`; a
+  // malformed one adds nothing rather than failing every launch.
+  const argv: unknown = inject?.kind === 'flag' ? inject.argv : undefined;
+  return [
+    ...(spec.launchFlags ?? []),
+    ...(Array.isArray(argv) ? argv.filter((a) => typeof a === 'string').map(fillDir) : []),
+  ];
+}
+
+/**
+ * Shell run before the agent binary on every launch (ends in `; ` when
+ * non-empty). A `flag` injection names the library dir on the command line, and
+ * pi (>= 0.84) prints a "skill path does not exist" block on every launch when
+ * it is missing, which it is whenever the hub serves no library, ctl's sync has
+ * not run yet, or the box is an older snapshot. So the launch creates it. The
+ * path is a constant with no shell metacharacters, so it is safe unquoted inside
+ * either launcher's quoting.
+ */
+export function agentLaunchPrelude(spec: Pick<AgentSyncSpec, 'skills'>): string {
+  return spec.skills?.inject.kind === 'flag'
+    ? `mkdir -p ${BOX_SKILLS_LIBRARY_DIR} 2>/dev/null; `
+    : '';
 }
 
 export interface AgentSyncSpec {
