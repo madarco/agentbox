@@ -8,7 +8,6 @@ import { agentSettingsFor } from '@agentbox/config';
 import type { AgentSettings, LoopbackEndpoint } from '@agentbox/core';
 import {
   DOCKER_HOST_ALIAS,
-  findLoopbackEndpoints,
   findAccount,
   LIVE_DATABASE_EXCLUDES,
   requireAgentCredential,
@@ -25,19 +24,9 @@ import {
   resolveAgentSpec,
   type AccountEnvPolicy,
 } from '@agentbox/sandbox-core';
-import {
-  addProjectAlias,
-  claudeSettingsEndpointPaths,
-  filterHostHooks,
-  hubSecretsOnHost,
-  stripHubMcpServers,
-  accountStateJqDelete,
-  setInstallMethodNative,
-  stripAccountState,
-  stripAuthSettings,
-  trustWorkspace,
-} from './hooks-filter.js';
+import { hubSecretsOnHost, accountStateJqDelete } from './hooks-filter.js';
 import { referencedPluginVersionKeys } from '@agentbox/sandbox-core';
+import { maybeFilterTo } from './claude-json-filter.js';
 export type { PullClaudeResult } from '@agentbox/sandbox-core';
 import {
   detectEngine,
@@ -466,114 +455,6 @@ export async function ensureClaudeVolume(
  * one change was made. Tolerant of missing or garbage JSON — silently returns
  * zero changes in those cases (sync proceeds with the raw rsync'd file).
  */
-/** Exported for tests. */
-export async function maybeFilterTo(
-  src: string,
-  dest: string,
-  hostHome: string,
-  opts: {
-    setInstallMethodNative?: boolean;
-    aliasProject?: { from: string; to: string };
-    trustWorkspacePath?: string;
-    /** Rewrite host-loopback `env.*_BASE_URL` values to `host` (#403). */
-    loopback?: { host: string; source: string };
-    /** Drop the host's account state (a named LLM account's volume). */
-    stripAccountState?: boolean;
-    /** Drop auth-bearing `env.*` keys and `apiKeyHelper` from a settings file. */
-    stripAuthSettings?: boolean;
-    /** Drop MCP servers carrying these hub credentials or a hub `/api/mcp` url. */
-    stripHubMcp?: readonly string[];
-  } = {},
-): Promise<{
-  removedHooks: number;
-  installMethodFixed: boolean;
-  aliasedProjectKey: boolean;
-  workspaceTrusted: boolean;
-  accountStateStripped: boolean;
-  loopbackEndpoints: LoopbackEndpoint[];
-}> {
-  const zero = {
-    removedHooks: 0,
-    installMethodFixed: false,
-    aliasedProjectKey: false,
-    workspaceTrusted: false,
-    accountStateStripped: false,
-    loopbackEndpoints: [],
-  };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFile(src, 'utf8'));
-  } catch {
-    return zero;
-  }
-  const filtered = filterHostHooks(parsed, hostHome);
-  let working: unknown = filtered.data;
-  let installFixed = false;
-  if (opts.setInstallMethodNative) {
-    const r = setInstallMethodNative(working);
-    working = r.data;
-    installFixed = r.applied;
-  }
-  let aliased = false;
-  if (opts.aliasProject) {
-    const r = addProjectAlias(working, opts.aliasProject.from, opts.aliasProject.to);
-    working = r.data;
-    aliased = r.aliased;
-  }
-  let trusted = false;
-  if (opts.trustWorkspacePath) {
-    const r = trustWorkspace(working, opts.trustWorkspacePath);
-    working = r.data;
-    trusted = r.trusted;
-  }
-  let authSettingsStripped = false;
-  if (opts.stripAuthSettings) {
-    const r = stripAuthSettings(working);
-    working = r.data;
-    authSettingsStripped = r.stripped;
-  }
-  let accountStateStripped = false;
-  if (opts.stripAccountState) {
-    const r = stripAccountState(working);
-    working = r.data;
-    accountStateStripped = r.stripped;
-  }
-  let hubMcpStripped = false;
-  if (opts.stripHubMcp) {
-    const r = stripHubMcpServers(working, opts.stripHubMcp);
-    working = r.data;
-    hubMcpStripped = r.removed.length > 0;
-  }
-  const loopbackEndpoints = opts.loopback
-    ? findLoopbackEndpoints(working, {
-        paths: claudeSettingsEndpointPaths(working),
-        source: opts.loopback.source,
-        rewriteHost: opts.loopback.host,
-      })
-    : [];
-  if (
-    filtered.removedCommands.length === 0 &&
-    !installFixed &&
-    !aliased &&
-    !trusted &&
-    !accountStateStripped &&
-    !authSettingsStripped &&
-    !hubMcpStripped &&
-    loopbackEndpoints.length === 0
-  ) {
-    return zero;
-  }
-  await writeFile(dest, JSON.stringify(working, null, 2));
-  return {
-    removedHooks: filtered.removedCommands.length,
-    installMethodFixed: installFixed,
-    aliasedProjectKey: aliased,
-    workspaceTrusted: trusted,
-    accountStateStripped: accountStateStripped || authSettingsStripped,
-    loopbackEndpoints,
-  };
-}
-
 export interface ClaudeMountResult {
   /** Docker -v spec strings to append to runBox(extraVolumes). */
   extraVolumes: string[];

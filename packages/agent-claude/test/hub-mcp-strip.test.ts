@@ -81,7 +81,7 @@ describe('cloud _claude.json staging', () => {
 
 describe('docker config-volume seed filter', () => {
   it('writes a filtered _claude.json without the hub MCP credential', async () => {
-    const { maybeFilterTo } = await import('../src/docker-sync.js');
+    const { maybeFilterTo } = await import('../src/claude-json-filter.js');
     const dir = await mkdtemp(join(tmpdir(), 'hub-docker-'));
     await writeFile(join(dir, 'src.json'), JSON.stringify(hostJson));
     const r = await maybeFilterTo(
