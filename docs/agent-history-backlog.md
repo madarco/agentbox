@@ -464,4 +464,30 @@ folder). Still open:
   `session_get` dropping `nextFrom` for a capped `to`, other TOML spellings of
   an existing `agentbox` server (no duplicate table), a box config pulled to a
   host that had none carrying the box-only server (`agentPull` strips it), and
-  one `git remote get-url` per MCP message (the scope is cached for a minute).
+  one `git remote get-url` per MCP message (since removed: the scope reads the registration only).
+- **From the review of #450 (2026-11-23), deferred:**
+  - *Inline `mcp_servers = { … }` in codex's config.toml.* Appending a
+    `[mcp_servers.agentbox]` table after an inline `mcp_servers` table makes
+    the file invalid TOML. The check now skips an inline table that names
+    `agentbox`; one that does not should be skipped too (with a log line).
+  - *`initialize` and `tools/list` go to the host.* Each is a relay round trip
+    with a 60 s timeout, so a cloud box whose PC is off shows a slow, then
+    failed, MCP server on every agent launch. ctl could answer both locally
+    and forward only `tools/call`.
+  - *`memory_propose` gaps.* `agent` is free-form (any name creates a memory
+    set); it ignores the project's `history.capture` opt-out; the approver sees
+    only the first 1,500 characters; a box with `autoApproveHostActions`
+    auto-approves it; a pending approval is lost on a hub restart (the
+    proposal is then neither applied nor reported).
+  - *Small items.* The hub logs one `rpc box=… method=mcp.message` line per MCP
+    message; the reply duplicates its payload (`content[0].text` and
+    `structuredContent`).
+  - *Re-registration without a repo.* The scope uses only the registration's
+    `repoKey`/`originUrl`. A registration re-pushed with neither (after a
+    relay restart, see Phase 4) leaves the box with no repo, so it sees
+    nothing until it registers again. Fail-closed by design.
+- **Fixed in the review of #450:** the host-side setup no longer puts the hub
+  token in an agent config (`agentbox mcp`, a stdio proxy that reads it at run
+  time), and staging `_claude.json` for a box (docker seed and cloud overlay)
+  drops any MCP server carrying the hub token or pointing at a hub `/api/mcp`.
+  The box scope no longer falls back to a live `git remote get-url`.

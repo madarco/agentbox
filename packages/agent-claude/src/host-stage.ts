@@ -40,6 +40,8 @@ import {
   addProjectAlias,
   claudeSettingsEndpointPaths,
   filterHostHooks,
+  hubSecretsOnHost,
+  stripHubMcpServers,
   setInstallMethodNative,
   trustWorkspace,
 } from './hooks-filter.js';
@@ -113,6 +115,7 @@ async function buildBoxClaudeJsonFromHost(opts: {
     };
   } else {
     working = filterHostHooks(working, hostHome).data;
+    working = stripHubMcpServers(working, hubSecretsOnHost(hostHome)).data;
     working = setInstallMethodNative(working).data;
     if (hostWorkspace) {
       working = addProjectAlias(working, hostWorkspace, CLOUD_WORKSPACE).data;

@@ -29,6 +29,8 @@ import {
   addProjectAlias,
   claudeSettingsEndpointPaths,
   filterHostHooks,
+  hubSecretsOnHost,
+  stripHubMcpServers,
   accountStateJqDelete,
   setInstallMethodNative,
   stripAccountState,
@@ -305,6 +307,7 @@ export async function ensureClaudeVolume(
             : undefined,
           trustWorkspacePath: CONTAINER_WORKSPACE,
           stripAccountState: opts.account !== undefined,
+          stripHubMcp: hubSecretsOnHost(hostHome),
         },
       );
       filteredHookCount += jsonResult.removedHooks;
@@ -463,7 +466,8 @@ export async function ensureClaudeVolume(
  * one change was made. Tolerant of missing or garbage JSON — silently returns
  * zero changes in those cases (sync proceeds with the raw rsync'd file).
  */
-async function maybeFilterTo(
+/** Exported for tests. */
+export async function maybeFilterTo(
   src: string,
   dest: string,
   hostHome: string,
@@ -477,6 +481,8 @@ async function maybeFilterTo(
     stripAccountState?: boolean;
     /** Drop auth-bearing `env.*` keys and `apiKeyHelper` from a settings file. */
     stripAuthSettings?: boolean;
+    /** Drop MCP servers carrying these hub credentials or a hub `/api/mcp` url. */
+    stripHubMcp?: readonly string[];
   } = {},
 ): Promise<{
   removedHooks: number;
@@ -532,6 +538,12 @@ async function maybeFilterTo(
     working = r.data;
     accountStateStripped = r.stripped;
   }
+  let hubMcpStripped = false;
+  if (opts.stripHubMcp) {
+    const r = stripHubMcpServers(working, opts.stripHubMcp);
+    working = r.data;
+    hubMcpStripped = r.removed.length > 0;
+  }
   const loopbackEndpoints = opts.loopback
     ? findLoopbackEndpoints(working, {
         paths: claudeSettingsEndpointPaths(working),
@@ -546,6 +558,7 @@ async function maybeFilterTo(
     !trusted &&
     !accountStateStripped &&
     !authSettingsStripped &&
+    !hubMcpStripped &&
     loopbackEndpoints.length === 0
   ) {
     return zero;

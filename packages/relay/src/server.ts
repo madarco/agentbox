@@ -472,29 +472,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       : null;
   const historyRpc = (reg: BoxRegistration) => (method: string, params: unknown) =>
     runHistoryRpc(historyRelay, memoryRelay, reg, method, params);
-  // A box's repo key can need a `git remote get-url` on its project folder:
-  // computed once a minute per box, not on every MCP message.
-  const mcpIdentities = new Map<
-    string,
-    { at: number; id: Promise<Pick<McpBoxScope, 'repoKey' | 'origin'>> }
-  >();
-  const mcpIdentity = (reg: BoxRegistration): Promise<Pick<McpBoxScope, 'repoKey' | 'origin'>> => {
-    if (!memoryRelay) {
-      return Promise.resolve({ repoKey: null, origin: { boxId: reg.boxId, boxName: reg.name } });
-    }
-    const hit = mcpIdentities.get(reg.boxId);
-    if (hit && Date.now() - hit.at < 60_000) return hit.id;
-    const id = memoryRelay.boxIdentity(reg);
-    mcpIdentities.set(reg.boxId, { at: Date.now(), id });
-    id.catch(() => mcpIdentities.delete(reg.boxId));
-    return id;
-  };
+  const mcpIdentity = (reg: BoxRegistration): Pick<McpBoxScope, 'repoKey' | 'origin'> =>
+    memoryRelay
+      ? memoryRelay.boxIdentity(reg)
+      : { repoKey: null, origin: { boxId: reg.boxId, boxName: reg.name } };
   // `prompts`/`subscribers` are read when a proposal is made, long after setup.
   const mcpScope = (reg: BoxRegistration) => async (): Promise<McpBoxScope> => ({
     kind: 'box',
     boxId: reg.boxId,
     boxName: reg.name,
-    ...(await mcpIdentity(reg)),
+    ...mcpIdentity(reg),
     approve: (req) => askMcpApproval(prompts, subscribers, reg.boxId, req),
     redact: (bytes) => (historyRelay ? historyRelay.redact(bytes) : Promise.resolve(bytes)),
   });

@@ -92,3 +92,28 @@ describe('cloud executor', () => {
     expect((await executeCloudAction(action, base)).exitCode).toBe(64);
   });
 });
+
+describe('box MCP identity', () => {
+  it('comes only from the registration, never from a live git read', async () => {
+    const { MemoryRelay } = await import('../src/history/memory-relay.js');
+    let gitReads = 0;
+    const relay = new MemoryRelay({
+      log: () => {},
+      gitOrigin: async () => {
+        gitReads++;
+        return 'https://github.com/someone/else';
+      },
+      projectRoot: async () => '/proj',
+    });
+    const reg = { boxId: 'b1', name: 'smoke', token: 't' } as never;
+    expect(
+      relay.boxIdentity({ ...(reg as object), repoKey: 'github.com/o/r' } as never).repoKey,
+    ).toBe('github.com/o/r');
+    expect(
+      relay.boxIdentity({ ...(reg as object), originUrl: 'git@github.com:O/R.git' } as never)
+        .repoKey,
+    ).toBe('github.com/o/r');
+    expect(relay.boxIdentity(reg).repoKey).toBeNull();
+    expect(gitReads).toBe(0);
+  });
+});

@@ -319,12 +319,18 @@ the relay authenticates the box and applies its scope. A box built from an image
 predates this needs a rebuild or re-bake to get it.
 
 Outside a box, the hub serves the same tools at `POST /api/mcp` (streamable HTTP, JSON replies)
-with the hub token, unscoped; pass `repo` to limit a call. For example, for claude on the PC:
+with the hub credential, unscoped; pass `repo` to limit a call. For an agent on your PC, register
+`agentbox mcp`, a stdio server that reads the hub credential when it runs (`--local` uses this
+machine's hub when a control box is configured):
 
 ```bash
-claude mcp add --transport http agentbox http://127.0.0.1:8787/api/mcp \
-  --header "Authorization: Bearer $(cat ~/.agentbox/hub/token)"
+claude mcp add agentbox -- agentbox mcp
+codex mcp add agentbox -- agentbox mcp
 ```
+
+Never put the hub token itself in an agent's MCP config (for example an `Authorization` header on
+an HTTP server): AgentBox copies `~/.claude.json` into boxes. As a safeguard, the copy drops any
+MCP server that carries the hub token or points at a hub's `/api/mcp`.
 
 ## Lifecycle
 

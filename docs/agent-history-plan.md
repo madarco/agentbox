@@ -601,9 +601,10 @@ project, without the hub token in the box.
 - **Scope.** `{kind: 'hub'}` for a hub-credential caller, `{kind: 'box', boxId,
   boxName, repoKey}` for a box. A box sees only sessions and memory whose repo
   key equals its own (`repoKey` of the session's `project_repo_url`; sessions
-  with no URL are hidden from boxes). The repo key is computed by the relay the
-  same way memory keys a box (registration `originUrl`, else the project
-  folder's `origin`, else `local:<machine>:<root>`). Workspace scope is not in
+  with no URL are hidden from boxes). The repo key comes only from what the box
+  registered with (`repoKey`, else `originUrl`), never from a live `git remote
+  get-url`: a docker box mounts the project's `.git` read-write and could point
+  `origin` at another repo. A box with no registered repo sees nothing. Workspace scope is not in
   this phase: sessions carry no workspace id yet (backlog).
 - **Tools.** `sessions_list`, `sessions_search`, `session_get` (condensed: user
   prompts, final answers, tool names; `from`/`to` turn ranges on request),
@@ -631,7 +632,11 @@ project, without the hub token in the box.
   registry, then again from the host's `agents.list`), on every provider:
   claude `~/.claude.json` `mcpServers`, codex `~/.codex/config.toml`
   `[mcp_servers.agentbox]`, opencode `~/.config/opencode/opencode.json` `mcp`.
-  pi has no MCP client; openclaw is left for later (backlog). The entry is the
+  pi has no MCP client; openclaw is left for later (backlog). On a PC, an agent
+  registers `agentbox mcp`, a stdio proxy to `/api/mcp` that reads the hub
+  credential at run time, so no token is ever written into an agent config
+  (the host `~/.claude.json` is copied into boxes; the copy also drops any MCP
+  server carrying the hub token or pointing at a hub's `/api/mcp`). The entry is the
   same command in every box, so a shared docker config file is harmless: each
   box's `agentbox-ctl mcp` authenticates as that box.
 - **Live check (2026-11-23, docker in a box, isolated hub on :18787).** ctl

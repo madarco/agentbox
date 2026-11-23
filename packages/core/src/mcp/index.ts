@@ -16,4 +16,5 @@ export {
  */
 export const MCP_RPC_METHOD = 'mcp.message';
 
+export { runMcpStdioBridge, type McpForward } from './bridge.js';
 export type { McpApprovalRequest, McpBoxHandler, McpBoxScope } from './types.js';
