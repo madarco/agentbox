@@ -109,12 +109,15 @@ const hubScope: McpHubScope = {
 };
 
 let nextId = 1;
+const servers = new WeakMap<SkillsStore, ReturnType<typeof createMcpServer>>();
 async function call(store: SkillsStore, scope: McpScope, name: string, args: object = {}) {
-  const server = createMcpServer({
-    name: 't',
-    version: '0',
-    toolSets: [() => skillsMcpTools({ store: () => store })],
-  });
+  // One server per store, as the hub builds one tool set for its life.
+  let server = servers.get(store);
+  if (!server) {
+    const tools = skillsMcpTools({ store: () => store });
+    server = createMcpServer({ name: 't', version: '0', toolSets: [() => tools] });
+    servers.set(store, server);
+  }
   const reply = (await server.handle(
     { jsonrpc: '2.0', id: nextId++, method: 'tools/call', params: { name, arguments: args } },
     scope,
@@ -182,6 +185,10 @@ describe('MCP skills tools', () => {
       reason: 'need it',
     });
     expect(r.structuredContent.status).toBe('pending');
+    // A retry while it waits asks nothing new.
+    const retry = await call(store, box, 'skills_propose_install', { name: 'alpha' });
+    expect(retry.structuredContent.status).toBe('pending');
+    expect(g.asked).toHaveLength(1);
     expect(g.asked[0]!.command).toBe('skills_propose_install');
     expect((await getSkillBindings(store)).box).toEqual({});
     g.answer(true);
@@ -260,6 +267,22 @@ describe('skill proposals', () => {
     g.answer(true);
     await settle();
     expect((await readSkillMeta(store, 'alpha'))!.current).toBe(moved);
+  });
+
+  it('never proposes an older stored version (a stale carried copy)', async () => {
+    const store = memStore();
+    await addSkill(store, 'alpha', 'v1');
+    await addSkill(store, 'alpha', 'v2');
+    const proposals = createSkillProposals({ store, approve: async () => true });
+    const r = await proposals.propose({
+      name: 'alpha',
+      tarball: writeTar(skillFiles('alpha', 'v1')),
+      box,
+    });
+    expect(r.status).toBe('unchanged');
+    expect((await readSkillMeta(store, 'alpha'))!.current).toBe(
+      treeHash(skillFiles('alpha', 'v2')),
+    );
   });
 
   it('refuses reserved names, a name mismatch and a skill without SKILL.md', async () => {

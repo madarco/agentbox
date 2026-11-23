@@ -16,6 +16,7 @@ import { tryGetMachineId } from '@agentbox/config';
 import type { AgentId, BoxRecord, SyncTransport } from '@agentbox/core';
 import {
   agentBoxDir,
+  authoredTreeHash,
   discoverLocalSkills,
   readLocalSkill,
   resolveAgentSpec,
@@ -74,7 +75,9 @@ export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<B
     discoverLocalSkills({ home: opts.home, maxBytes: opts.maxBytes }).catch(() => []),
   ]);
   const library = new Map(listing.skills.map((s) => [s.name, s.current]));
-  const onThisPc = new Set(local.map((s) => s.treeSha));
+  // Authored files only: a carried skill the agent merely ran leaves
+  // `__pycache__` / `node_modules` behind, which must not read as an edit.
+  const onThisPc = new Set(local.map((s) => authoredTreeHash(s.files)));
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-box-skills-'));
   const out: BoxSkillOutcome[] = [];
   const seen = new Set<string>();
@@ -108,7 +111,9 @@ export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<B
           continue;
         }
         // Carried from a PC (this one, as-is) or already the library's version.
-        if (onThisPc.has(skill.treeSha) || library.get(name) === skill.treeSha) continue;
+        if (onThisPc.has(authoredTreeHash(skill.files)) || library.get(name) === skill.treeSha) {
+          continue;
+        }
         try {
           const res: HubApiSkillProposal = await opts.client.proposeSkill(
             name,

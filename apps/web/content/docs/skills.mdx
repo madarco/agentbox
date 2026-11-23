@@ -157,7 +157,7 @@ Downloading a skill's files from the hub (`agentbox skills --download` / `--down
 
 ### Skills written in a box
 
-When an agent writes a new skill inside a box (say `~/.claude/skills/release-notes/`), it can join the library so later boxes get it too. `agentbox download <agent> [box]` (claude, codex, pi, openclaw) finishes its usual pull, then reads the agent's skill folder in the box and **proposes** each skill the library doesn't have at that version and this PC doesn't already have as-is:
+When an agent writes a new skill inside a box (say `~/.claude/skills/release-notes/`), it can join the library so later boxes get it too. `agentbox download <agent> [box]` (claude, codex, opencode, pi, openclaw) finishes its usual pull, then reads the agent's skill folder in the box and **proposes** each skill the library doesn't hold (at any kept version) and this PC doesn't already have as-is:
 
 ```bash
 agentbox download claude mybox

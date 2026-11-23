@@ -23,6 +23,8 @@ export interface SkillsMcpDeps {
 /** Characters of one file a `skill_get` reply carries before it pages. */
 const PAGE_CHARS = 48_000;
 const SKILL_FILE = 'SKILL.md';
+/** Custody's default blob cap: a stored skill never legitimately unpacks past it. */
+const MAX_UNPACKED_BYTES = 100 * 1024 * 1024;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false };
 
@@ -99,6 +101,8 @@ function isBinary(data: Buffer): boolean {
 }
 
 export function skillsMcpTools(deps: SkillsMcpDeps): McpTool[] {
+  /** `<boxId>/<name>` of every install request waiting for an answer. */
+  const asking = new Set<string>();
   const skillsList: McpTool = {
     name: 'skills_list',
     title: 'List library skills',
@@ -161,7 +165,7 @@ export function skillsMcpTools(deps: SkillsMcpDeps): McpTool[] {
       const { name, meta, view } = await visibleSkill(store, scope, args.name);
       const found = await store.get(`${SKILLS_SCOPE}/${name}/${meta.current}.tar.gz`);
       if (!found) throw new McpToolError(`skill '${name}' is missing its stored files`);
-      const files = readTar(found.data);
+      const files = readTar(found.data, { maxBytes: MAX_UNPACKED_BYTES });
       const path = str(args.path) ?? SKILL_FILE;
       const file = files.find((f) => f.path === path);
       if (!file) throw new McpToolError(`skill '${name}' has no file ${path}`);
@@ -226,6 +230,12 @@ export function skillsMcpTools(deps: SkillsMcpDeps): McpTool[] {
       }
       const reason = str(args.reason);
       const boxId = scope.boxId;
+      const key = `${boxId}/${name}`;
+      // A retry waits on the prompt already asked.
+      if (asking.has(key)) {
+        return { data: { status: 'pending', name, message: 'Already waiting for approval.' } };
+      }
+      asking.add(key);
       const approved = scope.approve({
         message: `Box ${scope.boxName} asks to install library skill ${name}`,
         detail: `${meta.description.slice(0, 200)}${reason ? ` — ${reason.slice(0, 200)}` : ''}`,
@@ -242,7 +252,8 @@ export function skillsMcpTools(deps: SkillsMcpDeps): McpTool[] {
           deps.log?.(
             `mcp: skills_propose_install ${name} failed: ${err instanceof Error ? err.message : String(err)}`,
           );
-        });
+        })
+        .finally(() => asking.delete(key));
       return {
         data: {
           status: 'pending',

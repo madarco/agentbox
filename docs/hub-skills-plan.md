@@ -795,7 +795,7 @@ one approval and appears in the next box.
    `importSkill`, unless the library's current moved meanwhile (then nothing is
    written, as with `memory_propose`). The route reaches the handler through
    `globalThis`, like the MCP route, so the relay stays out of Next's bundle.
-2. **`agentbox download <agent>`** (claude, codex, pi, openclaw): after its
+2. **`agentbox download <agent>`** (claude, codex, opencode, pi, openclaw): after its
    existing pull, it reads the agent's in-box skill dirs (the agent's
    `skills.dirs` that sit under its box config dir, so the docker volume
    transport reaches them on a stopped box too), skipping symlinked entries

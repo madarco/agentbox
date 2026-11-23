@@ -51,7 +51,7 @@ export interface SkillProposalResult {
   name: string;
   /** Tree hash the hub derived from the tarball. */
   version: string;
-  /** `unchanged`: the library's current version is already this one; nothing was asked. */
+  /** `unchanged`: the library already holds this version; nothing was asked. */
   status: 'pending' | 'unchanged';
   /** True when the library has no skill of this name yet. */
   isNew: boolean;
@@ -111,7 +111,9 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     const findings = scanSkillFiles(files);
     const prev = await readSkillMeta(deps.store, name);
     const base = { name, version, isNew: !prev, findings };
-    if (prev?.current === version) return { ...base, status: 'unchanged' };
+    // A version the library holds (current or older) is not new: proposing an
+    // older one would roll the library back (a stale carried copy).
+    if (prev?.versions.some((v) => v.sha256 === version)) return { ...base, status: 'unchanged' };
 
     const key = `${name}@${version}`;
     // The same proposal again (a second download) waits on the first prompt.
@@ -137,6 +139,8 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
         ? `${text.slice(0, PREVIEW_CHARS)}… [${String(text.length - PREVIEW_CHARS)} more chars]`
         : text;
     const baseCurrent = prev?.current ?? null;
+    // Only these reach the approval callback, so the unpacked files can be freed.
+    const fileCount = files.length;
     const approved = deps.approve(input.box.id, {
       message: `Box ${input.box.name} proposes ${prev ? 'a new version of' : 'a new'} library skill ${name}`,
       detail: `${String(files.length)} file(s), ${fmtBytes(size)}; ${scanLine} — ${description.slice(0, 200)}`,
@@ -163,7 +167,7 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
             sha256: version,
             description,
             size,
-            files: files.length,
+            files: fileCount,
             source: input.source ?? { host: `box ${input.box.name}` },
           },
           body: Readable.from([tarball]),

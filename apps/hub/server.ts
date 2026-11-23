@@ -325,16 +325,6 @@ async function main(): Promise<void> {
     redact: (bytes) => Promise.resolve(bytes),
   };
   globalThis.__AGENTBOX_HUB_MCP = { handle: (message) => mcpServer.handle(message, hubMcpScope) };
-  // Skill proposals from boxes (hub-skills Phase 7): one approval each, in the
-  // same prompt mailbox, under the box that wrote the skill.
-  globalThis.__AGENTBOX_HUB_SKILL_PROPOSALS = createSkillProposals({
-    store: custody,
-    approve: (boxId, req) =>
-      relayForMcp
-        ? askMcpApproval(relayForMcp.prompts, relayForMcp.subscribers, boxId, req)
-        : Promise.resolve(false),
-    log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
-  });
 
   const daemon = await startRelayDaemon({
     port,
@@ -403,6 +393,19 @@ async function main(): Promise<void> {
   // deferred poll-mode path only.
   globalThis.__AGENTBOX_BOX_SOURCE = daemon.handle.store;
   relayForMcp = daemon.handle;
+  // Skill proposals from boxes (hub-skills Phase 7): one approval each, in the
+  // same prompt mailbox, under the box that wrote the skill. Published only once
+  // the mailbox exists, so the route answers 503 rather than a `pending` no one
+  // is ever asked about.
+  globalThis.__AGENTBOX_HUB_SKILL_PROPOSALS = createSkillProposals({
+    store: custody,
+    approve: (boxId, req) =>
+      askMcpApproval(daemon.handle.prompts, daemon.handle.subscribers, boxId, req),
+    // Unpacked bytes a proposal may expand to: custody's blob cap, so a small
+    // gzip can't inflate into the hub's memory.
+    maxBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES) ?? 100 * 1024 * 1024,
+    log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+  });
   // Where this hub's timeline rows go, and where its manager records live. With
   // a control box configured the store (workspaces, tasks, log, managers) is
   // THERE, so the rows this hub produces for its own boxes are forwarded rather
