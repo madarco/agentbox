@@ -73,7 +73,7 @@ export async function POST(
   if (!tarball) {
     return fail(
       'invalid_request',
-      `the skill is over ${String(max)} bytes, the cap for a skill proposed from a box. Add a skill that large from a PC with \`agentbox skills\` instead.`,
+      `the skill is too large to propose from a box (its files may total ${String(Math.round(proposals.contentMaxBytes / 1024 / 1024))} MiB at most). Add a skill that large from a PC with \`agentbox skills\` instead.`,
     );
   }
   try {

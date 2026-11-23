@@ -168,6 +168,8 @@ export interface SkillProposals {
   pending(): number;
   /** The largest proposal tarball accepted (bytes): a route stops reading past it. */
   readonly maxBytes: number;
+  /** The cap on a proposed skill's own files (bytes), as users are told it. */
+  readonly contentMaxBytes: number;
 }
 
 /**
@@ -366,5 +368,10 @@ export function createSkillProposals(deps: SkillProposalDeps): SkillProposals {
     return { ...base, status: 'pending' };
   }
 
-  return { propose, pending: () => waiting.size, maxBytes: maxBytes + TAR_SLACK };
+  return {
+    propose,
+    pending: () => waiting.size,
+    maxBytes: maxBytes + TAR_SLACK,
+    contentMaxBytes: maxBytes,
+  };
 }
