@@ -199,7 +199,7 @@ export default function UsagePage() {
         </div>
       ) : (
         <>
-          <div className="mt-6 grid grid-cols-4 gap-3 max-md:grid-cols-2">
+          <div className="mt-6 grid grid-cols-6 gap-3 max-lg:grid-cols-3 max-sm:grid-cols-2">
             <Tile label="Total tokens" value={totals.totalTokens} />
             <Tile label="Input" value={totals.inputTokens} />
             <Tile label="Output" value={totals.outputTokens} />

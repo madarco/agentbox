@@ -333,3 +333,35 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
       images: one harmless log line.
     - A seed reply of 1000 x 256 KB could exceed the cloud bridge's body cap
       and fail forever. Real sets are KBs.
+
+## Phase 7 (usage + dashboard)
+
+- **No cost.** The plan's dashboard shows cost from a versioned price table,
+  computed at read time. Not built: tokens only, in the API, CLI and page. pi
+  and opencode already compute a cost in their own records; we still store
+  tokens only.
+- **Day buckets use one UTC offset.** `tzOffset` is the caller's offset now,
+  so a window that spans a DST change puts the hour around the switch in the
+  neighbouring day. An IANA zone would need the bucketing in JS or a calendar
+  table.
+- **Account is stamped once, from this hub's box record.** A session's account
+  is read from `record.accounts` when its first file arrives (backfilled at
+  hub start for sessions whose box is still in `state.json`). Sessions of boxes
+  destroyed before Phase 7, or of boxes this hub has no record of (another PC
+  ingesting over REST, a remote-hub split store), stay `unknown`. A session
+  resumed in a box on another account keeps the first one.
+- **Purged sessions are not re-parsed.** Retention keeps a session's usage
+  rows but deletes its raw, so a later parser fix (like claude v2's copied-usage
+  rule) cannot reach usage older than `history.retentionDays`.
+- **Copied usage, other agents.** claude drops usage on `/branch` and
+  desktop-continuation copies (parser v2). pi `/fork`/`/clone` and codex
+  `fork` were not measured: if they copy entries with usage into the new file,
+  that usage counts twice.
+- **Dashboard scope.** Not in this phase: live sessions, tool-call and failure
+  rates, a workspace dimension (sessions carry no workspace id yet), and a
+  drill-down into a session's transcript (the hub has no sessions page; the
+  session breakdown links nowhere).
+- **Usage query cost.** Every page load runs eight grouped queries over
+  `history_usage` joined to sessions, with a time filter on an expression
+  (`COALESCE(ts_ms, …)`) that the `ts_ms` index does not serve. Fine at
+  hundreds of thousands of rows; a daily rollup table is the fix if it shows.

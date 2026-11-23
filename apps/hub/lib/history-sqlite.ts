@@ -3,6 +3,7 @@
 // transcript volume would bloat it. Imported only by server.ts, dynamically.
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { repoKey } from '@agentbox/config';
 import type {
   HistorySearchHit,
   HistorySessionFilter,
@@ -199,6 +200,21 @@ function migrateUsage(db: Db): void {
   if (!sessions.has('purged_at')) {
     db.exec('ALTER TABLE history_sessions ADD COLUMN purged_at INTEGER');
   }
+  if (!sessions.has('project_key')) {
+    db.exec('ALTER TABLE history_sessions ADD COLUMN project_key TEXT');
+  }
+  // One repo spelled ssh and https is one project (`repoKey`).
+  const setKey = db.prepare(
+    'UPDATE history_sessions SET project_key = ? WHERE project_repo_url = ? AND project_key IS NULL',
+  );
+  for (const r of db
+    .prepare(
+      'SELECT DISTINCT project_repo_url AS u FROM history_sessions WHERE project_key IS NULL AND project_repo_url IS NOT NULL',
+    )
+    .all() as Row[]) {
+    const key = repoKey(String(r.u));
+    if (key) setKey.run(key, String(r.u));
+  }
   if (!columns(db, 'history_usage').has('ts_ms')) {
     db.exec('ALTER TABLE history_usage ADD COLUMN ts_ms INTEGER');
     db.exec(
@@ -217,7 +233,7 @@ const DIMENSION_SQL: Record<Exclude<UsageDimension, 'day'>, string> = {
   agent: 's.agent',
   account: 's.account',
   box: 's.box_id',
-  project: 's.project_repo_url',
+  project: 'COALESCE(s.project_key, s.project_repo_url)',
   host: 's.host_id',
   model: 'u.model',
   session: 's.key',
@@ -225,6 +241,7 @@ const DIMENSION_SQL: Record<Exclude<UsageDimension, 'day'>, string> = {
 
 const LABEL_SQL: Partial<Record<UsageDimension, string>> = {
   box: 'MAX(s.box_name)',
+  project: 'MAX(s.project_repo_url)',
   session: 'MAX(s.title)',
 };
 
@@ -265,8 +282,11 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
     args.push(q.box, q.box);
   }
   if (q.project !== undefined) {
-    where.push("s.project_repo_url LIKE ? ESCAPE '\\'");
-    args.push(`%${q.project.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    const like = `%${q.project.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    where.push(
+      "(s.project_repo_url LIKE ? ESCAPE '\\' OR s.project_key LIKE ? ESCAPE '\\' OR s.project_key = ?)",
+    );
+    args.push(like, like, repoKey(q.project) ?? q.project);
   }
   if (q.sinceMs !== undefined) {
     where.push(`${USAGE_TIME} >= ?`);
@@ -468,12 +488,12 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     async upsertSession(x) {
       db.prepare(
         `INSERT INTO history_sessions (key, agent, session_id, box_id, box_name, provider, host_id, project_repo_url,
-           account, parent_session_id, first_ts, last_ts, title, turns, input_tokens, output_tokens, parser_version,
-           created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           project_key, account, parent_session_id, first_ts, last_ts, title, turns, input_tokens, output_tokens,
+           parser_version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET box_id = excluded.box_id, box_name = excluded.box_name,
            provider = excluded.provider, host_id = excluded.host_id, project_repo_url = excluded.project_repo_url,
-           account = COALESCE(history_sessions.account, excluded.account),
+           project_key = excluded.project_key, account = COALESCE(history_sessions.account, excluded.account),
            parent_session_id = excluded.parent_session_id, parser_version = excluded.parser_version,
            purged_at = NULL, updated_at = excluded.updated_at`,
       ).run(
@@ -485,6 +505,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         x.provider,
         x.hostId,
         x.projectRepoUrl,
+        x.projectRepoUrl ? (repoKey(x.projectRepoUrl) ?? null) : null,
         x.account,
         x.parentSessionId,
         x.firstTs,

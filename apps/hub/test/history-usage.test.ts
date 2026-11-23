@@ -179,6 +179,20 @@ describe('usage (Phase 7)', () => {
     expect(one).toMatchObject({ truncated: true, groups: [{ keys: { agent: 'claude' } }] });
   });
 
+  it('groups one repo spelled ssh and https as one project', async () => {
+    const { svc, ship } = await setup();
+    const row = { id: 'm', ts: day1, model: 'x', in: 1, out: 1 };
+    await ship({ boxId: 'b1', repo: 'git@github.com:Acme/API.git' }, 'claude', 'p1', [row]);
+    await ship({ boxId: 'b2', repo: 'https://github.com/acme/api' }, 'claude', 'p2', [row]);
+    const r = await svc.usage({ by: ['project'], tzOffsetMin: 0, limit: 10 });
+    expect(r.groups).toHaveLength(1);
+    expect(r.groups[0]).toMatchObject({ keys: { project: 'github.com/acme/api' }, sessions: 2 });
+    for (const project of ['github.com/acme/api', 'acme/api', 'git@github.com:acme/api.git']) {
+      const f = await svc.usage({ by: [], tzOffsetMin: 0, limit: 10, project });
+      expect(f.totals.sessions).toBe(2);
+    }
+  });
+
   it('backfills the account of sessions stored before the box was known', async () => {
     const accounts: Record<string, string> = {};
     const { svc, ship, repo } = await setup(accounts);
