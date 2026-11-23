@@ -159,6 +159,11 @@ describe('node:sqlite row source', () => {
   it('refuses to copy a compressed row empty when this node has no zstd', () => {
     const row: Record<string, unknown> = { event_json: null, event_zstd: new Uint8Array([1]) };
     expect(() => decodeZstdColumn(row, 'event_zstd', 'event_json', null)).toThrow(/no zstd/);
+    const bad: Record<string, unknown> = { event_json: null, event_zstd: new Uint8Array([1, 2]) };
+    decodeZstdColumn(bad, 'event_zstd', 'event_json', () => {
+      throw new Error('corrupt frame');
+    });
+    expect(bad).toEqual({ event_json: null, event_zstd_error: 'corrupt frame' });
     const plain: Record<string, unknown> = { event_json: '{}', event_zstd: null };
     decodeZstdColumn(plain, 'event_zstd', 'event_json', null);
     expect(plain.event_json).toBe('{}');

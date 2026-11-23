@@ -491,6 +491,8 @@ export const openclawSpec: AgentSyncSpec = {
               id: 'seq',
               session: 'session_id',
               updated: 'created_at',
+              // After the window row, so lineage is in the file's head.
+              parent: { column: 'session_id', table: 'session_windows' },
               zstd: { column: 'event_zstd', into: 'event_json' },
               settleMs: 20_000,
             },

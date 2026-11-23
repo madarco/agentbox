@@ -167,6 +167,11 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   `agents/<id>/sessions/cold/<sha256>.jsonl.zst`. Anything copied before that is
   kept; a box whose history predates capture (a restored bot) has those events
   only in the cold files, which are not read.
+- **openclaw: parse state grows with the session.** The parser remembers every
+  projected event `seq` to drop a re-copied row (opencode does the same per
+  part), so a weeks-long daemon session carries tens of thousands of keys in
+  its state. A per-session high-watermark would do, once rows are known to
+  arrive in `seq` order.
 - **openclaw: a shared volume or a clone attributes to the wrong box.** Every
   session in the db is bound to the box that reads it. That is right for the
   default per-box volume, but an explicit `isolate: false` override (warned at

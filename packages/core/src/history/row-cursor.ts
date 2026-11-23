@@ -113,11 +113,14 @@ export function snapshotSources(agents: ShippedAgent[]): Array<{
 
 type Cursor = Record<string, Record<string, number>>;
 
-/** Numeric ids (openclaw's per-session `seq`) in number order, others as strings. */
-function byId(a: string, b: string): number {
-  const na = Number(a);
-  const nb = Number(b);
-  if (a !== '' && b !== '' && Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+const DIGITS = /^\d{1,15}$/;
+
+/** Integer ids (openclaw's per-session `seq`) in number order, before any other id. */
+function compareIds(a: string, b: string): number {
+  const da = DIGITS.test(a);
+  const db = DIGITS.test(b);
+  if (da && db) return Number(a) - Number(b);
+  if (da !== db) return da ? -1 : 1;
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
@@ -243,10 +246,10 @@ export class HistoryRowCursor {
             (final || now - v.u >= settle) &&
             (!parentSeen || (v.parent !== undefined && parentSeen[v.parent] !== undefined)),
         )
-        .sort((a, b) => a.u - b.u || byId(a.id, b.id));
+        .sort((a, b) => a.u - b.u || compareIds(a.id, b.id));
       for (let i = 0; i < due.length; i += ROWS_PER_QUERY) {
         const batch = due.slice(i, i + ROWS_PER_QUERY);
-        const byId = new Map(
+        const rowsById = new Map(
           db
             .rows(
               table,
@@ -256,7 +259,7 @@ export class HistoryRowCursor {
             .map((r) => [String(r[table.id]), r]),
         );
         for (const v of batch) {
-          const row = byId.get(v.id);
+          const row = rowsById.get(v.id);
           if (!row) continue;
           lines.push(rowLine(table.name, v.id, v.u, row));
           seen[v.id] = v.u;

@@ -188,20 +188,29 @@ function loadZstd(): ZstdDecompress | null {
 /** openclaw caps a compressed event at 4 MiB of text. */
 const ZSTD_MAX_OUTPUT = 8 * 1024 * 1024;
 
+const ZSTD = loadZstd();
+
 /**
  * Replace a zstd blob with its text. Throws when this node has no zstd (added
  * in 22.15/23.8), so the pass fails and the row is retried, never copied empty.
+ * A frame that does not decode is copied without its text, flagged
+ * `<column>_error`: retrying it would stall every session behind it.
  */
 export function decodeZstdColumn(
   row: Record<string, unknown>,
   column: string,
   into: string,
-  zstd: ZstdDecompress | null = loadZstd(),
+  zstd: ZstdDecompress | null = ZSTD,
 ): void {
   const blob = row[column];
   if (!(blob instanceof Uint8Array)) return;
   if (!zstd) throw new Error(`no zstd in this node: cannot decode ${column}`);
-  row[into] = zstd(blob, { maxOutputLength: ZSTD_MAX_OUTPUT }).toString('utf8');
+  try {
+    row[into] = zstd(blob, { maxOutputLength: ZSTD_MAX_OUTPUT }).toString('utf8');
+  } catch (e) {
+    row[into] = null;
+    row[`${column}_error`] = e instanceof Error ? e.message : String(e);
+  }
   delete row[column];
 }
 
