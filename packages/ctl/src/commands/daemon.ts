@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { HistoryLoop } from '../history-shipper.js';
 import { MemoryLoop } from '../memory-sync.js';
+import { registerBoxMcp } from '../mcp-register.js';
 import { describeSkillsSync, syncBoxSkills } from '../skills-sync.js';
 import { DEFAULT_BOX_RELAY_PORT, startRelayServer, type RelayServerHandle } from '@agentbox/relay';
 import { loadConfig, type CtlConfig } from '../config.js';
@@ -345,6 +346,11 @@ export const daemonCommand = new Command('daemon')
               `agentbox-ctl: skills sync failed: ${err instanceof Error ? err.message : String(err)}\n`,
             );
           });
+        // Fifth: the AgentBox MCP server in each agent's MCP config. Never
+        // throws; a file it cannot parse is logged and left alone.
+        void registerBoxMcp(watch.mcpTargets, {
+          log: (m) => void process.stderr.write(`agentbox-ctl: ${m}\n`),
+        });
         if (watch.units.length === 0 && watch.renders.length === 0) return;
         try {
           const diff = await sup.reload(await buildConfig());

@@ -45,6 +45,7 @@ describe('fetchWatchList', () => {
       renders: [],
       // Likewise no skill injection dirs: they come only from the host.
       skillDirs: [],
+      mcpTargets: [],
       source: 'timeout',
     });
   });
@@ -74,6 +75,7 @@ describe('fetchWatchList', () => {
       renders: [],
       // The fake descriptor declares no `skills`, so no agent gets a link dir.
       skillDirs: [],
+      mcpTargets: [],
       source: 'host',
     });
   });

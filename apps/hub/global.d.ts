@@ -25,6 +25,10 @@ declare global {
   // Agent memory versions (docs/agent-history-plan.md, Phase 4), in history.db.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_MEMORY: MemoryService | undefined;
+  // The MCP server for hub-credential callers (`POST /api/mcp`), set by the
+  // custom server; boxes reach the same server through the relay.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_MCP: { handle(message: unknown): Promise<unknown> } | undefined;
 
   // Host-facing backend (box list + lifecycle). Set by the custom server; Next's
   // source.ts / actions.ts reach the Node/docker toolchain only through this, so

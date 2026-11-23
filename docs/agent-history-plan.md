@@ -2,7 +2,7 @@
 
 **Status:** Phases 1, 2 done (store, archive, ingest, read API + CLI for claude
 in boxes); Phase 3 implemented (codex, pi, opencode transcripts, re-parse job;
-openclaw deferred); Phase 4 (memory, claude) implemented; Phases 5-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
+openclaw deferred); Phase 4 (memory, claude), Phase 5 (host sessions) and Phase 6 (MCP) implemented; Phase 7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -588,6 +588,67 @@ PC pointed at the same hub.
 
 **Done:** a box agent finds and quotes a previous box's session for the same
 project, without the hub token in the box.
+
+#### Phase 6 implementation plan (2026-11-23)
+
+- **One MCP core, hub-side** (`apps/hub/lib/backend/mcp.ts` + `mcp-history.ts`).
+  A small JSON-RPC handler (`initialize`, `ping`, `tools/list`, `tools/call`,
+  notifications) over a list of tool sets. A tool is `{name, description,
+  inputSchema, run(args, ctx)}`; `ctx` carries the caller's scope. History
+  registers the first set; skills (hub-skills Phase 7) appends its own set
+  without touching the core. No SDK dependency: the protocol surface is four
+  methods, and the same core answers both transports below.
+- **Scope.** `{kind: 'hub'}` for a hub-credential caller, `{kind: 'box', boxId,
+  boxName, repoKey}` for a box. A box sees only sessions and memory whose repo
+  key equals its own (`repoKey` of the session's `project_repo_url`; sessions
+  with no URL are hidden from boxes). The repo key comes only from what the box
+  registered with (`repoKey`, else `originUrl`), never from a live `git remote
+  get-url`: a docker box mounts the project's `.git` read-write and could point
+  `origin` at another repo. A box with no registered repo sees nothing. Workspace scope is not in
+  this phase: sessions carry no workspace id yet (backlog).
+- **Tools.** `sessions_list`, `sessions_search`, `session_get` (condensed: user
+  prompts, final answers, tool names; `from`/`to` turn ranges on request),
+  `memory_list`, `memory_get`, `memory_propose`. Every result is paged and
+  carries `tokensEstimate` (chars / 4). `usage_query` waits for Phase 7's
+  usage API. The service gains a `projectUrls` filter (exact `IN` over the
+  distinct stored URLs whose key matches), so scoping is done in SQL, not by
+  post-filtering a page.
+- **`memory_propose`** asks through the relay's approvals (`askPrompt`, a
+  `confirm` with the path and a content preview, 24 h TTL, default no). The
+  tool returns at once with `pending`; an approval appends a memory version
+  (origin: the box, redacted like a `memory.put`). It never blocks the agent.
+- **Transports.** Hub: `POST /api/mcp`, streamable HTTP answered as plain JSON
+  (no SSE, no session), behind `proxy.ts`'s API gate (Bearer, JSON 401). Box:
+  `agentbox-ctl mcp`, a stdio server that forwards each JSON-RPC message as an
+  `mcp.message` RPC over the existing relay channel. The relay authenticates
+  the box by its token, builds the box scope, and hands the message to the hub
+  in-process (`RelayServerOptions.mcp`). Routed in `server.ts` `/rpc` and in
+  `executeCloudAction` (both call sites), like `history.*`, so docker and every
+  cloud provider share one path and the box never holds the hub token. A relay
+  with no hub answers a JSON-RPC error.
+- **Registration.** Data on the agent row: `AgentSyncSpec.mcp = {file, format:
+  'json' | 'toml', serversPath, entry: 'stdio' | 'opencode'}`. ctl writes an
+  `agentbox` server entry into that file at daemon start (from its baked
+  registry, then again from the host's `agents.list`), on every provider:
+  claude `~/.claude.json` `mcpServers`, codex `~/.codex/config.toml`
+  `[mcp_servers.agentbox]`, opencode `~/.config/opencode/opencode.json` `mcp`.
+  pi has no MCP client; openclaw is left for later (backlog). On a PC, an agent
+  registers `agentbox mcp`, a stdio proxy to `/api/mcp` that reads the hub
+  credential at run time, so no token is ever written into an agent config
+  (the host `~/.claude.json` is copied into boxes; the copy also drops any MCP
+  server carrying the hub token or pointing at a hub's `/api/mcp`). The entry is the
+  same command in every box, so a shared docker config file is harmless: each
+  box's `agentbox-ctl mcp` authenticates as that box.
+- **Live check (2026-11-23, docker in a box, isolated hub on :18787).** ctl
+  wrote `mcpServers.agentbox` into box A's `~/.claude.json`. One `claude -p`
+  turn in box A ("The deploy codeword for this project is MANGO-7713.") shipped
+  with the repo URL; box A was destroyed. In box B of the same repo,
+  `claude -p` with only the `mcp__agentbox__*` tools found the session with
+  `sessions_search` and quoted the sentence, its id and box. The hub token was
+  in neither box B's environment nor its files. A `memory_propose` from box B
+  parked an approval in `/api/v1/approvals`; answering it stored version 1 with
+  origin `mcp-b`. `POST /api/mcp` answered `initialize` and `tools/call` with
+  the hub token and 401 without.
 
 ### Phase 7 — usage + dashboard
 

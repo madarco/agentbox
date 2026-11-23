@@ -143,6 +143,7 @@ export {
   stripJsonComments,
 } from './loopback-endpoints.js';
 export * from './history/index.js';
+export * from './mcp/index.js';
 
 export {
   SKILL_BINDINGS_PATH,

@@ -7,6 +7,7 @@
 // control box's postgres later) and `HistoryArchive` (chunk bytes: a directory
 // here, object storage later). This file holds no SQL and no paths.
 import { zstdCompressSync, zstdDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
+import { repoKey } from '@agentbox/config';
 import {
   agentHistoryModule,
   agentHistoryModules,
@@ -80,6 +81,11 @@ export interface HistorySessionFilter {
   box?: string;
   /** Substring of the project's repo URL. */
   project?: string;
+  /**
+   * Exact stored repo URLs (one repo's spellings, see `projectUrlsFor`). An
+   * empty list matches nothing: it is a scope, never "no filter".
+   */
+  projectUrls?: readonly string[];
   /** The PC (machine id) that shipped it. */
   host?: string;
   /** Last activity (the transcript's own last timestamp) at or after this epoch-ms. */
@@ -170,8 +176,10 @@ export interface HistoryRepo {
   /** Turn/tool rows in session order, `limit` from `from`. */
   turns(key: string, from: number, limit: number): Promise<HistoryTurnRow[]>;
   toolCounts(key: string): Promise<Array<{ name: string; count: number }>>;
-  /** FTS hits for an already-quoted query (see `ftsQuery`). */
-  search(fts: string, limit: number): Promise<HistorySearchHit[]>;
+  /** FTS hits for an already-quoted query (see `ftsQuery`), optionally within these repo URLs. */
+  search(fts: string, limit: number, projectUrls?: readonly string[]): Promise<HistorySearchHit[]>;
+  /** Every distinct `project_repo_url` stored. */
+  projectUrls(): Promise<string[]>;
 }
 
 /** Chunk bytes. */
@@ -234,7 +242,13 @@ export interface HistoryService extends HistoryIngestSink {
   sessionTurns(key: string, from: number, limit: number): Promise<HistoryTurnRow[]>;
   /** The file to download: `path` when it belongs to the session, else its main file. */
   sessionFile(key: string, path?: string): Promise<HistoryFileRow | null>;
-  search(q: string, limit: number): Promise<HistorySearchHit[]>;
+  search(
+    q: string,
+    limit: number,
+    opts?: { projectUrls?: readonly string[] },
+  ): Promise<HistorySearchHit[]>;
+  /** The stored repo URLs whose `repoKey` is `key` (ssh and https spellings of one repo). */
+  projectUrlsFor(key: string): Promise<string[]>;
   /**
    * Re-derive the projection of every session whose parser is older than its
    * agent module's, from the raw archive. Returns how many sessions it redid.
@@ -540,6 +554,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       const fts = q ? ftsQuery(q) : null;
       // A query with no words matches nothing (as `search` does), not everything.
       if (q && !fts) return Promise.resolve([]);
+      if (filter.projectUrls && filter.projectUrls.length === 0) return Promise.resolve([]);
       return repo.querySessions({
         ...rest,
         ...(fts ? { q: fts } : {}),
@@ -586,10 +601,15 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return files.find((f) => !f.child) ?? files[0] ?? null;
     },
 
-    async search(q, limit) {
+    async search(q, limit, opts) {
       const fts = ftsQuery(q);
       if (!fts) return [];
-      return repo.search(fts, Math.min(Math.max(limit, 1), 200));
+      if (opts?.projectUrls && opts.projectUrls.length === 0) return [];
+      return repo.search(fts, Math.min(Math.max(limit, 1), 200), opts?.projectUrls);
+    },
+
+    async projectUrlsFor(key) {
+      return (await repo.projectUrls()).filter((u) => u === key || repoKey(u) === key);
     },
 
     reparse() {
