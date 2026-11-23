@@ -42,7 +42,12 @@ const rollout =
     type: 'token_usage_record',
     payload: {
       response_id: 'resp_1',
-      usage: { input_tokens: 100, cached_input_tokens: 60, output_tokens: 5, cache_write_input_tokens: 0 },
+      usage: {
+        input_tokens: 100,
+        cached_input_tokens: 60,
+        output_tokens: 5,
+        cache_write_input_tokens: 0,
+      },
     },
   });
 
@@ -76,7 +81,9 @@ describe('codex history module', () => {
       'user:say hi',
       'assistant:hi',
     ]);
-    expect(records.filter((r) => r.kind === 'tool').map((r) => (r.kind === 'tool' ? r.name : ''))).toEqual(['shell']);
+    expect(
+      records.filter((r) => r.kind === 'tool').map((r) => (r.kind === 'tool' ? r.name : '')),
+    ).toEqual(['shell']);
     expect(records.find((r) => r.kind === 'usage')).toMatchObject({
       messageId: 'resp_1',
       model: 'gpt-5.5',
@@ -87,12 +94,18 @@ describe('codex history module', () => {
   });
 
   it('gives the same records whatever the chunking', () => {
-    const whole = codexHistoryModule.parse({ path: PATH, offset: 0, bytes: Buffer.from(rollout) }, {});
+    const whole = codexHistoryModule.parse(
+      { path: PATH, offset: 0, bytes: Buffer.from(rollout) },
+      {},
+    );
     const buf = Buffer.from(rollout);
     let state = {};
     const parts = [];
     for (let i = 0; i < buf.length; i += 37) {
-      const r = codexHistoryModule.parse({ path: PATH, offset: i, bytes: buf.subarray(i, i + 37) }, state);
+      const r = codexHistoryModule.parse(
+        { path: PATH, offset: i, bytes: buf.subarray(i, i + 37) },
+        state,
+      );
       state = r.state;
       parts.push(...r.records);
     }

@@ -42,7 +42,8 @@ function moduleAt(version: 1 | 2): AgentHistoryModule {
       const lines = text.split('\n');
       const partial = lines.pop() ?? '';
       const records: HistoryRecord[] = [];
-      let at = chunk.offset - Buffer.byteLength(typeof state.partial === 'string' ? state.partial : '');
+      let at =
+        chunk.offset - Buffer.byteLength(typeof state.partial === 'string' ? state.partial : '');
       for (const raw of lines) {
         const l = JSON.parse(raw) as { role: 'user' | 'assistant'; text: string };
         if (version === 1 && l.role === 'user') {
@@ -84,10 +85,7 @@ describe('history re-parse job', () => {
 
     registerAgentHistoryModule(moduleAt(2));
     expect(await svc.reparse()).toBe(1);
-    expect((await svc.sessionTurns(key, 0, 10)).map((t) => t.text)).toEqual([
-      'SAY HI',
-      'HI THERE',
-    ]);
+    expect((await svc.sessionTurns(key, 0, 10)).map((t) => t.text)).toEqual(['SAY HI', 'HI THERE']);
     const session = await repo.getSession(key);
     expect(session).toMatchObject({ parserVersion: 2, title: 'v2 title', turns: 2 });
     // The partial tail is in the stored parse state, so the next frame completes it.

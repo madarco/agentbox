@@ -150,3 +150,40 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
     `^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$` with a misleading "outside the folder"
     message.
   - Revisit both when codex, pi and opencode ids arrive.
+
+## Phase 3 (other agents)
+
+- **openclaw.** Not captured. Its 2026.11 store is a per-agent sqlite with a
+  large schema; transcripts look like `transcript_events(session_id, seq,
+  event_json | event_zstd, created_at, …)`, with compressed events the row
+  cursor cannot read as JSON. Its volume is always isolated per box, so it
+  would also need a "every session in the db" mode instead of bindings.
+  Measure it in a live openclaw box first.
+- **codex `.jsonl` → `.jsonl.zst`.** Codex compresses cold rollouts and the
+  shipper does not follow the rename. A rollout compressed before its tail was
+  shipped loses that tail (the hub keeps what it has). Boxes ship every 30 s,
+  so only a session that went cold inside one pass is at risk. Fix: treat
+  `<f>.jsonl.zst` as `<f>.jsonl` and decompress at the edge.
+- **codex sub-agent threads.** They are rollouts of their own and ship only
+  when a hook fires with their own `session_id`. Not verified; if hooks only
+  name the root thread, sub-agent rollouts are never bound.
+- **opencode streaming rows.** The row cursor writes a message/part row once it
+  has been quiet for 20 s, and the parser projects a part the first time it
+  sees it. A text part that paused longer than that mid-stream is projected
+  with its early text. Usage is only taken from a completed message, so it is
+  not affected.
+- **Row cursor on a paused docker box.** The destroy flush runs the box's
+  `agentbox-ctl history flush` only when the box is running; a paused box's
+  unsettled opencode rows (the last ~20 s) are not copied out.
+- **Row cursor needs Node ≥ 22.5** (`node:sqlite`) in the box. On an older base
+  it is a no-op and opencode is not captured until the provider is re-baked.
+- **`agentbox-history/` on the shared opencode volume** grows with every bound
+  session and is never cleaned.
+- **Re-parse keeps identity.** The job re-derives turns, usage and title, not
+  `sessionKey`, parent or `child`, which are fixed at a file's first frame. A
+  change to `identify()` needs its own migration.
+- **Re-parse blocks ingest per session.** Each session is re-derived inside the
+  ingest queue, so a very large session holds frames back while it runs.
+- **Boxes built before Phase 3** bind claude sessions only. Codex, pi and
+  opencode report their session ids from hooks baked into the image (docker)
+  or the provider's base snapshot (clouds); rebuild or re-bake to capture them.

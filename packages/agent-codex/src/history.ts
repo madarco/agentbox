@@ -25,7 +25,8 @@ import {
   type ParseState,
 } from '@agentbox/core';
 
-const ROLLOUT_ID = /-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/;
+const ROLLOUT_ID =
+  /-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/;
 
 /** A user-role message codex wrote itself (environment, AGENTS.md, permissions). */
 function injected(text: string): boolean {
@@ -80,7 +81,9 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
         }
         if (p.role === 'assistant') {
           const text = contentText(p.content, 'output_text').trim();
-          return text ? [{ kind: 'turn', role: 'assistant', text: clipText(text), ...tsPart, at }] : [];
+          return text
+            ? [{ kind: 'turn', role: 'assistant', text: clipText(text), ...tsPart, at }]
+            : [];
         }
         return [];
       }

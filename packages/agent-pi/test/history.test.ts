@@ -12,9 +12,16 @@ const session =
     id: SID,
     timestamp: '2026-11-23T10:00:00Z',
     cwd: '/workspace',
-    parentSession: '/home/vscode/.pi/agent/sessions/--workspace--/2026-11-22T09-00-00-000Z_aaaa0000-1111-4222-8333-444444444444.jsonl',
+    parentSession:
+      '/home/vscode/.pi/agent/sessions/--workspace--/2026-11-22T09-00-00-000Z_aaaa0000-1111-4222-8333-444444444444.jsonl',
   }) +
-  L({ type: 'message', id: 'a1', parentId: null, timestamp: 't1', message: { role: 'user', content: 'say hi' } }) +
+  L({
+    type: 'message',
+    id: 'a1',
+    parentId: null,
+    timestamp: 't1',
+    message: { role: 'user', content: 'say hi' },
+  }) +
   L({
     type: 'message',
     id: 'a2',
@@ -27,10 +34,23 @@ const session =
         { type: 'toolCall', id: 'c1', name: 'bash', arguments: {} },
       ],
       model: 'gpt-5.5',
-      usage: { input: 10, output: 3, cacheRead: 7, cacheWrite: 1, totalTokens: 21, cost: { total: 0.01 } },
+      usage: {
+        input: 10,
+        output: 3,
+        cacheRead: 7,
+        cacheWrite: 1,
+        totalTokens: 21,
+        cost: { total: 0.01 },
+      },
     },
   }) +
-  L({ type: 'message', id: 'a3', parentId: 'a2', timestamp: 't3', message: { role: 'toolResult', toolName: 'bash', content: [] } }) +
+  L({
+    type: 'message',
+    id: 'a3',
+    parentId: 'a2',
+    timestamp: 't3',
+    message: { role: 'toolResult', toolName: 'bash', content: [] },
+  }) +
   L({ type: 'session_info', id: 'a4', parentId: 'a3', timestamp: 't4', name: 'Greeting' });
 
 describe('pi history module', () => {
@@ -43,7 +63,10 @@ describe('pi history module', () => {
   });
 
   it('projects turns, tool calls, usage and the session name', () => {
-    const { records } = piHistoryModule.parse({ path: PATH, offset: 0, bytes: Buffer.from(session) }, {});
+    const { records } = piHistoryModule.parse(
+      { path: PATH, offset: 0, bytes: Buffer.from(session) },
+      {},
+    );
     expect(records.map((r) => r.kind)).toEqual(['meta', 'turn', 'turn', 'tool', 'usage', 'meta']);
     expect(records.find((r) => r.kind === 'usage')).toMatchObject({
       messageId: 'a2',

@@ -7,7 +7,9 @@ import { HistoryRowCursor, type AgentHistorySqliteTable } from '@agentbox/core';
 import { localRowFiles, openSqliteRowSource } from '../src/history-shipper.js';
 
 // vite cannot resolve `node:sqlite` as an import; require it as ctl does at runtime.
-const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+const { DatabaseSync } = createRequire(import.meta.url)(
+  'node:sqlite',
+) as typeof import('node:sqlite');
 
 const dir = mkdtempSync(join(tmpdir(), 'ctl-rowsrc-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -55,7 +57,9 @@ describe('node:sqlite row source', () => {
         },
       ],
       boxId: 'b1',
-      readBindings: async () => [{ ts: '', boxId: 'b1', agent: 'opencode', sessionId: 'ses_aaaaaaaa1' }],
+      readBindings: async () => [
+        { ts: '', boxId: 'b1', agent: 'opencode', sessionId: 'ses_aaaaaaaa1' },
+      ],
       open: openSqliteRowSource,
       files: localRowFiles,
     });
@@ -66,7 +70,11 @@ describe('node:sqlite row source', () => {
       .trim()
       .split('\n')
       .map((l) => JSON.parse(l) as { t: string; id: string; row: Record<string, unknown> });
-    expect(lines.map((l) => `${l.t}:${l.id}`)).toEqual(['session:ses_aaaaaaaa1', 'message:msg_1', 'part:prt_1']);
+    expect(lines.map((l) => `${l.t}:${l.id}`)).toEqual([
+      'session:ses_aaaaaaaa1',
+      'message:msg_1',
+      'part:prt_1',
+    ]);
     expect(lines[2]!.row.data).toBe('{"type":"text","text":"hi"}');
     expect((await cursor.pass()).rows).toBe(0);
   });

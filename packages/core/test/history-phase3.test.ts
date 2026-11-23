@@ -182,7 +182,12 @@ describe('HistoryRowCursor', () => {
     rig.tables.session![0]!.u = 19_000;
     rig.setStamp('s2');
     await rig.cursor.pass();
-    expect(rig.lines().map((l) => `${l.id}@${String(l.u)}`).slice(-1)).toEqual([`${OSID}@19000`]);
+    expect(
+      rig
+        .lines()
+        .map((l) => `${l.id}@${String(l.u)}`)
+        .slice(-1),
+    ).toEqual([`${OSID}@19000`]);
     expect(rig.lines()).toHaveLength(6);
   });
 
@@ -226,9 +231,17 @@ describe('parseJsonlChunk', () => {
       st.count = Number(st.count ?? 0) + 1;
       return [];
     };
-    const a = parseJsonlChunk({ path: 'f', offset: 0, bytes: Buffer.from('{"a":1}\n{"b"') }, {}, onLine);
+    const a = parseJsonlChunk(
+      { path: 'f', offset: 0, bytes: Buffer.from('{"a":1}\n{"b"') },
+      {},
+      onLine,
+    );
     expect(a.state.partial).toBeDefined();
-    const b = parseJsonlChunk({ path: 'f', offset: 12, bytes: Buffer.from(':2}\n') }, a.state, onLine);
+    const b = parseJsonlChunk(
+      { path: 'f', offset: 12, bytes: Buffer.from(':2}\n') },
+      a.state,
+      onLine,
+    );
     expect(seen).toEqual([0, 8]);
     expect(b.state).toEqual({ count: 2 });
   });

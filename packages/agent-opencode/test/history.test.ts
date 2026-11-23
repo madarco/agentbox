@@ -8,18 +8,52 @@ const L = (t: string, id: string, u: number, row: Record<string, unknown>): stri
 const d = (o: unknown): string => JSON.stringify(o);
 
 const rows =
-  L('session', SID, 1, { id: SID, title: 'New session', directory: '/workspace', parent_id: 'ses_parent0001' }) +
-  L('message', 'msg_u', 2, { id: 'msg_u', session_id: SID, data: d({ role: 'user', time: { created: 1 } }) }) +
+  L('session', SID, 1, {
+    id: SID,
+    title: 'New session',
+    directory: '/workspace',
+    parent_id: 'ses_parent0001',
+  }) +
+  L('message', 'msg_u', 2, {
+    id: 'msg_u',
+    session_id: SID,
+    data: d({ role: 'user', time: { created: 1 } }),
+  }) +
   L('message', 'msg_a', 3, {
     id: 'msg_a',
     session_id: SID,
-    data: d({ role: 'assistant', modelID: 'gpt-5.5', time: { created: 2 }, tokens: { input: 5, output: 1 } }),
+    data: d({
+      role: 'assistant',
+      modelID: 'gpt-5.5',
+      time: { created: 2 },
+      tokens: { input: 5, output: 1 },
+    }),
   }) +
-  L('part', 'prt_1', 4, { id: 'prt_1', message_id: 'msg_u', session_id: SID, data: d({ type: 'text', text: 'say hi' }) }) +
-  L('part', 'prt_2', 5, { id: 'prt_2', message_id: 'msg_a', session_id: SID, data: d({ type: 'tool', tool: 'bash' }) }) +
-  L('part', 'prt_3', 6, { id: 'prt_3', message_id: 'msg_a', session_id: SID, data: d({ type: 'text', text: 'hi' }) }) +
+  L('part', 'prt_1', 4, {
+    id: 'prt_1',
+    message_id: 'msg_u',
+    session_id: SID,
+    data: d({ type: 'text', text: 'say hi' }),
+  }) +
+  L('part', 'prt_2', 5, {
+    id: 'prt_2',
+    message_id: 'msg_a',
+    session_id: SID,
+    data: d({ type: 'tool', tool: 'bash' }),
+  }) +
+  L('part', 'prt_3', 6, {
+    id: 'prt_3',
+    message_id: 'msg_a',
+    session_id: SID,
+    data: d({ type: 'text', text: 'hi' }),
+  }) +
   // The same part again (it changed) and the completed message: no duplicate turn, usage once.
-  L('part', 'prt_3', 7, { id: 'prt_3', message_id: 'msg_a', session_id: SID, data: d({ type: 'text', text: 'hi' }) }) +
+  L('part', 'prt_3', 7, {
+    id: 'prt_3',
+    message_id: 'msg_a',
+    session_id: SID,
+    data: d({ type: 'text', text: 'hi' }),
+  }) +
   L('message', 'msg_a', 8, {
     id: 'msg_a',
     session_id: SID,

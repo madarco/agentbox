@@ -61,7 +61,12 @@ describe('HistoryLoop config backoff (review R1)', () => {
 
 describe('HistoryLoop row cursor (Phase 3)', () => {
   it('runs the row cursor for a docker box (materialize) without a shipper', async () => {
-    const agent = { agent: 'opencode', configDir: '/x', projectKey: '-workspace', spec: { transcripts: [] } };
+    const agent = {
+      agent: 'opencode',
+      configDir: '/x',
+      projectKey: '-workspace',
+      spec: { transcripts: [] },
+    };
     const cursorPass = vi.fn(async () => ({ sessions: 0, rows: 0, errors: [] }));
     const makeRowCursor = vi.fn(
       () => ({ active: true, pass: cursorPass }) as unknown as HistoryRowCursor,

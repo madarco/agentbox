@@ -719,6 +719,15 @@ name; the render lints for a secret-shaped literal and warns.
    box-path constants in `packages/sandbox-core/src/sync/agent-pull.ts`. Easy to
    miss: nothing fails without it, the subcommand is simply absent, so an agent
    added without this step can never sync its box-side config back.
+8. **Session history**, if the hub should keep the agent's transcripts: a
+   `history` block on the row (where the session files are, relative to the
+   config dir; a sqlite store adds a `sqlite` block for the box's row cursor),
+   an `AgentHistoryModule` parser registered from the package's `register…`
+   function, and a capture of the session id into the box's binding log from
+   the agent's hook, plugin or extension (`agentbox-ctl agent-state <id> idle
+   --capture-session` with `{session_id, transcript_path}` on stdin). Without the
+   binding nothing ships: shared volumes pool every box's sessions. See
+   [`agent-history-plan.md`](./agent-history-plan.md).
 
 Step 3 is no longer a 1,300-line clone and step 6 is no longer a wire change —
 see the backlog below, and

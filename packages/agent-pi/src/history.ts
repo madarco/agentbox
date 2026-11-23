@@ -105,7 +105,8 @@ export const piHistoryModule: AgentHistoryModule = {
     const sessionId =
       (header?.type === 'session' ? nonEmptyString(header.id) : undefined) ?? idFromName(path);
     if (!sessionId) return null;
-    const parentPath = header?.type === 'session' ? nonEmptyString(header.parentSession) : undefined;
+    const parentPath =
+      header?.type === 'session' ? nonEmptyString(header.parentSession) : undefined;
     const parent = parentPath ? idFromName(parentPath) : undefined;
     return parent && parent !== sessionId ? { sessionId, parentSessionId: parent } : { sessionId };
   },

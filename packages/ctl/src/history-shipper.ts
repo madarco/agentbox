@@ -5,7 +5,16 @@
  * a cloud box). Docker boxes are shipped host-side by the relay instead, which
  * `history.config` tells us by answering `enabled: false`.
  */
-import { appendFile, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import {
@@ -179,7 +188,9 @@ export function openSqliteRowSource(path: string): HistoryRowSource | null {
     versions(t, sessionId) {
       const parent = t.parent ? `, ${t.parent.column} AS p` : '';
       return db
-        .prepare(`SELECT ${t.id} AS id, ${t.updated} AS u${parent} FROM ${t.name} WHERE ${t.session} = ?`)
+        .prepare(
+          `SELECT ${t.id} AS id, ${t.updated} AS u${parent} FROM ${t.name} WHERE ${t.session} = ?`,
+        )
         .all(sessionId)
         .map((r) => ({
           id: String(r.id),

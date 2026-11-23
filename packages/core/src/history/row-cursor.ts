@@ -82,7 +82,10 @@ export function validSqliteSource(src: AgentHistorySqliteSource | undefined): bo
 /** The agents' snapshot sources the row cursor can run. */
 export function snapshotSources(
   agents: ShippedAgent[],
-): Array<{ agent: ShippedAgent; t: AgentHistoryTranscripts & { sqlite: AgentHistorySqliteSource } }> {
+): Array<{
+  agent: ShippedAgent;
+  t: AgentHistoryTranscripts & { sqlite: AgentHistorySqliteSource };
+}> {
   const out: Array<{
     agent: ShippedAgent;
     t: AgentHistoryTranscripts & { sqlite: AgentHistorySqliteSource };
@@ -100,10 +103,7 @@ export function snapshotSources(
 type Cursor = Record<string, Record<string, number>>;
 
 function join(...parts: string[]): string {
-  return parts
-    .filter(Boolean)
-    .join('/')
-    .replace(/\/+/g, '/');
+  return parts.filter(Boolean).join('/').replace(/\/+/g, '/');
 }
 
 function parseCursor(text: string | null): Cursor {
@@ -217,7 +217,12 @@ export class HistoryRowCursor {
       for (let i = 0; i < due.length; i += ROWS_PER_QUERY) {
         const batch = due.slice(i, i + ROWS_PER_QUERY);
         const byId = new Map(
-          db.rows(table, batch.map((v) => v.id)).map((r) => [String(r[table.id]), r]),
+          db
+            .rows(
+              table,
+              batch.map((v) => v.id),
+            )
+            .map((r) => [String(r[table.id]), r]),
         );
         for (const v of batch) {
           const row = byId.get(v.id);
