@@ -973,6 +973,21 @@ async function adminPostForJson(path: string, body: unknown): Promise<unknown> {
 export type BoxWithToken = Pick<BoxRecord, 'id' | 'name'> & Partial<BoxRecord>;
 
 /**
+ * Whether a rehydrate may hand the relay a cloud box's preview URL and bridge
+ * token, which start a `CloudBoxPoller`. Not for a paused or stopped box: its
+ * pause stopped the poller on purpose, and a long-poll auto-resumes an E2B box
+ * that the keepalive then never re-pauses (it keeps billing). Not for a
+ * control-plane box either: the hub that owns it polls it, and a second poller
+ * here would compete. Such a box still re-registers (token, agents, repo); its
+ * own resume or start registers the preview again.
+ */
+export function shouldPollOnRehydrate(b: Pick<BoxRecord, 'cloud'>): boolean {
+  const state = b.cloud?.lastState;
+  if (state === 'paused' || state === 'stopped' || state === 'missing') return false;
+  return b.cloud?.topology !== 'control-plane';
+}
+
+/**
  * Re-push every known (id, token) to the relay's in-memory registry. Called
  * after `ensureRelay()` so a fresh / restarted relay learns about boxes that
  * were created in a previous CLI invocation — and, for cloud boxes,
@@ -986,6 +1001,7 @@ export async function rehydrateRelayRegistry(boxes: readonly BoxWithToken[]): Pr
   for (const b of boxes) {
     if (!b.relayToken) continue;
     const kind = b.provider === 'docker' || b.provider === undefined ? 'docker' : 'cloud';
+    const poll = kind === 'cloud' && shouldPollOnRehydrate(b);
     try {
       await registerBoxWithRelay({
         boxId: b.id,
@@ -997,9 +1013,13 @@ export async function rehydrateRelayRegistry(boxes: readonly BoxWithToken[]): Pr
         createdAt: b.createdAt,
         projectIndex: b.projectIndex,
         worktrees: b.gitWorktrees,
-        previewUrl: b.cloud?.relayPreviewUrl,
-        previewToken: b.cloud?.relayPreviewToken,
-        bridgeToken: b.cloud?.bridgeToken,
+        ...(poll
+          ? {
+              previewUrl: b.cloud?.relayPreviewUrl,
+              previewToken: b.cloud?.relayPreviewToken,
+              bridgeToken: b.cloud?.bridgeToken,
+            }
+          : {}),
         autoApproveHostActions: b.autoApproveHostActions,
         autoApproveSafeHostActions: b.autoApproveSafeHostActions,
         // A registration replaces the entry: without these a rehydrate (relay

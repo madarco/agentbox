@@ -622,3 +622,30 @@ re-registration. Left open:
   `originUrl` after a restart for new boxes; the folder fallback for old boxes
   is still open.
 
+### LATER, from the independent review of #457 (2026-11-23)
+
+Fixed in the PR: R1. Every docker create rehydrates every cloud record (as
+stored, since #457, so with its preview URL and bridge token), and that
+started a `CloudBoxPoller` for paused boxes too, waking E2B ones. A rehydrate
+now leaves the poller fields out for a paused, stopped or control-plane box
+(`shouldPollOnRehydrate`), which also covers a hub or relay restart. Left for
+later:
+
+- **L1: a late seed still loses to a host copy of the same file.** A host
+  import is stored with the seed time as its `createdAt`
+  (`history-memory.ts`, `append` from `memorySeed`), so a box's `MEMORY.md`
+  written before the seed looks older than the host's and is overwritten.
+  Stamp a host import with the host file's mtime instead.
+- **L2: the hosted plane's register handler** (`core/handler.ts`, the
+  control-plane `/admin/register-box`) ignores `agents` and does not keep a
+  stored `originUrl` when a re-register omits it, unlike the relay's.
+- **L3: `registrationAgents` should put the primary agent first** in every
+  case; today it only prepends it when the list lacks it, so a list that
+  names it later keeps that order.
+- **L5: `MemoryRelay.keyOf` ignores `reg.repoKey`,** re-deriving the key from
+  `originUrl`, and still falls back to the live `git remote get-url` of the
+  project folder for boxes created before #457 (the record has no repo).
+- **L6: a newer ctl against an older relay gets no tombstones** in the seed,
+  so a hub deletion never removes a box file during a late seed there; and
+  files past `MEMORY_MAX_FILES` never converge (see above).
+

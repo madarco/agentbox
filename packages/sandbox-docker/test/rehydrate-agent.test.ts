@@ -118,4 +118,52 @@ describe('rehydrateRelayRegistry', () => {
     expect(bodies[0]?.originMachineId).toBeUndefined();
     expect(bodies[0]?.originFolder).toBeUndefined();
   });
+
+  it('never hands the relay a poller for a paused, stopped or control-plane cloud box (R1)', async () => {
+    const cloud = (extra: Record<string, unknown>) => ({
+      backend: 'e2b',
+      sandboxId: 's',
+      relayPreviewUrl: 'https://bridge.example',
+      bridgeToken: 'bt',
+      ...extra,
+    });
+    await rehydrateRelayRegistry([
+      {
+        id: 'c-run',
+        name: 'r',
+        relayToken: 't',
+        provider: 'e2b',
+        cloud: cloud({ lastState: 'running' }),
+      },
+      {
+        id: 'c-pause',
+        name: 'p',
+        relayToken: 't',
+        provider: 'e2b',
+        cloud: cloud({ lastState: 'paused' }),
+      },
+      {
+        id: 'c-stop',
+        name: 's',
+        relayToken: 't',
+        provider: 'e2b',
+        cloud: cloud({ lastState: 'stopped' }),
+      },
+      {
+        id: 'c-plane',
+        name: 'cp',
+        relayToken: 't',
+        provider: 'e2b',
+        cloud: cloud({ lastState: 'running', topology: 'control-plane' }),
+      },
+    ] as never);
+    const of = (id: string) => bodies.find((b) => b.boxId === id);
+    expect(of('c-run')).toMatchObject({ previewUrl: 'https://bridge.example', bridgeToken: 'bt' });
+    for (const id of ['c-pause', 'c-stop', 'c-plane']) {
+      // Still registered (token, kind, backend), but nothing a poller starts from.
+      expect(of(id)).toMatchObject({ kind: 'cloud', backend: 'e2b' });
+      expect(of(id)?.previewUrl).toBeUndefined();
+      expect(of(id)?.bridgeToken).toBeUndefined();
+    }
+  });
 });
