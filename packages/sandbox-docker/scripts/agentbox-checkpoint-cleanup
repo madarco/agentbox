@@ -54,6 +54,12 @@ chmod 600 /home/vscode/.bash_history 2>/dev/null
 # backstop). The resume pointers beside it are left alone on purpose.
 rm -f /home/vscode/.local/state/agentbox/history-bindings.jsonl 2>/dev/null
 
+# Agent memory (docs/agent-history-plan.md, Phase 4): ctl's seed baseline. A
+# box made from this checkpoint then seeds its memory from the hub for its own
+# repo, replacing the carried dir. The dir itself is NOT deleted: this runs in
+# the live box, whose ctl would ship every file as deleted.
+rm -f /home/vscode/.local/state/agentbox/memory-state.json 2>/dev/null
+
 # Anthropic's installer writes a transient marker; redundant once the binary
 # is in place. Safe to wipe.
 rm -rf /home/vscode/.claude-installer 2>/dev/null

@@ -129,6 +129,47 @@ review items marked must-fix before a remote hub serves skills.
 Deferred, with reason (in Open items): excluding `skills/` from config-volume
 syncs and static bakes once the library is on.
 
+## Phase 3 — implementation plan (2026-11-22)
+
+Scope: every built-in agent reads the box's library skills, each through the
+injection Phase 0 measured, declared as data on `AgentSyncSpec.skills`.
+
+Measured before planning (throwaway container, codex 0.171.0, opencode 1.19.6,
+pi 0.73.1, openclaw 2026.11.6): all three non-`dir` injections tolerate a
+missing directory (a box with no library, or an older ctl), so the injection
+can be unconditional. **Corrected after review (R1 of #445):** pi 0.84.4 and
+1.6.0 (what boxes install) print a "skill path does not exist" block on every
+launch when the `--skill` dir is missing, so the docker and cloud launchers now
+`mkdir -p` it first (`agentLaunchPrelude`), which also covers older snapshots. Same-name collisions between the carried `~/.agents`
+copy and the library copy: codex lists both (user + admin scope), opencode
+keeps the library copy, pi and openclaw keep the carried one.
+
+1. **`AgentSkillsSpec.inject` grows two shapes**: `flag` (`argv` with a `{dir}`
+   placeholder) and `config` (`jsonPath`, for an agent whose own boot task merges
+   it). An `env` shape was implemented and dropped after review, see 3. `{dir}` is the canonical box path
+   `BOX_SKILLS_LIBRARY_DIR` (`/home/vscode/.local/share/agentbox/skills`), now a
+   core constant ctl also uses.
+2. **codex**: `dir` → `/etc/codex/skills` (ctl links, like claude).
+3. **opencode**: `dir` → `/home/vscode/.opencode/skills` (ctl links). First
+   built as `env` `OPENCODE_CONFIG_CONTENT={"skills":{"paths":["{dir}"]}}`; the
+   review then found two problems, both measured: a config layer REPLACES the
+   user's own `skills.paths` array (a regression for anyone who sets one), and the
+   Hetzner/DigitalOcean box.env keeps only `AGENTBOX_*` keys, so the env never
+   reached opencode there. opencode scans `~/.opencode/skills` regardless of
+   `OPENCODE_CONFIG_DIR`, the dir is unused in a box, and the user's
+   `skills.paths` keeps loading next to it.
+4. **pi**: `flag` → `--skill {dir}`, appended to the declared `launchFlags` by one
+   helper (`agentLaunchFlags`) at the docker and cloud launch sites.
+5. **openclaw**: `config` → `skills.load.extraDirs`; its existing
+   `openclaw-agentbox-env` boot task merges the library dir next to
+   `/opt/agentbox/skills`. openclaw watches its skill dirs, so skills that arrive
+   after the task ran still load.
+6. **The docker `~/.agents` volume stays** (plan decision 6's condition does not
+   hold yet): a box served by a relay with no library (a PC's local relay on a
+   remote-hub setup) or built on an image without the Phase 2 ctl gets codex,
+   opencode, pi and openclaw skills ONLY from that volume. Retiring it now would
+   drop them. Revisit with the carry-exclusion item.
+7. **Docs**: public skills page (every agent), plan status.
 ## Phase 5 — implementation plan (2026-11-23)
 
 In the plan doc's Phase 5 section. Built: origin/policy/pending on `meta.json`;
@@ -447,3 +488,58 @@ elevated read, so a PC holding only the hub API key can list but not download
 - **L9. Claude's inject dir is in every box's descriptor whatever the box's
   agent** (not `runsHere`-gated), so a codex-only box still sudo-creates
   `/etc/claude-code/.claude/skills` and installs the set. Harmless.
+
+## From the Phase 3 `/code-review medium` (2026-11-22)
+
+Fixed in the PR: opencode's injection moved from `OPENCODE_CONFIG_CONTENT` to a
+`dir` link (it replaced the user's `skills.paths` and never reached opencode on
+Hetzner/DigitalOcean, see Phase 3 item 3); `agentLaunchFlags` ignores a malformed
+plugin `flag` injection instead of failing every launch.
+
+Later:
+
+- **Pre-existing: opencode's run env never reaches a Hetzner/DigitalOcean box.**
+  `cloudInitBoxEnv` keeps only `AGENTBOX_*` keys and the cloud launcher exports
+  only `agentTuiEnv`, so `OPENCODE_CONFIG_DIR` / `XDG_STATE_HOME` (and any other
+  `boxRunEnv`) are missing there. Not a skills issue any more, but the same gap.
+  Fix: export the agent's `boxRunEnv` on the launch command in
+  `buildCloudAttachInnerCommand`, like the docker path.
+- **`BOX_SKILLS_LIBRARY_DIR` is a fixed `/home/vscode/...` path** (it was
+  `homedir()` in Phase 2), because host-side `{dir}` expansion needs one known
+  path. On a provider whose execs run as root (islo), ctl writes it as root, and
+  a later ctl run as vscode can't update it. Fix with the islo provider work:
+  chown the tree to the box user, or have ctl always run as vscode.
+- **openclaw's `config` declaration is not read by anything generic**: the boot
+  script hardcodes `skills.load.extraDirs`. A plugin agent declaring `config`
+  gets nothing. Either read `jsonPath` in the task, or document `config` as
+  "the agent's own boot task does it".
+- **The openclaw merge passes the skill dirs as one `:`-joined argv.** Both are
+  constants without `:` today; pass them as separate args or JSON if either
+  becomes configurable.
+- **ctl's startup skills sync doesn't retry.** It runs once, after the
+  `agents.list` fetch; when the same command cold-starts the hub, that fetch hits
+  ECONNREFUSED and the box gets no library skills until `agentbox-ctl skills sync`
+  (seen in the Phase 3 live check; a box created with the hub already up synced at
+  start). Fix: retry the fetch with backoff, or sync on the first successful
+  relay call.
+- **Duplicate names in pi and openclaw**: the carried `~/.agents` copy wins over
+  the library's, so a skill edited in the library isn't seen there while the
+  PC's old copy is carried. Same fix as the carry-exclusion item.
+
+## From the independent review of PR #445 (2026-11-23)
+
+Fixed in the PR: R1, pi's missing `--skill` dir warning (see the Phase 3 plan
+note above).
+
+Later:
+
+- **L1: the startup skills sync is non-blocking** (`packages/ctl/src/commands/daemon.ts`,
+  the `void syncBoxSkills(...)` after `agents.list`). pi and codex can start
+  before it finishes, and miss library skills until they restart. Related to the
+  no-retry item above.
+- **L2: with a library, every box creates `/etc/codex/skills` and
+  `~/.opencode/skills`** whatever its agent, because ctl links into every `dir`
+  injection the descriptors declare. Harmless (empty of anything but links).
+- **L3: the published SDK's `resolveAgentSpec` return type gained two inject
+  kinds** (`flag`, `config`). Additive; ships with the next SDK republish, no
+  `SDK_API_VERSION` bump.

@@ -683,6 +683,15 @@ is deferred; the selection resolves to current versions (no pinning yet). See
 **Done:** one library skill invoked by each of the five agents, on docker and one
 cloud provider.
 
+**Status (2026-11-22): implemented.** Live-checked on docker (DinD) with each
+agent's model-free listing: codex `app-server` `skills/list` (admin scope), opencode
+`debug skill`, pi RPC `get_commands`, openclaw `skills list` (`openclaw-extra`).
+Deviations: opencode uses a `dir` link into `~/.opencode/skills`, not
+`OPENCODE_CONFIG_CONTENT` (a config layer replaces the user's own `skills.paths`,
+and the VPS providers drop the env); the docker `~/.agents` volume stays (decision
+6's condition doesn't hold while a box can be served by a relay with no library).
+No cloud box was run for this phase. See [`hub-skills-backlog.md`](./hub-skills-backlog.md).
+
 ### Phase 4 — bindings, workspaces, projects
 
 `skill_bindings` at workspace / project (repo URL) / box scope,
