@@ -448,6 +448,22 @@ one `openclaw agent --local` turn against a local mock model; no account used):
    `previous_session_id`, title/model from the window row, turns, tool calls and
    usage from the events, injected `custom*` events skipped.
 
+**As built:** as planned, plus a `parent` gate on `transcript_events` →
+`session_windows` (events land after their window row, so the lineage is in
+the file's head), and a frame that fails to decode is copied without its text
+(`event_zstd_error`) rather than retried forever.
+
+**Live check** (docker, isolated hub on a scratch HOME, openclaw 2026.11.7 in
+the box, a mock OpenAI-compatible endpoint in the box, no account): one turn
+through the gateway; the row cursor bound the session, decoded the two
+compressed messages and the relay shipped them. `sessions ls` showed the
+openclaw session with its box, 2 turns and the mock's tokens; `sessions search`
+found both the user and assistant rows. A second turn shipped with no manual
+step within ~2 min (20 s settle + ticks). The first one was nudged with
+`agentbox-ctl history flush`, because the hub was restarted under the box's
+first config fetch. After `destroy` (container and openclaw volume gone) the
+session, 4 turns, was still listed and searchable.
+
 `memory_entries`, seed-from-hub with host fallback, write-back, `agentbox
 memory` commands; extended to every agent that declares memory.
 
