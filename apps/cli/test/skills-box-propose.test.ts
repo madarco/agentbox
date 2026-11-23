@@ -1,5 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,8 +16,11 @@ import {
   describeBoxSkillOutcomes,
   PROBE_SCRIPT,
   probeRefusal,
+  proposeBoxSkills,
   stagedSkillDir,
 } from '../src/lib/skills/box-propose.js';
+import { HubApiError, type HubApiClient } from '../src/control-plane/hub-api-client.js';
+import type { BoxRecord, SyncTransport } from '@agentbox/core';
 
 describe('box skill proposals', () => {
   it("maps each agent's skill dirs to box paths its config dir holds", () => {
@@ -47,7 +58,12 @@ describe('box skill proposals', () => {
 
 // The in-box probe, run for real with this machine's sh/find/awk (a box runs the
 // same GNU tools). No HOME is touched: everything is under a fresh temp dir.
-describe('box skill probe (before anything leaves the box)', () => {
+// A box runs GNU find; macOS's find has no `-printf`, so on a Mac these skip
+// (CI on Ubuntu runs them).
+const gnuFind =
+  spawnSync('find', ['.', '-maxdepth', '0', '-printf', ''], { stdio: 'ignore' }).status === 0;
+
+describe.skipIf(!gnuFind)('box skill probe (before anything leaves the box)', () => {
   const probe = (dir: string, max = 8 * 1024 * 1024): string | null =>
     probeRefusal(execFileSync('sh', ['-c', PROBE_SCRIPT(dir)], { encoding: 'utf8' }), dir, max);
   const skillDir = (): string => {
@@ -101,5 +117,76 @@ describe('box skill probe (before anything leaves the box)', () => {
 
   it('refuses when the probe printed nothing it can read', () => {
     expect(probeRefusal('', '/x', 10)).toMatch(/could not be checked/);
+  });
+});
+
+// A box can plant any number of skills. The loop must never hold more than one
+// staged copy on this disk, and must stop once the hub will refuse the rest.
+describe('proposeBoxSkills bounds what a box can make this machine copy', () => {
+  const names = ['s1', 's2', 's3', 's4', 's5'];
+  function fakeBox() {
+    const pulled: string[] = [];
+    let maxLive = 0;
+    const transport = {
+      exec: (cmd: string[]) => {
+        const script = cmd.at(-1) ?? '';
+        // The listing script names every skill; the probe passes each one.
+        const stdout = script.includes('basename') ? `${names.join('\n')}\n` : '\t100\n';
+        return Promise.resolve({ exitCode: 0, stdout, stderr: '' });
+      },
+      pullTree: (boxDir: string, dest: string) => {
+        const name = boxDir.split('/').at(-1)!;
+        pulled.push(name);
+        writeFileSync(join(dest, 'SKILL.md'), `---\nname: ${name}\ndescription: d\n---\n`);
+        // Count staged copies still on disk: the stage root's numbered dirs.
+        const stage = join(dest, '..', '..');
+        maxLive = Math.max(maxLive, readdirSync(stage).length);
+        return Promise.resolve();
+      },
+    } as unknown as SyncTransport;
+    return { transport, pulled, maxLive: () => maxLive };
+  }
+  const box = { id: 'b1', name: 'one' } as BoxRecord;
+  const home = mkdtempSync(join(tmpdir(), 'agentbox-home-'));
+
+  it('stops after 3 pending proposals, one staged copy at a time', async () => {
+    const fb = fakeBox();
+    const client = {
+      listSkills: () => Promise.resolve({ skills: [] }),
+      proposeSkill: (name: string) =>
+        Promise.resolve({ name, version: 'v', status: 'pending', isNew: true, findings: [] }),
+    } as unknown as HubApiClient;
+    const out = await proposeBoxSkills({
+      client,
+      box,
+      agent: 'claude',
+      transport: fb.transport,
+      home,
+      maxBytes: 1024 * 1024,
+    });
+    expect(fb.pulled).toEqual(['s1', 's2', 's3']);
+    expect(fb.maxLive()).toBe(1);
+    expect(out.at(-1)).toMatchObject({ name: 'the rest', status: 'skipped' });
+    expect((out.at(-1) as { reason: string }).reason).toMatch(/3 proposals waiting/);
+  });
+
+  it('stops at the first 409 from the hub', async () => {
+    const fb = fakeBox();
+    const client = {
+      listSkills: () => Promise.resolve({ skills: [] }),
+      proposeSkill: () =>
+        Promise.reject(new HubApiError('10 skill proposals are already waiting', 'conflict', 409)),
+    } as unknown as HubApiClient;
+    const out = await proposeBoxSkills({
+      client,
+      box,
+      agent: 'claude',
+      transport: fb.transport,
+      home,
+      maxBytes: 1024 * 1024,
+    });
+    expect(fb.pulled).toEqual(['s1']);
+    expect(out.map((o) => o.status)).toEqual(['failed', 'skipped']);
+    expect(existsSync(home)).toBe(true);
   });
 });

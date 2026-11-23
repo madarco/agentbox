@@ -11,7 +11,7 @@
  */
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, posix, resolve, sep } from 'node:path';
+import { dirname, join, posix, resolve, sep } from 'node:path';
 import { tryGetMachineId } from '@agentbox/config';
 import type { AgentId, BoxRecord, SyncTransport } from '@agentbox/core';
 import {
@@ -24,7 +24,11 @@ import {
   writeTar,
   type LocalSkill,
 } from '@agentbox/sandbox-core';
-import type { HubApiClient, HubApiSkillProposal } from '../../control-plane/hub-api-client.js';
+import {
+  HubApiError,
+  type HubApiClient,
+  type HubApiSkillProposal,
+} from '../../control-plane/hub-api-client.js';
 
 /** The agent's skill dirs as box paths its config dir holds (opencode's relocated config included). */
 export function boxSkillDirs(agent: AgentId): string[] {
@@ -134,8 +138,13 @@ export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<B
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-box-skills-'));
   const out: BoxSkillOutcome[] = [];
   const seen = new Set<string>();
+  // A box can plant any number of skills: stop once it has as many waiting as
+  // the hub keeps for one box, or when the hub says it is full, instead of
+  // copying the rest out only to be refused.
+  let pending = 0;
+  let stopped: string | null = null;
   try {
-    for (const dir of dirs) {
+    outer: for (const dir of dirs) {
       const r = await opts.transport.exec(['sh', '-c', LIST_SCRIPT(dir)]);
       const names = r.stdout
         .split('\n')
@@ -170,63 +179,73 @@ export async function proposeBoxSkills(opts: ProposeBoxSkillsOptions): Promise<B
         }
         const dest = stagedSkillDir(stage, seen.size, name);
         await mkdir(dest, { recursive: true });
-        let skill: LocalSkill;
+        // Each staged copy goes as soon as its skill is done, so the disk holds
+        // at most one box skill at a time however many the box has.
         try {
-          // The cap the probe can't guarantee (the box answered it), enforced
-          // here on what actually crosses to this machine. Tar framing on top.
-          await opts.transport.pullTree(boxDir, dest, {
-            exclude: ['.git'],
-            maxBytes: maxBytes + 1024 * 1024,
-          });
-          skill = await readLocalSkill(name, dest, { maxBytes });
-        } catch (err) {
-          out.push({
-            name,
-            status: 'failed',
-            reason: err instanceof Error ? err.message : String(err),
-          });
-          continue;
-        }
-        if (skill.problems.length > 0) {
-          out.push({ name, status: 'skipped', reason: skill.problems.join('; ') });
-          continue;
-        }
-        // Carried from a PC (this one, as-is) or already the library's version.
-        if (onThisPc.has(authoredTreeHash(skill.files)) || library.get(name) === skill.treeSha) {
-          continue;
-        }
-        try {
-          const res: HubApiSkillProposal = await opts.client.proposeSkill(
-            name,
-            writeTar(skill.files),
-            {
-              box: { id: opts.box.id, name: opts.box.name },
-              agent: opts.agent,
-              source: {
-                host: `box ${opts.box.name}`,
-                ...(tryGetMachineId() ? { machineId: tryGetMachineId()! } : {}),
-                path: posix.join(dir, name),
+          let skill: LocalSkill;
+          try {
+            // The cap the probe can't guarantee (the box answered it), enforced
+            // here on what actually crosses to this machine. Tar framing on top.
+            await opts.transport.pullTree(boxDir, dest, {
+              exclude: ['.git'],
+              maxBytes: maxBytes + 1024 * 1024,
+            });
+            skill = await readLocalSkill(name, dest, { maxBytes });
+          } catch (err) {
+            out.push({
+              name,
+              status: 'failed',
+              reason: err instanceof Error ? err.message : String(err),
+            });
+            continue;
+          }
+          if (skill.problems.length > 0) {
+            out.push({ name, status: 'skipped', reason: skill.problems.join('; ') });
+            continue;
+          }
+          // Carried from a PC (this one, as-is) or already the library's version.
+          if (onThisPc.has(authoredTreeHash(skill.files)) || library.get(name) === skill.treeSha) {
+            continue;
+          }
+          try {
+            const res: HubApiSkillProposal = await opts.client.proposeSkill(
+              name,
+              writeTar(skill.files),
+              {
+                box: { id: opts.box.id, name: opts.box.name },
+                agent: opts.agent,
+                source: {
+                  host: `box ${opts.box.name}`,
+                  ...(tryGetMachineId() ? { machineId: tryGetMachineId()! } : {}),
+                  path: posix.join(dir, name),
+                },
               },
-            },
-          );
-          out.push({
-            name,
-            status: res.status,
-            isNew: res.isNew,
-            findings: res.findings.length,
-          });
-        } catch (err) {
-          out.push({
-            name,
-            status: 'failed',
-            reason: err instanceof Error ? err.message : String(err),
-          });
+            );
+            out.push({
+              name,
+              status: res.status,
+              isNew: res.isNew,
+              findings: res.findings.length,
+            });
+            if (res.status === 'pending' && ++pending >= SKILL_PROPOSAL_LIMITS.perBox) {
+              stopped = `this box has ${String(pending)} proposals waiting, the most the hub keeps for one box; answer them, then download again`;
+            }
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            out.push({ name, status: 'failed', reason });
+            if (err instanceof HubApiError && err.status === 409) stopped = reason;
+          }
+        } finally {
+          // `<stage>/<n>/<name>`: the numbered dir goes too.
+          await rm(dirname(dest), { recursive: true, force: true });
         }
+        if (stopped) break outer;
       }
     }
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
+  if (stopped) out.push({ name: 'the rest', status: 'skipped', reason: `stopped: ${stopped}` });
   return out;
 }
 

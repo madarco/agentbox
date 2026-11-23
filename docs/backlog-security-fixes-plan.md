@@ -159,6 +159,13 @@ What the review of that change moved or left:
 - LATER: the probe is one extra `exec` per box skill; it could ride the listing exec.
 - LATER: on cloud, a box racing the in-box size check could swap the tar before the
   download; the post-download size check stops the extract, not the download itself.
+- LATER: republish the provider SDK so community providers get `pullTree`'s
+  `maxBytes` (and `PullTooLargeError`); until then a plugin transport ignores the cap.
+- LATER: a destroyed box's waiting proposals keep their slots until their approvals
+  expire (up to 24 h). Cancel them when the hub forgets the box.
+- Done in #461's review: each staged box skill is deleted as soon as it is handled,
+  and the loop stops after the box has 3 proposals waiting or at the hub's first 409,
+  so a box with many planted skills can't fill the PC's temp dir.
 - The caps are fixed constants (no config key): a skill bigger than 8 MiB goes into the
   library from a PC with `agentbox skills`.
 
