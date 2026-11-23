@@ -283,6 +283,24 @@ export function buildCloudBoxRunEnv(agents: readonly CloudAgentKind[]): Record<s
   return env;
 }
 
+/**
+ * The full env a box's agents run with: run-env, the host's forwarded keys and
+ * any named account's own auth. The same map create hands `provision`, rebuilt
+ * from the box record (`agents`, `accounts`) wherever a box is woken, since a
+ * VPS only gets it through the 0600 agent env file. Absent `agents` = every
+ * agent, as for a pre-selection box.
+ */
+export async function buildCloudAgentEnv(
+  agents: readonly string[] | undefined,
+  accounts: Readonly<Record<string, string>> = {},
+): Promise<Record<string, string>> {
+  const wanted = agents ? new Set<string>(agents) : undefined;
+  const kinds = agentSpecs()
+    .filter((s) => !wanted || wanted.has(s.kind))
+    .map((s) => s.kind);
+  return buildForwardedEnv(kinds, accounts);
+}
+
 async function buildForwardedEnv(
   agents: CloudAgentKind[],
   accounts: Readonly<Record<string, string>>,

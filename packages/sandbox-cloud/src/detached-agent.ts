@@ -25,6 +25,7 @@ import {
   runModelAuthIngest,
 } from '@agentbox/sandbox-core';
 import { seedDeclaredFilesForLaunch } from './sync/agent-seed.js';
+import { CLOUD_AGENT_ENV_FILE } from './agent-env-file.js';
 
 /**
  * `AgentSyncSpec.launchFlags` for an agent binary, or none. Guarded on
@@ -85,15 +86,26 @@ export function buildCloudAttachInnerCommand(
   // the renderer pin lives on the launch command on both paths rather than
   // being carried one way here and another way there. One mechanism, one place
   // to look when it misbehaves.
-  const exports = Object.entries(env ?? {})
+  //
+  // The agent's run-env (`boxRunEnv`: OPENCODE_CONFIG_DIR, XDG_STATE_HOME, ...)
+  // goes here too, under the TUI env. A VPS box (hetzner, digitalocean) has no
+  // sandbox-wide env to carry it: cloud-init user_data is readable from the
+  // metadata service, so only AGENTBOX_* identity keys ride it.
+  const runEnv = isRuntimeAgent(binary) ? resolveAgentSpec(binary).boxRunEnv : {};
+  const exports = Object.entries({ ...runEnv, ...(env ?? {}) })
     .map(([k, v]) => `export ${k}=${shQuote(v)}; `)
     .join('');
+  // Secrets (forwarded keys, a named account's token) never go on this command
+  // line, which any process in the box can read. They wait in a 0600 file the
+  // host rewrites on every create and wake (`writeCloudAgentEnvFile`), sourced
+  // before the exports above so those still win.
+  const agentEnv = `if [ -r ${CLOUD_AGENT_ENV_FILE} ]; then set -a; . ${CLOUD_AGENT_ENV_FILE}; set +a; fi; `;
   const launchFlags = launchFlagsFor(binary);
   // Creates the dir a `flag` skills injection names (pi warns on a missing one).
   const prelude = isRuntimeAgent(binary) ? agentLaunchPrelude(resolveAgentSpec(binary)) : '';
   const args = [...launchFlags, ...(extraArgs ?? [])];
   if (args.length === 0) {
-    return `bash -lc '${agentStartBanner(binary)}${preamble}${exports}${prelude}exec ${binary}'`;
+    return `bash -lc '${agentStartBanner(binary)}${preamble}${agentEnv}${exports}${prelude}exec ${binary}'`;
   }
   // Encode EACH arg to its own base64 token, newline-join the tokens, then
   // base64 that whole list once more into a single opaque `blob`. The launcher
@@ -116,7 +128,7 @@ export function buildCloudAttachInnerCommand(
   // the `bash -lc` body MUST be single-quoted — a double-quoted `"${A[@]}"`
   // expands eagerly under the outer `/bin/sh -c` before the loop runs, dropping
   // the seed prompt. Single quotes are inert to sh; bash runs `${A[@]}`/`$(…)`.
-  return `bash -lc '${agentStartBanner(binary)}${preamble}${exports}${prelude}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
+  return `bash -lc '${agentStartBanner(binary)}${preamble}${agentEnv}${exports}${prelude}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
 }
 
 /**

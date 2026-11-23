@@ -87,6 +87,7 @@ import {
   ensureAgentsInstalledForCloud,
   ensureAgentVolumesForCloud,
   reconcileAgentCredentials,
+  buildCloudAgentEnv,
 } from './sync/agent-credentials.js';
 import { seedAgentStaticForCreate } from './sync/agent-static.js';
 import {
@@ -104,6 +105,7 @@ import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
+import { removeCloudAgentEnvFile, writeCloudAgentEnvFile } from './agent-env-file.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
 import { adminCustodySink, pushProjectSeedToCustody, SEED_PUSH_MS } from './custody-seed.js';
@@ -608,6 +610,10 @@ export function createCloudProvider(
     // resume — /workspace already exists. dockerd/VNC are best-effort inside the
     // bootstrap; a dead ctl daemon throws and fails start (matching the previous
     // behavior, where the ctl relaunch was the one un-caught step).
+    // Read from config, the same rule the credential reconcile below follows.
+    const credentialSync = await loadEffectiveConfig(box.workspacePath)
+      .then((c) => c.effective.box.credentialSync)
+      .catch(() => true);
     await kickCloudBootstrap({
       backend,
       handle: h,
@@ -627,7 +633,26 @@ export function createCloudProvider(
       gitPushMode: box.cloud?.gitPushMode,
       hubGitAuth: box.cloud?.hubGitAuth,
       boxHost: deriveCloudBoxHost(box.name, webPreview?.url),
+      credentialSync,
     });
+    // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
+    // on every wake. Built from the waking process's env, but each line only
+    // fills a key the sandbox env lacks, so an SDK box keeps its create-time
+    // auth. Best-effort, like the reconcile below: a box that comes up without
+    // it still runs, its agent just lacks the forwarded keys.
+    try {
+      await writeCloudAgentEnvFile(
+        backend,
+        h,
+        await buildCloudAgentEnv(box.agents, box.accounts ?? {}),
+      );
+    } catch (err) {
+      // The message names the step and the exec's exit, never the values.
+      process.stderr.write(
+        `agentbox: WARN: ${box.name}: agent env not rewritten on wake (${err instanceof Error ? err.message : String(err)}); ` +
+          'forwarded API keys and a named account token may be missing on a VPS box\n',
+      );
+    }
     // Re-register on resume. A control-plane box registers on the plane (with
     // its origin URL, needed for lease minting); a classic-cloud box registers
     // on the host relay so its CloudBoxPoller picks up the fresh preview
@@ -717,8 +742,6 @@ export function createCloudProvider(
     // into the sandbox env; re-read the config here since the host flag is
     // what the user controls).
     try {
-      const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
-        .credentialSync;
       if (credentialSync) {
         // Per account: a named login reconciles against its own secret; a
         // pasted-kind account (a token, no login file) is left out.
@@ -1194,8 +1217,23 @@ export function createCloudProvider(
           gitPushMode: req.gitPushMode,
           hubGitAuth: req.hubGitAuth,
           boxHost: deriveCloudBoxHost(name, webPreview?.url),
+          credentialSync: !credentialSyncOff,
           onLog: log,
         });
+        // The agents' env (forwarded keys, a named account's token, run-env) in
+        // a 0600 file the launcher sources: a VPS has no sandbox-wide env to
+        // carry it, and the SDK providers get the same values either way, so a
+        // failure is logged rather than failing a create that is otherwise up.
+        try {
+          await writeCloudAgentEnvFile(backend, handle, agentVolumes.env);
+        } catch (err) {
+          log(
+            `WARN: agent env not written (${err instanceof Error ? err.message : String(err)}); ` +
+              'forwarded API keys and a named account token may be missing on a VPS box',
+          );
+          // A stale copy from a checkpoint must not be sourced in its place.
+          await removeCloudAgentEnvFile(backend, handle);
+        }
 
         // Portless host alias + in-VPS mirror. Default-on for backends whose
         // `previewUrl()` returns a loopback URL (Hetzner); naturally skipped

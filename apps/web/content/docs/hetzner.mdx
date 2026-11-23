@@ -192,6 +192,7 @@ agentbox checkpoint create smoke setup
 - **Pause still bills.** Hetzner charges ~€4/mo even for a _stopped_ VPS. Destroy the box (`agentbox destroy <box> -y`) to stop billing entirely — it deletes the VPS, its firewall, and the per-box SSH key.
 - **No live stats.** `agentbox top` and `dashboard` render `—` for CPU/mem; the basic API doesn't expose per-server metrics.
 - **No shared credential volume.** Agent credentials are pushed to each box via scp at create time.
+- **Agent env rides a 0600 file, not the VPS user data.** Cloud-init user data is readable from inside the box, so forwarded keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...) and a named account's token are written to `/run/agentbox/agent.env` (mode `0600`, box user) at create and on every start, and the agent launcher sources it. They are re-read from the host that starts the box, so start it from where those keys are set.
 - **IPv4 only.** SSH targets the VPS's IPv4 address; IPv6-only host networks aren't exercised yet.
 - **`agentbox prune --provider hetzner` isn't wired yet.** Clean up orphans from the Hetzner dashboard or the REST API (`$HCLOUD_TOKEN` lives in `~/.agentbox/secrets.env`).
 

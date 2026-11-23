@@ -1,6 +1,12 @@
 // The cloud twin of `AgentSyncModule` — what this layer needs from an agent,
 // received rather than imported. See `sync/agent-cloud-module.ts`.
-export { buildCloudBoxRunEnv } from './sync/agent-credentials.js';
+export { buildCloudAgentEnv, buildCloudBoxRunEnv } from './sync/agent-credentials.js';
+export {
+  CLOUD_AGENT_ENV_FILE,
+  removeCloudAgentEnvFile,
+  renderAgentEnvFile,
+  writeCloudAgentEnvFile,
+} from './agent-env-file.js';
 
 export {
   agentCloudModule,
