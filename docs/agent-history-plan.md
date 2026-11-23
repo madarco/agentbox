@@ -467,6 +467,61 @@ PC pointed at the same hub.
 
 **Done:** sessions from two PCs, host and box, in one `sessions ls`.
 
+#### Phase 5 implementation plan (2026-11-23)
+
+- **Where it runs.** A `HostSessionWatcher` in `startRelayDaemon`, so every
+  PC's relay has it: the hub's embedded relay and a bare `agentbox-relay serve`
+  alike. It is constructed always and does nothing until enabled; it re-reads
+  config on each pass (60 s), so a toggle needs no restart.
+- **Opt-in and per-project allow/deny: one config key, two scopes.**
+  `history.hostSessions` (bool, default false). The global value is the
+  toggle; a project's own value is its allow (`true`) or deny (`false`) and
+  wins over the global one, through the normal effective-config merge. A
+  project with `history.capture: false` is denied too.
+- **Which projects.** Only folders agentbox knows on this PC (decision 1):
+  every registered project (`~/.agentbox/projects/<hash>/meta.json`, which
+  any create or project-scoped `config set` writes) plus the `projectRoot` of
+  this PC's box records. A folder agentbox never saw is never read, even with
+  the global toggle on. Setting the key on a folder registers it, so `agentbox
+  sessions host allow <dir>` is how a desktop-only project is added.
+- **Claude desktop app.** Its sessions are written to the same
+  `~/.claude/projects/<dashed cwd>/` tree as the CLI's, so they follow the
+  same project rule: allowed with their project, denied with it. No separate
+  switch.
+- **Which agents.** Those whose `history.transcripts` entry declares a
+  `hostKey` (how the host spells a project folder in `<projectKey>`); today
+  claude (`dashed-path`). Phase 3's agents are not host-watched until they
+  declare one (codex keys by date, not project: backlog).
+- **Engine reuse.** The same `HistoryShipper`, one per allowed project, over a
+  local-disk `HistoryFileSource` whose bindings are the session files present
+  in the project's dir (every stem there is a host session: no box shares
+  this dir). The origin is `{kind: 'host', hostId: <machine id>,
+  projectRepoUrl}`; the shipper skips its per-box binding filter for a host
+  origin. Frames are redacted on the PC (curated formats + the PC's exact
+  secrets) before they leave it.
+- **Sink: the configured hub.** With `relay.controlPlaneUrl` set (and this
+  process is not the control box), frames go to that hub's `POST
+  /api/v1/history/chunks` with this PC's device token (`agentbox hub login`,
+  multi-PC Phase 1b), else the shared API key. Otherwise they go in-process to
+  the local hub's history service. A bare relay with no control box has no
+  hub: status says so.
+- **Hub.** A host origin is keyed `host:<hostId>`; the session row has no box
+  and provider `host`. The chunks route accepts a host origin and, for a
+  device-token caller, overwrites `hostId` with the verified device id.
+- **Status.** The watcher writes `~/.agentbox/history-host.json` after every
+  pass: enabled, target, last pass, per project (folder, allowed, why, files,
+  bytes), last error.
+- **Surfaces.** `GET|PUT /api/v1/history/host` on the hub reads that status and
+  writes the hub machine's key (global, or one project folder): the tray's
+  toggle + status against the local hub. `agentbox sessions host
+  [status|on|off|allow|deny|inherit] [dir]` does the same on this PC directly:
+  the watcher and its config are this machine's, and a PC that uses a remote
+  hub may run no local hub to ask. `sessions ls` gains a PC column.
+- **Done check.** An isolated hub (scratch HOME A) with a docker box session
+  and A's own host session; a second scratch HOME B enrolled with `hub login`,
+  `relay.controlPlaneUrl` set to hub A, running its relay with host sessions on.
+  `agentbox sessions ls` lists all three.
+
 ### Phase 6 — MCP
 
 `/api/mcp`, relay MCP proxy for boxes, MCP registration in agent packages,
