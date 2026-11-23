@@ -135,7 +135,7 @@ Without a flag a box gets every library skill. The choice is recorded on the box
 The hub also keeps **skill bindings**, which turn a library skill on or off for every box of a workspace or a project, on whichever PC or provider the box is created:
 
 ```bash
-agentbox skills disable daytona                       # off for every box
+agentbox skills disable daytona                       # leave it out of the library set for every box
 agentbox skills enable daytona --workspace            # ...but on in the workspace of this folder
 agentbox skills disable unslop --project              # off for this folder's repo
 agentbox skills enable unslop --project https://github.com/acme/app
@@ -144,6 +144,8 @@ agentbox skills bindings [--json]                     # list every binding
 ```
 
 For each skill the most specific choice wins: the create flags above, then the project, then the workspace, then a global binding. A skill bound nowhere is in every box. `--project` with no value uses this folder's `origin` remote; a project is keyed by its repo, not a folder, so the same repo checked out on two PCs gets the same set. `--workspace` with no value uses the [workspace](/docs/cli#workspaces--tasks) containing this folder, or takes its id or name. Enabling a skill for one workspace or project only narrows anything if it is disabled globally; the command says so when it isn't.
+
+Bindings select what boxes receive **from the library**. A skill that also arrives from your machine's own folders (see [Keeping boxes in sync](#keeping-boxes-in-sync)), such as a copy in `~/.claude/skills` or `~/.agents/skills` on Docker, or one baked into a cloud base, still reaches the box that way, so disabling it in the library doesn't remove that copy.
 
 In the hub web UI, the create form's **Advanced** section lists the library skills ticked as the bindings resolve for the chosen project. Leave it alone and the bindings decide. Unticking a skill skips just that one; ticking one the bindings leave out gives the box exactly the ticked set.
 

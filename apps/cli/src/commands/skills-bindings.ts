@@ -119,7 +119,9 @@ function bindAction(mode: HubApiSkillBindingMode) {
       // workspace or project alone changes nothing. Say how to make it scoped.
       if (!opts.clear && mode === 'include' && target.scope !== 'global') {
         const doc = await client.getSkillBindings();
-        const open = names.filter((n) => doc.global[n] !== 'exclude');
+        const open = names.filter(
+          (n) => !(Object.hasOwn(doc.global, n) && doc.global[n] === 'exclude'),
+        );
         if (open.length > 0) {
           process.stdout.write(
             `note: ${open.join(', ')} ${open.length === 1 ? 'is' : 'are'} not disabled globally, so every box gets ${open.length === 1 ? 'it' : 'them'} already. ` +

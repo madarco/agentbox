@@ -121,4 +121,39 @@ describe('skill bindings', () => {
     await expect(readBindings(failing, { strict: true })).rejects.toThrow('EIO');
     expect(SKILL_BINDINGS_PATH).toBe('skills/.bindings.json');
   });
+
+  it('treats prototype names as ordinary keys', () => {
+    const odd = ['constructor', 'tostring', 'alpha'];
+    // No bindings at all: every skill, `constructor` included.
+    expect(resolveSkillNames(odd, emptyBindings(), {}, undefined)).toEqual(odd);
+    expect(
+      resolveSkillNames(
+        odd,
+        emptyBindings(),
+        { projectKey: 'constructor', boxId: 'toString' },
+        undefined,
+      ),
+    ).toEqual(odd);
+    // A binding on `constructor` works like any other.
+    const off = applyBindingChanges(emptyBindings(), 'global', undefined, {
+      constructor: 'exclude' as const,
+    });
+    expect(resolveSkillNames(odd, off, {}, undefined)).toEqual(['tostring', 'alpha']);
+    // `__proto__` is a stored scope id, not a prototype write.
+    const proto = applyBindingChanges(emptyBindings(), 'project', '__proto__', {
+      alpha: 'exclude',
+    });
+    expect(Object.keys(proto.project)).toEqual(['__proto__']);
+    expect(resolveSkillNames(odd, proto, { projectKey: '__proto__' }, undefined)).toEqual([
+      'constructor',
+      'tostring',
+    ]);
+    // ...and it survives a JSON round trip through the stored file.
+    const back = parseBindings(JSON.parse(JSON.stringify(proto)));
+    expect(resolveSkillNames(odd, back, { projectKey: '__proto__' }, undefined)).toEqual([
+      'constructor',
+      'tostring',
+    ]);
+    expect(withoutSkill(off, 'constructor').global).toEqual({});
+  });
 });

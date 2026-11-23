@@ -205,6 +205,19 @@ resolver is in `@agentbox/core` (a hub route can't bundle `@agentbox/relay`).
   the box without its workspace bindings, silently (log it); `enable|disable`
   makes three sequential hub calls (parallelize, read only the global scope for
   the hint).
+- **L1 (review of #448): docker registrations carry no `repoKey`.**
+  `sandbox-docker/src/create.ts` (the register body, ~L901-916) sends
+  `originUrl` only, so the relay keys the box with a raw `repoKey(originUrl)`,
+  while `agentbox skills enable|disable --project` stores the alias-expanded
+  `repoKeyAtEdge` key. A project binding misses a docker box whose remote uses an
+  `~/.ssh/config` alias (`work:acme/app`). Fix: send `repoKeyAtEdge(originUrl)`
+  in the docker registration, as the cloud path does.
+- **L3 (review of #448): a corrupt `skills/.bindings.json` fails open
+  silently.** `skills.get` reads it as "nothing bound", so every box gets every
+  skill (excludes stop applying) and nothing is logged; `GET
+  /api/v1/skill-bindings` shows it empty while `PUT` refuses with "not valid
+  JSON". Fix: log/emit a relay event on the tolerant read, and surface the error
+  on GET.
 - **Discard keeps bindings** (on purpose, from the review): a global `disable`
   must survive a discard + re-import. Bindings for skills that never come back
   stay in the file; `agentbox skills bindings` shows them.

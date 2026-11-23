@@ -374,6 +374,9 @@ export const skillsCommand = new Command('skills')
   .option('--discard <names>', 'delete these skills (every version) from the hub', collect)
   .option('-y, --yes', 'skip confirms (discard; replacing a different local copy on download)')
   .option('--allow-findings', 'upload skills the secret scan flagged')
+  // Without it the parent swallows a subcommand's own options (`skills
+  // bindings --json` would set the parent's --json). Not inherited from the root.
+  .enablePositionalOptions()
   .addCommand(skillsEnableCommand)
   .addCommand(skillsDisableCommand)
   .addCommand(skillsBindingsCommand)

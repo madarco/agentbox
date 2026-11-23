@@ -61,8 +61,25 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const WORKSPACE_ID_RE = /^[0-9a-f]{16}$/;
 const BOX_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
+/**
+ * Every map here is keyed by user-controlled strings (skill names, repo keys,
+ * box ids), so `constructor` or `__proto__` must be ordinary keys: maps have no
+ * prototype, and every read goes through {@link own}.
+ */
+function dict<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
+function own<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(map, key) ? map[key] : undefined;
+}
+
+function copy<T>(map: Record<string, T>): Record<string, T> {
+  return Object.assign(dict<T>(), map);
+}
+
 export function emptyBindings(): SkillBindingsDoc {
-  return { schema: 1, global: {}, workspace: {}, project: {}, box: {} };
+  return { schema: 1, global: dict(), workspace: dict(), project: dict(), box: dict() };
 }
 
 /** Why a scope id is unusable, or null. The global scope takes no id. */
@@ -87,7 +104,7 @@ export function scopeIdProblem(
 }
 
 function parseMap(raw: unknown): SkillBindingMap {
-  const out: SkillBindingMap = {};
+  const out: SkillBindingMap = dict();
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [name, mode] of Object.entries(raw as Record<string, unknown>)) {
     if (NAME_RE.test(name) && (mode === 'include' || mode === 'exclude')) out[name] = mode;
@@ -96,7 +113,7 @@ function parseMap(raw: unknown): SkillBindingMap {
 }
 
 function parseKeyed(raw: unknown, scope: SkillBindingScope): Record<string, SkillBindingMap> {
-  const out: Record<string, SkillBindingMap> = {};
+  const out: Record<string, SkillBindingMap> = dict();
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [id, map] of Object.entries(raw as Record<string, unknown>)) {
     if (scopeIdProblem(scope, id)) continue;
@@ -160,7 +177,7 @@ export function bindingsAt(
   scopeId?: string,
 ): SkillBindingMap {
   if (scope === 'global') return doc.global;
-  return (scopeId ? doc[scope][scopeId] : undefined) ?? {};
+  return (scopeId ? own(doc[scope], scopeId) : undefined) ?? dict();
 }
 
 /**
@@ -175,12 +192,12 @@ export function applyBindingChanges(
 ): SkillBindingsDoc {
   const next: SkillBindingsDoc = {
     schema: 1,
-    global: { ...doc.global },
-    workspace: { ...doc.workspace },
-    project: { ...doc.project },
-    box: { ...doc.box },
+    global: copy(doc.global),
+    workspace: copy(doc.workspace),
+    project: copy(doc.project),
+    box: copy(doc.box),
   };
-  const map: SkillBindingMap = { ...bindingsAt(doc, scope, scopeId) };
+  const map: SkillBindingMap = copy(bindingsAt(doc, scope, scopeId));
   for (const [name, mode] of Object.entries(changes)) {
     if (mode === null) delete map[name];
     else map[name] = mode;
@@ -198,12 +215,13 @@ export function withoutSkill(doc: SkillBindingsDoc, name: string): SkillBindings
   let next = doc;
   for (const scope of SKILL_BINDING_SCOPES) {
     if (scope === 'global') {
-      if (name in next.global)
+      if (Object.hasOwn(next.global, name))
         next = applyBindingChanges(next, 'global', undefined, { [name]: null });
       continue;
     }
     for (const id of Object.keys(next[scope])) {
-      if (name in next[scope][id]!) next = applyBindingChanges(next, scope, id, { [name]: null });
+      if (Object.hasOwn(next[scope][id]!, name))
+        next = applyBindingChanges(next, scope, id, { [name]: null });
     }
   }
   return next;
@@ -216,14 +234,14 @@ export function resolveBindings(
   ctx: SkillBindingContext,
 ): ResolvedSkill[] {
   const layers: [SkillBindingScope, SkillBindingMap][] = [
-    ['box', ctx.boxId ? (doc.box[ctx.boxId] ?? {}) : {}],
-    ['project', ctx.projectKey ? (doc.project[ctx.projectKey] ?? {}) : {}],
-    ['workspace', ctx.workspaceId ? (doc.workspace[ctx.workspaceId] ?? {}) : {}],
+    ['box', ctx.boxId ? bindingsAt(doc, 'box', ctx.boxId) : dict()],
+    ['project', ctx.projectKey ? bindingsAt(doc, 'project', ctx.projectKey) : dict()],
+    ['workspace', ctx.workspaceId ? bindingsAt(doc, 'workspace', ctx.workspaceId) : dict()],
     ['global', doc.global],
   ];
   return names.map((name) => {
     for (const [scope, map] of layers) {
-      const mode = map[name];
+      const mode = own(map, name);
       if (mode) return { name, included: mode === 'include', from: scope };
     }
     return { name, included: true, from: 'default' as const };

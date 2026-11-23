@@ -124,4 +124,22 @@ describe('skill bindings backend', () => {
     ).rejects.toThrow(/not valid JSON/);
     expect((await store.get('skills/.bindings.json'))!.data.toString()).toBe('{broken');
   });
+
+  it('stores prototype-named scope ids and skills', async () => {
+    const store = memStore();
+    await seed(store, 'constructor', 'beta');
+    const out = await putSkillBindings(
+      store,
+      parseBindingTarget('project', '__proto__'),
+      parseBindingChanges(JSON.parse('{"bindings":{"constructor":"exclude"}}')),
+    );
+    expect(out).toEqual({ constructor: 'exclude' });
+    expect(Object.keys((await getSkillBindings(store)).project)).toEqual(['__proto__']);
+    const preview = await previewSkillSet(store, { projectKey: '__proto__' });
+    expect(preview.skills.map((s) => [s.name, s.included])).toEqual([
+      ['beta', true],
+      ['constructor', false],
+    ]);
+    expect((await previewSkillSet(store, {})).skills.every((s) => s.included)).toBe(true);
+  });
 });
