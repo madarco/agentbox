@@ -238,3 +238,37 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
       images: one harmless log line.
     - A seed reply of 1000 x 256 KB could exceed the cloud bridge's body cap
       and fail forever. Real sets are KBs.
+
+## Phase 5 (host sessions + multiple PCs)
+
+- **Tray toggle against a remote hub.** `GET|PUT /api/v1/history/host` reads and
+  writes the watcher of the machine the hub runs on. A tray pointed at a
+  control box therefore toggles the control box's watcher, not the PC's. A
+  per-device setting carried by the hub (the PC's relay reading it back) would
+  fix it; `agentbox sessions host` on the PC works today.
+- **Only claude is host-watched.** A host agent needs a `hostKey` on its
+  transcripts entry. codex keys rollouts by date, not by project, so its host
+  filter has to read `session_meta.cwd` (Phase 3 territory); pi keys by
+  `--<cwd dashed>--`, which is a second `hostKey` kind.
+- **Sessions started below the project root.** claude keys a transcript by the
+  cwd it was launched in, so a session run in `repo/sub` lives under another
+  key and is not shipped. Same for a path claude spells differently from the
+  registered one (macOS `/private/var` realpath), and for long paths claude
+  truncates and hashes. Fix: match keys by prefix, or read each file's `cwd`.
+- **Host memory.** The watcher ships transcripts only. Host memory still reaches
+  the hub only as the hub machine's own import at a box seed (Phase 4); a
+  second PC's host memory never does.
+- **Restart cost (L2 again).** After every relay restart the watcher re-learns
+  each host file's cursor: one first frame, then a re-hash of the ingested
+  prefix. On a PC like the one measured in Phase 0 that is ~2 GB read once per
+  restart. The empty-data probe + persisted edge cursor from L2 fixes it.
+- **Same session on the host and in a box.** `agentbox fork` copies a host
+  session into a box under the same id. With both shipped, the session's turns
+  count twice and its row keeps the first origin (the "same session from two
+  boxes" item, with a host origin as one side).
+- **Admin-key callers name their own `hostId`.** A device-token caller's host
+  frames are stamped with the verified device; a caller with the shared admin
+  key or API key is trusted, like box frames (see "REST ingest trusts the
+  caller's origin").
+- **`PC` column shows a machine-id prefix,** not the device label the hub has
+  in its devices table.
