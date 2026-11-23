@@ -9,7 +9,7 @@ import {
   BoxNotFoundError,
   buildNoVncUrl,
   normalizeAgentStatus,
-  primaryAgent,
+  registrationFromRecord,
 } from '@agentbox/core';
 import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
@@ -557,9 +557,7 @@ export async function startBox(idOrName: string): Promise<StartedBox> {
         worktrees: box.gitWorktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-        agent: primaryAgent(box),
-        ...(box.skills ? { skills: box.skills } : {}),
-        ...(box.accounts ? { accounts: box.accounts } : {}),
+        ...registrationFromRecord(box),
       });
     } catch {
       // best-effort

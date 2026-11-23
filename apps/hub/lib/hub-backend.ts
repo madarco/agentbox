@@ -40,7 +40,7 @@ import {
   type LlmProxyRecord,
   type PromptAnswer,
   type Provider,
-  primaryAgent,
+  registrationFromRecord,
   providerWarning,
 } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
@@ -67,6 +67,7 @@ import {
   queueLogPath,
   readCurrentBranch,
   readJob,
+  registrationAgents,
   registrationToBoxRecord,
   writeQueueLoginCode,
   type BoxRegistration,
@@ -403,9 +404,13 @@ interface ProjectRegrouping {
  * the hub worker passed them) still reports the registration's agent, so `hub
  * adopt` on another PC keeps it and a service agent's gateway survives.
  */
-function withRegisteredAgent(box: Box, reg: { agent?: string } | undefined): Box {
-  if ((box.agents && box.agents.length > 0) || !reg?.agent || reg.agent === 'none') return box;
-  return { ...box, agents: [reg.agent] };
+function withRegisteredAgent(
+  box: Box,
+  reg: { agent?: string; agents?: string[] } | undefined,
+): Box {
+  if (box.agents && box.agents.length > 0) return box;
+  const agents = reg ? registrationAgents(reg) : undefined;
+  return agents ? { ...box, agents: [...agents] } : box;
 }
 
 /** The origin-machine fields of the Box payload, from a registration. */
@@ -1679,11 +1684,10 @@ async function sanctionBranch(box: BoxRecord, branch: string): Promise<void> {
         worktrees,
         autoApproveHostActions: box.autoApproveHostActions,
         autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-        agent: primaryAgent(box),
-        // A register REPLACES the registration: without this a branch switch
-        // would widen a `--no-skills` / `--skip-skills` box to the whole library.
-        ...(box.skills ? { skills: box.skills } : {}),
-        ...(box.accounts ? { accounts: box.accounts } : {}),
+        // A register REPLACES the registration: every field the record holds
+        // (agents, repo, skills -- a `--no-skills` box must not widen to the
+        // whole library -- accounts) goes with it.
+        ...registrationFromRecord(box),
       });
     } catch (err) {
       // Persisted to state.json, but the running relay still holds the old

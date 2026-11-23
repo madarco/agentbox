@@ -7,7 +7,7 @@
 // box itself writes the PC record's token, which is not the one in the box's
 // relay.env, and every box->hub call then 401s ("unknown box token").
 import type { BoxRecord } from '@agentbox/core';
-import type { BoxRegistration } from '@agentbox/relay';
+import { registrationAgents, type BoxRegistration } from '@agentbox/relay';
 
 export interface BoxAgentDeps {
   /** This hub's record of the box, by id or name; null when it has none. */
@@ -38,9 +38,14 @@ export async function addBoxAgent(
   const reg = await deps.getRegistration(boxId);
   if (!box && !reg) return { kind: 'not_found' };
   const recorded = box ? await deps.recordAgent(box.id, agent) : undefined;
-  // One agent per registration: the one just added is the one whose units the
-  // box needs now (a box running claude AND openclaw is a backlog item).
-  if (reg && reg.agent !== agent) await deps.register({ ...reg, agent });
+  // The registration names EVERY agent the box runs: the added one joins the
+  // list (its units reach the box through `agents.list`) and the box's own
+  // agent stays primary, the same shape every re-registration sends from the
+  // record (`registrationFromRecord`), so a later start or restart keeps it.
+  const current = reg ? (registrationAgents(reg) ?? []) : [];
+  if (reg && !current.includes(agent)) {
+    await deps.register({ ...reg, agent: current[0] ?? agent, agents: [...current, agent] });
+  }
   const agents = recorded?.agents ?? (box?.agents ? [...box.agents] : [agent]);
   return { kind: 'ok', boxId, agents: agents.includes(agent) ? agents : [...agents, agent] };
 }

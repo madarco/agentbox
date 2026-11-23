@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { primaryAgent, type LlmProxyRecord } from '@agentbox/core';
+import { registrationFromRecord, type BoxRecord, type LlmProxyRecord } from '@agentbox/core';
 import { randomBytes } from 'node:crypto';
 import { existsSync, openSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
@@ -29,6 +29,7 @@ import {
   shouldReclaimForVersion,
   registrationOrigin,
   type HealthzBody,
+  type RegistrationOrigin,
   type RelayReuseHealth,
 } from '@agentbox/sandbox-core';
 import { containerExists, removeContainer } from './docker.js';
@@ -694,24 +695,39 @@ export interface RegisterBoxArgs {
    * whether this machine is recorded as the box's origin machine.
    */
   workspacePath?: string;
-  /** Repo key computed by the requesting machine (CreateBoxRequest.repoKey). */
+  /** Repo key computed by the requesting machine (CreateBoxRequest.repoKey), or the record's. */
   repoKey?: string;
+  /**
+   * The origin stamp a re-registration carries from the record
+   * (`registrationFromRecord`). When set it is sent as is instead of stamping
+   * this machine.
+   */
+  originMachineId?: string;
+  originMachineLabel?: string;
+  originFolder?: string;
   /** The PC the box is built for (CreateBoxRequest.requester). */
   requester?: { machineId: string; label?: string; folder?: string };
   /**
    * The agent the box was created for. The relay's `agents.list` hands a
    * `surface: 'service'` agent's units only to a box that runs it; a
    * registration without this gets none. An existing box re-registers with
-   * `primaryAgent(record)`, or it loses its service agent.
+   * `registrationFromRecord(record)`, or it loses its service agent.
    */
   agent?: string;
+  /** Every agent the box runs (`BoxRecord.agents`), so an added one survives a re-register. */
+  agents?: string[];
   /** Named LLM account per agent (`BoxRecord.accounts`). */
   accounts?: Record<string, string>;
   /** The hub egress proxy (`BoxRecord.llmProxy`). */
   llmProxy?: LlmProxyRecord;
 }
 
-export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void> {
+/**
+ * Register (or re-register) a box. Returns the repo key and origin stamp it
+ * registered with, so a create persists them on the record for every later
+ * re-registration (`registrationFromRecord`).
+ */
+export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<RegistrationOrigin> {
   const worktrees: BoxWorktree[] = (args.worktrees ?? []).map((w) => ({
     containerPath: w.containerPath,
     hostMainRepo: w.hostMainRepo,
@@ -720,14 +736,24 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
   }));
   // Only a registration that names the repo stamps where it came from; the
   // relay keeps the first stamp across the many re-registrations that don't.
-  const origin = args.originUrl
-    ? await registrationOrigin({
-        originUrl: args.originUrl,
-        folder: args.workspacePath ?? args.worktrees?.[0]?.hostMainRepo,
-        repoKey: args.repoKey ?? null,
-        requester: args.requester ?? null,
-      })
-    : {};
+  // A re-registration from a record sends the stamp the create recorded.
+  const origin: RegistrationOrigin = args.originMachineId
+    ? {
+        ...(args.repoKey ? { repoKey: args.repoKey } : {}),
+        originMachineId: args.originMachineId,
+        ...(args.originMachineLabel ? { originMachineLabel: args.originMachineLabel } : {}),
+        ...(args.originFolder ? { originFolder: args.originFolder } : {}),
+      }
+    : args.originUrl
+      ? await registrationOrigin({
+          originUrl: args.originUrl,
+          folder: args.workspacePath ?? args.worktrees?.[0]?.hostMainRepo,
+          repoKey: args.repoKey ?? null,
+          requester: args.requester ?? null,
+        })
+      : args.repoKey
+        ? { repoKey: args.repoKey }
+        : {};
   await adminPost('/admin/register-box', {
     ...origin,
     boxId: args.boxId,
@@ -747,9 +773,11 @@ export async function registerBoxWithRelay(args: RegisterBoxArgs): Promise<void>
     ...(args.skills ? { skills: args.skills } : {}),
     originUrl: args.originUrl,
     agent: args.agent,
+    ...(args.agents && args.agents.length > 0 ? { agents: args.agents } : {}),
     ...(args.accounts && Object.keys(args.accounts).length > 0 ? { accounts: args.accounts } : {}),
     ...(args.llmProxy ? { llmProxy: args.llmProxy } : {}),
   });
+  return origin;
 }
 
 export async function forgetBoxFromRelay(boxId: string): Promise<void> {
@@ -939,44 +967,20 @@ async function adminPostForJson(path: string, body: unknown): Promise<unknown> {
   });
 }
 
-export interface BoxWithToken {
-  id: string;
-  name: string;
-  /** Named LLM account per agent — kept across a relay restart's re-registration. */
-  accounts?: Record<string, string>;
-  /** The hub egress proxy — kept across a relay restart's re-registration. */
-  llmProxy?: LlmProxyRecord;
-  /** Sandbox backend the box runs on. Defaults to 'docker' when absent. */
-  provider?: 'docker' | 'cloud' | string;
-  container?: string;
-  createdAt?: string;
-  relayToken?: string;
-  projectIndex?: number;
-  gitWorktrees?: GitWorktreeRecord[];
-  /** Cloud-only: which backend (e.g. 'daytona') drives this box. */
-  cloudBackend?: string;
-  /** Cloud-only: in-sandbox /bridge URL + tokens (from BoxRecord.cloud). */
-  relayPreviewUrl?: string;
-  relayPreviewToken?: string;
-  bridgeToken?: string;
-  /** Mirrors `BoxRecord.autoApproveHostActions`; re-registered on rehydrate. */
-  autoApproveHostActions?: boolean;
-  /** Mirrors `BoxRecord.autoApproveSafeHostActions`; re-registered on rehydrate. */
-  autoApproveSafeHostActions?: boolean;
-  /** `BoxRecord.agents` / `lastAgent`: re-registered (via `primaryAgent`) on rehydrate. */
-  agents?: readonly string[];
-  lastAgent?: string;
-  /** Mirrors `BoxRecord.skills`; re-registered on rehydrate. */
-  skills?: SkillSelection;
-}
+/** A box as `state.json` records it; only `id` and `name` are required. */
+export type BoxWithToken = Pick<BoxRecord, 'id' | 'name'> & Partial<BoxRecord>;
 
 /**
  * Re-push every known (id, token) to the relay's in-memory registry. Called
  * after `ensureRelay()` so a fresh / restarted relay learns about boxes that
  * were created in a previous CLI invocation — and, for cloud boxes,
  * restarts the host-side `CloudBoxPoller`.
+ *
+ * Takes the records as `state.json` holds them (cloud fields nested under
+ * `cloud`), so every caller, the docker create included, re-registers a cloud
+ * box with its backend, preview URL and bridge token.
  */
-export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<void> {
+export async function rehydrateRelayRegistry(boxes: readonly BoxWithToken[]): Promise<void> {
   for (const b of boxes) {
     if (!b.relayToken) continue;
     const kind = b.provider === 'docker' || b.provider === undefined ? 'docker' : 'cloud';
@@ -986,23 +990,21 @@ export async function rehydrateRelayRegistry(boxes: BoxWithToken[]): Promise<voi
         token: b.relayToken,
         name: b.name,
         kind,
-        backend: kind === 'cloud' ? b.cloudBackend : undefined,
+        backend: kind === 'cloud' ? (b.cloud?.backend ?? b.provider) : undefined,
         containerName: b.container,
         createdAt: b.createdAt,
         projectIndex: b.projectIndex,
         worktrees: b.gitWorktrees,
-        previewUrl: b.relayPreviewUrl,
-        previewToken: b.relayPreviewToken,
-        bridgeToken: b.bridgeToken,
+        previewUrl: b.cloud?.relayPreviewUrl,
+        previewToken: b.cloud?.relayPreviewToken,
+        bridgeToken: b.cloud?.bridgeToken,
         autoApproveHostActions: b.autoApproveHostActions,
         autoApproveSafeHostActions: b.autoApproveSafeHostActions,
-        // Without it a rehydrate (relay restart, any docker create) replaced
-        // every registration with an agentless one, and an openclaw box lost
-        // its gateway on the next ctl start.
-        agent: primaryAgent(b),
-        ...(b.skills ? { skills: b.skills } : {}),
-        ...(b.accounts ? { accounts: b.accounts } : {}),
-        ...(b.llmProxy ? { llmProxy: b.llmProxy } : {}),
+        // A registration replaces the entry: without these a rehydrate (relay
+        // or hub restart, any docker create) dropped the box's added agents (an
+        // openclaw gateway is lost on the next ctl start) and its repo (MCP
+        // history scope and skill bindings go empty).
+        ...registrationFromRecord(b),
       });
     } catch {
       // best-effort

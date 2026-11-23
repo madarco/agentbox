@@ -1571,6 +1571,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                     ...(reg.backend ? { backend: reg.backend } : {}),
                     ...(reg.originMachineId ? { originMachineId: reg.originMachineId } : {}),
                     ...(reg.agent ? { agent: reg.agent } : {}),
+                    ...(reg.agents ? { agents: reg.agents } : {}),
                     ...(reg.autoApproveSafeHostActions === false
                       ? { autoApproveSafeHostActions: false }
                       : {}),
@@ -2024,10 +2025,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         // older wire body without the field stays relaxed.
         autoApproveSafeHostActions: body.autoApproveSafeHostActions !== false,
         ...(skillSelection ? { skills: skillSelection } : {}),
+        // Kept from the stored registration when a re-register omits it (like
+        // `repoKey` in `mergeRegistrationOrigin`): the box's MCP history scope
+        // and skill bindings are keyed by it.
         originUrl:
           typeof body.originUrl === 'string' && body.originUrl.length > 0
             ? body.originUrl
-            : undefined,
+            : existingReg?.originUrl,
         publicHost:
           typeof body.publicHost === 'string' && body.publicHost.length > 0
             ? body.publicHost
@@ -2045,6 +2049,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           typeof body.agent === 'string' && body.agent.length > 0
             ? body.agent
             : (existingReg?.agent ?? undefined),
+        // Every agent the box runs; kept like `agent` when a re-register omits it.
+        agents: sanitizeAgents(body.agents) ?? existingReg?.agents,
         accounts: sanitizeAccounts(body.accounts),
         // Kept from the stored registration when a re-register omits it, like
         // `agent`: a relaunch from a record that predates it must not strip it.
@@ -3458,4 +3464,13 @@ function sanitizeAccounts(raw: unknown): Record<string, string> | undefined {
     if (typeof id === 'string' && accountIdProblem(id) === null) out[agent] = id;
   }
   return namedAccounts(out);
+}
+
+/** A registration's `agents`: non-empty agent ids, `'none'` dropped; undefined when none. */
+function sanitizeAgents(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter(
+    (a): a is string => typeof a === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(a) && a !== 'none',
+  );
+  return out.length > 0 ? [...new Set(out)] : undefined;
 }

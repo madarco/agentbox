@@ -55,12 +55,14 @@ export interface RegistrationToRecordOptions {
  * (an agentless box, or `'none'`). Feeds `agents.list`: a `surface: 'service'`
  * agent's units go only to a box that names it, so undefined means NO service
  * agent (see `buildAgentDescriptors`). Every registration of an existing box
- * must therefore send `primaryAgent(record)`.
+ * must therefore send `registrationFromRecord(record)`.
  */
 export function registrationAgents(
-  reg: Pick<BoxRegistration, 'agent'>,
+  reg: Pick<BoxRegistration, 'agent' | 'agents'>,
 ): readonly string[] | undefined {
-  return reg.agent && reg.agent !== 'none' ? [reg.agent] : undefined;
+  const all = (reg.agents ?? []).filter((a) => a.length > 0 && a !== 'none');
+  if (reg.agent && reg.agent !== 'none' && !all.includes(reg.agent)) all.unshift(reg.agent);
+  return all.length > 0 ? all : undefined;
 }
 
 /** Same answer from a BoxRecord: `agents` as created, else the last agent that ran. */
@@ -152,8 +154,8 @@ export function registrationToBoxRecord(
     // and `reg.agent` is only the first); otherwise the registration's.
     ...(existing?.agents && existing.agents.length > 0
       ? { agents: existing.agents }
-      : reg.agent && reg.agent !== 'none'
-        ? { agents: [reg.agent] }
+      : registrationAgents(reg)
+        ? { agents: [...registrationAgents(reg)!] }
         : {}),
     // The box's named accounts travel with it, so an adopting PC never
     // reconciles it against its own DEFAULT login (llm-accounts Phase 3).
@@ -164,6 +166,11 @@ export function registrationToBoxRecord(
     ...((reg.llmProxy ?? existing?.llmProxy)
       ? { llmProxy: reg.llmProxy ?? existing?.llmProxy }
       : {}),
+    // The repo identity, so this PC's own re-registrations keep it.
+    ...((reg.originUrl ?? existing?.originUrl)
+      ? { originUrl: reg.originUrl ?? existing?.originUrl }
+      : {}),
+    ...((reg.repoKey ?? existing?.repoKey) ? { repoKey: reg.repoKey ?? existing?.repoKey } : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),
     ssh: buildSshTarget(provider, sandboxId, reg.publicHost) ?? existing?.ssh,

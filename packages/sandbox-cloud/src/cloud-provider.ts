@@ -18,6 +18,7 @@ import {
   namedAccounts,
   persistentRefusal,
   primaryAgent,
+  registrationFromRecord,
   resolveSyncTopology,
   UserFacingError,
 } from '@agentbox/core';
@@ -62,6 +63,7 @@ import {
   withPerBoxCarry,
   borrowedCredentialCarry,
   agentIds,
+  type RegistrationOrigin,
 } from '@agentbox/sandbox-core';
 import { makeCloudSync, namedAccountAgents } from './sync/cloud-sync.js';
 import { createCloudSyncTransport } from './sync/sync-transport.js';
@@ -414,10 +416,7 @@ export function createCloudProvider(
       projectIndex: box.projectIndex,
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
-      agent: primaryAgent(box),
-      ...(box.skills ? { skills: box.skills } : {}),
-      ...(box.accounts ? { accounts: box.accounts } : {}),
-      ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
+      ...registrationFromRecord(box),
     });
   }
 
@@ -635,7 +634,8 @@ export function createCloudProvider(
     // URL/token. Both best-effort.
     if (box.cloud?.controlPlaneUrl && box.relayToken) {
       const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN;
-      const originUrl = await readGitOriginUrl(box.workspacePath).catch(() => undefined);
+      const originUrl =
+        box.originUrl ?? (await readGitOriginUrl(box.workspacePath).catch(() => undefined));
       if (adminToken && originUrl) {
         try {
           await registerBoxWithPlane({
@@ -645,6 +645,7 @@ export function createCloudProvider(
             token: box.relayToken,
             name: box.name,
             originUrl,
+            ...(box.repoKey ? { repoKey: box.repoKey } : {}),
             workspacePath: box.workspacePath,
             backend: backend.name,
             sandboxId: box.cloud.sandboxId,
@@ -671,6 +672,9 @@ export function createCloudProvider(
             image: box.cloud.image,
             webPort: box.cloud.webPort,
             agent: primaryAgent(box),
+            ...(registrationFromRecord(box).agents
+              ? { agents: registrationFromRecord(box).agents }
+              : {}),
             ...(box.accounts ? { accounts: box.accounts } : {}),
             ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
@@ -696,11 +700,12 @@ export function createCloudProvider(
           autoApproveSafeHostActions: box.autoApproveSafeHostActions,
           ...(box.skills ? { skills: box.skills } : {}),
           // Repo identity so a thin client can map this box to a local project
-          // by origin (Step 4 adoption); best-effort.
-          originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
-          agent: primaryAgent(box),
-          ...(box.accounts ? { accounts: box.accounts } : {}),
-          ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
+          // by origin (Step 4 adoption), from the record; a box created before
+          // the record carried it falls back to the host folder's origin.
+          ...registrationFromRecord(box),
+          ...(box.originUrl
+            ? {}
+            : { originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined) }),
         });
       } catch {
         // best-effort
@@ -1303,11 +1308,15 @@ export function createCloudProvider(
         // to the plane and needs no host poller. Classic-cloud box → register on
         // the host relay so it spawns a CloudBoxPoller for /bridge. Both
         // best-effort: a failed register doesn't break create.
+        let registeredOriginUrl: string | undefined;
+        let registered: RegistrationOrigin = {};
         if (req.controlPlaneUrl) {
           const adminToken = process.env.AGENTBOX_RELAY_ADMIN_TOKEN;
           const originUrl = req.inBoxClone
             ? req.inBoxClone.originUrl
             : await readGitOriginUrl(req.workspacePath).catch(() => undefined);
+          registeredOriginUrl = originUrl;
+          if (req.repoKey) registered = { repoKey: req.repoKey };
           if (!adminToken) {
             log(
               'control-plane URL configured but AGENTBOX_RELAY_ADMIN_TOKEN is unset; ' +
@@ -1433,7 +1442,10 @@ export function createCloudProvider(
           }
         } else if (relayPreview) {
           try {
-            await registerBoxWithRelay({
+            registeredOriginUrl = req.inBoxClone
+              ? req.inBoxClone.originUrl
+              : await readGitOriginUrl(req.workspacePath).catch(() => undefined);
+            registered = await registerBoxWithRelay({
               boxId: id,
               token: relayToken,
               name,
@@ -1449,14 +1461,13 @@ export function createCloudProvider(
               ...(req.skills ? { skills: req.skills } : {}),
               // Repo identity so a thin client can map this box to a local
               // project by origin (Step 4 adoption); best-effort.
-              originUrl: req.inBoxClone
-                ? req.inBoxClone.originUrl
-                : await readGitOriginUrl(req.workspacePath).catch(() => undefined),
+              originUrl: registeredOriginUrl,
               // An in-box clone has no host folder: nothing here to ask for files.
               ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
               ...(req.repoKey ? { repoKey: req.repoKey } : {}),
               ...(req.requester ? { requester: req.requester } : {}),
               agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
+              ...(req.agents && req.agents.length > 1 ? { agents: [...req.agents] } : {}),
               ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
               ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
             });
@@ -1497,6 +1508,10 @@ export function createCloudProvider(
               }
             : {}),
           ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
+          // What the host-relay registration above was keyed by, so every
+          // re-registration (start, resume, rehydrate) sends the same repo.
+          ...(registeredOriginUrl ? { originUrl: registeredOriginUrl } : {}),
+          ...registered,
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,

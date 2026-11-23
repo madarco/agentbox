@@ -45,4 +45,52 @@ describe('rehydrateRelayRegistry', () => {
     expect(agentOf('b-tui')).toBe('claude');
     expect(agentOf('b-none')).toBeUndefined();
   });
+
+  it('re-registers the full agents list, repo identity and origin stamp from the record', async () => {
+    await rehydrateRelayRegistry([
+      {
+        id: 'b-both',
+        name: 'both',
+        relayToken: 't',
+        agents: ['claude', 'openclaw'],
+        originUrl: 'git@github.com:o/r.git',
+        repoKey: 'github.com/o/r',
+        originMachineId: 'pc-1',
+        originFolder: '/home/u/r',
+        llmProxy: { mode: 'forward', upstream: 'hub.example.com:8790' },
+      },
+    ]);
+    expect(bodies[0]).toMatchObject({
+      agent: 'claude',
+      agents: ['claude', 'openclaw'],
+      originUrl: 'git@github.com:o/r.git',
+      repoKey: 'github.com/o/r',
+      originMachineId: 'pc-1',
+      originFolder: '/home/u/r',
+      llmProxy: { mode: 'forward', upstream: 'hub.example.com:8790' },
+    });
+  });
+
+  it('reads a cloud record as stored (cloud fields nested), as the docker create passes it', async () => {
+    await rehydrateRelayRegistry([
+      {
+        id: 'b-cloud',
+        name: 'c',
+        relayToken: 't',
+        provider: 'hetzner',
+        cloud: {
+          backend: 'hetzner',
+          sandboxId: 's',
+          relayPreviewUrl: 'https://bridge.example',
+          bridgeToken: 'bt',
+        },
+      } as never,
+    ]);
+    expect(bodies[0]).toMatchObject({
+      kind: 'cloud',
+      backend: 'hetzner',
+      previewUrl: 'https://bridge.example',
+      bridgeToken: 'bt',
+    });
+  });
 });
