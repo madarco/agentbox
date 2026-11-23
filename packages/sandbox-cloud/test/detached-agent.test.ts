@@ -282,10 +282,21 @@ describe('verifyAgentSessionStaysUp (the docker path runs it over docker exec)',
       .fn<(argv: string[]) => Promise<{ exitCode: number; stdout: string }>>()
       .mockRejectedValueOnce(new Error('docker hiccup'))
       .mockResolvedValue({ exitCode: 0, stdout: 'Working on it...' });
-    await expect(
-      verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', { windowMs: 5, pollMs: 1 }),
-    ).resolves.toBeUndefined();
-    expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Fake timers drive both the poll sleep and the Date.now() deadline, so the
+    // probe count is exact rather than whatever a loaded CI box fits in 5 ms.
+    vi.useFakeTimers();
+    try {
+      const done = verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', {
+        windowMs: 3_000,
+        pollMs: 1_000,
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(done).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+    // t=0 (transport error), 1s, 2s, 3s (deadline reached).
+    expect(exec).toHaveBeenCalledTimes(4);
   });
 
   it('does not read the echoed seed prompt as an auth failure', async () => {
