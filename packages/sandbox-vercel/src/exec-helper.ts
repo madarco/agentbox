@@ -20,8 +20,8 @@
  *   AGENTBOX_VERCEL_PROJECT_ID    project id
  *   AGENTBOX_VERCEL_INNER_CMD     the bash command to run (renderInnerCommand)
  *
- * stdout/stderr stream live; the exit code mirrors the command's. An SDK error
- * exits 1 with the message on stderr.
+ * stdout/stderr stream live; the exit code mirrors the command's (1 when it has
+ * none). An SDK error exits 1 with the message on stderr.
  */
 
 import { Sandbox } from '@vercel/sandbox';
@@ -80,13 +80,18 @@ async function main(): Promise<void> {
       stderr: process.stderr,
       signal: abort.signal,
     });
-    process.exit(r.exitCode ?? 0);
+    // exitCode, not exit(): piped stdio is async on macOS and exit() can drop
+    // the tail of the output. A missing code (killed by a signal) is a failure.
+    process.exitCode = typeof r.exitCode === 'number' ? r.exitCode : 1;
   } catch (err) {
-    if (abort.signal.aborted) process.exit(130);
+    if (abort.signal.aborted) {
+      process.exitCode = 130;
+      return;
+    }
     process.stderr.write(
       `exec-helper: vercel exec failed: ${err instanceof Error ? err.message : String(err)}\n`,
     );
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 

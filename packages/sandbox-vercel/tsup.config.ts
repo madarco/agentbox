@@ -12,7 +12,9 @@ export default defineConfig([
     entry: ['src/index.ts', 'src/cli.ts'],
     format: ['esm'],
     target: 'node20',
-    clean: true,
+    // tsup runs the two configs concurrently, so a clean here could delete the
+    // helper the other build just wrote. `pnpm build` empties dist/ first.
+    clean: false,
     dts: true,
     sourcemap: true,
     // commander + @clack/prompts are external (apps/cli bundles them at the root).
@@ -23,7 +25,6 @@ export default defineConfig([
     entry: { 'exec-helper': 'src/exec-helper.ts' },
     format: ['cjs'],
     target: 'node20',
-    // Don't clean: the ESM build above already cleaned dist/.
     clean: false,
     dts: false,
     sourcemap: true,

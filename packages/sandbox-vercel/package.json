@@ -22,7 +22,7 @@
     "scripts"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "rm -rf dist && tsup",
     "dev": "tsup --watch",
     "lint": "eslint src test",
     "test": "vitest run",
