@@ -74,6 +74,15 @@ CLI, not the raw commits.
 - **A box can no longer exhaust the hub's memory or your disk with proposed
   skills**: at most 3 waiting per box, 10 in total, 8 MiB each.
 - **A docker create no longer wakes paused E2B boxes.**
+- **`agentbox opencode -i` runs its prompt**, including one that starts with
+  `-`; a docker `-i` job whose agent dies at launch now fails instead of
+  reporting done.
+- **Docker claude boxes start past the onboarding screens** when the host has
+  no `~/.claude`.
+- **Vercel boxes start their agent through the SDK**, so a broken `sbx` no
+  longer stops a create; attach needs `sbx` 4 or later.
+- **Cloud boxes never leave a copy of the agent's keys on disk** while writing
+  them.
 - Host agent-dir syncs tolerate files that vanish mid-copy.
 
 ## [0.33.1] - 2026-11-21
