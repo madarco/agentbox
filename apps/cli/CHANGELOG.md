@@ -11,6 +11,71 @@ CLI, not the raw commits.
 
 ## [Unreleased]
 
+### Added
+
+- **Skills library in the hub.** The hub keeps one library of skills, seeded
+  from your PC and managed with `agentbox skills` or the hub's Skills page. It
+  is delivered to every box of every provider in each agent's own skill folder.
+  - **Choosing skills:** per workspace, project or box (`--skills` / `--no-skills`).
+  - **Sources:** a git repo, a marketplace or a linked folder. Updates wait for
+    your approval, with a diff and a secret scan.
+  - **In the web UI:** a SKILL.md editor, and a Skills section on each box with
+    Sync now.
+  - **Skills a box writes** can be proposed to the library; each one asks.
+- **Agent history in the hub.** Agent sessions from every box (claude, codex,
+  opencode, pi, openclaw) and, optionally, your PC's own sessions
+  (`history.hostSessions`) are stored by the hub.
+  - Browse them with `agentbox sessions ls|show|search|download`.
+  - Claude's memory follows the project across boxes.
+  - `agentbox usage` and the hub's Usage page show token usage.
+  - Agents in boxes can search past sessions and memory through the hub's MCP
+    server.
+- **LLM accounts.** Keep several named logins, setup tokens or API keys per
+  agent with `agentbox accounts`, and pick one per box with `--account` or the
+  `<agent>.account` key. Credential refreshes stay within that account.
+- **LLM egress through the hub** (`llm.proxy: forward`, `--llm-proxy`): a box's
+  model traffic leaves from the hub's IP.
+- **Several PCs on one hub.**
+  - Each computer enrolls with `agentbox hub login`, gets its own revocable
+    token, and shows on the hub's Devices page (`agentbox hub devices`).
+  - Git, gh and download requests from a box go to the PC it was created from,
+    then to any PC that has the repo.
+  - Hetzner and DigitalOcean firewalls keep one entry per PC, so attaching from
+    a second PC no longer locks the first out.
+- **macOS menu-bar app:** accounts, Session History and Skill updates menus,
+  Sync Skills per box, and pending skill updates in the badge.
+
+### Changed
+
+- **A box's workspace download always asks before it overwrites your
+  project**, and never touches `.git`.
+- **Approving a new device needs a signed-in hub session** (or the API key
+  plus the admin token); the API key alone no longer can.
+- **A signed-in owner session can read skill content**, so the update diff and
+  the editor work on a password-protected hub.
+- **A pushed login never replaces a newer one held by the hub.**
+
+### Fixed
+
+- **The hub refuses cookie-authenticated writes from other sites**, so a page
+  served from a box can no longer act on the hub as you.
+- **Hetzner and DigitalOcean boxes get the agent's environment.**
+  - opencode config, the pi version-check setting, forwarded API keys and
+    named accounts now reach these boxes.
+  - Keys are kept in a 0600 file on tmpfs, never in cloud-init.
+  - On every other provider they never override a box's own login.
+- **A box keeps its repo and its added agents** across restarts, hub restarts
+  and branch switches. Before, its history search went empty, and an added
+  OpenClaw stopped running.
+- **A late memory sync no longer deletes notes an agent wrote in the box**:
+  files merge, and the newer copy wins.
+- **`agentbox clone` keeps what makes the source box what it is**: skills, LLM
+  proxy, accounts, limits and size.
+- **A box can no longer exhaust the hub's memory or your disk with proposed
+  skills**: at most 3 waiting per box, 10 in total, 8 MiB each.
+- **A docker create no longer wakes paused E2B boxes.**
+- Host agent-dir syncs tolerate files that vanish mid-copy.
+
 ## [0.33.1] - 2026-11-21
 
 ### Added
