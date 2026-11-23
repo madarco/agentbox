@@ -3,6 +3,7 @@
 export { buildCloudAgentEnv, buildCloudBoxRunEnv } from './sync/agent-credentials.js';
 export {
   CLOUD_AGENT_ENV_FILE,
+  removeCloudAgentEnvFile,
   renderAgentEnvFile,
   writeCloudAgentEnvFile,
 } from './agent-env-file.js';

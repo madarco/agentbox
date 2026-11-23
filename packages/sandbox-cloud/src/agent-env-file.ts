@@ -14,18 +14,24 @@ export const CLOUD_AGENT_ENV_FILE = '/run/agentbox/agent.env';
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
- * Render `env` as lines a `set -a; . file` can source. Values are single-quoted,
- * so nothing in them expands; a key that is not a shell identifier is dropped
- * rather than allowed to inject a line.
+ * Render `env` as lines a `set -a; . file` can source. Each line sets its key
+ * only when the environment does not already have it: on daytona, vercel, e2b
+ * and remote-docker the sandbox env from create wins, so a wake from a shell
+ * with a different `ANTHROPIC_API_KEY` cannot move an existing box onto it; a
+ * VPS, which has no sandbox env, still gets every key. Values are
+ * single-quoted, so nothing in them expands; a key that is not a shell
+ * identifier is dropped rather than allowed to inject a line.
  */
 export function renderAgentEnvFile(env: Readonly<Record<string, string>>): string {
   const lines: string[] = [];
   for (const [k, v] of Object.entries(env)) {
     if (!ENV_KEY.test(k)) continue;
-    lines.push(`${k}='${v.replace(/'/g, `'\\''`)}'`);
+    lines.push(`[ -n "\${${k}+x}" ] || export ${k}='${v.replace(/'/g, `'\\''`)}'`);
   }
   return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
+
+const SUDO_PREFIX = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi; `;
 
 /**
  * Write the box's agent env into {@link CLOUD_AGENT_ENV_FILE}, 0600, owned by the
@@ -33,10 +39,13 @@ export function renderAgentEnvFile(env: Readonly<Record<string, string>>): strin
  * is readable by any process in the box, and cloud-init user_data or box.env would
  * expose them to the metadata service or every user.
  *
- * Staged as a 0600 local file (scp keeps the mode), uploaded to /tmp, then moved
- * into place with `install -m 600` as the exec user (the box user on every cloud
- * backend). Always written, even empty, so a wake drops a key the host no longer
- * has.
+ * Staged as a 0600 local file (scp keeps the mode) and uploaded straight into
+ * /run/agentbox, which is tmpfs, so a copy left by a failed move never reaches
+ * the disk a snapshot captures. An SDK upload that cannot write there (it runs
+ * as another user) falls back to /tmp; those providers already hold the same
+ * values in their sandbox env. Moved into place with `install -m 600` as the
+ * exec user (the box user on every cloud backend). Always written, even empty,
+ * so a wake drops a key the host no longer has.
  */
 export async function writeCloudAgentEnvFile(
   backend: CloudBackend,
@@ -45,14 +54,20 @@ export async function writeCloudAgentEnvFile(
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'agentbox-agent-env-'));
   const local = join(dir, 'agent.env');
-  const remote = `/tmp/agentbox-agent-env-${randomBytes(6).toString('hex')}`;
+  const name = `.agent-env-${randomBytes(6).toString('hex')}`;
   try {
     await writeFile(local, renderAgentEnvFile(env), { mode: 0o600 });
     await chmod(local, 0o600);
-    await backend.uploadFile(handle, local, remote);
+    let remote = `/run/agentbox/${name}`;
+    try {
+      await backend.uploadFile(handle, local, remote);
+    } catch {
+      remote = `/tmp/agentbox${name}`;
+      await backend.uploadFile(handle, local, remote);
+    }
     const r = await backend.exec(
       handle,
-      `umask 077; if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi; ` +
+      `umask 077; ${SUDO_PREFIX}` +
         // The same mkdir + chown the in-box bootstrap does, so a /run/agentbox
         // recreated by root does not make `install` fail.
         `$SUDO mkdir -p /run/agentbox && $SUDO chown "$(id -un):$(id -gn)" /run/agentbox; ` +
@@ -68,5 +83,20 @@ export async function writeCloudAgentEnvFile(
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Remove {@link CLOUD_AGENT_ENV_FILE}, so a stale copy (carried in by a
+ * checkpoint, say) is never sourced after a failed write. Best-effort.
+ */
+export async function removeCloudAgentEnvFile(
+  backend: CloudBackend,
+  handle: CloudHandle,
+): Promise<void> {
+  try {
+    await backend.exec(handle, `${SUDO_PREFIX}$SUDO rm -f ${CLOUD_AGENT_ENV_FILE}`);
+  } catch {
+    // best-effort: the box is already in trouble if this exec fails too
   }
 }

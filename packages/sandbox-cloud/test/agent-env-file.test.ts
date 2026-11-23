@@ -7,6 +7,7 @@ import type { CloudBackend, CloudHandle } from '@agentbox/core';
 import {
   CLOUD_AGENT_ENV_FILE,
   buildCloudAttachInnerCommand,
+  removeCloudAgentEnvFile,
   renderAgentEnvFile,
   writeCloudAgentEnvFile,
 } from '../src/index.js';
@@ -32,7 +33,36 @@ describe('renderAgentEnvFile', () => {
   });
 
   it('drops a key that is not a shell identifier', () => {
-    expect(renderAgentEnvFile({ 'BAD;rm -rf /': 'x', OK: 'y' })).toBe("OK='y'\n");
+    expect(renderAgentEnvFile({ 'BAD;rm -rf /': 'x', OK: 'y' })).toBe(
+      `[ -n "\${OK+x}" ] || export OK='y'\n`,
+    );
+  });
+
+  it('never overrides a key the sandbox env already has, but fills the missing ones', () => {
+    // An SDK box keeps its create-time auth when a wake comes from a shell
+    // exporting a different key; a VPS (no sandbox env) still gets it.
+    const dir = mkdtempSync(join(tmpdir(), 'agent-env-test-'));
+    try {
+      const file = join(dir, 'agent.env');
+      writeFileSync(file, renderAgentEnvFile({ ANTHROPIC_API_KEY: 'from-wake', EXTRA: 'filled' }));
+      const out = execFileSync(
+        'bash',
+        ['-c', `set -a; . ${file}; set +a; printf %s "$ANTHROPIC_API_KEY|$EXTRA|$EMPTY"`],
+        {
+          encoding: 'utf8',
+          env: { PATH: process.env.PATH ?? '', ANTHROPIC_API_KEY: 'from-create', EMPTY: '' },
+        },
+      );
+      expect(out).toBe('from-create|filled|');
+      // Exported, so the exec'd agent inherits it.
+      const child = execFileSync('bash', ['-c', `. ${file}; bash -c 'printf %s "$EXTRA"'`], {
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH ?? '' },
+      });
+      expect(child).toBe('filled');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -58,6 +88,62 @@ describe('writeCloudAgentEnvFile', () => {
     expect(execs[0]).not.toContain('sk-dummy');
     expect(execs[0]).toContain(`install -m 600`);
     expect(execs[0]).toContain(CLOUD_AGENT_ENV_FILE);
+  });
+
+  it('stages on tmpfs /run/agentbox, falling back to /tmp when the upload cannot write there', async () => {
+    const targets: string[] = [];
+    const ok = {
+      async uploadFile(_h: CloudHandle, _l: string, remote: string) {
+        targets.push(remote);
+      },
+      async exec() {
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    } as unknown as CloudBackend;
+    await writeCloudAgentEnvFile(ok, {} as CloudHandle, { A: 'b' });
+    expect(targets).toHaveLength(1);
+    expect(targets[0]).toMatch(/^\/run\/agentbox\/\.agent-env-[0-9a-f]+$/);
+
+    targets.length = 0;
+    const execs: string[] = [];
+    const runDenied = {
+      async uploadFile(_h: CloudHandle, _l: string, remote: string) {
+        targets.push(remote);
+        if (remote.startsWith('/run/')) throw new Error('permission denied');
+      },
+      async exec(_h: CloudHandle, cmd: string) {
+        execs.push(cmd);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    } as unknown as CloudBackend;
+    await writeCloudAgentEnvFile(runDenied, {} as CloudHandle, { A: 'b' });
+    expect(targets).toHaveLength(2);
+    expect(targets[1]).toMatch(/^\/tmp\/agentbox\.agent-env-[0-9a-f]+$/);
+    expect(execs[0]).toContain(`install -m 600 ${targets[1]} `);
+  });
+
+  it('removeCloudAgentEnvFile deletes the file and never throws', async () => {
+    const execs: string[] = [];
+    await removeCloudAgentEnvFile(
+      {
+        async exec(_h: CloudHandle, cmd: string) {
+          execs.push(cmd);
+          return { exitCode: 0, stdout: '', stderr: '' };
+        },
+      } as unknown as CloudBackend,
+      {} as CloudHandle,
+    );
+    expect(execs[0]).toContain(`rm -f ${CLOUD_AGENT_ENV_FILE}`);
+    await expect(
+      removeCloudAgentEnvFile(
+        {
+          async exec() {
+            throw new Error('gone');
+          },
+        } as unknown as CloudBackend,
+        {} as CloudHandle,
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it('fails loudly when the in-box move fails', async () => {

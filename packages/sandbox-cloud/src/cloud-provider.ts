@@ -105,7 +105,7 @@ import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
-import { writeCloudAgentEnvFile } from './agent-env-file.js';
+import { removeCloudAgentEnvFile, writeCloudAgentEnvFile } from './agent-env-file.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
 import { adminCustodySink, pushProjectSeedToCustody, SEED_PUSH_MS } from './custody-seed.js';
@@ -636,16 +636,22 @@ export function createCloudProvider(
       credentialSync,
     });
     // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
-    // on every wake. Best-effort, like the reconcile below: a box that comes up
-    // without it still runs, its agent just lacks the forwarded keys.
+    // on every wake. Built from the waking process's env, but each line only
+    // fills a key the sandbox env lacks, so an SDK box keeps its create-time
+    // auth. Best-effort, like the reconcile below: a box that comes up without
+    // it still runs, its agent just lacks the forwarded keys.
     try {
       await writeCloudAgentEnvFile(
         backend,
         h,
         await buildCloudAgentEnv(box.agents, box.accounts ?? {}),
       );
-    } catch {
-      // best-effort
+    } catch (err) {
+      // The message names the step and the exec's exit, never the values.
+      process.stderr.write(
+        `agentbox: WARN: ${box.name}: agent env not rewritten on wake (${err instanceof Error ? err.message : String(err)}); ` +
+          'forwarded API keys and a named account token may be missing on a VPS box\n',
+      );
     }
     // Re-register on resume. A control-plane box registers on the plane (with
     // its origin URL, needed for lease minting); a classic-cloud box registers
@@ -1225,6 +1231,8 @@ export function createCloudProvider(
             `WARN: agent env not written (${err instanceof Error ? err.message : String(err)}); ` +
               'forwarded API keys and a named account token may be missing on a VPS box',
           );
+          // A stale copy from a checkpoint must not be sourced in its place.
+          await removeCloudAgentEnvFile(backend, handle);
         }
 
         // Portless host alias + in-VPS mirror. Default-on for backends whose
