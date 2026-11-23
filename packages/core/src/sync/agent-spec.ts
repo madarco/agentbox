@@ -835,6 +835,21 @@ export function agentLaunchPrelude(spec: Pick<AgentSyncSpec, 'skills'>): string 
     : '';
 }
 
+/**
+ * The file an agent reads MCP servers from, and the shape of one entry.
+ * `file` is absolute or `~/`-relative (the box user's home); `serversPath` is
+ * the key path of the servers table (`['mcpServers']`, `['mcp_servers']`,
+ * `['mcp']`); the AgentBox entry is written under `[...serversPath, 'agentbox']`.
+ * `entry`: `stdio` = `{type: 'stdio', command, args}` (claude) or the TOML table
+ * `command`/`args` (codex); `opencode` = `{type: 'local', command: [..], enabled}`.
+ */
+export interface AgentMcpSpec {
+  file: string;
+  format: 'json' | 'toml';
+  serversPath: readonly string[];
+  entry: 'stdio' | 'opencode';
+}
+
 export interface AgentSyncSpec {
   id: AgentId;
   /** Alternate spellings that resolve to this spec (reconciles the wire `'claude-code'`). */
@@ -950,6 +965,13 @@ export interface AgentSyncSpec {
    * agent gets no library skills (its host-carried ones are unaffected).
    */
   skills?: AgentSkillsSpec;
+  /**
+   * Where this agent reads user-scope MCP servers, so ctl can register the
+   * AgentBox MCP server (`agentbox-ctl mcp`) in every box
+   * (docs/agent-history-plan.md, Phase 6). Data, applied by ctl from the
+   * `agents.list` descriptor. Absent = the agent gets no AgentBox MCP server.
+   */
+  mcp?: AgentMcpSpec;
   /**
    * Extra argv prepended to every launch of this agent's binary, for flags it
    * needs in order to LOAD what `seeds` placed (codex will not read a

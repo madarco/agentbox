@@ -78,6 +78,7 @@ describe('fetchWatchListWithRetry', () => {
     units: [],
     renders: [],
     skillDirs: [],
+    mcpTargets: [],
     source: 'host' as const,
   };
   const baked = { ...host, source: 'baked' as const };

@@ -159,6 +159,13 @@ export const codexSpec: AgentSyncSpec = {
         "Named LLM account new boxes of this agent run on (`agentbox accounts` lists them; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
     },
   ],
+  // AgentBox MCP server (docs/agent-history-plan.md, Phase 6), written by ctl.
+  mcp: {
+    file: '~/.codex/config.toml',
+    format: 'toml',
+    serversPath: ['mcp_servers'],
+    entry: 'stdio',
+  },
   // The hub's skills library: codex reads `/etc/codex/skills` as its `admin`
   // scope, unprefixed (measured, Phase 0); `/etc` is box-local, never the shared
   // config volume.

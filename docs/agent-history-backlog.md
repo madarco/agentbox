@@ -441,3 +441,88 @@ folder). Still open:
 - **L7: `stop()` does not await a running pass.**
 - **L8: a project's `relay.controlPlaneUrl` is ignored.** The watcher always
   ships to the global hub (the daemon's), not a per-project one.
+
+## Phase 6 (MCP)
+
+- **Workspace scope.** A box is scoped to its repository only. The plan says
+  "project, or workspace when it has one", but sessions carry no workspace id
+  yet (`history_sessions` has no `workspace_id`), so there is nothing to scope
+  a workspace by. Add the column at ingest, then widen a box's scope to its
+  workspace's repos.
+- **Sessions with no repo URL are invisible to boxes.** A session is matched by
+  `repoKey(project_repo_url)`. `HistoryRelay` stamps that URL from the
+  registration's `originUrl` only, so a session shipped after a relay restart
+  (registration re-pushed without `originUrl`, see Phase 4's live-check note)
+  has none and no box can find it. Use the same folder-`origin` fallback the
+  memory relay uses (`MemoryRelay.boxIdentity`) when stamping transcripts.
+- **`local:` repos.** A repo with no `origin` keys as `local:<machine>:<root>`
+  for memory, but its sessions carry no URL, so such a box sees no sessions.
+- **`usage_query`.** In the plan's tool list; it waits for Phase 7's usage API.
+- **Registration timing on a fresh cloud box.** ctl writes the MCP entries when
+  `agents.list` first answers (retried with backoff). An agent launched before
+  that starts without the server until its next launch. Docker is unaffected
+  after the first box (the entry is on the shared config volume).
+- **Older images on a shared docker volume.** claude's and codex's MCP files are
+  on the shared config volume, so a box from an image older than this phase
+  sees the `agentbox` entry too, and its ctl has no `mcp` command: the agent
+  shows one failed MCP server. Harmless; goes away with a rebuild.
+- **openclaw** gets no registration. It is a service agent with its own MCP
+  config layer; needs an `mcp` spec kind for its config file.
+- **Host-reach path.** `mcp.*` from a box served through another PC's
+  host-reach executor (`daemon.ts`) is not routed (answers unknown method),
+  like `history.*`.
+- **Hub-scope proposals.** `memory_propose` from `/api/mcp` parks its approval
+  under the pseudo box id `hub`; the web approvals list shows it, the tray may
+  group it under no box. Its content is not redacted (the caller holds the hub
+  token already).
+- **No approval id in the reply.** `memory_propose` returns `pending` without
+  the approval id (`askPrompt` mints it internally), so an agent cannot poll
+  the outcome. A `memory_get` later shows whether it landed.
+- **`session_get` pages by turn index, not tokens.** A page stops at ~48k
+  characters; a single huge turn in `detail: full` is still returned whole.
+- **From the Phase 6 review, not fixed:**
+  - *Registration for agents the box does not run.* `agents.list` carries
+    `mcp` for every agent, so a claude-only box also gets
+    `~/.codex/config.toml` and `~/.config/opencode/opencode.json` written. Gate
+    it on `runsHere` like `service`, and register on `agent add` too (ctl only
+    reconciles at start).
+  - *`~/.claude.json` write race.* ctl's read-modify-rename can drop a write
+    claude made in the same few milliseconds, and a running claude that later
+    saves its in-memory copy drops the entry until ctl's next start. On docker
+    the file is shared by every box. A re-check on an interval, or a flag
+    injection (`--mcp-config`) at every launch path, would remove the race.
+  - *`projectUrlsFor` scans every distinct URL* on each box-scoped list or
+    search. Cache it, or store a `repo_key` column on sessions.
+- **Fixed in the Phase 6 review:** `sessions_list` paging past the 500-row
+  listing, `memory_propose` applying over a newer version (it now records its
+  base version and an approval of a superseded proposal writes nothing),
+  `session_get` dropping `nextFrom` for a capped `to`, other TOML spellings of
+  an existing `agentbox` server (no duplicate table), a box config pulled to a
+  host that had none carrying the box-only server (`agentPull` strips it), and
+  one `git remote get-url` per MCP message (since removed: the scope reads the registration only).
+- **From the review of #450 (2026-11-23), deferred:**
+  - *Inline `mcp_servers = { … }` in codex's config.toml.* Appending a
+    `[mcp_servers.agentbox]` table after an inline `mcp_servers` table makes
+    the file invalid TOML. The check now skips an inline table that names
+    `agentbox`; one that does not should be skipped too (with a log line).
+  - *`initialize` and `tools/list` go to the host.* Each is a relay round trip
+    with a 60 s timeout, so a cloud box whose PC is off shows a slow, then
+    failed, MCP server on every agent launch. ctl could answer both locally
+    and forward only `tools/call`.
+  - *`memory_propose` gaps.* `agent` is free-form (any name creates a memory
+    set); it ignores the project's `history.capture` opt-out; the approver sees
+    only the first 1,500 characters; a box with `autoApproveHostActions`
+    auto-approves it; a pending approval is lost on a hub restart (the
+    proposal is then neither applied nor reported).
+  - *Small items.* The hub logs one `rpc box=… method=mcp.message` line per MCP
+    message; the reply duplicates its payload (`content[0].text` and
+    `structuredContent`).
+  - *Re-registration without a repo.* The scope uses only the registration's
+    `repoKey`/`originUrl`. A registration re-pushed with neither (after a
+    relay restart, see Phase 4) leaves the box with no repo, so it sees
+    nothing until it registers again. Fail-closed by design.
+- **Fixed in the review of #450:** the host-side setup no longer puts the hub
+  token in an agent config (`agentbox mcp`, a stdio proxy that reads it at run
+  time), and staging `_claude.json` for a box (docker seed and cloud overlay)
+  drops any MCP server carrying the hub token or pointing at a hub `/api/mcp`.
+  The box scope no longer falls back to a live `git remote get-url`.

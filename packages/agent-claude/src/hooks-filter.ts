@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 export interface HookFilterResult<T = unknown> {
   data: T;
   removedCommands: string[];
@@ -316,4 +319,76 @@ export function stripAuthSettings<T = unknown>(data: T): { data: T; stripped: bo
     rec.env = next;
   }
   return stripped ? { data: rec as T, stripped: true } : { data, stripped: false };
+}
+
+/** A hub's MCP endpoint, in any MCP server's `url`. */
+const HUB_MCP_URL = /\/api\/mcp(?:[/?#]|$)/;
+
+/**
+ * Drop MCP servers that would hand a box the hub's credential
+ * (docs/agent-history-plan.md, Phase 6): any `mcpServers` entry, top-level or
+ * under `projects[*]`, whose definition contains one of `secrets` (the hub
+ * token, the hub API key) or whose `url` is a hub's `/api/mcp`. A box reaches
+ * the hub's MCP tools through its own relay (`agentbox-ctl mcp`), scoped to
+ * its repo; a copied host entry would be the unscoped admin credential.
+ */
+export function stripHubMcpServers<T = unknown>(
+  data: T,
+  secrets: readonly string[],
+): { data: T; removed: string[] } {
+  const removed: string[] = [];
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return { data, removed };
+  const usable = secrets.filter((s) => s.length >= 8);
+  const leaks = (def: unknown): boolean => {
+    const text = JSON.stringify(def) ?? '';
+    if (usable.some((s) => text.includes(s))) return true;
+    const url = (def as { url?: unknown } | null)?.url;
+    return typeof url === 'string' && HUB_MCP_URL.test(url);
+  };
+  const clean = (servers: unknown, where: string): unknown => {
+    if (servers === null || typeof servers !== 'object' || Array.isArray(servers)) return servers;
+    const out: Record<string, unknown> = {};
+    for (const [name, def] of Object.entries(servers as Record<string, unknown>)) {
+      if (leaks(def)) removed.push(`${where}${name}`);
+      else out[name] = def;
+    }
+    return out;
+  };
+  const root = { ...(data as Record<string, unknown>) };
+  if ('mcpServers' in root) root.mcpServers = clean(root.mcpServers, '');
+  const projects = root.projects;
+  if (projects !== null && typeof projects === 'object' && !Array.isArray(projects)) {
+    const next: Record<string, unknown> = {};
+    for (const [key, proj] of Object.entries(projects as Record<string, unknown>)) {
+      if (
+        proj !== null &&
+        typeof proj === 'object' &&
+        !Array.isArray(proj) &&
+        'mcpServers' in proj
+      ) {
+        const p = proj as Record<string, unknown>;
+        next[key] = { ...p, mcpServers: clean(p.mcpServers, `${key}:`) };
+      } else {
+        next[key] = proj;
+      }
+    }
+    root.projects = next;
+  }
+  return removed.length > 0 ? { data: root as T, removed } : { data, removed };
+}
+
+/** The hub credentials on this machine that must never ride a copied MCP config. */
+export function hubSecretsOnHost(hostHome: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const out: string[] = [];
+  try {
+    const t = readFileSync(join(hostHome, '.agentbox', 'hub', 'token'), 'utf8').trim();
+    if (t) out.push(t);
+  } catch {
+    /* no local hub */
+  }
+  for (const k of ['AGENTBOX_HUB_TOKEN', 'AGENTBOX_HUB_API_KEY', 'AGENTBOX_RELAY_ADMIN_TOKEN']) {
+    const v = env[k]?.trim();
+    if (v) out.push(v);
+  }
+  return out;
 }

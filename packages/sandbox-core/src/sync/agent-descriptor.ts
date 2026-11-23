@@ -23,7 +23,12 @@
  * parser warns on unknown keys instead of failing.
  */
 
-import type { AgentConfigRenderSpec, AgentServiceSpec, AgentSkillsSpec } from '@agentbox/core';
+import type {
+  AgentConfigRenderSpec,
+  AgentMcpSpec,
+  AgentServiceSpec,
+  AgentSkillsSpec,
+} from '@agentbox/core';
 import { AGENT_SYNC_SPECS } from './registry.js';
 
 /** One file ctl watches in the box, and what the host should do when it changes. */
@@ -58,6 +63,11 @@ export interface AgentDescriptor {
    * ignores any kind it doesn't know. Absent = none.
    */
   skills?: { inject: AgentSkillsSpec['inject'] };
+  /**
+   * Where ctl registers the AgentBox MCP server for this agent
+   * (`AgentSyncSpec.mcp`). An older ctl ignores it. Absent = none.
+   */
+  mcp?: AgentMcpSpec;
   /** Files to watch in-box, with their intent. */
   watch: readonly AgentWatchDescriptor[];
   /**
@@ -204,6 +214,7 @@ export function buildAgentDescriptors(
         : {}),
       ...(spec.configRender && runsHere(spec.id) ? { configRender: spec.configRender } : {}),
       ...(spec.skills ? { skills: { inject: spec.skills.inject } } : {}),
+      ...(spec.mcp ? { mcp: spec.mcp } : {}),
       watch: [
         ...(spec.credential
           ? [

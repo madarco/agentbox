@@ -272,6 +272,14 @@ imported from the hub machine's own agent dir.
 | `GET /history/memory/versions` | `{ path, versions }`: every version of `?path=`, oldest first, deletions included. `404` for a path never written.         |
 | `GET /history/memory/file`     | `{ file, content }`: `?path=` at `?version=` (default: the latest), `content` base64. `404` when deleted or absent.        |
 
+**MCP.** `POST /api/mcp` (outside `/api/v1`, same auth) serves the history and memory above as
+MCP tools (`sessions_list`, `sessions_search`, `session_get`, `memory_list`, `memory_get`,
+`memory_propose`) over streamable HTTP. It is stateless: every reply is one JSON body, `202` for a
+notification, `405` for `GET`. A cross-origin `Origin` is refused. `memory_propose` returns
+`pending` and parks an approval in `/approvals`; approving it adds a memory version. Boxes reach
+the same server through their relay, scoped to their repository (see the
+[CLI page](/docs/cli#past-sessions-for-agents-mcp)).
+
 ### Workspaces
 
 A workspace groups one or more projects, owning a task list and its manager sessions. It is
