@@ -79,7 +79,6 @@ export function scopeIdProblem(
   if (scope === 'project') {
     // A repo key: `host/owner/repo` (or `local:<machine>:<path>`). Printable,
     // bounded; the hub never derives anything from it beyond equality.
-    // eslint-disable-next-line no-control-regex
     if (scopeId.length > 512 || /[\u0000-\u001f\u007f\s]/.test(scopeId)) {
       return 'project scopeId must be a repo key (e.g. github.com/owner/repo)';
     }
