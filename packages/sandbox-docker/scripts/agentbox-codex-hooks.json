@@ -1,66 +1,102 @@
 {
-  "description": "AgentBox activity-state hooks (defense-in-depth seed; production state comes from the tmux-pane scraper in packages/ctl/src/codex-scraper.ts). Codex's strict parser allows only `description` and `hooks` at the top level. Loading needs `codex --enable hooks --dangerously-bypass-hook-trust` (both supplied by startCodexSession()).",
+  "description": "AgentBox activity-state hooks (defense-in-depth seed; production state comes from the tmux-pane scraper in packages/ctl/src/codex-scraper.ts). Codex's strict parser allows only `description` and `hooks` at the top level. Loading needs `codex --enable hooks --dangerously-bypass-hook-trust` (both supplied by startCodexSession()). SessionStart and Stop also pass --capture-session: they buffer the hook's stdin JSON in the shell (at most 1 s) and hand it to a backgrounded agentbox-ctl, which appends its session_id to the box's session-history binding log (how a session on the shared codex volume is attributed to this box). Buffering first keeps the payload (a bare & would detach stdin) while codex never waits on ctl, whose client can spend 5 s restarting a dead daemon.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "p=$(timeout 1 cat); printf '%s' \"$p\" | agentbox-ctl codex-state idle --capture-session >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "PreToolUse": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "PermissionRequest": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state waiting >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state waiting >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state compacting >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state compacting >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "PostCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "SubagentStart": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state working >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl codex-state idle >/dev/null 2>&1 &", "timeout": 3 }
+          {
+            "type": "command",
+            "command": "p=$(timeout 1 cat); printf '%s' \"$p\" | agentbox-ctl codex-state idle --capture-session >/dev/null 2>&1 &",
+            "timeout": 3
+          }
         ]
       }
     ]

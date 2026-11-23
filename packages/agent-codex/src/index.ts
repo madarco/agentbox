@@ -27,6 +27,8 @@ import {
   resolveCodexVolume,
   seedCodexAgentsOverride,
 } from './docker-sync.js';
+import { registerAgentHistoryModule } from '@agentbox/core';
+import { codexHistoryModule } from './history.js';
 
 /** Codex's docker behavior, in the shape `sandbox-docker` asks for. */
 export const codexSyncModule: AgentSyncModule = {
@@ -74,6 +76,7 @@ export const codexCloudModule: AgentCloudModule = {
 export function registerCodexAgent(): void {
   registerAgentSyncModule(codexSyncModule);
   registerAgentCloudModule(codexCloudModule);
+  registerAgentHistoryModule(codexHistoryModule);
 }
 
 // The CLI still reaches for these by name; they move behind the module contract
@@ -91,3 +94,4 @@ export { codexStagedItems } from './staged-items.js';
 // cli-kit carries the pty backend, so re-exporting it here fails the hub's
 // esbuild bundle on a `.node` binary. Subpath entries keep that cost where it
 // belongs.
+export { codexHistoryModule } from './history.js';

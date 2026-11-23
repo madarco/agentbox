@@ -168,7 +168,7 @@ export function dockerHistorySource(opts: DockerSourceOptions): DockerHistorySou
     async scan(roots) {
       const path = `${BOX_HOME}/${HISTORY_BINDINGS_FILE}`;
       const finds = roots
-        .map((r) => `find ${shQuote(r)} -maxdepth 3 -type f -printf '%s %p\\n' 2>/dev/null`)
+        .map((r) => `find ${shQuote(r)} -maxdepth 5 -type f -printf '%s %p\\n' 2>/dev/null`)
         .join('; ');
       if (running) {
         // One exec: the log, a separator, then every file's size.

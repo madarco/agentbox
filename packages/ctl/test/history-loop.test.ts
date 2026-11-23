@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { HistoryShipper } from '@agentbox/core';
+import type { HistoryRowCursor, HistoryShipper } from '@agentbox/core';
 import { HistoryLoop, RpcTimeout, type HistoryConfigFetch } from '../src/history-shipper.js';
 
 const enabled: HistoryConfigFetch = {
@@ -56,5 +56,34 @@ describe('HistoryLoop config backoff (review R1)', () => {
     await l.tick();
     await l.tick();
     expect(fetchConfig).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('HistoryLoop row cursor (Phase 3)', () => {
+  it('runs the row cursor for a docker box (materialize) without a shipper', async () => {
+    const agent = {
+      agent: 'opencode',
+      configDir: '/x',
+      projectKey: '-workspace',
+      spec: { transcripts: [] },
+    };
+    const cursorPass = vi.fn(async () => ({ sessions: 0, rows: 0, errors: [] }));
+    const makeRowCursor = vi.fn(
+      () => ({ active: true, pass: cursorPass }) as unknown as HistoryRowCursor,
+    );
+    const makeShipper = vi.fn();
+    const l = new HistoryLoop({
+      fetchConfig: async () => ({
+        kind: 'ok',
+        config: { enabled: false, agents: [], materialize: [agent], credentialFiles: [] },
+      }),
+      makeShipper,
+      makeRowCursor,
+    });
+    l.stop();
+    expect(await l.tick(true)).toBeNull();
+    expect(makeRowCursor).toHaveBeenCalledWith([agent]);
+    expect(cursorPass).toHaveBeenCalledWith({ final: true });
+    expect(makeShipper).not.toHaveBeenCalled();
   });
 });
