@@ -171,7 +171,8 @@ describe('agent sync registry', () => {
     ]);
     // opencode data tree. `auth.json` and the `opencode.db` triple are gone
     // from the list — both are derived now — and `snapshot` is the entry the
-    // docker copy of this list had been missing.
+    // docker copy of this list had been missing. `agentbox-history` is the
+    // box-written output of the history row cursor.
     expect(resolveAgentSpec('opencode').staticPaths[0]?.exclude).toEqual([
       'storage',
       'log',
@@ -181,6 +182,7 @@ describe('agent sync registry', () => {
       'repos',
       'snapshot',
       'config',
+      'agentbox-history',
     ]);
   });
 

@@ -361,6 +361,20 @@ describe('history reads (Phase 2)', () => {
     expect(await svc.resolveSession('aaaaaaa%')).toMatchObject({ ok: false, code: 'not_found' });
   });
 
+  it('resolves a prefix containing `_` (opencode ids) literally', async () => {
+    const { svc } = await service();
+    await new Edge(svc, 'box1', 'projects/-workspace/ses_df9264f6cffe.jsonl').append(
+      line({ type: 'user', message: { content: 'x' } }),
+    );
+    await new Edge(svc, 'box1', 'projects/-workspace/sesXdf9264f6cffe.jsonl').append(
+      line({ type: 'user', message: { content: 'y' } }),
+    );
+    expect(await svc.resolveSession('ses_df92')).toEqual({
+      ok: true,
+      key: 'claude:ses_df9264f6cffe',
+    });
+  });
+
   it('reports an ambiguous prefix with its candidates', async () => {
     const { svc } = await seeded();
     await new Edge(

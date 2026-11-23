@@ -2,6 +2,8 @@ export type {
   AgentHistoryModule,
   AgentHistoryMemory,
   AgentHistorySpec,
+  AgentHistorySqliteSource,
+  AgentHistorySqliteTable,
   AgentHistoryTranscripts,
   HistoryBinding,
   HistoryConfigReply,
@@ -20,7 +22,7 @@ export type {
   ParseState,
   RawChunk,
 } from './types.js';
-export { agentHistoryModule, registerAgentHistoryModule } from './registry.js';
+export { agentHistoryModule, agentHistoryModules, registerAgentHistoryModule } from './registry.js';
 export {
   createRedactor,
   looksLikeSecretValue,
@@ -47,6 +49,27 @@ export {
 } from './shipper.js';
 export { HISTORY_BINDINGS_FILE, bindingsForBox, parseBindingLog } from './bindings.js';
 export { HISTORY_MAX_FRAME_BYTES, parseHistoryFrame } from './frame.js';
+export {
+  HistoryRowCursor,
+  snapshotSources,
+  validSqliteSource,
+  type HistoryRowCursorOptions,
+  type HistoryRowFiles,
+  type HistoryRowSource,
+  type HistoryRowVersion,
+  type RowCursorStats,
+} from './row-cursor.js';
+export {
+  HISTORY_TEXT_MAX,
+  asObject,
+  clipText,
+  finiteNumber,
+  headJsonLines,
+  isoTime,
+  nonEmptyString,
+  parseJsonlChunk,
+  type JsonObject,
+} from './jsonl.js';
 export {
   MEMORY_FILE_MAX_BYTES,
   MEMORY_MAX_FILES,

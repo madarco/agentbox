@@ -11,3 +11,8 @@ export function registerAgentHistoryModule(mod: AgentHistoryModule): void {
 export function agentHistoryModule(id: string): AgentHistoryModule | undefined {
   return MODULES.get(id);
 }
+
+/** Every registered parser (the hub's re-parse job walks them). */
+export function agentHistoryModules(): AgentHistoryModule[] {
+  return [...MODULES.values()];
+}

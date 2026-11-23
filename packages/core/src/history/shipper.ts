@@ -95,9 +95,10 @@ function posixJoin(...parts: string[]): string {
 export function transcriptRoots(agents: ShippedAgent[]): string[] {
   const out = new Set<string>();
   for (const a of agents) {
+    // A snapshot source's session files are its row cursor's output, which is
+    // byte-tailed like any append transcript.
     for (const t of a.spec.transcripts) {
-      if (t.mode === 'append')
-        out.add(posixJoin(a.configDir, t.root.replace(/<projectKey>/g, a.projectKey)));
+      out.add(posixJoin(a.configDir, t.root.replace(/<projectKey>/g, a.projectKey)));
     }
   }
   return [...out];
@@ -113,7 +114,6 @@ export function resolveSessionFilesFromSizes(
   const out: Array<{ abs: string; rel: string }> = [];
   const prefix = posixJoin(agent.configDir, '/');
   for (const t of agent.spec.transcripts) {
-    if (t.mode !== 'append') continue;
     const root = t.root.replace(/<projectKey>/g, agent.projectKey);
     for (const pattern of t.sessionFiles) {
       const re = globToRegExp(posixJoin(root, pattern.replace(/<sessionId>/g, sessionId)));
@@ -138,26 +138,29 @@ export async function resolveSessionFiles(
   if (!SESSION_ID.test(sessionId)) return [];
   const out: Array<{ abs: string; rel: string }> = [];
   for (const t of agent.spec.transcripts) {
-    if (t.mode !== 'append') continue;
     const root = t.root.replace(/<projectKey>/g, agent.projectKey);
     for (const pattern of t.sessionFiles) {
       const relPattern = posixJoin(root, pattern.replace(/<sessionId>/g, sessionId));
-      const slash = relPattern.lastIndexOf('/');
-      const dirRel = slash === -1 ? '' : relPattern.slice(0, slash);
-      const base = relPattern.slice(slash + 1);
-      if (dirRel.includes('*')) continue;
-      if (!base.includes('*')) {
-        out.push({ abs: posixJoin(agent.configDir, relPattern), rel: relPattern });
-        continue;
-      }
-      const names = await source.list(posixJoin(agent.configDir, dirRel));
-      const re = globToRegExp(base);
-      for (const n of (names ?? []).sort()) {
-        if (re.test(n)) {
-          const rel = posixJoin(dirRel, n);
-          out.push({ abs: posixJoin(agent.configDir, rel), rel });
+      const segments = relPattern.split('/').filter(Boolean);
+      // Expand one segment at a time; only a segment with `*` costs a `list`.
+      let prefixes = [''];
+      for (const seg of segments) {
+        const next: string[] = [];
+        for (const pre of prefixes) {
+          if (!seg.includes('*')) {
+            next.push(pre ? `${pre}/${seg}` : seg);
+            continue;
+          }
+          const names = await source.list(posixJoin(agent.configDir, pre));
+          const re = globToRegExp(seg);
+          for (const n of (names ?? []).sort()) {
+            if (re.test(n)) next.push(pre ? `${pre}/${n}` : n);
+          }
         }
+        prefixes = next;
+        if (prefixes.length === 0) break;
       }
+      for (const rel of prefixes) out.push({ abs: posixJoin(agent.configDir, rel), rel });
     }
   }
   return out;

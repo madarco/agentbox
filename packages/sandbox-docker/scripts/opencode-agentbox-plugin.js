@@ -30,6 +30,16 @@
 //                AFTER compaction completes, so it maps to `working` (the next
 //                event supersedes) rather than `compacting`.
 //
+// Session history: `session.idle` (`properties.sessionID`) also hands the
+// session id to `agentbox-ctl opencode-state
+// idle --capture-session` on stdin, which appends it to the box's binding log.
+// Sessions in opencode's shared sqlite db are attributed to a box only through
+// that log; the box's history row cursor copies the bound sessions out. Only
+// `session.idle` binds: the bind reports `idle` from its own process, and any
+// other event (a sub-agent's `session.created` mid-turn) could land that idle
+// after a later `working`. The row cursor copies the whole session at its
+// first idle, so nothing is lost by binding then.
+//
 // The plugin shape comes from https://opencode.ai/docs/plugins/ — `event` is
 // a single handler that receives `{ event }` with a `type` field. Multiple
 // exports = multiple plugin functions; we ship one.
@@ -69,8 +79,34 @@ function pushState(state) {
   }
 }
 
+const bound = new Set();
+
+function sessionIdOf(event) {
+  const p = event && event.properties;
+  if (!p || typeof p !== 'object') return null;
+  return event.type === 'session.idle' && typeof p.sessionID === 'string' ? p.sessionID : null;
+}
+
+function bindSession(id) {
+  if (!id || bound.has(id)) return;
+  bound.add(id);
+  try {
+    const p = spawn('agentbox-ctl', ['opencode-state', 'idle', '--capture-session'], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+      detached: true,
+    });
+    p.on('error', () => {});
+    p.stdin.on('error', () => {});
+    p.stdin.end(JSON.stringify({ session_id: id }));
+    p.unref();
+  } catch {
+    // Fire-and-forget, like pushState.
+  }
+}
+
 export const AgentboxStatePlugin = async () => ({
   event: async ({ event }) => {
     pushState(EVENT_TO_STATE[event?.type]);
+    bindSession(sessionIdOf(event));
   },
 });

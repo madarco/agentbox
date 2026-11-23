@@ -6,6 +6,8 @@
 import type { BoxRecord, ExecOptions, ExecResult } from '@agentbox/core';
 
 export const HISTORY_FLUSH_TIMEOUT_MS = 90_000;
+/** How long a docker destroy waits for the in-box flush before the relay read starts. */
+export const DOCKER_IN_BOX_FIRST_MS = 20_000;
 
 export interface HistoryFlushDeps {
   /** The relay's docker shipper, when this hub has history enabled. */
@@ -19,6 +21,8 @@ export interface HistoryFlushDeps {
   probeState(box: BoxRecord): Promise<string>;
   log(line: string): void;
   timeoutMs?: number;
+  /** Tests: the docker in-box flush's head start (default `DOCKER_IN_BOX_FIRST_MS`). */
+  inBoxFirstMs?: number;
 }
 
 export async function flushBoxHistory(box: BoxRecord, deps: HistoryFlushDeps): Promise<void> {
@@ -39,8 +43,17 @@ export async function flushBoxHistory(box: BoxRecord, deps: HistoryFlushDeps): P
       deps.log(`history: final flush of ${box.name} exited ${String(r.exitCode)}`);
     }
   });
+  // Docker: in-box first, then the relay's read. The in-box flush also runs
+  // the sqlite row cursor (opencode), whose last rows the relay then ships.
+  // Capped, so a slow in-box flush cannot spend the relay read's budget.
+  const relayHistory = deps.relayHistory;
+  const inBoxCap = new Promise<void>((resolve) => {
+    setTimeout(resolve, deps.inBoxFirstMs ?? DOCKER_IN_BOX_FIRST_MS).unref();
+  });
   const work = isDocker
-    ? Promise.all([deps.relayHistory.flushBox(box.id), inBox.catch(() => undefined)])
+    ? Promise.race([inBox.catch(() => undefined), inBoxCap]).then(() =>
+        relayHistory.flushBox(box.id),
+      )
     : inBox;
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<'timeout'>((resolve) => {

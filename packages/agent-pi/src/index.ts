@@ -16,6 +16,8 @@ import {
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
 import { stagePiCredentialsForUpload, stagePiStaticForUpload } from './host-stage.js';
 import { buildPiMounts, ensurePiVolume, piSessionInfo, resolvePiVolume } from './docker-sync.js';
+import { registerAgentHistoryModule } from '@agentbox/core';
+import { piHistoryModule } from './history.js';
 
 /** Pi's docker behavior. No post-sync hook and no expiring credential. */
 export const piSyncModule: AgentSyncModule = {
@@ -72,9 +74,11 @@ export const piCloudModule: AgentCloudModule = {
 export function registerPiAgent(): void {
   registerAgentSyncModule(piSyncModule);
   registerAgentCloudModule(piCloudModule);
+  registerAgentHistoryModule(piHistoryModule);
 }
 
 export * from './docker-sync.js';
 export { stagePiCredentialsForUpload, stagePiStaticForUpload } from './host-stage.js';
 export { scanPiMcpConfig, type PiMcpScan } from './mcp-notice.js';
 export { piStagedItems } from './staged-items.js';
+export { piHistoryModule } from './history.js';
