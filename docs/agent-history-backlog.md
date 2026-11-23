@@ -154,12 +154,47 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
 
 ## Phase 3 (other agents)
 
-- **openclaw.** Not captured. Its 2026.11 store is a per-agent sqlite with a
-  large schema; transcripts look like `transcript_events(session_id, seq,
-  event_json | event_zstd, created_at, …)`, with compressed events the row
-  cursor cannot read as JSON. Its volume is always isolated per box, so it
-  would also need a "every session in the db" mode instead of bindings.
-  Measure it in a live openclaw box first.
+- **openclaw: only the `main` agent.** The row cursor reads
+  `agents/main/agent/openclaw-agent.sqlite`; sessions of any other openclaw agent
+  id (`openclaw agents add`) are not captured. Fix: a `*` in the `sqlite.db`
+  path, one cursor per matching db.
+- **openclaw: an event rewritten in place is not re-copied.** `transcript_events`
+  has no updated column, so the cursor keys a row on `created_at`; the 20 s
+  settle covers a rewrite during a turn, not a later one
+  (`transcript_rewrite_watermarks` suggests rewrites exist). Rewind / reset make
+  a new window instead, which is captured.
+- **openclaw: cold archives.** Old windows can move out of the db into
+  `agents/<id>/sessions/cold/<sha256>.jsonl.zst`. Anything copied before that is
+  kept; a box whose history predates capture (a restored bot) has those events
+  only in the cold files, which are not read.
+- **openclaw: parse state grows with the session.** The parser remembers every
+  projected event `seq` to drop a re-copied row (opencode does the same per
+  part), so a weeks-long daemon session carries tens of thousands of keys in
+  its state. A per-session high-watermark would do, once rows are known to
+  arrive in `seq` order.
+- **openclaw: a shared volume.** Every session in the db is bound to the box
+  that reads it, which is right for the default per-box volume. An explicit
+  `isolate: false` override (warned at create) puts two boxes on one db: both
+  bind every session, and each takes the per-session cursor over from the
+  other (moving the other's output aside), so turns land under both boxes.
+  Restores and boxes made from a checkpoint are handled (the cursor names its
+  box; an inherited output is moved aside and only new rows are copied).
+  `bot clone` never copies the config volume, so it is not affected.
+- **openclaw: redaction misses its own secrets.** The exact-value list does not
+  hold the gateway token, `~/.openclaw/.env` or the host's
+  `~/.agentbox/openclaw/<box>.env` values, and Telegram bot tokens match no
+  format rule. Escaped JSON inside `event_json` also slips past the
+  `KEY: value` rule (as codex's, #447 L2).
+- **openclaw: cost grows with the db.** Every pass lists every session and
+  their row versions; the full `session_windows` row (last-message preview
+  included) is re-copied on every change; whole sessions are held in memory
+  in 200-row batches.
+- **openclaw: the decompressed copy is never cleaned.** `agentbox-history/`
+  (and `*.from-<box>` files after a restore) grows with the db and rides every
+  bot backup.
+- **openclaw: a stopped daemon.** A read-only reader leaves `-shm`/`-wal`
+  behind when openclaw is not running; harmless only while ctl and openclaw
+  run as the same user.
 - **codex `.jsonl` → `.jsonl.zst`.** Codex compresses cold rollouts and the
   shipper does not follow the rename. A rollout compressed before its tail was
   shipped loses that tail (the hub keeps what it has). Boxes ship every 30 s,

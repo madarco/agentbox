@@ -9,10 +9,13 @@
  * (`apps/cli/src/agents/command/service-factory.ts`), built off the registry
  * row, so there is nothing tool-specific to write.
  *
- * What is left is the docker half: which volume the box mounts and where.
+ * What is left is the docker half (which volume the box mounts and where) and
+ * the hub's session-history parser.
  */
 
+import { registerAgentHistoryModule } from '@agentbox/core';
 import { registerAgentSyncModule, type AgentSyncModule } from '@agentbox/sandbox-docker';
+import { openclawHistoryModule } from './history.js';
 import {
   buildOpenclawMounts,
   ensureOpenclawVolume,
@@ -31,6 +34,9 @@ export const openclawSyncModule: AgentSyncModule = {
 /** Register OpenClaw's docker behavior. Called by `@agentbox/agent-modules`. */
 export function registerOpenclawAgent(): void {
   registerAgentSyncModule(openclawSyncModule);
+  registerAgentHistoryModule(openclawHistoryModule);
 }
+
+export { openclawHistoryModule, openclawLineRecords } from './history.js';
 
 export * from './docker-sync.js';

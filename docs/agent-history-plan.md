@@ -2,7 +2,7 @@
 
 **Status:** Phases 1, 2 done (store, archive, ingest, read API + CLI for claude
 in boxes); Phase 3 implemented (codex, pi, opencode transcripts, re-parse job;
-openclaw deferred); Phase 4 (memory, claude), Phase 5 (host sessions) and Phase 6 (MCP) implemented; Phase 7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
+openclaw in Phase 3b); Phase 4 (memory, claude), Phase 5 (host sessions) and Phase 6 (MCP) implemented; Phase 7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal
@@ -379,9 +379,7 @@ Re-parse job (raw → normalized) for parser version bumps.
   `parser_version` is below its module's: clear the projection, stream the raw
   through `parse`, store the end parse state, stamp the version. It runs at hub
   start and in the hourly sweep, inside the ingest queue.
-- **openclaw** is not in this phase (see the backlog): its 2026.11 store is a
-  large schema (`transcript_events` with zstd-compressed event blobs, plus
-  navigation rows) that Phase 0 did not measure.
+- **openclaw** was deferred from this phase and is done in Phase 3b below.
 - **As built:** ctl runs the row cursor in every box; the relay's final docker
   read no longer triggers it itself: the hub's destroy flush runs the box's
   `agentbox-ctl history flush` first and the relay read after it, or after a
@@ -395,7 +393,80 @@ Re-parse job (raw → normalized) for parser version bumps.
   On a copy of that store, bumping all three parsers re-derived every session
   with an identical projection, and a second run found nothing stale.
 
-### Phase 4 — memory in the hub
+#### Phase 3b — openclaw (2026-11-23)
+
+**Measured** (openclaw 2026.11.7, Node 24.22 in a throwaway `node:24` container,
+one `openclaw agent --local` turn against a local mock model; no account used):
+
+- **Where.** `~/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite` (+ WAL,
+  `-shm`, a `.seal` ownership file), per-agent schema 23+, 70 tables. The default
+  agent id is `main`. Older history can move to
+  `agents/<agentId>/sessions/cold/<sha256>.jsonl.zst` (cold archives, after
+  retention), out of the db.
+- **Transcript.** `transcript_events(session_id, seq, event_json TEXT,
+  event_zstd BLOB, created_at, navigation_* …)`, primary key `(session_id,
+  seq)`, `STRICT`. Exactly one of `event_json` / `event_zstd` is set: events of
+  1 KiB–4 MiB that compress by ≥10 % are stored as **a plain zstd frame**
+  (magic `28b52ffd`, level 1, frame checksum), which Node 24's
+  `zlib.zstdDecompressSync` decodes as is. In one turn 3 of 9 events were
+  compressed (the user message, the system-prompt snapshot, the assistant reply).
+  There is no `updated` column; `created_at` is epoch ms. `seq` is per session,
+  not global.
+- **Event format.** pi's session format, v4: a `session` header (`id`, `cwd`),
+  `model_change`, `thinking_level_change`, `custom` / `custom_message`
+  (openclaw-injected runtime context, system prompt), and `message` events whose
+  `message` carries `role`, `content` (string or blocks, `toolCall` blocks),
+  `model`, and on assistant messages `usage` {`input`, `output`, `cacheRead`,
+  `cacheWrite`, `cost`}.
+- **Session id.** `session_windows.session_id`, a uuid (fits the hub's id
+  pattern). A window has `session_key` (`agent:main:main`), `previous_session_id`
+  + `reason` (`reset`, `rollover`, `fork`, `compaction`, …) for lineage, `model`,
+  `display_name`. `session_nodes` maps a key to its current window.
+- **Readable while the daemon writes.** The db is WAL; a `node:sqlite`
+  read-only handle reads it alongside the writer, as for opencode.
+- **No hooks.** openclaw is a daemon with no AgentBox hook to report a session
+  id, but its volume is always per box (service agents isolate,
+  `agent-isolation.ts`) and the push excludes every `*.sqlite*`, so every
+  session in the db is this box's own.
+
+**Feasible with the existing row cursor**, with three small generic additions:
+
+1. **Plan.** `AgentHistorySqliteTable.zstd {column, into}`: ctl's `node:sqlite`
+   row source decodes the blob into the text column (refusing the pass, not
+   dropping the row, when this node has no zstd). `AgentHistorySqliteSource.sessions
+   {table, column}`: the cursor lists every session in the db instead of only
+   bound ones, and appends a binding line for each new one (ctl's
+   `appendHistoryBinding`), so the ctl shipper and the docker relay ship it
+   unchanged. The row source's `rows()` filters by session too (`seq` repeats
+   across sessions).
+2. openclaw's registry row: a `snapshot` source on
+   `agents/main/agent/openclaw-agent.sqlite`, tables `session_windows` (id
+   `session_id`, updated `updated_at`) and `transcript_events` (id `seq`,
+   updated `created_at`, `zstd: event_zstd → event_json`, settle 20 s), output
+   `agentbox-history/<sessionId>.jsonl` (excluded from the push).
+3. `openclawHistoryModule` in `@agentbox/agent-openclaw`: lineage from
+   `previous_session_id`, title/model from the window row, turns, tool calls and
+   usage from the events, injected `custom*` events skipped.
+
+**As built:** as planned, plus a `parent` gate on `transcript_events` →
+`session_windows` (events land after their window row, so the lineage is in
+the file's head), and a frame that fails to decode is copied without its text
+(`event_zstd_error`) rather than retried forever. Each `<sessionId>.cursor.json`
+names the box that wrote it: a box that finds another box's cursor (a restored
+bot backup, a cloud box made from a checkpoint) moves that output to
+`<sessionId>.jsonl.from-<box>`, keeps its row map, and binds the session only
+after, so only rows it copies itself ship under its origin.
+
+**Live check** (docker, isolated hub on a scratch HOME, openclaw 2026.11.7 in
+the box, a mock OpenAI-compatible endpoint in the box, no account): one turn
+through the gateway; the row cursor bound the session, decoded the two
+compressed messages and the relay shipped them. `sessions ls` showed the
+openclaw session with its box, 2 turns and the mock's tokens; `sessions search`
+found both the user and assistant rows. A second turn shipped with no manual
+step within ~2 min (20 s settle + ticks). The first one was nudged with
+`agentbox-ctl history flush`, because the hub was restarted under the box's
+first config fetch. After `destroy` (container and openclaw volume gone) the
+session, 4 turns, was still listed and searchable.
 
 `memory_entries`, seed-from-hub with host fallback, write-back, `agentbox
 memory` commands; extended to every agent that declares memory.

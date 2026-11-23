@@ -35,7 +35,7 @@ import {
 } from '@agentbox/core';
 import { postRpcAwait } from './relay-rpc.js';
 import { resolveRelayEnv } from './relay-env.js';
-import { HISTORY_BINDINGS_PATH, currentBoxId } from './session-pointer.js';
+import { HISTORY_BINDINGS_PATH, appendHistoryBinding, currentBoxId } from './session-pointer.js';
 
 /** Raw frame cap: base64 of this plus the JSON envelope stays under the relay's 1 MiB `/rpc` cap. */
 export const CTL_FRAME_MAX = 512 * 1024;
@@ -173,6 +173,47 @@ function loadSqlite(): SqliteModule | null {
   }
 }
 
+type ZstdDecompress = (buf: Uint8Array, opts?: { maxOutputLength?: number }) => Buffer;
+
+function loadZstd(): ZstdDecompress | null {
+  try {
+    const get = (process as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
+    const zlib = get?.('node:zlib') as { zstdDecompressSync?: ZstdDecompress } | undefined;
+    return zlib?.zstdDecompressSync ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** openclaw caps a compressed event at 4 MiB of text. */
+const ZSTD_MAX_OUTPUT = 8 * 1024 * 1024;
+
+const ZSTD = loadZstd();
+
+/**
+ * Replace a zstd blob with its text. Throws when this node has no zstd (added
+ * in 22.15/23.8), so the pass fails and the row is retried, never copied empty.
+ * A frame that does not decode is copied without its text, flagged
+ * `<column>_error`: retrying it would stall every session behind it.
+ */
+export function decodeZstdColumn(
+  row: Record<string, unknown>,
+  column: string,
+  into: string,
+  zstd: ZstdDecompress | null = ZSTD,
+): void {
+  const blob = row[column];
+  if (!(blob instanceof Uint8Array)) return;
+  if (!zstd) throw new Error(`no zstd in this node: cannot decode ${column}`);
+  try {
+    row[into] = zstd(blob, { maxOutputLength: ZSTD_MAX_OUTPUT }).toString('utf8');
+  } catch (e) {
+    row[into] = null;
+    row[`${column}_error`] = e instanceof Error ? e.message : String(e);
+  }
+  delete row[column];
+}
+
 /** A read-only `node:sqlite` handle behind the row cursor's seam. */
 export function openSqliteRowSource(path: string): HistoryRowSource | null {
   const mod = loadSqlite();
@@ -198,10 +239,20 @@ export function openSqliteRowSource(path: string): HistoryRowSource | null {
           ...(t.parent && r.p !== null && r.p !== undefined ? { parent: String(r.p) } : {}),
         }));
     },
-    rows(t, ids) {
+    rows(t, sessionId, ids) {
       if (ids.length === 0) return [];
       const marks = ids.map(() => '?').join(', ');
-      return db.prepare(`SELECT * FROM ${t.name} WHERE ${t.id} IN (${marks})`).all(...ids);
+      const rows = db
+        .prepare(`SELECT * FROM ${t.name} WHERE ${t.session} = ? AND ${t.id} IN (${marks})`)
+        .all(sessionId, ...ids);
+      if (t.zstd) for (const r of rows) decodeZstdColumn(r, t.zstd.column, t.zstd.into);
+      return rows;
+    },
+    sessions(table, column) {
+      return db
+        .prepare(`SELECT DISTINCT ${column} AS s FROM ${table} WHERE ${column} IS NOT NULL`)
+        .all()
+        .map((r) => String(r.s));
     },
     close() {
       try {
@@ -226,9 +277,17 @@ export const localRowFiles: HistoryRowFiles = {
     await appendFile(path, text, 'utf8');
   },
   async writeText(path, text) {
+    await mkdir(dirname(path), { recursive: true });
     const tmp = `${path}.tmp`;
     await writeFile(tmp, text, 'utf8');
     await rename(tmp, path);
+  },
+  async rename(from, to) {
+    try {
+      await rename(from, to);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   },
   async stamp(path) {
     const one = async (p: string): Promise<string> => {
@@ -250,6 +309,7 @@ export function buildRowCursor(agents: ShippedAgent[]): HistoryRowCursor {
     agents,
     boxId: currentBoxId(),
     readBindings: () => localFileSource.readBindings(),
+    bind: (agent, sessionId) => appendHistoryBinding(agent, sessionId),
     open: openSqliteRowSource,
     files: localRowFiles,
   });
