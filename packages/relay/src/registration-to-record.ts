@@ -55,12 +55,14 @@ export interface RegistrationToRecordOptions {
  * (an agentless box, or `'none'`). Feeds `agents.list`: a `surface: 'service'`
  * agent's units go only to a box that names it, so undefined means NO service
  * agent (see `buildAgentDescriptors`). Every registration of an existing box
- * must therefore send `primaryAgent(record)`.
+ * must therefore send `registrationFromRecord(record)`.
  */
 export function registrationAgents(
-  reg: Pick<BoxRegistration, 'agent'>,
+  reg: Pick<BoxRegistration, 'agent' | 'agents'>,
 ): readonly string[] | undefined {
-  return reg.agent && reg.agent !== 'none' ? [reg.agent] : undefined;
+  const all = (reg.agents ?? []).filter((a) => a.length > 0 && a !== 'none');
+  if (reg.agent && reg.agent !== 'none' && !all.includes(reg.agent)) all.unshift(reg.agent);
+  return all.length > 0 ? all : undefined;
 }
 
 /** Same answer from a BoxRecord: `agents` as created, else the last agent that ran. */
@@ -113,6 +115,7 @@ export function registrationToBoxRecord(
 
   const branch = reg.worktrees?.[0]?.branch ?? `agentbox/${reg.name}`;
   const sanctionedBranch = reg.worktrees?.[0]?.sanctionedBranch ?? branch;
+  const regAgents = registrationAgents(reg);
 
   // Git worktree bookkeeping points at the LOCAL clone (PC only). On the control
   // box `projectRoot` is undefined → no worktrees, which is correct: cloud
@@ -152,8 +155,8 @@ export function registrationToBoxRecord(
     // and `reg.agent` is only the first); otherwise the registration's.
     ...(existing?.agents && existing.agents.length > 0
       ? { agents: existing.agents }
-      : reg.agent && reg.agent !== 'none'
-        ? { agents: [reg.agent] }
+      : regAgents
+        ? { agents: [...regAgents] }
         : {}),
     // The box's named accounts travel with it, so an adopting PC never
     // reconciles it against its own DEFAULT login (llm-accounts Phase 3).
@@ -163,6 +166,23 @@ export function registrationToBoxRecord(
     // The hub egress proxy too, or an adopted box's agent would run direct.
     ...((reg.llmProxy ?? existing?.llmProxy)
       ? { llmProxy: reg.llmProxy ?? existing?.llmProxy }
+      : {}),
+    // The repo identity, so this PC's own re-registrations keep it.
+    ...((reg.originUrl ?? existing?.originUrl)
+      ? { originUrl: reg.originUrl ?? existing?.originUrl }
+      : {}),
+    ...((reg.repoKey ?? existing?.repoKey) ? { repoKey: reg.repoKey ?? existing?.repoKey } : {}),
+    // And the origin stamp: a rehydrate on this PC must send it, not stamp itself.
+    ...((reg.originMachineId ?? existing?.originMachineId)
+      ? {
+          originMachineId: reg.originMachineId ?? existing?.originMachineId,
+          ...((reg.originMachineLabel ?? existing?.originMachineLabel)
+            ? { originMachineLabel: reg.originMachineLabel ?? existing?.originMachineLabel }
+            : {}),
+          ...((reg.originFolder ?? existing?.originFolder)
+            ? { originFolder: reg.originFolder ?? existing?.originFolder }
+            : {}),
+        }
       : {}),
     gitWorktrees,
     createdAt: reg.createdAt ?? existing?.createdAt ?? new Date().toISOString(),

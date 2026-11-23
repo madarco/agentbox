@@ -133,6 +133,12 @@ export interface BoxRegistration {
   /** Agent the box was created for — an `AgentId` → `BoxRecord.lastAgent`. */
   agent?: string;
   /**
+   * Every agent the box runs (`BoxRecord.agents`), `agent` first. An agent
+   * added to a running box (`agentbox openclaw <box>`) is here, so a
+   * re-registration keeps handing it its service units (`agents.list`).
+   */
+  agents?: string[];
+  /**
    * Named LLM account per agent (`BoxRecord.accounts`; llm-accounts Phase 3).
    * Carried so a PC that adopts the box — and the credential fan-out guard —
    * know it does not run on the default login.
@@ -265,6 +271,8 @@ export interface RegisterBoxBody {
   webPort?: number;
   /** Agent the box was created for. */
   agent?: string;
+  /** Every agent the box runs (see `BoxRegistration.agents`). */
+  agents?: string[];
   /** Named LLM account per agent (see `BoxRegistration.accounts`). */
   accounts?: Record<string, string>;
   /** The hub egress proxy (see `BoxRegistration.llmProxy`). */
@@ -322,6 +330,7 @@ export interface HostAction {
       originMachineId?: string;
       autoApproveSafeHostActions?: boolean;
       agent?: string;
+      agents?: string[];
     };
   };
 }

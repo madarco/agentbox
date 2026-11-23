@@ -239,11 +239,17 @@ export interface MemoryFileWire {
   content?: string;
   sha256: string;
   deleted?: boolean;
+  /**
+   * When the hub stored this version (epoch ms). Absent on a host-only seed.
+   * A box file newer than it, and different, wins the last-writer-wins order.
+   */
+  updatedAt?: number;
 }
 
 /**
  * `memory.seed` reply. `files` is the set to place in the box (the hub's latest
- * plus host-only paths); `writeBack` says whether `memory.put` will be stored.
+ * plus host-only paths, and tombstones of deleted paths); `writeBack` says
+ * whether `memory.put` will be stored.
  */
 export interface MemorySeedReply {
   agents: Array<{
@@ -279,6 +285,16 @@ export interface MemoryOrigin {
   hostId?: string;
 }
 
+/** One path of a `memorySeed` answer: the latest version, or a tombstone (`deleted`, empty bytes). */
+export interface MemorySeedFile {
+  path: string;
+  bytes: Uint8Array;
+  sha256: string;
+  deleted?: boolean;
+  /** When the hub stored this version (epoch ms). */
+  updatedAt?: number;
+}
+
 /** The hub's memory store, as the relay sees it (in-process). */
 export interface HistoryMemorySink {
   /**
@@ -291,7 +307,7 @@ export interface HistoryMemorySink {
     scope: 'project' | 'global';
     hostFiles: Array<{ path: string; bytes: Uint8Array }>;
     origin: MemoryOrigin;
-  }): Promise<Array<{ path: string; bytes: Uint8Array; sha256: string }>>;
+  }): Promise<MemorySeedFile[]>;
   memoryPut(input: {
     repoKey: string;
     agent: string;

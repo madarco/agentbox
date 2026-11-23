@@ -62,6 +62,8 @@ export interface RegisterBoxWithPlaneArgs {
   webPort?: number;
   /** Agent the box was created for, so an adopting PC can relaunch the right one. */
   agent?: string;
+  /** Every agent the box runs (`BoxRecord.agents`). */
+  agents?: string[];
   /**
    * Named LLM account per agent (`BoxRecord.accounts`). A registration REPLACES
    * the stored one, so a re-register without it would drop the box's accounts.
@@ -129,6 +131,7 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       image: args.image,
       webPort: args.webPort,
       agent: args.agent,
+      ...(args.agents && args.agents.length > 0 ? { agents: args.agents } : {}),
       ...(args.accounts && Object.keys(args.accounts).length > 0
         ? { accounts: args.accounts }
         : {}),

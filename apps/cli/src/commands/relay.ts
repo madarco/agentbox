@@ -62,28 +62,9 @@ function renderControlPlane(cp: ControlPlaneInfo): string {
  */
 export async function rehydrateFromState(): Promise<void> {
   const state = await readState();
-  await rehydrateRelayRegistry(
-    state.boxes.map((b) => ({
-      id: b.id,
-      name: b.name,
-      provider: b.provider,
-      container: b.container,
-      createdAt: b.createdAt,
-      relayToken: b.relayToken,
-      projectIndex: b.projectIndex,
-      gitWorktrees: b.gitWorktrees,
-      cloudBackend: b.cloud?.backend,
-      relayPreviewUrl: b.cloud?.relayPreviewUrl,
-      relayPreviewToken: b.cloud?.relayPreviewToken,
-      bridgeToken: b.cloud?.bridgeToken,
-      autoApproveHostActions: b.autoApproveHostActions,
-      autoApproveSafeHostActions: b.autoApproveSafeHostActions,
-      agents: b.agents,
-      lastAgent: b.lastAgent,
-      ...(b.skills ? { skills: b.skills } : {}),
-      ...(b.accounts ? { accounts: b.accounts } : {}),
-    })),
-  );
+  // The records as stored: the rehydrate reads every field it re-registers
+  // (cloud fields, agents, repo, origin stamp, accounts, egress proxy) from them.
+  await rehydrateRelayRegistry(state.boxes);
 }
 
 interface StatusOpts {

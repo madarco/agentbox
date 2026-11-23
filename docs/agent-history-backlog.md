@@ -341,7 +341,8 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
     `projectRepoUrl` on that box's sessions. Memory now reads the folder's
     `origin` (fixed in this phase); transcripts should do the same.
 - **From the review of #443 (2026-11-22), deferred:**
-  - *A late seed deletes box-local writes (3).* When the seed is delayed
+  - *A late seed deletes box-local writes (3).* **Fixed** (plan, "Backlog
+    fixes"): the seed merges last-writer-wins. Original note: when the seed is delayed
     (relay unreachable, older relay backoff) and claude writes memory first,
     `placeSet` removes those never-baselined files. The same happens on a ctl
     restart after a checkpoint dropped the state while write-back was off.
@@ -611,7 +612,7 @@ Fixed in this pass: a cloud box's first RPCs got `401 unknown box token`
 for 10 minutes as if the relay lacked the methods; the late memory seed then
 deleted what the agent had written (plan, "Cloud sign-off"). Still open:
 
-- **The seed still replaces a dir the agent already wrote.** The fix closes the
+- **Fixed (plan, "Backlog fixes"):** ~~The seed still replaces a dir the agent already wrote.~~ The fix closes the
   401 window, but a box whose hub is unreachable at boot for longer (tunnel
   down, hub restarting) seeds whenever the relay first answers, and
   `placeSet` replaces the dir: memory written before that is lost. Merging
@@ -655,3 +656,73 @@ deleted what the agent had written (plan, "Cloud sign-off"). Still open:
   - Testing inside an AgentBox box: the exposed hub's own creates clone the repo
     with `git`, which the box's git shim refuses (`git.clone: not yet
     implemented`); `--local` sidesteps it.
+
+## Backlog fixes: late seed + re-registration (2026-11-23)
+
+Fixed (plan, "Backlog fixes"): the late memory seed, an added agent lost on
+re-registration, and a box losing its repo (`originUrl`/`repoKey`) on every
+re-registration. Left open:
+
+- **From the review of this pass, deferred:**
+  - *Past the file-count cap the merge cannot read a box file.* A box holding
+    more than `MEMORY_MAX_FILES` memory files has files that are present but
+    unread; the merge treats them as the box's own (like an over-size file),
+    so the hub's version is not placed and the file never converges.
+  - *A time order is not a write order.* The hub's `updatedAt` is when the
+    version was stored, not written: an edit made in a box before another
+    box's older edit reached the hub loses the late-seed comparison.
+- **From the live check: a hub that is DOWN parks the seed for 10 minutes.**
+  The in-box forwarder answers an `ECONNREFUSED` upstream with a non-zero
+  exit that `relayNotReady` does not recognise, so ctl reads it as
+  `unsupported` and backs off (same family as the #454 "bodyless 401 only"
+  note). The merge then lands when the backoff ends; nothing is lost, it is
+  just late. Treat a forwarder upstream error as `unreachable`.
+- **Clock skew decides a late-seed tie.** The merge compares a box file's
+  mtime (box clock) with the hub version's `updatedAt` (hub clock). Docker
+  shares the clock; a cloud box with a skewed clock can keep an older file
+  or lose a newer one. Only the late-seed window is affected; later passes
+  compare content, not time.
+- **A checkpoint-carried file the hub never saw is shipped.** It used to be
+  deleted by the seed. Owner direction is last-writer-wins, so it now becomes
+  a version (it was written by the parent box); a tombstone newer than it
+  still deletes it.
+- **Boxes created before the fix have no recorded repo.** Their record has no
+  `originUrl`/`repoKey`, so after a relay or hub restart they still register
+  without one (MCP scope empty, skill bindings off) until recreated. A one-time
+  backfill could read it from a docker box's host repo while no box process
+  runs, but that is the `.git` the box can write, so it is not done
+  automatically.
+- **Cloud start still falls back to the host folder's `origin`** for a record
+  without `originUrl` (pre-existing behavior; a cloud box has no write access
+  to the host `.git`).
+- **Transcripts' `projectRepoUrl` (Phase 4/6 notes)** now gets the registered
+  `originUrl` after a restart for new boxes; the folder fallback for old boxes
+  is still open.
+
+### LATER, from the independent review of #457 (2026-11-23)
+
+Fixed in the PR: R1. Every docker create rehydrates every cloud record (as
+stored, since #457, so with its preview URL and bridge token), and that
+started a `CloudBoxPoller` for paused boxes too, waking E2B ones. A rehydrate
+now leaves the poller fields out for a paused, stopped or control-plane box
+(`shouldPollOnRehydrate`), which also covers a hub or relay restart. Left for
+later:
+
+- **L1: a late seed still loses to a host copy of the same file.** A host
+  import is stored with the seed time as its `createdAt`
+  (`history-memory.ts`, `append` from `memorySeed`), so a box's `MEMORY.md`
+  written before the seed looks older than the host's and is overwritten.
+  Stamp a host import with the host file's mtime instead.
+- **L2: the hosted plane's register handler** (`core/handler.ts`, the
+  control-plane `/admin/register-box`) ignores `agents` and does not keep a
+  stored `originUrl` when a re-register omits it, unlike the relay's.
+- **L3: `registrationAgents` should put the primary agent first** in every
+  case; today it only prepends it when the list lacks it, so a list that
+  names it later keeps that order.
+- **L5: `MemoryRelay.keyOf` ignores `reg.repoKey`,** re-deriving the key from
+  `originUrl`, and still falls back to the live `git remote get-url` of the
+  project folder for boxes created before #457 (the record has no repo).
+- **L6: a newer ctl against an older relay gets no tombstones** in the seed,
+  so a hub deletion never removes a box file during a late seed there; and
+  files past `MEMORY_MAX_FILES` never converge (see above).
+

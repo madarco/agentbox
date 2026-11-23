@@ -51,6 +51,48 @@ describe('/admin/register-box keeps the agent across a re-register that omits it
     expect(await services('t1')).toEqual(['openclaw']);
   });
 
+  it('a claude box with an added openclaw keeps the gateway across every re-register', async () => {
+    const reg = { boxId: 'b4', token: 't4', name: 'both', agent: 'claude' };
+    await post('/admin/register-box', { ...reg, agents: ['claude', 'openclaw'] });
+    expect(await services('t4')).toEqual(['openclaw']);
+    // A re-register that sends only the primary agent (an older caller).
+    await post('/admin/register-box', reg);
+    expect(await services('t4')).toEqual(['openclaw']);
+    expect((await handle.store.getBox('b4'))?.agents).toEqual(['claude', 'openclaw']);
+  });
+
+  it("a re-register from another PC's older record (agents [claude]) does not drop openclaw", async () => {
+    const reg = { boxId: 'b6', token: 't6', name: 'both', agent: 'claude' };
+    await post('/admin/register-box', { ...reg, agents: ['claude', 'openclaw'] });
+    await post('/admin/register-box', { ...reg, agents: ['claude'] });
+    expect(await services('t6')).toEqual(['openclaw']);
+    // An older hub's addBoxAgent swapped `agent` instead of listing both.
+    await post('/admin/register-box', { boxId: 'b7', token: 't7', name: 'old', agent: 'openclaw' });
+    await post('/admin/register-box', {
+      boxId: 'b7',
+      token: 't7',
+      name: 'old',
+      agent: 'claude',
+      agents: ['claude'],
+    });
+    expect(await services('t7')).toEqual(['openclaw']);
+  });
+
+  it('keeps originUrl and repoKey across a re-register that omits them', async () => {
+    await post('/admin/register-box', {
+      boxId: 'b5',
+      token: 't5',
+      name: 'r',
+      originUrl: 'git@github.com:o/r.git',
+      repoKey: 'github.com/o/r',
+    });
+    await post('/admin/register-box', { boxId: 'b5', token: 't5', name: 'r' });
+    expect(await handle.store.getBox('b5')).toMatchObject({
+      originUrl: 'git@github.com:o/r.git',
+      repoKey: 'github.com/o/r',
+    });
+  });
+
   it('still gives an agentless box no service units', async () => {
     await post('/admin/register-box', { boxId: 'b2', token: 't2', name: 'plain' });
     await post('/admin/register-box', { boxId: 'b2', token: 't2', name: 'plain' });

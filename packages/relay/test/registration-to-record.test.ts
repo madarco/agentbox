@@ -163,6 +163,31 @@ describe('agents.list for a box adopted on another PC', () => {
     expect(rec.agents).toEqual(['claude', 'codex']);
   });
 
+  it('an adopted record carries the full agents list, repo and origin stamp', () => {
+    const rec = registrationToBoxRecord(
+      reg({
+        agent: 'claude',
+        agents: ['claude', 'openclaw'],
+        originUrl: 'git@github.com:o/r.git',
+        repoKey: 'github.com/o/r',
+        originMachineId: 'pc-a',
+        originFolder: '/a/r',
+      }),
+      { controlPlaneUrl: 'https://hub.example', freshToken },
+    );
+    expect(rec).toMatchObject({
+      agents: ['claude', 'openclaw'],
+      originUrl: 'git@github.com:o/r.git',
+      repoKey: 'github.com/o/r',
+      originMachineId: 'pc-a',
+      originFolder: '/a/r',
+    });
+    expect(registrationAgents({ agent: 'claude', agents: ['openclaw'] })).toEqual([
+      'claude',
+      'openclaw',
+    ]);
+  });
+
   it("treats 'none' as agentless in both helpers", () => {
     expect(registrationAgents({ agent: 'none' })).toBeUndefined();
   });

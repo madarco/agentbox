@@ -518,6 +518,25 @@ export interface BoxRecord {
    */
   borrowedCredentials?: string[];
   /**
+   * The box repo's `origin` URL and its repo key, as registered at create.
+   * Durable because every later registration (start, resume, a relay or hub
+   * restart's rehydrate) replaces the relay's entry, and the box's MCP scope
+   * and skill bindings are keyed by them. Read from the record, never from a
+   * live `git remote get-url`: a docker box mounts the repo's `.git` read-write
+   * and could repoint `origin`. Absent on a box with no origin, and on boxes
+   * created before this field.
+   */
+  originUrl?: string;
+  repoKey?: string;
+  /**
+   * The origin-machine stamp registered at create (the PC the box was seeded
+   * from, and its folder): host-reach routes the box's host actions there.
+   * Durable for the same reason as `originUrl`.
+   */
+  originMachineId?: string;
+  originMachineLabel?: string;
+  originFolder?: string;
+  /**
    * The NAMED LLM account each agent runs on, chosen at create
    * (docs/llm-accounts-plan.md, Phase 3). An agent absent here runs on its
    * `default` account. Every later seam — mounts, the launch env, the
@@ -601,4 +620,60 @@ export function primaryAgent(box: {
 }): string | undefined {
   const first = box.agents?.find((a) => a.length > 0 && a !== 'none');
   return first ?? box.lastAgent;
+}
+
+/**
+ * The fields every re-registration of an existing box (start, resume, a relay
+ * or hub restart's rehydrate, a branch sanction) sends from its record. A
+ * registration REPLACES the relay's entry, so a field left out here is lost:
+ *  - `agents`: every agent the box runs (claude plus an added openclaw, whose
+ *    gateway `agents.list` hands only to a box that names it);
+ *  - the repo identity and origin stamp: the MCP history scope, skill
+ *    bindings and host-reach routing are keyed by them;
+ *  - skills, accounts and the egress proxy: the box's create-time choices.
+ */
+export function registrationFromRecord(
+  box: Pick<
+    BoxRecord,
+    | 'agents'
+    | 'lastAgent'
+    | 'originUrl'
+    | 'repoKey'
+    | 'originMachineId'
+    | 'originMachineLabel'
+    | 'originFolder'
+    | 'skills'
+    | 'accounts'
+    | 'llmProxy'
+  >,
+): {
+  agent?: string;
+  agents?: string[];
+  originUrl?: string;
+  repoKey?: string;
+  originMachineId?: string;
+  originMachineLabel?: string;
+  originFolder?: string;
+  skills?: BoxRecord['skills'];
+  accounts?: Record<string, string>;
+  llmProxy?: BoxRecord['llmProxy'];
+} {
+  const agents = box.agents?.filter((a) => a.length > 0 && a !== 'none') ?? [];
+  const agent = primaryAgent(box);
+  return {
+    ...(agent ? { agent } : {}),
+    ...(agents.length > 0 ? { agents } : {}),
+    ...(box.originUrl ? { originUrl: box.originUrl } : {}),
+    ...(box.repoKey ? { repoKey: box.repoKey } : {}),
+    ...(box.originMachineId
+      ? {
+          originMachineId: box.originMachineId,
+          ...(box.originMachineLabel ? { originMachineLabel: box.originMachineLabel } : {}),
+          ...(box.originFolder ? { originFolder: box.originFolder } : {}),
+        }
+      : {}),
+    ...(box.skills ? { skills: box.skills } : {}),
+    ...(box.accounts && Object.keys(box.accounts).length > 0 ? { accounts: box.accounts } : {}),
+    ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
+  };
 }

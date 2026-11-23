@@ -50,9 +50,7 @@ describe('MemorySync', () => {
     writeBack,
   });
 
-  it('seeds once: the hub set replaces the dir and is the baseline', async () => {
-    await mkdir(memDir, { recursive: true });
-    await writeFile(join(memDir, 'stale.md'), 'from a checkpoint');
+  it('seeds once: the hub set is placed and is the baseline', async () => {
     const f = fakeRpc(
       reply([
         { path: 'MEMORY.md', content: b64('index'), sha256: 'x' },
@@ -97,6 +95,83 @@ describe('MemorySync', () => {
       ['old.md', 'deleted'],
     ]);
     expect((await s.pass()).shipped).toBe(0);
+  });
+
+  describe('a late seed (the agent wrote memory before the seed landed)', () => {
+    // Hub versions stored at t=1000 (epoch ms); box files are written "now", so newer.
+    const OLD = 1000;
+    const FUTURE = Date.now() + 3_600_000;
+    const shipped = (f: ReturnType<typeof fakeRpc>) =>
+      f.puts.map((p) => [
+        p.path,
+        p.deleted ? 'deleted' : Buffer.from(p.content!, 'base64').toString(),
+      ]);
+
+    beforeEach(async () => {
+      await mkdir(memDir, { recursive: true });
+      await writeFile(join(memDir, 'box-only.md'), 'written before the seed');
+      await writeFile(join(memDir, 'MEMORY.md'), 'box index');
+    });
+
+    it('keeps a box file the seed does not know and ships it', async () => {
+      const f = fakeRpc(
+        reply([{ path: 'hub.md', content: b64('hub'), sha256: 'h', updatedAt: OLD }]),
+      );
+      const s = new MemorySync({ rpc: f.rpc, statePath, boxId: 'box-1' });
+      await s.pass();
+      expect(await readFile(join(memDir, 'box-only.md'), 'utf8')).toBe('written before the seed');
+      expect(await readFile(join(memDir, 'hub.md'), 'utf8')).toBe('hub');
+      await s.pass();
+      expect(shipped(f)).toEqual([
+        ['MEMORY.md', 'box index'],
+        ['box-only.md', 'written before the seed'],
+      ]);
+      expect((await s.pass()).shipped).toBe(0);
+    });
+
+    it('a box file newer than the hub version wins and ships; an older one is overwritten', async () => {
+      const f = fakeRpc(
+        reply([{ path: 'MEMORY.md', content: b64('hub index'), sha256: 'h', updatedAt: OLD }]),
+      );
+      const s = new MemorySync({ rpc: f.rpc, statePath, boxId: 'box-1' });
+      await s.pass();
+      expect(await readFile(join(memDir, 'MEMORY.md'), 'utf8')).toBe('box index');
+      await s.pass();
+      expect(shipped(f)).toContainEqual(['MEMORY.md', 'box index']);
+
+      const f2 = fakeRpc(
+        reply([{ path: 'MEMORY.md', content: b64('hub index'), sha256: 'h', updatedAt: FUTURE }]),
+      );
+      const s2 = new MemorySync({ rpc: f2.rpc, statePath, boxId: 'box-2' });
+      await s2.pass();
+      expect(await readFile(join(memDir, 'MEMORY.md'), 'utf8')).toBe('hub index');
+      await s2.pass();
+      expect(shipped(f2)).toEqual([['box-only.md', 'written before the seed']]);
+    });
+
+    it('a hub tombstone deletes an older box file and loses to a newer one', async () => {
+      const f = fakeRpc(
+        reply([
+          { path: 'box-only.md', sha256: '', deleted: true, updatedAt: FUTURE },
+          { path: 'MEMORY.md', sha256: '', deleted: true, updatedAt: OLD },
+        ]),
+      );
+      const s = new MemorySync({ rpc: f.rpc, statePath, boxId: 'box-1' });
+      await s.pass();
+      expect(await readdir(memDir)).toEqual(['MEMORY.md']);
+      await s.pass();
+      expect(shipped(f)).toEqual([['MEMORY.md', 'box index']]);
+    });
+
+    it('a seed version with no time (host-only seed) still wins over a differing box file', async () => {
+      const f = fakeRpc(
+        reply([{ path: 'MEMORY.md', content: b64('host index'), sha256: 'h' }], false),
+      );
+      const s = new MemorySync({ rpc: f.rpc, statePath, boxId: 'box-1' });
+      await s.pass();
+      expect(await readFile(join(memDir, 'MEMORY.md'), 'utf8')).toBe('host index');
+      expect(await readFile(join(memDir, 'box-only.md'), 'utf8')).toBe('written before the seed');
+    });
   });
 
   it('a state from another box (a checkpoint) is not ours: seed again', async () => {
