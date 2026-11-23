@@ -26,6 +26,12 @@ import type { CreateJobRequestOpts } from '@agentbox/relay';
  */
 export interface HubApiBox {
   id: string;
+  /** Named LLM account per agent (`{ claude: 'work' }`); absent = default logins. */
+  accounts?: Record<string, string>;
+  /** Label + kind for each entry of `accounts`, from the hub machine's store. */
+  accountsInfo?: Array<{ agent: string; account: string; label?: string; kind?: string }>;
+  /** The hub egress proxy the box was created with (llm-accounts Phase 7). */
+  llmProxy?: { mode: 'forward'; upstream: string };
   name?: string;
   /** Cosmetic user label (set via rename); the CLI prefers it over `name`. */
   displayName?: string | null;
@@ -79,6 +85,8 @@ export interface HubApiBox {
   webPort?: number;
   previewUrls?: Record<number, string>;
   lastAgent?: AgentId;
+  /** Every agent the box was created for, service agents (openclaw) included. */
+  agents?: string[];
   /** Other agents' logins this box borrows as model auth. */
   borrowedCredentials?: string[];
   topology?: string;
@@ -152,7 +160,9 @@ export interface HubApiJob {
  * local checkout can honour. A control box drops that second group — and says
  * so, rather than building something quietly different.
  */
-export interface HubApiCreateBoxOpts extends CreateJobRequestOpts {
+export interface HubApiCreateBoxOpts extends Omit<CreateJobRequestOpts, 'llmProxy'> {
+  /** `--llm-proxy`: a mode; the hub resolves the upstream from its own address. */
+  llmProxy?: 'off' | 'forward';
   memory?: string;
   cpus?: string;
   pidsLimit?: string;
@@ -533,6 +543,23 @@ export interface HubApiCheckout {
 }
 
 /** `PUT /checkouts`: this machine's report. */
+/** One named LLM account (`/api/v1/accounts`). */
+export interface HubApiAccount {
+  agent: string;
+  id: string;
+  label?: string;
+  kind: 'login' | 'setup-token' | 'api-key';
+  identity?: { email?: string; org?: string; plan?: string };
+  hasSecret: boolean;
+  /** The boxes that record this account (running it, or borrowing it). */
+  boxes: string[];
+}
+
+export interface HubApiAccountList {
+  accounts: HubApiAccount[];
+  agents: Array<{ id: string; kinds: Array<'login' | 'setup-token' | 'api-key'> }>;
+}
+
 export interface HubApiCheckoutReport {
   machineId: string;
   label: string;
@@ -998,6 +1025,18 @@ export class HubApiClient {
     const q = new URLSearchParams({ ref });
     if (project !== undefined) q.set('project', project);
     return (await this.request<{ boxes: HubApiBox[] }>('GET', `/boxes?${q.toString()}`)).boxes;
+  }
+
+  /**
+   * Add an agent to an existing box: the owning hub records it and re-registers
+   * the box with its own token (`agentbox openclaw <box>`).
+   */
+  async addBoxAgent(id: string, agent: string): Promise<{ boxId: string; agents: string[] }> {
+    return this.request<{ boxId: string; agents: string[] }>(
+      'POST',
+      `/boxes/${encodeURIComponent(id)}/agent`,
+      { agent },
+    );
   }
 
   /** Lifecycle action on a box. Reverse-adoption lets the hub drive registered-only boxes. */
@@ -1596,6 +1635,30 @@ export class HubApiClient {
       `/checkouts${qs ? `?${qs}` : ''}`,
     );
     return res.checkouts ?? [];
+  }
+
+  /** The named LLM accounts of the hub's machine (`GET /api/v1/accounts`). Never a secret. */
+  async listAccounts(): Promise<HubApiAccountList> {
+    return this.request<HubApiAccountList>('GET', '/accounts');
+  }
+
+  async labelAccount(agent: string, id: string, label: string | null): Promise<HubApiAccount> {
+    const res = await this.request<{ account: HubApiAccount }>(
+      'PATCH',
+      `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`,
+      { label },
+    );
+    return res.account;
+  }
+
+  async removeAccount(
+    agent: string,
+    id: string,
+  ): Promise<{ volumeRemoved: boolean; volumeError?: string }> {
+    return this.request<{ ok: true; volumeRemoved: boolean; volumeError?: string }>(
+      'DELETE',
+      `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`,
+    );
   }
 
   async reportCheckouts(report: HubApiCheckoutReport): Promise<HubApiCheckout[]> {

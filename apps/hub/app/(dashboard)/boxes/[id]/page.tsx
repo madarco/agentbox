@@ -112,6 +112,14 @@ export default function BoxDetailPage() {
             that does not exist anywhere. */}
         {box.hasGit === false ? null : <DRow k="Branch" v={box.branch} mono />}
         <DRow k="Host" v={box.host} mono />
+        {box.accountsInfo?.map((a) => (
+          <DRow
+            key={`acct-${a.agent}`}
+            k={`${a.agent} account`}
+            v={[a.account, a.label, a.kind].filter(Boolean).join(' · ')}
+            mono
+          />
+        ))}
         <DRow k="Created" v={new Date(box.createdAt).toLocaleString()} mono />
       </Card>
     </div>

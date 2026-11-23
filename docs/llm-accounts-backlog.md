@@ -202,7 +202,7 @@ Done in #442: `agentbox accounts rm` refuses while a box records the account
 (running or borrowing it), and the propagate planner skips a named docker box
 with no recorded volume instead of falling back to the shared default volume.
 
-- **PHASE 5 MUST DESIGN: named custody objects are keyed by account name only.**
+- ~~PHASE 5 MUST DESIGN: named custody objects are keyed by account name only~~ — designed and built in Phase 5: named logins are keyed by machine (`agents/<a>/accounts/<machine>/<id>/<file>`), pasted secrets no longer travel, a hub seeds only its own machine's. Original note:
   Account ids are local to each PC: PC A's `claude/work` and PC B's
   `claude/work` (a different subscription) both push to
   `agents/claude/accounts/work/.credentials.json`, and the push is hash-only,
@@ -221,3 +221,127 @@ with no recorded volume instead of falling back to the shared default volume.
   `agents/<agent>/`): a PC with only a named claude account shows Claude as
   logged in, but a hub create gets no default login. Count only
   `agents/<a>/<boxRelPath>`, and list accounts separately.
+
+## From Phase 5 (surfaces)
+
+- **A remote control box cannot run a PC's named account yet.** The custody
+  objects are now keyed by machine, but the control box has no per-machine
+  account list: a create there still resolves `--account` against the control
+  box's own store and refuses. Next step: rows travel next to the secret
+  (`agents/<a>/accounts/<machine>/<id>/account.json`), the control box keeps a
+  per-machine account view, and a create resolves accounts against the
+  REQUESTER's machine (`requester.machineId`) and seeds that machine's secret.
+- **Old flat custody objects** (`agents/<a>/accounts/<id>/<file>`, pushed by a
+  Phase 4 CLI) are left in place and never read again; a one-time cleanup can
+  delete them.
+- **`accounts rm` still leaves the machine's custody objects** on a control box.
+  Add the delete with the per-machine account view above.
+- **The tray** (`../agentbox-tray`) does not show accounts yet (Phase 6):
+  `Box.accounts` / `Box.accountsInfo` and `/api/v1/accounts` are ready for it.
+- **No docs figure for the Accounts page** yet; capture one per
+  `apps/web/images.md` with the next screenshot round.
+- **`agentbox status` reads the account store locally** for its ACCOUNTS
+  labels instead of the hub's `Box.accountsInfo`; same data, two lookups
+  (Phase 5 review). Switch it when `status` moves behind the hub.
+- **`GET /api/v1/accounts` reads each secret sequentially** to set
+  `hasSecret`, and the list and single-account views build the shape twice.
+  Small; `Promise.all` over one `view()` when it matters.
+
+## From the #444 review
+
+Fixed in #444: the `POST` / `PATCH` / `DELETE /api/v1/accounts…` routes now
+answer a store failure (a corrupt `accounts.json`) with the error envelope
+naming the file, like `GET`, instead of a bare 500.
+
+- **(a) The in-use list shows a docker box twice**: `hub-backend.ts` (~2162)
+  feeds the accounts slice `state.json` boxes AND relay registrations, so a
+  docker box present in both is named twice in `boxes`. Dedupe by box id.
+- **(b) MUST FIX before "accounts resolve against the requester's machine":**
+  `credentials-fanout.ts` (~251) files a hub-side box's refreshed account login
+  under the box's ORIGIN machine id, although the account itself came from the
+  hub's own store — so it lands in PC B's custody slot. Key it by the hub's own
+  machine id (or drop the update) until per-machine account lists exist. Same
+  root cause: the hub accepts a remote PC's `--account` against its OWN store
+  (the Phase 3 resolution), which only works because a remote hub has no rows.
+- **(c) API labels have no length or control-character limit**, and the CLI
+  prints them raw (`agentbox accounts`, `status`). Cap the length and strip
+  control characters at the API boundary.
+- **(d) All of `/api/v1`**: a page on another `localhost` port can send a
+  `text/plain`, cookie-authenticated `POST` (a "simple" request: no CORS
+  preflight), because the gate checks neither `Content-Type` nor `Origin`.
+  Require `application/json` or a same-origin `Origin` on writes.
+- **(e) Stale text**: comments in `hub-worker.ts` (~127-133, the account seed),
+  `apps/hub/lib/backend/accounts.ts` (lines 1-5, still "a remote control box
+  has no account store yet (Phase 5)"), the `apps/cli/src/commands/accounts.ts`
+  header; and the plan says `GET /accounts` returns `agents [{id, name,
+  kinds}]` while the code returns `{id, kinds}`.
+- **(f) `custody-client.ts` (~311) reads the machine id before the account
+  loop**, so a failure reading it also skips the DEFAULT-login push. Read it
+  lazily inside the loop (or catch it), so the default push never depends on it.
+
+## From Phase 7 (hub egress proxy, `forward`)
+
+- **No live egress check from a real cloud box yet.** It needs the hub's
+  `llm.proxyPort` published on a public address (`llm.proxyUrl`); the local
+  chain was verified live (plan, Phase 7 item 8). Steps are in the #PR body.
+- **The split proxy is started at agent launch, not supervised.** If it dies
+  mid-session the agent gets a refused connection (claude retries those
+  silently). A relaunch restarts it. Move it under ctl's supervisor when the
+  image next changes.
+- **The hub allowlist is the union of every agent's `llmHosts`**, not the
+  box's own agents: a claude box's token can tunnel to `chatgpt.com`, and an
+  installed plugin agent (`agentbox agent add`) can add any syntactically valid
+  host to it (Phase 7 review). The plugin is user-installed, but narrow the
+  allowlist by the registration's agents and keep plugin hosts behind an
+  explicit grant. The list is also read once per process: a plugin added after
+  the hub started is not allowed until a restart.
+- **A failed proxy auth is not throttled** (Phase 7 review). The listener only
+  runs after a global opt-in, but a reachable `llm.proxyPort` allows unlimited
+  token guesses. Rate-limit 407s per peer.
+- **A cloned box (`clone-create`) does not carry `llmProxy`** and goes direct.
+  (Adopt/relaunch carry it since the #446 review: it rides the registration.)
+- **A control-box create resolves the mode from that hub's global
+  `llm.proxy`** when the client sends none: it has no project config. The CLI
+  sends `forward` when the project says so; a project's explicit `off` against
+  a hub whose global is `forward` still lands on `forward`.
+- **Agents without `llmHosts` (opencode, pi, plugins, the openclaw service
+  units) are never proxied**, even in a box recorded `forward`, and nothing
+  warns at create (Phase 7 review). Documented; warn, or refuse `forward` for
+  such an agent, once more agents can declare hosts.
+- **No UI for it**: the web create dialog has no LLM-proxy toggle and the
+  tray shows nothing; `Box.llmProxy` is in the payload for both.
+- **Successful tunnels are not logged or counted**; only refusals are.
+
+### From the #446 review
+
+Fixed in #446: B1 (`llmProxy` rides the registration, adopt and the hub
+payload; a foreground create that asked for `forward` refuses to attach a box
+without it) and B2 (a proxy-only HMAC credential replaces the relay token on
+the unencrypted hub leg).
+
+- **L1 An older hub silently drops `opts.llmProxy`**, so `forward` becomes
+  direct with no warning on the `-i` / web paths (the foreground adopt path now
+  refuses). Report unknown create opts back, or check `Box.llmProxy` after.
+- **L2 `withSessionLlmProxy` fails open** when `state.json` cannot be read: the
+  docker session starts unproxied. Refuse the launch instead when the read
+  fails.
+- **L3 (docs fixed)** The Phase 7 docs said the relay token never enters the
+  agent's env; `AGENTBOX_RELAY_TOKEN` is in the container / provision env
+  (pre-existing). The wording now only claims the token never goes to the
+  proxy.
+- **L4 Tunnels outlive a revoked token**, there is no idle timeout, and a
+  client closing during the auth lookup leaks the upstream socket. Track
+  tunnels per box (close on forget), add an idle timeout, destroy on client
+  close before connect.
+- **L5 The listener binds `0.0.0.0` even docker-only** (LAN exposure once
+  opted in). Bind the docker bridge / loopback when no `llm.proxyUrl` is set.
+- **L6 `llmHostsProblem` accepts IP literals**, so a plugin agent could add
+  `127.0.0.1` and open the hub's loopback through the proxy. Refuse IPs and
+  single-label names; resolve and refuse private addresses at connect.
+- **L7 Provider SDK republish**: community providers on the old SDK have no
+  `llmProxy` on `CreateBoxRequest` / the attach preamble, so their boxes go
+  direct. Republish (additive, no `SDK_API_VERSION` bump).
+- **L8 `create-action.ts` (~648-649) spreads `localLlmProxy()` twice** in the
+  queued-create opts. Harmless (memoized, same value); drop one.
+- **L9 A project-level `llm.proxyPort` / `llm.proxyUrl` is silently ignored**
+  (they are global-only by design). Warn when a project config sets them.

@@ -62,6 +62,30 @@ for teams PCs must never hold it (device tokens only).
 - Multi-repo boxes: `hostCandidatesFor` already picks a nested repo by path prefix,
   but registrations describe one root repo until box-sources Phase 2.
 
+## From the review of #429 (agentless box started OpenClaw), noted, not fixed
+
+- **`route.box.agent` is for future routed methods.** Host-reach routes only `cp.*`,
+  `tool.*` (and, with #432, `download.workspace`); none of them asks `agents.list`,
+  so passing the box's agent on a routed action changes nothing today. Kept so a
+  future routed method that does reach `agents.list` answers for the right agent.
+- **Tests do not drive the real start/resume paths.** The decision-path test calls
+  `primaryAgent` + `registrationAgents` directly; the server's register/replace
+  path, `cloud-provider` start/resume and the hub worker's create record are
+  covered by the unit tests of their pieces, not end to end.
+- **Provider SDK republish.** `createCloudProvider` is inlined into
+  `@madarco/agentbox-provider-sdk`: plugin providers get the control-plane resume
+  fix (`primaryAgent`) only after the SDK is rebuilt and republished (no
+  `SDK_API_VERSION` bump: not an API break). The owner publishes.
+- **A box running a TUI agent AND a service agent loses the service agent's units on
+  its next start.** `agentbox openclaw <a claude box>` makes the hub set
+  `reg.agent = 'openclaw'` (the gateway comes up), and the record becomes
+  `agents: ['claude', 'openclaw']`. But every later re-registration (start, resume,
+  rehydrate) sends `primaryAgent(record)`, which is `'claude'`, so after the first
+  restart `agents.list` ships no openclaw units and the gateway is gone. A registration
+  carries one agent. Fix: carry the full list on the registration (`agents: string[]`),
+  or have `primaryAgent` prefer a service agent. Not a regression: a claude box
+  registered `claude` before #429 too.
+
 ## From the review of #432 (origin-only download)
 
 - **Fixed in #432 (owner decision): a download never unpacks a `.git`.** The workspace
@@ -140,3 +164,33 @@ for teams PCs must never hold it (device tokens only).
   never consulted `controlBoxIsThisMachine`); #436 only makes the always-mute explicit.
   Fix: skip the mute when `controlBoxIsThisMachine()`, the same exception
   `dockerProviderRefusal` makes.
+
+## From the real-Hetzner sign-off of #429 / #432, noted, not fixed
+
+- **The operator PC loses `hub devices approve` once it enrolls.** Its device token
+  shadows the API key in `resolveHubTarget` (`apps/cli/src/commands/hub-devices.ts`),
+  so approve answers 403 ("only the hub owner"). Workaround: POST
+  `/api/v1/devices/approve` with the API key. From #422.
+- **`hub login` blip.** A PC's first `hub login` ended in `fetch failed`; it did not
+  reproduce on retry.
+- **Poller noise for hub-built boxes.** The hub logs `[cloud-poller <id>] poll error:
+  bridge/poll -> 404` every 30 s for every control-plane-topology box.
+- **A download whose origin is offline waits the full 60 s** before failing, even when
+  the origin has never connected; it could answer at once.
+- **The no-origin download message prints a literal `<box>`** (also noted under the
+  #432 review).
+- **`agentbox-ctl status | head -4` crashes with an EPIPE stack trace.**
+- **`tool.list` for a box with no origin runs on any PC.** Known from #426.
+- **A box cut off by the old PC-local re-register stays cut off.** Before #429's fix, a
+  re-register from the operator PC wrote its record's token into the hub's
+  registration; the box's relay.env keeps the hub's original token, so every box->hub
+  call 401s and a hub stop + start does not heal it. Recreate such a box. Root cause
+  (PC records can carry a different `relayToken` than the hub's) predates #429: any
+  remaining PC-local `registerBoxWithPlane` path can do the same.
+
+- **Host off: a classic cloud box's `agents.list` retries pile up.** With the PC asleep
+  (or an independent box), each retry parks another `agents.list` on the in-box queue
+  (13 in all, about 11 minutes with the 30 s timeouts) and holds an in-box socket. On
+  reconnect the poller drains and answers all of them (read-only, unprompted). An
+  unregistered hub-built box logs 13 "relay returned 401" lines over about 5 minutes.
+  Minor; fix: drop a parked `agents.list` when a newer one from the same box is queued.

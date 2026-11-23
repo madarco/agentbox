@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { log, spinner } from '@clack/prompts';
 import {
+  boxLlmProxyPreamble,
   buildCloudAttachInnerCommand,
   seedDeclaredFilesForLaunch,
   startDetachedCloudAgent,
@@ -18,7 +19,7 @@ import { agentResumeArgs } from '../agent-sessions.js';
 // Re-exported so existing importers (dashboard, unit tests) keep their paths; the
 // implementations now live in @agentbox/sandbox-cloud so the hub worker can share
 // them without importing apps/cli.
-export { buildCloudAttachInnerCommand, verifyDetachedSession };
+export { boxLlmProxyPreamble, buildCloudAttachInnerCommand, verifyDetachedSession };
 import { ensureFirewallReach } from '../lib/firewall-repair.js';
 import { providerForBox } from '../provider/registry.js';
 import { runWrappedAttach } from '../wrapped-pty/index.js';
@@ -162,6 +163,7 @@ export async function cloudAgentAttach(args: CloudAgentAttachArgs): Promise<void
     args.binary,
     extraArgs,
     agentTuiEnv(args.binary, await agentSettingsFor(args.binary, box.workspacePath)),
+    boxLlmProxyPreamble(box, args.binary),
   );
   // Every cloud provider honours `attach.openIn`.
   //

@@ -10,7 +10,7 @@
  * `apps/cli/src/control-plane/ensure-repo-installed.ts`.
  */
 import { execa } from 'execa';
-import type { SkillSelection } from '@agentbox/core';
+import type { LlmProxyRecord, SkillSelection } from '@agentbox/core';
 import { registrationOrigin } from '@agentbox/sandbox-core';
 
 export interface RegisterBoxWithPlaneArgs {
@@ -62,6 +62,13 @@ export interface RegisterBoxWithPlaneArgs {
   webPort?: number;
   /** Agent the box was created for, so an adopting PC can relaunch the right one. */
   agent?: string;
+  /**
+   * Named LLM account per agent (`BoxRecord.accounts`). A registration REPLACES
+   * the stored one, so a re-register without it would drop the box's accounts.
+   */
+  accounts?: Record<string, string>;
+  /** The hub egress proxy (`BoxRecord.llmProxy`), so an adopting PC keeps it. */
+  llmProxy?: LlmProxyRecord;
   /** Custody `projects/<slug>` key linking the box to its seed material. */
   projectSlug?: string;
   /**
@@ -122,6 +129,10 @@ export async function registerBoxWithPlane(args: RegisterBoxWithPlaneArgs): Prom
       image: args.image,
       webPort: args.webPort,
       agent: args.agent,
+      ...(args.accounts && Object.keys(args.accounts).length > 0
+        ? { accounts: args.accounts }
+        : {}),
+      ...(args.llmProxy ? { llmProxy: args.llmProxy } : {}),
       projectSlug: args.projectSlug,
     }),
   });

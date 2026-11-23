@@ -148,13 +148,23 @@ export const ACCOUNTS_CUSTODY_SEGMENT = 'accounts';
 
 /**
  * Custody-relative path of one account's credential file.
- * `default` stays at `agents/<agent>/<file>`; a named account lives at
- * `agents/<agent>/accounts/<account>/<file>`.
+ *
+ * `default` stays at `agents/<agent>/<file>`. A named account is keyed by the
+ * MACHINE whose store holds it: `agents/<agent>/accounts/<machine>/<account>/<file>`.
+ * Account ids are names local to each machine — two PCs' `claude/work` can be
+ * two subscriptions — so the machine is part of the key (#442 review).
  */
-export function accountCustodyPath(agent: string, account: string, file: string): string {
-  return isDefaultAccount(account)
-    ? `agents/${agent}/${file}`
-    : `agents/${agent}/${ACCOUNTS_CUSTODY_SEGMENT}/${account}/${file}`;
+export function accountCustodyPath(
+  agent: string,
+  account: string,
+  file: string,
+  machine?: string,
+): string {
+  if (isDefaultAccount(account)) return `agents/${agent}/${file}`;
+  if (!machine || !/^[A-Za-z0-9._-]+$/.test(machine)) {
+    throw new Error(`a named account's custody path needs the machine id it belongs to`);
+  }
+  return `agents/${agent}/${ACCOUNTS_CUSTODY_SEGMENT}/${machine}/${account}/${file}`;
 }
 
 /**

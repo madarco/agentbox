@@ -154,7 +154,11 @@ agentbox accounts rm claude/work      # its stored login and config volume (not 
 ```
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
-secret 0600 under `~/.agentbox/credentials/`.
+secret 0600 under `~/.agentbox/credentials/`. The hub's **Accounts** page shows
+the same list, and lets you add a setup token or API key, relabel or remove one.
+Named logins are copied to your control box keyed by this machine, so two
+computers' `work` accounts never mix; setup tokens and API keys stay on the
+machine.
 
 ### Choosing the account a box runs on
 
@@ -190,6 +194,52 @@ account's other boxes (and to your control box, if you have one), never to
 boxes on another account. Each renewal still signs the other copies out until
 they receive it, so give an account that several cloud boxes use at once a
 setup token: it never renews.
+
+## Route LLM traffic through the hub
+
+With `llm.proxy: forward`, a box's model traffic leaves from the **hub's** IP instead
+of the box's own. The rest of the box's traffic still goes direct: package installs,
+git, telemetry. This is useful when an account should always be seen from one address,
+or when the box's network shouldn't talk to model providers directly.
+
+```bash
+agentbox config set llm.proxy forward             # turn the hub's proxy on (global), and on for every new box
+agentbox hub restart                              # the proxy listener starts with the hub
+agentbox claude --llm-proxy forward               # or per box (needs the proxy on, above)
+```
+
+Only the hosts each agent declares are proxied: Claude's `api.anthropic.com`,
+`platform.claude.com`, `mcp-proxy.anthropic.com` and `claude.ai`, and Codex's
+`chatgpt.com`, `ab.chatgpt.com`, `auth.openai.com` and `api.openai.com`. Inside the
+box, a small proxy on `127.0.0.1` sends those hosts to the hub and everything else
+direct. Only the agent process is pointed at it, through `HTTPS_PROXY`; an existing
+`NO_PROXY` is kept. Agents that declare no model hosts (`opencode`, `pi`) are not
+proxied, even in a `forward` box.
+
+The hub's side is an HTTP CONNECT proxy on `llm.proxyPort` (default `8790`). It runs
+only once this machine opted in, with `llm.proxy: forward` in the **global** config or
+`llm.proxyUrl` set; until then a `forward` create is refused. `llm.proxyPort` and
+`llm.proxyUrl` are read from the global config only, since they are this machine's
+address. It never decrypts and only tunnels to those model hosts on port 443.
+
+Each box authenticates with a **proxy-only credential**: its box id plus an HMAC of its
+relay token. The relay token itself, which is the box's identity for git pushes, host
+tools and file copies, is never sent to the proxy. **The leg from a box to the hub's
+proxy is unencrypted TCP**, so that scoped credential can be read by anyone on the
+path. It can only be used to reach these model hosts through the hub, for that box.
+The model traffic inside the tunnel is still end-to-end TLS between the agent and
+the provider.
+
+- **Docker boxes** reach it at `host.docker.internal:<llm.proxyPort>`. No setup.
+- **Cloud and remote-docker boxes** need `llm.proxyUrl`, the `host:port` where the
+  hub's proxy port is reachable from the internet. A create with `forward` and no
+  `llm.proxyUrl` is refused. A Cloudflare tunnel carries no raw TCP, so it can't be
+  used for this. On Vercel, the proxy host is added to a `networkPolicy` allowlist
+  automatically.
+
+The setting is **fixed at create** and shown as `llmProxy` on the box in the API. It
+fails closed: if the hub can't be reached, the agent's call fails with an error naming
+the hub instead of going out directly.
 
 ## Share a login you already have
 

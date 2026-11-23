@@ -161,8 +161,14 @@ export async function start(opts: ConnectOptions, service: string): Promise<Serv
   return sendOneShot<ServiceStatus>(opts, { op: 'start', service });
 }
 
-export async function reload(opts: ConnectOptions): Promise<ReloadResult> {
-  return sendOneShot<ReloadResult>(opts, { op: 'reload' });
+export async function reload(
+  opts: ConnectOptions,
+  reloadOpts: { refreshAgents?: boolean } = {},
+): Promise<ReloadResult> {
+  return sendOneShot<ReloadResult>(opts, {
+    op: 'reload',
+    ...(reloadOpts.refreshAgents ? { refreshAgents: true } : {}),
+  });
 }
 
 export async function agentSession(

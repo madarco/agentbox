@@ -13,6 +13,7 @@ import {
   createDockerSyncTransport,
   boxAccountForContainer,
   sessionForwardEnv,
+  withSessionLlmProxy,
 } from '@agentbox/sandbox-docker';
 import { ensureAgentInstalled, AgentInstallError, resolveAgentSpec } from '@agentbox/sandbox-core';
 import {
@@ -634,7 +635,11 @@ export interface StartCodexSessionOptions {
 export async function startCodexSession(opts: StartCodexSessionOptions): Promise<void> {
   const sessionName = opts.sessionName ?? DEFAULT_CODEX_SESSION;
   const flags = agentLaunchFlags(resolveAgentSpec('codex'));
-  const cmd = ['codex', ...flags, ...opts.codexArgs].map(shQuote).join(' ');
+  const cmd = await withSessionLlmProxy(
+    'codex',
+    opts.container,
+    ['codex', ...flags, ...opts.codexArgs].map(shQuote).join(' '),
+  );
   const term = process.env['TERM'] ?? 'xterm-256color';
   const envFlags: string[] = ['-e', `TERM=${term}`];
   const hostForwarded: Record<string, string> = {};

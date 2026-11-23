@@ -17,6 +17,7 @@ import {
   generateBoxId,
   namedAccounts,
   persistentRefusal,
+  primaryAgent,
   resolveSyncTopology,
   UserFacingError,
 } from '@agentbox/core';
@@ -36,6 +37,7 @@ import type {
   GitWorktreeRecord,
   InboundPolicy,
   InspectedBox,
+  LlmProxyRecord,
   Provider,
   ProviderCheckpoint,
   ProviderSync,
@@ -412,9 +414,10 @@ export function createCloudProvider(
       projectIndex: box.projectIndex,
       autoApproveHostActions: box.autoApproveHostActions,
       autoApproveSafeHostActions: box.autoApproveSafeHostActions,
+      agent: primaryAgent(box),
       ...(box.skills ? { skills: box.skills } : {}),
-      agent: box.agents?.[0] ?? box.lastAgent,
       ...(box.accounts ? { accounts: box.accounts } : {}),
+      ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
     });
   }
 
@@ -667,7 +670,9 @@ export function createCloudProvider(
             publicHost: h.publicHost ?? box.cloud.publicHost,
             image: box.cloud.image,
             webPort: box.cloud.webPort,
-            agent: box.lastAgent,
+            agent: primaryAgent(box),
+            ...(box.accounts ? { accounts: box.accounts } : {}),
+            ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
             projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
           });
         } catch {
@@ -693,8 +698,9 @@ export function createCloudProvider(
           // Repo identity so a thin client can map this box to a local project
           // by origin (Step 4 adoption); best-effort.
           originUrl: await readGitOriginUrl(box.workspacePath).catch(() => undefined),
-          agent: box.agents?.[0] ?? box.lastAgent,
+          agent: primaryAgent(box),
           ...(box.accounts ? { accounts: box.accounts } : {}),
+          ...(box.llmProxy ? { llmProxy: box.llmProxy } : {}),
         });
       } catch {
         // best-effort
@@ -769,10 +775,12 @@ export function createCloudProvider(
       const timeoutMs =
         typeof timeoutOverride === 'number' && timeoutOverride >= 0 ? timeoutOverride : undefined;
       const networkPolicyOpt = req.providerOptions?.['networkPolicy'];
-      const networkPolicy =
+      const networkPolicy = withLlmProxyHost(
         typeof networkPolicyOpt === 'string' && networkPolicyOpt.trim() !== ''
           ? networkPolicyOpt.trim()
-          : undefined;
+          : undefined,
+        req.llmProxy,
+      );
       // Generic VM-size string, resolved per-provider by the call site
       // (`resolveBoxSize` + `--size` flag). Each backend interprets it natively
       // (hetzner: server type; daytona: cpu-mem-disk GB; vercel: vCPUs);
@@ -1350,7 +1358,12 @@ export function createCloudProvider(
                 publicHost: handle.publicHost,
                 image,
                 webPort: wp,
-                agent: req.agent,
+                // The same agent the host-relay branch below registers: a
+                // queued create passes `agents` and no `agent`, and without it
+                // the box's first boot got no service units (no gateway).
+                agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
+                ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+                ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
                 projectSlug: (await projectSlugAtEdge(originUrl)) ?? undefined,
               });
               // Reverse custody: a PC-created box that just registered on the
@@ -1443,8 +1456,9 @@ export function createCloudProvider(
               ...(req.inBoxClone ? {} : { workspacePath: req.workspacePath }),
               ...(req.repoKey ? { repoKey: req.repoKey } : {}),
               ...(req.requester ? { requester: req.requester } : {}),
-              agent: req.agents?.[0] ?? req.agent,
+              agent: primaryAgent({ agents: req.agents, lastAgent: req.agent }),
               ...(namedAccounts(req.accounts) ? { accounts: namedAccounts(req.accounts) } : {}),
+              ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
             });
           } catch (err) {
             log(
@@ -1482,6 +1496,7 @@ export function createCloudProvider(
                 ),
               }
             : {}),
+          ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
           relayToken,
           withPlaywright: req.withPlaywright,
           withEnv: req.withEnv,
@@ -2239,4 +2254,20 @@ export function emptyCloudStats(provider: string): BoxResourceStats {
     limits: { memoryBytes: null, cpus: null, pidsLimit: null, disk: null },
     warnings: [],
   };
+}
+
+/**
+ * A sandbox network allowlist (vercel's `networkPolicy`) must let the box reach
+ * the hub's LLM proxy, or a `forward` box could reach nothing that matters.
+ * Unset / `allow-all` already does; `deny-all` is left as asked (the box was
+ * meant to be offline). Exported for tests.
+ */
+export function withLlmProxyHost(
+  policy: string | undefined,
+  llmProxy: LlmProxyRecord | undefined,
+): string | undefined {
+  if (!policy || !llmProxy || policy === 'allow-all' || policy === 'deny-all') return policy;
+  const host = llmProxy.upstream.slice(0, llmProxy.upstream.lastIndexOf(':'));
+  const entries = policy.split(',').map((s) => s.trim());
+  return entries.includes(host) ? policy : [...entries, host].join(',');
 }

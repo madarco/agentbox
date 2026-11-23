@@ -1,4 +1,4 @@
-import type { SkillSelection } from '@agentbox/core';
+import type { LlmProxyRecord, SkillSelection } from '@agentbox/core';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, PromptAskEvent, RelayEvent } from '../types.js';
 
@@ -149,6 +149,12 @@ export interface CreateJobRequestOpts {
    * account store (llm-accounts Phase 3). Becomes `CreateBoxRequest.accounts`.
    */
   accounts?: Record<string, string>;
+  /**
+   * The hub egress proxy, resolved by the hub at enqueue against its own
+   * address (llm-accounts Phase 7). Becomes `CreateBoxRequest.llmProxy`. Not a
+   * portable key: a client sends a mode, never an upstream.
+   */
+  llmProxy?: LlmProxyRecord;
   /**
    * VM size and location for a cloud box (`--size`/`--location`, or the
    * project's `box.size<Provider>` / `box.<provider>Location`).

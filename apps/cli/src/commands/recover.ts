@@ -36,7 +36,7 @@ import {
 import { ensureRelay, generateRelayToken, readState, recordBox } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
 import { restoreAgentSessions } from '../agent-sessions.js';
-import { FIREWALL_PROVIDERS } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, FIREWALL_PROVIDERS } from '@agentbox/sandbox-core';
 import { withFirewallRepair } from '../lib/firewall-repair.js';
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
@@ -137,6 +137,27 @@ async function readBoxBranch(box: BoxRecord): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The `surface: 'service'` agents whose rendered config exists in the box
+ * (`configRender.file`, e.g. openclaw's `~/.openclaw/openclaw.json`). Best-effort:
+ * an unreachable box reports none.
+ */
+async function readBoxServiceAgents(box: BoxRecord): Promise<string[]> {
+  const found: string[] = [];
+  try {
+    const provider = await providerForBox(box);
+    for (const spec of AGENT_SYNC_SPECS) {
+      const file = spec.caps.surface === 'service' ? spec.configRender?.file : undefined;
+      if (!file) continue;
+      const r = await provider.exec(box, ['test', '-e', file], { user: 'vscode' });
+      if (r.exitCode === 0) found.push(spec.id);
+    }
+  } catch {
+    /* best-effort */
+  }
+  return found;
 }
 
 /**
@@ -291,6 +312,12 @@ async function adoptUnknownBox(
     );
     process.exit(1);
   }
+  // The agent the box was created for is not in the provider listing, and an
+  // agentless record now gets no service units: an adopted openclaw box would
+  // come back without its gateway. A service agent leaves its config file in
+  // the box, so that is what is read.
+  const serviceAgents = await readBoxServiceAgents(record);
+  if (serviceAgents.length > 0) record.agents = serviceAgents;
   const branch = await readBoxBranch(record);
   if (branch) {
     // Best-effort: only the box-visible branch + path are knowable from the

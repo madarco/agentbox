@@ -116,6 +116,12 @@ export function AppSidebar() {
           label="Skills"
         />
         <SideItem
+          active={pathname.startsWith('/accounts')}
+          to="/accounts"
+          icon={Icons.lock}
+          label="Accounts"
+        />
+        <SideItem
           active={pathname.startsWith('/devices')}
           to="/devices"
           icon={Icons.host}

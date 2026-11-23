@@ -7,6 +7,7 @@ import { seedHostBackupsFromCustody } from '../lib/hub-worker';
 const blob = (expiresAt: number) =>
   JSON.stringify({ claudeAiOauth: { refreshToken: 'r', expiresAt } });
 
+const M = '11111111-2222-3333-4444-555555555555';
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'agentbox-seed-acct-'));
@@ -35,9 +36,13 @@ describe('seedHostBackupsFromCustody per account (llm-accounts Phase 4)', () => 
   it("materializes a named account's secret from its custody path", async () => {
     const logs: string[] = [];
     await seedHostBackupsFromCustody(
-      custody({ 'agents/claude/accounts/work/.credentials.json': blob(200) }),
+      custody({
+        'agents/claude/accounts/11111111-2222-3333-4444-555555555555/work/.credentials.json':
+          blob(200),
+      }),
       (l) => logs.push(l),
       dir,
+      M,
     );
     const written = readFileSync(join(dir, 'credentials', 'claude', 'work.json'), 'utf8');
     expect(JSON.parse(written).claudeAiOauth.expiresAt).toBe(200);
@@ -48,9 +53,13 @@ describe('seedHostBackupsFromCustody per account (llm-accounts Phase 4)', () => 
     mkdirSync(join(dir, 'credentials', 'claude'), { recursive: true });
     writeFileSync(join(dir, 'credentials', 'claude', 'work.json'), blob(500));
     await seedHostBackupsFromCustody(
-      custody({ 'agents/claude/accounts/work/.credentials.json': blob(200) }),
+      custody({
+        'agents/claude/accounts/11111111-2222-3333-4444-555555555555/work/.credentials.json':
+          blob(200),
+      }),
       () => {},
       dir,
+      M,
     );
     const kept = readFileSync(join(dir, 'credentials', 'claude', 'work.json'), 'utf8');
     expect(JSON.parse(kept).claudeAiOauth.expiresAt).toBe(500);
@@ -59,11 +68,13 @@ describe('seedHostBackupsFromCustody per account (llm-accounts Phase 4)', () => 
   it('ignores malformed paths and bad ids', async () => {
     await seedHostBackupsFromCustody(
       custody({
-        'agents/claude/accounts/Bad Id/.credentials.json': blob(1),
-        'agents/claude/accounts/work/other.json': blob(1),
+        'agents/claude/accounts/11111111-2222-3333-4444-555555555555/Bad Id/.credentials.json':
+          blob(1),
+        'agents/claude/accounts/11111111-2222-3333-4444-555555555555/work/other.json': blob(1),
       }),
       () => {},
       dir,
+      M,
     );
     expect(() => readFileSync(join(dir, 'credentials', 'claude', 'work.json'))).toThrow();
   });
@@ -73,12 +84,29 @@ describe('seedHostBackupsFromCustody per account (llm-accounts Phase 4)', () => 
     const tok = (t: string) => JSON.stringify({ kind: 'setup-token', token: t }) + '\n';
     writeFileSync(join(dir, 'credentials', 'claude', 'ci.json'), tok('old-token-aaaaaaaaaaaaaaaa'));
     await seedHostBackupsFromCustody(
-      custody({ 'agents/claude/accounts/ci/.credentials.json': tok('new-token-bbbbbbbbbbbbbbbb') }),
+      custody({
+        'agents/claude/accounts/11111111-2222-3333-4444-555555555555/ci/.credentials.json': tok(
+          'new-token-bbbbbbbbbbbbbbbb',
+        ),
+      }),
       () => {},
       dir,
+      M,
     );
     expect(readFileSync(join(dir, 'credentials', 'claude', 'ci.json'), 'utf8')).toBe(
       tok('new-token-bbbbbbbbbbbbbbbb'),
     );
+  });
+  it("never seeds another machine's account of the same name", async () => {
+    await seedHostBackupsFromCustody(
+      custody({
+        'agents/claude/accounts/99999999-2222-3333-4444-555555555555/work/.credentials.json':
+          blob(9),
+      }),
+      () => {},
+      dir,
+      M,
+    );
+    expect(() => readFileSync(join(dir, 'credentials', 'claude', 'work.json'))).toThrow();
   });
 });

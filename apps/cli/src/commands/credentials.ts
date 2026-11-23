@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { getMachineId } from '@agentbox/config';
 import {
   runModelAuthIngest,
   findAgentSpec,
@@ -223,6 +224,8 @@ async function pushCredentialToCustody(
       agent,
       account,
       requireAgentCredential(resolveAgentSpec(agent)).boxRelPath,
+      // A named account belongs to THIS machine's store.
+      isDefaultAccount(account) ? undefined : getMachineId(),
     );
     const item = { path, data: Buffer.from(content, 'utf8') };
     const manifest = await client.list('agents');

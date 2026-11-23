@@ -90,6 +90,8 @@ export interface HostReachBox {
   originMachineId?: string;
   /** `box.autoApproveSafeHostActions` from the registration (absent = enabled). */
   autoApproveSafeHostActions?: boolean;
+  /** The agent the box was created for (its registration's), for `agents.list`. */
+  agent?: string;
 }
 
 /**

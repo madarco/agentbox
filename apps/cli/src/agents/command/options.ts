@@ -7,6 +7,7 @@
  * `test/_fixtures/agent-cli-surface.json` is what asserts that description of
  * reality is exact, flag for flag.
  */
+import { LLM_PROXY_FLAG_HELP } from '../../lib/llm-proxy-flag.js';
 import { collectSkillNames, SKILL_FLAG_HELP } from '../../lib/skills/selection.js';
 import { Command } from 'commander';
 import { agentAccountKinds, type LlmAccountKind } from '@agentbox/core';
@@ -57,6 +58,8 @@ export interface AgentCreateOptions {
    *  Undefined when neither was passed, which is what lets the agent's registry
    *  surface supply the default. */
   persistent?: boolean;
+  /** `--llm-proxy <off|forward>` (llm-accounts Phase 7). */
+  llmProxy?: string;
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;
@@ -182,6 +185,7 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
       'always-on box: never auto-paused, never idle-lapsed, skipped by `agentbox prune`, confirmed before destroy, and started again by the relay after a host reboot. Not available on e2b/vercel (platform session cap). Sets box.persistent for this box.',
     )
     .option('--no-persistent', 'create an expendable box even when box.persistent is set')
+    .option('--llm-proxy <mode>', LLM_PROXY_FLAG_HELP)
     .option('--skills <names>', SKILL_FLAG_HELP.skills, collectSkillNames)
     .option('--no-skills', SKILL_FLAG_HELP.noSkills)
     .option('--skip-skills <names>', SKILL_FLAG_HELP.skipSkills, collectSkillNames)

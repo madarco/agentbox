@@ -67,6 +67,7 @@ describe('CredentialsFanout', () => {
       accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
       accountKindFor: () => Promise.resolve('login'),
       custody: { put },
+      originMachineFor: () => Promise.resolve('11111111-2222-3333-4444-555555555555'),
       boxAccountFor: (boxId, agent) =>
         Promise.resolve(boxId === 'box-work' && agent === 'claude' ? 'work' : undefined),
     });
@@ -81,7 +82,7 @@ describe('CredentialsFanout', () => {
         .claudeAiOauth.expiresAt,
     ).toBe(999);
     expect(put).toHaveBeenCalledWith(
-      'agents/claude/accounts/work/.credentials.json',
+      'agents/claude/accounts/11111111-2222-3333-4444-555555555555/work/.credentials.json',
       expect.anything(),
     );
     // A default box updates the default, on its own chain.

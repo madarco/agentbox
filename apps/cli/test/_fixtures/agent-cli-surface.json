@@ -147,6 +147,13 @@
         "negate": true
       },
       {
+        "flags": "--llm-proxy <mode>",
+        "description": "route the box's LLM traffic through the hub's egress proxy: `forward` (the agent's model hosts leave from the hub's IP; cloud boxes need llm.proxyUrl) or `off`. Default: llm.proxy. Fixed at create.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--skills <names>",
         "description": "give the box only these skills from the hub's library (comma-separated, repeatable)",
         "defaultValue": null,
@@ -676,6 +683,13 @@
         "defaultValue": null,
         "mandatory": false,
         "negate": true
+      },
+      {
+        "flags": "--llm-proxy <mode>",
+        "description": "route the box's LLM traffic through the hub's egress proxy: `forward` (the agent's model hosts leave from the hub's IP; cloud boxes need llm.proxyUrl) or `off`. Default: llm.proxy. Fixed at create.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
       },
       {
         "flags": "--skills <names>",
@@ -1430,6 +1444,13 @@
         "negate": true
       },
       {
+        "flags": "--llm-proxy <mode>",
+        "description": "route the box's LLM traffic through the hub's egress proxy: `forward` (the agent's model hosts leave from the hub's IP; cloud boxes need llm.proxyUrl) or `off`. Default: llm.proxy. Fixed at create.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--skills <names>",
         "description": "give the box only these skills from the hub's library (comma-separated, repeatable)",
         "defaultValue": null,
@@ -1903,6 +1924,13 @@
         "defaultValue": null,
         "mandatory": false,
         "negate": true
+      },
+      {
+        "flags": "--llm-proxy <mode>",
+        "description": "route the box's LLM traffic through the hub's egress proxy: `forward` (the agent's model hosts leave from the hub's IP; cloud boxes need llm.proxyUrl) or `off`. Default: llm.proxy. Fixed at create.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
       },
       {
         "flags": "--skills <names>",

@@ -20,7 +20,7 @@ describe('daemon startup order', () => {
 
   it('fetches the watch list AFTER the relay forwarder is listening', () => {
     const forwarderAt = src.indexOf('toolLinks.start()');
-    const fetchAt = src.indexOf('fetchWatchList(');
+    const fetchAt = src.indexOf('void fetchWatchListWithRetry(');
     expect(forwarderAt, 'toolLinks.start() marks the post-forwarder point').toBeGreaterThan(-1);
     expect(fetchAt, 'daemon must fetch the watch list').toBeGreaterThan(-1);
     expect(fetchAt).toBeGreaterThan(forwarderAt);
@@ -32,7 +32,7 @@ describe('daemon startup order', () => {
     // so with the host off it never settles: awaiting it cost the box credential
     // fan-out outright. Start baked, upgrade later via setFiles().
     const startAt = src.indexOf('credentialsWatcher = new CredentialsWatcher(');
-    const fetchAt = src.indexOf('fetchWatchList(');
+    const fetchAt = src.indexOf('void fetchWatchListWithRetry(');
     expect(startAt).toBeGreaterThan(-1);
     expect(startAt).toBeLessThan(fetchAt);
   });
@@ -41,8 +41,9 @@ describe('daemon startup order', () => {
     // `await fetchWatchList()` anywhere here also delays the SIGTERM/SIGINT
     // handlers registered below it, so a stop during the hang skips the whole
     // graceful path (credential flush, stopAll, relay close).
-    expect(src).not.toMatch(/await\s+fetchWatchList\(/);
-    expect(src).toMatch(/void\s+fetchWatchList\(/);
+    // (`reload --agents` awaits a re-fetch inside its socket handler: off startup.)
+    expect(src).not.toMatch(/await\s+fetchWatchListWithRetry\(/);
+    expect(src).toMatch(/void\s+fetchWatchListWithRetry\(/);
   });
 
   it('fetches the watch list OUTSIDE the credential-sync gate', () => {
@@ -55,7 +56,7 @@ describe('daemon startup order', () => {
     // Source-level, like the ordering checks above: the failure is silent (the
     // reporter just keeps its baked list), so nothing observable breaks.
     const gateAt = src.indexOf("AGENTBOX_CREDENTIAL_SYNC !== '0'");
-    const fetchAt = src.indexOf('fetchWatchList(');
+    const fetchAt = src.indexOf('void fetchWatchListWithRetry(');
     expect(gateAt, 'the credential-sync gate must still exist').toBeGreaterThan(-1);
     expect(fetchAt).toBeGreaterThan(gateAt);
 

@@ -20,6 +20,7 @@ export {
   type CreateCloudProviderOptions,
 } from './cloud-provider.js';
 export {
+  boxLlmProxyPreamble,
   buildCloudAttachInnerCommand,
   startDetachedCloudAgent,
   startDetachedSession,

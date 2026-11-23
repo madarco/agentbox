@@ -17,7 +17,10 @@ import type { AgentSettings, BoxRecord, Provider } from '@agentbox/core';
 import { agentSettingsFor } from '@agentbox/config';
 import {
   agentTuiEnv,
+  allAgentLlmHosts,
+  findAgentSpec,
   isRuntimeAgent,
+  llmProxyLaunchPreamble,
   resolveAgentSpec,
   runModelAuthIngest,
 } from '@agentbox/sandbox-core';
@@ -64,7 +67,13 @@ export function buildCloudAttachInnerCommand(
   binary: string,
   extraArgs?: string[],
   env?: Record<string, string>,
+  /**
+   * Shell run before the agent (the LLM split proxy, `llmProxyLaunchPreamble`).
+   * Must carry no single quote: it lands inside the `bash -lc '…'` body.
+   */
+  preamble = '',
 ): string {
+  if (preamble.includes("'")) throw new Error('launch preamble must not contain a single quote');
   // Flags the agent needs to load what its `seeds` placed (codex will not read
   // `hooks.json` without them). PREPENDED, because codex's `resume` is a
   // subcommand and global flags must precede it — the same order the docker
@@ -84,7 +93,7 @@ export function buildCloudAttachInnerCommand(
   const prelude = isRuntimeAgent(binary) ? agentLaunchPrelude(resolveAgentSpec(binary)) : '';
   const args = [...launchFlags, ...(extraArgs ?? [])];
   if (args.length === 0) {
-    return `bash -lc '${agentStartBanner(binary)}${exports}${prelude}exec ${binary}'`;
+    return `bash -lc '${agentStartBanner(binary)}${preamble}${exports}${prelude}exec ${binary}'`;
   }
   // Encode EACH arg to its own base64 token, newline-join the tokens, then
   // base64 that whole list once more into a single opaque `blob`. The launcher
@@ -107,7 +116,7 @@ export function buildCloudAttachInnerCommand(
   // the `bash -lc` body MUST be single-quoted — a double-quoted `"${A[@]}"`
   // expands eagerly under the outer `/bin/sh -c` before the loop runs, dropping
   // the seed prompt. Single quotes are inert to sh; bash runs `${A[@]}`/`$(…)`.
-  return `bash -lc '${agentStartBanner(binary)}${exports}${prelude}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
+  return `bash -lc '${agentStartBanner(binary)}${preamble}${exports}${prelude}A=(); while IFS= read -r t; do A+=("$(printf %s "$t" | base64 -d)"); done <<< "$(echo ${blob} | base64 -d)"; exec ${binary} "\${A[@]}"'`;
 }
 
 /**
@@ -354,6 +363,7 @@ export async function startDetachedCloudAgent(
     binary,
     extraArgs,
     agentTuiEnv(binary, await resolveBoxAgentSettings(box, binary)),
+    boxLlmProxyPreamble(box, binary),
   );
   const attempts = Math.max(1, args.startRetry?.attempts ?? DEFAULT_START_ATTEMPTS);
   const backoffMs = args.startRetry?.backoffMs ?? DEFAULT_START_BACKOFF_MS;
@@ -379,4 +389,16 @@ export async function startDetachedCloudAgent(
   }
   await verifyDetachedSession(provider, box, sessionName, binary, args.verify);
   return box;
+}
+
+/**
+ * The LLM split-proxy preamble for `binary` in `box` (llm-accounts Phase 7):
+ * '' unless the box was created with `llm.proxy: forward` and the agent
+ * declares model hosts.
+ */
+export function boxLlmProxyPreamble(box: BoxRecord, binary: string): string {
+  if (!box.llmProxy || !findAgentSpec(binary)?.llmHosts?.length) return '';
+  // Every agent's hosts, not this one's: one split proxy serves the whole box,
+  // so a second agent finds it already running with the same config.
+  return llmProxyLaunchPreamble(box.llmProxy, allAgentLlmHosts());
 }

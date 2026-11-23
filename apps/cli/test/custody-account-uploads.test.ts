@@ -10,6 +10,7 @@ const realHome = process.env.HOME;
 process.env.HOME = home;
 const { collectAgentCredentialUploads } = await import('../src/control-plane/custody-client.js');
 const core = await import('@agentbox/sandbox-core');
+const { getMachineId } = await import('@agentbox/config');
 
 const LOGIN = JSON.stringify({ claudeAiOauth: { refreshToken: 'r', expiresAt: 5 } });
 
@@ -30,14 +31,13 @@ afterAll(() => {
 });
 
 describe('custody push carries named accounts (llm-accounts Phase 4)', () => {
-  it("uploads each named account's secret under its account path", async () => {
+  it('uploads each named LOGIN under this machine, never a pasted secret', async () => {
     const items = await collectAgentCredentialUploads();
-    const paths = items.map((i) => i.path).sort();
-    expect(paths).toEqual([
-      'agents/claude/accounts/ci/.credentials.json',
-      'agents/claude/accounts/work/.credentials.json',
+    const machine = getMachineId();
+    expect(items.map((i) => i.path)).toEqual([
+      `agents/claude/accounts/${machine}/work/.credentials.json`,
     ]);
-    expect(items.find((i) => i.path.includes('/work/'))!.data.toString()).toBe(LOGIN);
+    expect(items[0]!.data.toString()).toBe(LOGIN);
   });
   it('honours the agent filter', async () => {
     expect(await collectAgentCredentialUploads('codex')).toEqual([]);

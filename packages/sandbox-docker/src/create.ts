@@ -81,6 +81,7 @@ import {
   generateBoxId,
   isDefaultAccount,
   namedAccounts,
+  type LlmProxyRecord,
   type ResolvedCarryEntry,
   type ResyncResult,
   type SkillSelection,
@@ -199,6 +200,8 @@ export interface CreateBoxOptions {
    * shared (or isolated) one, and its launch env follows the account.
    */
   accounts?: Record<string, string>;
+  /** The hub egress proxy, resolved by the caller (llm-accounts Phase 7). */
+  llmProxy?: LlmProxyRecord;
   /**
    * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
    * every box mounts the shared `agentbox-claude-config` volume at
@@ -1023,6 +1026,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ? { borrowedCredentials: [...opts.borrowCredentials] }
       : {}),
     ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
+    ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
     withPlaywright: opts.withPlaywright ? true : undefined,
     withEnv: opts.withEnv ? true : undefined,
     autoApproveHostActions: autoApproveHostActions ? true : undefined,

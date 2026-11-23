@@ -218,7 +218,7 @@ export type CtlRequest =
   | { op: 'restart'; service: string }
   | { op: 'stop'; service: string }
   | { op: 'start'; service: string }
-  | { op: 'reload' }
+  | { op: 'reload'; refreshAgents?: boolean }
   | { op: 'ping' }
   | { op: 'agent-session'; sessionName?: string }
   | {

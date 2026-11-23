@@ -6,6 +6,7 @@
  * `provider` discriminator (or, for `create`, from config/flags) and calls it.
  */
 
+import type { LlmProxyRecord } from './box-record.js';
 import type { BoxRecord, ProviderName, SkillSelection, SshTargetRecord } from './box-record.js';
 import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxEndpoints } from './endpoints.js';
@@ -169,6 +170,11 @@ export interface CreateBoxRequest {
    * that agent's `default` account. Recorded as `BoxRecord.accounts`.
    */
   accounts?: Record<string, string>;
+  /**
+   * Route the box's LLM traffic through the hub's CONNECT proxy (Phase 7),
+   * resolved by the caller. Recorded as `BoxRecord.llmProxy`.
+   */
+  llmProxy?: LlmProxyRecord;
   /** Override the base image / snapshot. */
   image?: string;
   /**

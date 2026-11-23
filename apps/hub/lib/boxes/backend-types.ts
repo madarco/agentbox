@@ -1,3 +1,4 @@
+import type { AddBoxAgentResult } from '../backend/box-agents';
 import type {
   HubState,
   ManagerView,
@@ -187,6 +188,12 @@ export interface CreateBoxOpts {
    * THIS machine's account store; agents left out fall back to `<agent>.account`.
    */
   accounts?: Record<string, string>;
+  /**
+   * `--llm-proxy`: route the box's LLM traffic through this hub's egress proxy
+   * (llm-accounts Phase 7). Absent → the project's `llm.proxy`. The upstream is
+   * resolved here, from this hub's own `llm.proxyPort` / `llm.proxyUrl`.
+   */
+  llmProxy?: 'off' | 'forward';
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;
@@ -544,7 +551,7 @@ export type BoxLogAttachSpec =
 // packages never enter Next's bundle. This is a pure-type module (no runtime
 // imports) so both the implementation and the ambient global can share it.
 export interface HubBackend
-  extends WorkspaceBackend, ManagerBackend, TimelineBackend, CheckoutBackend {
+  extends WorkspaceBackend, ManagerBackend, TimelineBackend, CheckoutBackend, AccountBackend {
   // authMode is an env-derived concern layered on by source.ts, not the host
   // backend — so the backend produces everything else. `live` (opt-in, expensive
   // — mirrors providers' `?freshness=1`) refreshes each cloud box's `state` with
@@ -737,6 +744,10 @@ export interface HubBackend
   // store). null when the hub doesn't know the box; `{ claude: null }` when it
   // knows the box but no snapshot has been reported yet.
   getAgentState(id: string): Promise<AgentStateResult | null>;
+  // Add an agent to an existing box: this hub records it and re-registers the
+  // box with its own token, so `agents.list` hands the box that agent's units
+  // (`agentbox openclaw <box>`; the box's ctl then runs `reload --agents`).
+  addBoxAgent(id: string, agent: string): Promise<AddBoxAgentResult>;
 
   // ── box service logs ──
   // Non-follow tail of a service log (or the ctl-daemon log with `daemon`).
@@ -1449,4 +1460,48 @@ export interface WorkspaceBackend {
     byBox: Map<string, BoxTaskSummary>;
     byJob: Map<string, BoxTaskSummary>;
   }>;
+}
+
+// Named LLM accounts (docs/llm-accounts-plan.md, Phase 5): `/api/v1/accounts`.
+// The accounts of the machine whose store this hub owns. Never a secret.
+/** One account as the API shows it. */
+export interface AccountView {
+  agent: string;
+  id: string;
+  label?: string;
+  kind: AccountKind;
+  identity?: AccountIdentity;
+  /** Whether a secret is stored for it (a login whose capture failed has none). */
+  hasSecret: boolean;
+  /** Names of the boxes that record this account (running it, or borrowing it). */
+  boxes: string[];
+}
+
+/** An agent that can hold named accounts, and which kinds. */
+export interface AccountAgentView {
+  id: string;
+  kinds: readonly AccountKind[];
+}
+
+export type AccountResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: 'invalid_request' | 'not_found' | 'conflict'; error: string };
+
+export interface AccountBackend {
+  listAccounts(): Promise<{ accounts: AccountView[]; agents: AccountAgentView[] }>;
+  /** A pasteable kind (`api-key` / `setup-token`); a login is interactive only. */
+  addPastedAccount(input: unknown): Promise<AccountResult<AccountView>>;
+  labelAccount(agent: string, id: string, label: unknown): Promise<AccountResult<AccountView>>;
+  removeAccount(
+    agent: string,
+    id: string,
+  ): Promise<AccountResult<{ volumeRemoved: boolean; volumeError?: string }>>;
+}
+
+export type AccountKind = 'login' | 'setup-token' | 'api-key';
+
+export interface AccountIdentity {
+  email?: string;
+  org?: string;
+  plan?: string;
 }
