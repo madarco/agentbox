@@ -21,6 +21,8 @@ import {
   opencodeSessionInfo,
   resolveOpencodeVolume,
 } from './docker-sync.js';
+import { registerAgentHistoryModule } from '@agentbox/core';
+import { opencodeHistoryModule } from './history.js';
 
 /** OpenCode's docker behavior. No post-sync hook and no expiring credential. */
 export const opencodeSyncModule: AgentSyncModule = {
@@ -62,9 +64,11 @@ export const opencodeCloudModule: AgentCloudModule = {
 export function registerOpencodeAgent(): void {
   registerAgentSyncModule(opencodeSyncModule);
   registerAgentCloudModule(opencodeCloudModule);
+  registerAgentHistoryModule(opencodeHistoryModule);
 }
 
 export { seedOpencodeModelState } from './cloud-sync.js';
 export * from './docker-sync.js';
 
 export { opencodeStagedItems } from './staged-items.js';
+export { opencodeHistoryModule } from './history.js';

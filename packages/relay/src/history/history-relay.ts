@@ -166,7 +166,18 @@ export class HistoryRelay {
       s.credential?.boxAbsPath ? [s.credential.boxAbsPath] : [],
     );
     if (isDockerBox(reg)) {
-      return { enabled: false, reason: 'shipped by the host relay', agents: [], credentialFiles };
+      // The relay ships a docker box's files, but only the box can read its
+      // live sqlite stores: its ctl runs the row cursor for these.
+      const materialize = (await this.captureEnabled(reg))
+        ? agents.filter((a) => a.spec.transcripts.some((t) => t.mode === 'snapshot'))
+        : [];
+      return {
+        enabled: false,
+        reason: 'shipped by the host relay',
+        agents: [],
+        materialize,
+        credentialFiles,
+      };
     }
     if (!(await this.captureEnabled(reg))) {
       return {

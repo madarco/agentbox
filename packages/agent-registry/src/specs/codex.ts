@@ -99,6 +99,19 @@ export const codexSpec: AgentSyncSpec = {
       ],
     },
   ],
+  // Session history (docs/agent-history-plan.md). The rollout is the transcript;
+  // `state_5.sqlite` / `thread_history_1.sqlite` are projections, not shipped.
+  // The session id is the uuid the rollout's name ends with.
+  history: {
+    transcripts: [
+      {
+        root: 'sessions',
+        format: 'jsonl',
+        mode: 'append',
+        sessionFiles: ['*/*/*/rollout-*-<sessionId>.jsonl'],
+      },
+    ],
+  },
   credential: {
     boxRelPath: 'auth.json',
     boxAbsPath: `${CODEX_BOX_DIR}/auth.json`,

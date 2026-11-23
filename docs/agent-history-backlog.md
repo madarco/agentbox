@@ -144,12 +144,107 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   verbatim; a CR/LF or a character above U+00FF in a path makes the response
   throw (500). Use `encodeURIComponent(file.path)`.
 - **Phase 3 id shapes (LATER-7).**
-  - The prefix lookup refuses refs containing `_`; escape with `LIKE … ESCAPE`
-    instead.
+  - ~~The prefix lookup refuses refs containing `_`~~ — fixed in Phase 3 (`LIKE …
+    ESCAPE`), since an opencode id (`ses_…`) is otherwise unreachable by the
+    8-character id `sessions ls` prints.
   - `downloadTarget` skips session ids outside
     `^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$` with a misleading "outside the folder"
     message.
   - Revisit both when codex, pi and opencode ids arrive.
+
+## Phase 3 (other agents)
+
+- **openclaw.** Not captured. Its 2026.11 store is a per-agent sqlite with a
+  large schema; transcripts look like `transcript_events(session_id, seq,
+  event_json | event_zstd, created_at, …)`, with compressed events the row
+  cursor cannot read as JSON. Its volume is always isolated per box, so it
+  would also need a "every session in the db" mode instead of bindings.
+  Measure it in a live openclaw box first.
+- **codex `.jsonl` → `.jsonl.zst`.** Codex compresses cold rollouts and the
+  shipper does not follow the rename. A rollout compressed before its tail was
+  shipped loses that tail (the hub keeps what it has). Boxes ship every 30 s,
+  so only a session that went cold inside one pass is at risk. Fix: treat
+  `<f>.jsonl.zst` as `<f>.jsonl` and decompress at the edge.
+- **codex sub-agent threads.** They are rollouts of their own and ship only
+  when a hook fires with their own `session_id`. Not verified; if hooks only
+  name the root thread, sub-agent rollouts are never bound.
+- **opencode streaming rows.** The row cursor writes a message/part row once it
+  has been quiet for 20 s, and the parser projects a part the first time it
+  sees it. A text part that paused longer than that mid-stream is projected
+  with its early text. Usage is only taken from a completed message, so it is
+  not affected.
+- **Row cursor on a paused docker box.** The destroy flush runs the box's
+  `agentbox-ctl history flush` only when the box is running; a paused box's
+  unsettled opencode rows (the last ~20 s) are not copied out.
+- **Row cursor needs Node ≥ 22.5** (`node:sqlite`) in the box. On an older base
+  it is a no-op and opencode is not captured until the provider is re-baked.
+- **`agentbox-history/` on the shared opencode volume** grows with every bound
+  session and is never cleaned.
+- **Re-parse keeps identity.** The job re-derives turns, usage and title, not
+  `sessionKey`, parent or `child`, which are fixed at a file's first frame. A
+  change to `identify()` needs its own migration.
+- **Re-parse blocks ingest per session.** Each session is re-derived inside the
+  ingest queue, so a very large session holds frames back while it runs.
+- **From the Phase 3 review, not fixed:**
+  - *opencode final flush ships unsettled parts.* A destroy's flush ignores
+    `settleMs`, so a part still streaming is written, projected with its
+    partial text, and its complete copy is skipped as seen. Fix: let a later,
+    longer copy of a text part replace the turn (needs a record update path).
+  - *Rows that never become due* (a NULL parent column, a parent from an
+    unbound session, a NULL `updated`) keep the row cursor's stamp cache off,
+    so the db is reopened and scanned every pass. Drop such rows from
+    `pending`.
+  - *Glob expansion cost on clouds.* ctl expands codex's
+    `*/*/*/rollout-*-<id>.jsonl` with a `readdir` per wildcard segment, per
+    bound session, per pass. Cache the resolved path per session id, or list
+    the root once per pass as the docker `scan` does.
+  - *Session-id regex in three places* (`row-cursor.ts`, `shipper.ts`, ctl's
+    `appendHistoryBinding`). Export one constant from `core/history`.
+- **codex hooks in the TUI: they fire (checked 2026-11-23).** One interactive
+  codex 0.171 TUI turn (`--enable hooks --dangerously-bypass-hook-trust`, as
+  agentbox launches it) ran SessionStart/Stop, the session bound and shipped,
+  and `sessions search` found it. `ctl/src/codex-scraper.ts`'s note that
+  hooks.json often does not fire in TUI mode predates this codex; the scraper
+  stays the activity source, but history attribution does not depend on it.
+  The hooks now buffer stdin and background ctl (#447 review R1): with the
+  in-box daemon stopped a hook returned in 10 ms and still wrote the binding.
+- **From the review of #447 (2026-11-23), deferred:**
+  - *L2: opencode rows reach the redactor double-escaped.* A row's JSON
+    columns (`data`) are written as strings inside the line, so a quoted
+    `"API_KEY": "…"` inside them is `\"API_KEY\": \"…\"` and the
+    `KEY: value` rule misses it (exact host-secret values and known formats
+    still match). Fix: parse JSON columns in `rowLine` and write them as
+    objects.
+  - *L3: the first copy of a session is synchronous and in memory.* The row
+    cursor reads every due row of a session, builds all its lines and appends
+    them in one write, inside the ctl daemon's event loop. A large first copy
+    (an old session bound late) blocks the daemon and holds it all in memory.
+    Batch the append per query page.
+  - *L4: the cursor temp file is always `<path>.tmp`.* Two writers (a destroy's
+    `history flush` racing the daemon's tick, or the same opencode session in
+    two boxes on the shared volume) can rename each other's temp. Harmless
+    today (the parser dedupes), but use a unique temp name.
+  - *L5: opencode binds at its first `session.idle`.* A session whose first
+    turn is still running at a destroy or a crash is never bound, so nothing
+    of it ships.
+  - *L6: a failed re-parse saves the parse state at the failure point.* The
+    next ingest frame then parses from a state that does not match the file's
+    offset. Do not save the state of a file whose re-parse failed (the session
+    stays stale and is redone anyway).
+  - *L7: opencode revert.* A revert deletes message/part rows in the db; the row
+    cursor only sees rows that exist, so the hub keeps the reverted turns.
+  - *L8: smaller items.*
+    - `agentbox-ctl history flush` builds its `HistoryLoop` with no logger, so
+      row-cursor errors during a destroy are silent.
+    - opencode's parse state (seen parts, roles) grows with the session and is
+      rewritten with every frame.
+    - The docker `scan` lists every codex and pi rollout on the shared volume
+      on every pass (5 levels deep), not just the bound sessions'.
+    - The `session` table has no settle time, so a busy session's row (its
+      `time_updated` moves with every message) is re-copied on every pass.
+- **Boxes built before Phase 3** bind claude sessions only. Codex, pi and
+  opencode report their session ids from hooks baked into the image (docker)
+  or the provider's base snapshot (clouds); rebuild or re-bake to capture them.
 
 ## Phase 4 (memory in the hub)
 

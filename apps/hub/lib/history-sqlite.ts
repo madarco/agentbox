@@ -479,6 +479,21 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         return keys;
       });
     },
+    async staleParserSessions(agent, version, limit) {
+      return (
+        db
+          .prepare(
+            'SELECT key FROM history_sessions WHERE agent = ? AND parser_version < ? ORDER BY updated_at DESC LIMIT ?',
+          )
+          .all(agent, version, limit) as Row[]
+      ).map((r) => String(r.key));
+    },
+    async clearSessionTitle(key) {
+      db.prepare('UPDATE history_sessions SET title = NULL WHERE key = ?').run(key);
+    },
+    async setSessionParserVersion(key, version) {
+      db.prepare('UPDATE history_sessions SET parser_version = ? WHERE key = ?').run(version, key);
+    },
     async gcBlobs() {
       const r = db
         .prepare(
@@ -536,13 +551,16 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         .prepare('SELECT key FROM history_sessions WHERE key = ? OR session_id = ?')
         .all(ref, ref) as Row[];
       if (exact.length > 0) return exact.map((r) => String(r.key));
-      if (ref.length < 8 || /[%_\\]/.test(ref)) return [];
+      if (ref.length < 8) return [];
+      // opencode ids carry `_` (`ses_…`): escape LIKE's wildcards instead of
+      // refusing them.
+      const pattern = `${ref.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
       return (
         db
           .prepare(
-            'SELECT key FROM history_sessions WHERE session_id LIKE ? ORDER BY updated_at DESC LIMIT 11',
+            "SELECT key FROM history_sessions WHERE session_id LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 11",
           )
-          .all(`${ref}%`) as Row[]
+          .all(pattern) as Row[]
       ).map((r) => String(r.key));
     },
 
