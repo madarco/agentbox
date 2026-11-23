@@ -528,6 +528,75 @@ folder). Still open:
   drops any MCP server carrying the hub token or pointing at a hub `/api/mcp`.
   The box scope no longer falls back to a live `git remote get-url`.
 
+## Phase 7 (usage + dashboard)
+
+- **No cost.** The plan's dashboard shows cost from a versioned price table,
+  computed at read time. Not built: tokens only, in the API, CLI and page. pi
+  and opencode already compute a cost in their own records; we still store
+  tokens only.
+- **Day buckets use one UTC offset.** `tzOffset` is the caller's offset now,
+  so a window that spans a DST change puts the hour around the switch in the
+  neighbouring day. An IANA zone would need the bucketing in JS or a calendar
+  table.
+- **Account is stamped once, from this hub's box record.** A session's account
+  is read from `record.accounts` when its first file arrives (backfilled at
+  hub start for sessions whose box is still in `state.json`). Sessions of boxes
+  destroyed before Phase 7, or of boxes this hub has no record of (another PC
+  ingesting over REST, a remote-hub split store), stay `unknown`. A session
+  resumed in a box on another account keeps the first one.
+- **Purged sessions are not re-parsed.** Retention keeps a session's usage
+  rows but deletes its raw, so a later parser fix (like claude v2's copied-usage
+  rule) cannot reach usage older than `history.retentionDays`.
+- **Copied usage, other agents.** claude drops usage on `/branch` and
+  desktop-continuation copies (parser v2). pi `/fork`/`/clone` and codex
+  `fork` were not measured: if they copy entries with usage into the new file,
+  that usage counts twice.
+- **Dashboard scope.** Not in this phase: live sessions, tool-call and failure
+  rates, a workspace dimension (sessions carry no workspace id yet), and a
+  drill-down into a session's transcript (the hub has no sessions page; the
+  session breakdown links nowhere).
+- **Usage query cost.** Every page load runs eight grouped queries over
+  `history_usage` joined to sessions, with a time filter on an expression
+  (`COALESCE(ts_ms, …)`) that the `ts_ms` index does not serve. Fine at
+  hundreds of thousands of rows; a daily rollup table is the fix if it shows.
+- **From the Phase 7 review, not fixed:**
+  - *Store-only boxes have no account.* `accountOf` reads this hub's
+    `state.json`. A box a control box knows only from a Store registration
+    (`reg.accounts`, another PC's box) is stamped unknown, and the backfill
+    cannot reach it either. Read the registration's accounts too.
+  - *A purged session named by usage cannot be opened.* `usage --by session`
+    and the page's Top sessions list sessions whose transcript retention
+    deleted; `sessions show <id>` then answers "not found" with no hint why.
+    Say "purged by retention" instead.
+  - *Shared shapes copied.* `shortRepo` and the dimension list exist in the CLI
+    (`usage-format.ts`), the hub backend and the page. A nested GitLab path
+    (`group/sub/repo`) shortens to `sub/repo` in both copies.
+- **From the review of #452 (2026-11-23), deferred:**
+  - *L1: the `ts_ms` fill runs once.* It runs only in the migration that adds
+    the column, so a crash between the two statements, or an older hub writing
+    to a migrated db, leaves rows with no `ts_ms` for good (they fall back to
+    the session's last activity). Fill `ts_ms IS NULL AND ts IS NOT NULL` on
+    every open.
+  - *L2: the Usage page's cost.* It refreshes every 30 s even in a hidden tab.
+    At 1M usage rows its 8 queries take about 5.7 s, because the time filter is
+    an expression the `ts_ms` index cannot serve. That stalls the hub process,
+    which also runs the relay. Pause on `document.hidden`, and filter on
+    `ts_ms` directly with the fallback only for rows without one (or a daily
+    rollup).
+  - *L3: a huge duration is a 500.* `since=100000000000d` makes an invalid
+    date and the route answers 500 instead of `invalid_request`. Bound the
+    duration.
+  - *L5: a purged session that is shipped again keeps its v1 usage.* The
+    re-parse skips purged sessions; when the file comes back, its new rows are
+    `INSERT OR IGNORE`d next to the old ones, so v1's copied usage stays.
+  - *L6: smaller items.*
+    - `project_key` is computed once; a change to `repoKey`'s rules needs a
+      recompute.
+    - A date-only `--since 2026-11-22` starts at UTC midnight, while days
+      bucket in local time.
+    - Host sessions (Phase 5) show account `unknown`; they run on the PC's
+      own login, which is the `default` account.
+
 ## Cloud sign-off (2026-11-23)
 
 Fixed in this pass: a cloud box's first RPCs got `401 unknown box token`

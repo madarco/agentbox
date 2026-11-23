@@ -122,6 +122,12 @@ export function AppSidebar() {
           label="Accounts"
         />
         <SideItem
+          active={pathname.startsWith('/usage')}
+          to="/usage"
+          icon={Icons.activity}
+          label="Usage"
+        />
+        <SideItem
           active={pathname.startsWith('/devices')}
           to="/devices"
           icon={Icons.host}

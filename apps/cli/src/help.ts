@@ -66,6 +66,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       'hub',
       'skills',
       'sessions',
+      'usage',
       'memory',
       'mcp',
     ],
@@ -79,6 +80,7 @@ export const HELP_GROUPS: HelpGroup[] = [
 // the live description and clips as a safety net either way.
 export const SHORT_DESCRIPTIONS: Record<string, string> = {
   sessions: 'Agent sessions the hub recorded: list, show, search, download',
+  usage: 'Tokens the recorded sessions spent, by day, agent, box, project, PC',
   memory: 'Agent memory the hub keeps per repo: list, versions, show, pull',
   mcp: "The hub's MCP tools (sessions, memory) over stdio, for an agent on this PC",
   workspace: 'Register a folder grouping several projects, with its own task list',

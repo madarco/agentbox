@@ -33,6 +33,7 @@ import {
   visibleAgentSpecs,
   BOX_IMAGE_REGISTRY,
   llmProxyListenerEnabled,
+  readState,
   registryRefForSha,
 } from '@agentbox/sandbox-core';
 import { createHubBackend } from './lib/hub-backend';
@@ -124,6 +125,14 @@ function relayDeviceAuth(devices: DeviceService): {
   };
 }
 
+let boxesCache: { at: number; boxes: Awaited<ReturnType<typeof readState>>['boxes'] } | null = null;
+async function cachedBoxes(): Promise<Awaited<ReturnType<typeof readState>>['boxes']> {
+  if (!boxesCache || Date.now() - boxesCache.at > 5_000) {
+    boxesCache = { at: Date.now(), boxes: (await readState()).boxes };
+  }
+  return boxesCache.boxes;
+}
+
 async function openHistoryService(dbPath: string, archiveDir: string): Promise<HistoryService> {
   const { openSqliteHistoryRepo } = await import('./lib/history-sqlite');
   const { fsHistoryArchive } = await import('./lib/history-archive-fs');
@@ -134,6 +143,15 @@ async function openHistoryService(dbPath: string, archiveDir: string): Promise<H
     repo: await openSqliteHistoryRepo(dbPath),
     archive: fsHistoryArchive(archiveDir),
     retentionDays: Math.max(1, retentionDays),
+    // The account a session's agent ran on, from this hub's box record
+    // (llm-accounts Phase 3). Boxes known only from a Store registration get
+    // none (backlog). The state is cached briefly: a backfill asks once per
+    // session.
+    accountOf: async (boxId, agent) => {
+      const boxes = await cachedBoxes();
+      const box = boxes.find((b) => b.id === boxId);
+      return box ? (box.accounts?.[agent] ?? 'default') : null;
+    },
     log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
   });
 }
