@@ -33,7 +33,7 @@ import {
   type ShipStats,
   type ShippedAgent,
 } from '@agentbox/core';
-import { postRpcAwait } from './relay-rpc.js';
+import { postRpcAwait, relayNotReady, type RelayRpcResult } from './relay-rpc.js';
 import { resolveRelayEnv } from './relay-env.js';
 import { HISTORY_BINDINGS_PATH, appendHistoryBinding, currentBoxId } from './session-pointer.js';
 
@@ -43,7 +43,7 @@ const RPC_TIMEOUT_MS = 60_000;
 
 export class RpcTimeout extends Error {}
 
-async function rpc(method: string, params: unknown): Promise<{ exitCode: number; stdout: string }> {
+async function rpc(method: string, params: unknown): Promise<RelayRpcResult> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new RpcTimeout(`${method} timed out`)), RPC_TIMEOUT_MS);
@@ -61,8 +61,8 @@ async function rpc(method: string, params: unknown): Promise<{ exitCode: number;
  *  - `unsupported`: it answered with something else (a relay predating history
  *    returns 501 and records an `rpc-unknown` event per call), so do not ask
  *    again for a while.
- *  - `unreachable`: no answer at all (no relay env, transport error), so retry
- *    on the next tick.
+ *  - `unreachable`: no usable answer yet (no relay env, transport error, or a
+ *    relay that does not know this box yet), so retry on the next tick.
  * A timeout throws `RpcTimeout`.
  */
 export type HistoryConfigFetch =
@@ -70,12 +70,9 @@ export type HistoryConfigFetch =
   | { kind: 'unsupported' }
   | { kind: 'unreachable' };
 
-/** postRpcAwait's own codes for a missing relay env (65) and a transport failure (126). */
-const UNREACHABLE_EXIT = new Set([65, 126]);
-
 export async function fetchHistoryConfig(): Promise<HistoryConfigFetch> {
   const r = await rpc('history.config', {});
-  if (UNREACHABLE_EXIT.has(r.exitCode)) return { kind: 'unreachable' };
+  if (relayNotReady(r)) return { kind: 'unreachable' };
   if (r.exitCode !== 0) return { kind: 'unsupported' };
   try {
     const v = JSON.parse(r.stdout) as Partial<HistoryConfigReply>;
