@@ -367,10 +367,32 @@ export { collectHostSecrets } from './history/host-secrets.js';
 export { runHistoryRpc } from './history/rpc.js';
 export { askMcpApproval, MCP_APPROVAL_TTL_MS, runMcpRpc } from './mcp-rpc.js';
 export {
+  HOST_SESSIONS_STATUS_FILE,
+  HostSessionWatcher,
+  defaultHostSinkResolver,
+  hostWatchedAgents,
+  httpHistorySink,
+  knownProjectFolders,
+  localHostSource,
+  readHostSessionsStatus,
+  type HostProjectStatus,
+  type HostSessionWatcherDeps,
+  type HostSessionsStatus,
+  type HostSink,
+} from './history/host-watcher.js';
+export {
+  hostProjectDecisions,
+  setHostSessionsEnabled,
+  setHostSessionsProject,
+  type HostDecisions,
+  type HostProjectDecision,
+  type HostProjectMode,
+} from './history/host-settings.js';
+export {
   SKILL_BLOB_CHUNK_BYTES,
   parseSkillSelection,
   resolveBoxSkills,
   runSkillsRpc,
-  selectSkills,
+  skillContextForRegistration,
 } from './skills-rpc.js';
-export type { BoxSkill, SkillsGetResult } from './skills-rpc.js';
+export type { BoxSkill, BoxSkillContext, SkillsGetResult } from './skills-rpc.js';

@@ -4,7 +4,16 @@
  * CLI reads no store of its own.
  */
 import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { findProjectRoot } from '@agentbox/config';
+import {
+  hostProjectDecisions,
+  knownProjectFolders,
+  readHostSessionsStatus,
+  setHostSessionsEnabled,
+  setHostSessionsProject,
+  type HostProjectMode,
+} from '@agentbox/relay';
 import { log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
 import { withHubClient, type WithHubOptions } from '../control-plane/with-hub.js';
@@ -114,7 +123,9 @@ sessionsCommand
       const s = d.session;
       const lines = [
         `session   ${s.id} (${s.agent})${s.title ? ` — ${clip(s.title, 80)}` : ''}`,
-        `box       ${s.boxName ?? '-'} (${s.boxId ?? '-'}) on ${s.provider ?? '-'}`,
+        s.provider === 'host'
+          ? `host      PC ${s.hostId ?? '-'} (not in a box)`
+          : `box       ${s.boxName ?? '-'} (${s.boxId ?? '-'}) on ${s.provider ?? '-'}`,
         ...(s.projectRepoUrl ? [`project   ${s.projectRepoUrl}`] : []),
         ...(s.parentSessionId ? [`parent    ${s.parentSessionId}`] : []),
         `active    ${shortTime(s.firstTs)} → ${shortTime(s.lastTs)}`,
@@ -196,4 +207,91 @@ sessionsCommand
       }
       for (const w of written) process.stdout.write(`${w.file}  (${String(w.bytes)} B)\n`);
     });
+  });
+
+/**
+ * The folder `allow|deny|inherit` acts on: the project root of `dir` (default:
+ * the cwd), resolved the way registered projects are, so the setting lands on
+ * the folder the watcher lists.
+ */
+async function hostFolderArg(dir: string | undefined): Promise<string> {
+  return (await findProjectRoot(resolve(dir ?? process.cwd()))).root;
+}
+
+const HOST_ACTIONS = ['status', 'on', 'off', 'allow', 'deny', 'inherit'] as const;
+
+sessionsCommand
+  .command('host')
+  .description(
+    "This PC's own (non-box) agent sessions: show the watcher's status, turn it on/off, or allow/deny one project",
+  )
+  .argument('[action]', `${HOST_ACTIONS.join(' | ')} (default status)`, 'status')
+  .argument('[dir]', 'project folder for allow/deny/inherit (default: the current project)')
+  .option('--json', 'print JSON (status)')
+  .action(async (action: string, dir: string | undefined, opts: { json?: boolean }) => {
+    if (!(HOST_ACTIONS as readonly string[]).includes(action)) {
+      throw new Error(`unknown action "${action}": expected ${HOST_ACTIONS.join(', ')}`);
+    }
+    // The watcher runs in THIS machine's relay and reads this machine's config,
+    // so this acts locally (a PC on a remote hub may run no local hub to ask).
+    if (action === 'on' || action === 'off') {
+      await setHostSessionsEnabled(action === 'on');
+      log.success(
+        action === 'on'
+          ? 'Host sessions on: the relay ships the sessions of every project agentbox knows here (deny one with `agentbox sessions host deny <dir>`).'
+          : 'Host sessions off (a project allowed with `allow` still ships).',
+      );
+      return;
+    }
+    if (action === 'allow' || action === 'deny' || action === 'inherit') {
+      const folder = await setHostSessionsProject(
+        await hostFolderArg(dir),
+        action as HostProjectMode,
+      );
+      log.success(
+        action === 'inherit'
+          ? `${folder}: follows the global setting again.`
+          : `${folder}: host sessions ${action === 'allow' ? 'allowed' : 'denied'}.`,
+      );
+      return;
+    }
+    const decided = await hostProjectDecisions(await knownProjectFolders());
+    const status = await readHostSessionsStatus();
+    if (opts.json) {
+      process.stdout.write(`${JSON.stringify({ ...decided, status }, null, 2)}\n`);
+      return;
+    }
+    const shipped = new Map((status?.projects ?? []).map((p) => [p.folder, p]));
+    const lines = [
+      `host sessions  ${decided.enabled ? 'on' : 'off'} (global history.hostSessions)`,
+      `watcher        ${
+        status
+          ? `last pass ${shortTime(status.lastPassAt)}, to ${status.target ?? 'nowhere'}, ${String(status.sessions)} session file(s) seen, ${String(status.bytesShipped)} B shipped`
+          : 'has not run on this machine (is the relay up? `agentbox relay status`)'
+      }`,
+      ...(status?.backoffUntil
+        ? [
+            `paused         the hub refused or was unreachable; retrying after ${shortTime(status.backoffUntil)}`,
+          ]
+        : []),
+      ...(status?.errors.length ? [`errors         ${status.errors.slice(0, 5).join('; ')}`] : []),
+    ];
+    process.stdout.write(`${lines.join('\n')}\n\n`);
+    if (decided.projects.length === 0) {
+      log.info('No known project folders on this machine.');
+      return;
+    }
+    renderTable(
+      ['FOLDER', 'SETTING', 'SHIPS', 'WHY', 'LAST PASS'],
+      decided.projects.map((p) => {
+        const s = shipped.get(p.folder);
+        return [
+          p.folder,
+          p.mode,
+          p.allowed ? 'yes' : 'no',
+          p.reason,
+          s?.allowed ? `${String(s.files ?? 0)} file(s), ${String(s.bytes ?? 0)} B` : '-',
+        ];
+      }),
+    );
   });

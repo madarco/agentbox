@@ -138,6 +138,8 @@ export const claudeSpec: AgentSyncSpec = {
         format: 'jsonl',
         mode: 'append',
         sessionFiles: ['<sessionId>.jsonl', '<sessionId>/subagents/*.jsonl'],
+        // On a PC, `~/.claude/projects/<the cwd with every non-alphanumeric as ->`.
+        hostKey: 'dashed-path',
       },
     ],
     // Auto-memory: a MEMORY.md index plus one markdown file per fact. The box

@@ -4,9 +4,9 @@
 [Phase 0 results](#phase-0-results): **go** on box-local delivery for all five
 agents. The [owner direction](#owner-direction-2026-11-22) of the same day
 changes the store (custody, not a new blob store), the first import (automatic,
-from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b and 2
+from the PC) and adds the `agentbox skills` TUI. Phases 1, 1b, 2, 3 and 4
 implemented (see [`hub-skills-backlog.md`](./hub-skills-backlog.md) for what
-they left open); Phases 3+ not started.
+they left open); Phases 5+ not started.
 
 Roadmap item 2 is "skills, memory and multiple LLM subscriptions in the hub".
 Memory is planned in [`agent-history-plan.md`](./agent-history-plan.md),
@@ -699,6 +699,55 @@ No cloud box was run for this phase. See [`hub-skills-backlog.md`](./hub-skills-
 
 **Done:** the same repo from two PCs on one remote hub gets the same set;
 a workspace-scoped skill appears only in that workspace's boxes.
+
+**Implementation plan (2026-11-23):**
+
+1. **Store: one custody file, `skills/.bindings.json`**, not a database table.
+   The relay already reads the library from custody to answer `skills.get`, and
+   a local hub has no relational store for this; one file keeps the local and
+   remote hub identical. Shape: `{ schema: 1, global: {name: mode},
+   workspace: {id: {…}}, project: {repoKey: {…}}, box: {boxId: {…}} }`, mode
+   `include | exclude`. Writes are serialized in the hub process.
+2. **Resolver** (`packages/relay/src/skill-bindings.ts`, pure): per library
+   skill, the most specific binding wins (box > project > workspace > global),
+   no binding = included (decision 2). The create flags stay most specific of
+   all: `--no-skills` = none, `--skills` = exactly those (bindings ignored),
+   `--skip-skills` subtracts from the bound set.
+3. **Box context, from the registration only**: the project key is
+   `reg.repoKey` (alias-expanded on the registering PC) or `repoKey(originUrl)`;
+   the workspace is `workspaceForBox` over the hub's own workspace records
+   (origin folder on the origin machine first, then the repo). Both are
+   machine-independent, so two PCs creating boxes of one repo on one hub get
+   one set. `skills.get` / `skills.blob` resolve with it on both relay paths.
+4. **API**: `GET /api/v1/skill-bindings[?scope&scopeId]`, `PUT
+   /api/v1/skill-bindings?scope&scopeId` (merge `{bindings: {name: mode|null}}`,
+   `null` clears), `GET /api/v1/skill-bindings/resolve?repo&workspaceId` (the
+   set a new box would get, with where each decision came from). Hub slice
+   `apps/hub/lib/backend/skill-bindings.ts`. Discarding a skill drops its
+   bindings.
+5. **CLI**: `agentbox skills enable|disable <names…>` with `--project [url]`
+   (default: the cwd repo, keyed on this PC with `repoKeyAtEdge`),
+   `--workspace [ref]` (default: the workspace containing the cwd), no scope =
+   global, `--clear` to remove the binding at that scope; `agentbox skills
+   bindings [--json]`. Box scope is API-only in this phase.
+6. **Web**: a Skills picker in the create modal's Advanced section, prefilled
+   from `/skill-bindings/resolve` for the chosen project; sent as
+   `opts.skills.include` (or `none`) only when the user changed it.
+7. **Docs**: public skills page + CLI reference; backlog.
+
+**Status: implemented 2026-11-23**, live-checked on an isolated hub (scratch
+HOME, port 18797) with a second scratch-HOME PC pointed at it: with `alpha`
+disabled globally and enabled for workspace `ws1`, and `beta` disabled for
+`github.com/acme/app` from PC B (its `git@github.com:Acme/App.git` checkout),
+`skills.get` answered `[alpha, gamma]` for that repo's box from PC A (`https`
+remote, folder in `ws1`) and from PC B (folder outside any workspace, joined by
+repo); `[beta, gamma]` for another repo's box; a box with `--skip-skills gamma`
+got `[alpha]`; `skills.blob` refused `alpha` to the other repo's box; the web
+create form listed the three skills ticked per the bindings. Boxes were
+registered with the hub as a create does, not built: delivery itself is
+unchanged since Phase 3. Deviations: bindings are one custody file, the resolver
+lives in `@agentbox/core`, discard keeps bindings, box scope is API-only. See
+[`hub-skills-backlog.md`](./hub-skills-backlog.md).
 
 ### Phase 5 — git + marketplace sources, updates
 

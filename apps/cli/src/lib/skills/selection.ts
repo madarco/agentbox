@@ -19,7 +19,7 @@ export interface SkillFlagOptions {
   skipSkills?: string[];
 }
 
-const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
  * Commander collector for the `--skills` / `--skip-skills` name lists. Refuses a

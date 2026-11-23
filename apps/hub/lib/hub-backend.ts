@@ -52,6 +52,7 @@ import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { createWorkspaceBackend } from './backend/workspaces';
 import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
+import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
 import type { BackendDeps } from './backend/deps';
 import {
@@ -2286,6 +2287,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   }
   const hub: HubBackend = {
     ...checkouts,
+    ...createHostSessionsBackend(),
     ...accounts,
     ...workspaces,
     ...managers,

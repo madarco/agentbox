@@ -2,7 +2,9 @@
 //        in the `X-AgentBox-Skill-Meta` header (base64 JSON: sha256 tree hash,
 //        description, size, files, source). Streamed straight into custody,
 //        capped by AGENTBOX_CUSTODY_MAX_BLOB_BYTES.
-// DELETE /api/v1/skills/{name} — discard the skill and every stored version.
+// DELETE /api/v1/skills/{name} — discard the skill and every stored version,
+//        Its skill bindings stay, so a global `disable` still holds if a skill
+//        of the same name is imported again.
 import { Readable } from 'node:stream';
 import { discardSkill, importSkill, parseImportMeta } from '@/lib/backend/skills';
 import { fail, ok } from '../../lib/envelope';

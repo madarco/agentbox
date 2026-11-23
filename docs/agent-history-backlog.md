@@ -334,6 +334,79 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
     - A seed reply of 1000 x 256 KB could exceed the cloud bridge's body cap
       and fail forever. Real sets are KBs.
 
+## Phase 5 (host sessions + multiple PCs)
+
+- **Tray toggle against a remote hub.** `GET|PUT /api/v1/history/host` reads and
+  writes the watcher of the machine the hub runs on. A tray pointed at a
+  control box therefore toggles the control box's watcher, not the PC's. A
+  per-device setting carried by the hub (the PC's relay reading it back) would
+  fix it; `agentbox sessions host` on the PC works today.
+- **Only claude is host-watched.** A host agent needs a `hostKey` on its
+  transcripts entry. codex keys rollouts by date, not by project, so its host
+  filter has to read `session_meta.cwd` (Phase 3 territory); pi keys by
+  `--<cwd dashed>--`, which is a second `hostKey` kind.
+- **Sessions started below the project root.** claude keys a transcript by the
+  cwd it was launched in, so a session run in `repo/sub` lives under another
+  key and is not shipped. Same for a path claude spells differently from the
+  registered one (macOS `/private/var` realpath), and for long paths claude
+  truncates and hashes. Fix: match keys by prefix, or read each file's `cwd`.
+- **Host memory.** The watcher ships transcripts only. Host memory still reaches
+  the hub only as the hub machine's own import at a box seed (Phase 4); a
+  second PC's host memory never does.
+- **Restart cost (L2 again).** After every relay restart the watcher re-learns
+  each host file's cursor: one first frame, then a re-hash of the ingested
+  prefix. On a PC like the one measured in Phase 0 that is ~2 GB read once per
+  restart. The empty-data probe + persisted edge cursor from L2 fixes it.
+- **Same session on the host and in a box.** `agentbox fork` copies a host
+  session into a box under the same id. With both shipped, the session's turns
+  count twice and its row keeps the first origin (the "same session from two
+  boxes" item, with a host origin as one side).
+- **Admin-key callers name their own `hostId`.** A device-token caller's host
+  frames are stamped with the verified device; a caller with the shared admin
+  key or API key is trusted, like box frames (see "REST ingest trusts the
+  caller's origin").
+- **`PC` column shows a machine-id prefix,** not the device label the hub has
+  in its devices table.
+- **Per-pass cost with the feature off (review of this phase).** Every 60 s the
+  watcher loads the effective config of every known folder, even when nothing
+  is allowed, and lists each allowed project dir twice. Cheap at tens of
+  folders. Skip folders with no project override while the global toggle is
+  off, and count sessions from the shipper's own listing.
+- **`sessions host` acts locally, not through `/api/v1/history/host`** (review
+  of this phase). Deliberate: the watcher and its config are this PC's, and a
+  PC on a remote hub may run no local hub to ask. Both paths share
+  `host-settings.ts`, so the rules cannot drift; only the folder argument is
+  resolved by the CLI (project root of the cwd).
+
+## From the review of #449 (2026-11-23)
+
+Fixed in #449: B1 (a refusing or unreachable hub is backed off for 10
+minutes per target, shown as `backoffUntil` in the status, instead of every
+session being re-read and re-posted each pass) and B2 (claude's dashed key is
+lossy, so a session ships only when its transcript's first `cwd` is the allowed
+folder). Still open:
+
+- **L1: PUT/tray allow below an `agentbox.yaml`.** The project key is written
+  to the nearest project root, so allowing a subfolder of a project writes the
+  allow on the parent while reporting the subfolder. PUT also accepts a folder
+  that does not exist.
+- **L2: global off is not a kill switch.** A project `allow` ships with the
+  global toggle off (by design, it is the per-project opt-in). The tray must
+  not present "off" as "nothing ships": show the allowed projects next to it.
+- **L3: origin URL shipped raw.** `projectRepoUrl` comes from `.git/config`
+  verbatim, so an `https://user:token@…` origin reaches the hub and the status
+  file. Box sessions have the same gap. Strip userinfo at the edge.
+- **L4: host secrets miss the control-plane credentials.** `collectHostSecrets`
+  does not read `control-plane.env` (API key, admin token, admin password) or
+  this PC's `abdev_` device token, and falls back to formats-only redaction if
+  it throws.
+- **L5: status file rewritten every 60 s** even with the feature off.
+- **L6: `GET /history/host` answers device-token callers** with the hub
+  machine's project folder list. Refuse it for devices like the PUT.
+- **L7: `stop()` does not await a running pass.**
+- **L8: a project's `relay.controlPlaneUrl` is ignored.** The watcher always
+  ships to the global hub (the daemon's), not a per-project one.
+
 ## Phase 6 (MCP)
 
 - **Workspace scope.** A box is scoped to its repository only. The plan says

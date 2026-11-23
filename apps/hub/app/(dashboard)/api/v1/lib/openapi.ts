@@ -12,6 +12,47 @@ const errorResponse = {
   },
 };
 
+const hostSessionsViewSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', description: 'The global `history.hostSessions`.' },
+    projects: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          folder: { type: 'string' },
+          repoUrl: { type: 'string' },
+          mode: { type: 'string', enum: ['allow', 'deny', 'inherit'] },
+          allowed: { type: 'boolean' },
+          reason: {
+            type: 'string',
+            enum: ['project', 'global', 'history.capture off', 'config unreadable', 'off'],
+          },
+        },
+      },
+    },
+    status: {
+      type: ['object', 'null'],
+      properties: {
+        enabled: { type: 'boolean' },
+        target: { type: ['string', 'null'], description: '`local`, a hub URL, or null.' },
+        hostId: { type: ['string', 'null'] },
+        lastPassAt: { type: ['string', 'null'] },
+        projects: { type: 'array', items: { type: 'object' } },
+        sessions: { type: 'integer' },
+        bytesShipped: { type: 'integer' },
+        errors: { type: 'array', items: { type: 'string' } },
+        backoffUntil: {
+          type: 'string',
+          description:
+            'Present while the hub refused frames (or was unreachable): nothing ships until this time.',
+        },
+      },
+    },
+  },
+};
+
 const managerIdParam = {
   name: 'id',
   in: 'path',
@@ -1901,6 +1942,56 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/history/host': {
+        get: {
+          tags: ['History'],
+          summary: 'Host-session watcher',
+          description:
+            "This hub machine's host-session watcher (agent-history Phase 5): the global toggle (`history.hostSessions`), every project folder agentbox knows here with its own setting (`allow`/`deny`/`inherit`) and outcome, and the watcher's last pass (`status`, null when it never ran).",
+          responses: {
+            '200': {
+              description: 'OK',
+              content: { 'application/json': { schema: hostSessionsViewSchema } },
+            },
+          },
+        },
+        put: {
+          tags: ['History'],
+          summary: 'Toggle host sessions',
+          description:
+            "Turn the watcher on or off (`enabled`, the global key), and/or allow, deny or reset one project folder (`project`). Writes this hub machine's config; the watcher applies it on its next pass. Refused (403) for a device-token caller: only the hub owner decides what this machine ships. Answers the updated view.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    enabled: { type: 'boolean' },
+                    project: {
+                      type: 'object',
+                      properties: {
+                        folder: { type: 'string', description: 'Absolute path.' },
+                        mode: { type: 'string', enum: ['allow', 'deny', 'inherit'] },
+                      },
+                      required: ['folder', 'mode'],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'OK',
+              content: { 'application/json': { schema: hostSessionsViewSchema } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '403': errorResponse,
+          },
+        },
+      },
       '/history/chunks': {
         post: {
           tags: ['History'],
@@ -1916,14 +2007,16 @@ export function buildOpenApi(): Record<string, unknown> {
                   properties: {
                     origin: {
                       type: 'object',
+                      description:
+                        "A box session names `boxId`. A session run directly on a PC (`kind: host`) names `hostId` instead; a device-token caller's `hostId` is replaced with its verified device id.",
                       properties: {
+                        kind: { type: 'string', enum: ['box', 'host'] },
                         boxId: { type: 'string' },
                         boxName: { type: 'string' },
                         provider: { type: 'string' },
                         hostId: { type: 'string' },
                         projectRepoUrl: { type: 'string' },
                       },
-                      required: ['boxId'],
                     },
                     agent: { type: 'string', description: 'Agent id, e.g. `claude`.' },
                     path: {
@@ -4997,6 +5090,123 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+          },
+        },
+      },
+      '/skill-bindings': {
+        parameters: [
+          {
+            name: 'scope',
+            in: 'query',
+            required: false,
+            schema: { type: 'string', enum: ['global', 'workspace', 'project', 'box'] },
+            description: 'Scope to read or write (GET without it returns every scope)',
+          },
+          {
+            name: 'scopeId',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description:
+              'workspace: 16-hex workspace id; project: repo key (e.g. `github.com/owner/repo`); box: box id; global: none',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Read skill bindings',
+          description:
+            'Which library skills each scope includes or excludes. Without `scope`: the whole document `{schema, global, workspace, project, box}`, each a `{<skill>: include|exclude}` map (keyed by scope id below global). With `scope`: `{scope, scopeId?, bindings}`. Resolution per skill, most specific first: create flags > box > project > workspace > global; a skill bound nowhere is in every box. Backs `agentbox skills bindings`.',
+          responses: {
+            '200': {
+              description: 'Bindings',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Skills'],
+          summary: 'Change skill bindings in one scope',
+          description:
+            "Merges `{bindings: {<skill>: 'include' | 'exclude' | null}}` into the scope named by `?scope&scopeId`; `null` clears a binding so the skill inherits from the next scope down. Returns `{scope, scopeId?, bindings}` after the write. A running box applies the change at its next skills sync. Backs `agentbox skills enable|disable`.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    bindings: {
+                      type: 'object',
+                      additionalProperties: {
+                        type: 'string',
+                        enum: ['include', 'exclude'],
+                        nullable: true,
+                      },
+                    },
+                  },
+                  required: ['bindings'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The scope after the write',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/skill-bindings/resolve': {
+        parameters: [
+          {
+            name: 'repo',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Git remote URL of the project (keyed on the hub)',
+          },
+          {
+            name: 'projectKey',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Repo key computed by the caller (wins over `repo`)',
+          },
+          {
+            name: 'workspaceId',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Workspace id',
+          },
+          {
+            name: 'boxId',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Box id, for box bindings',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Preview the skill set of a box',
+          description:
+            "The library skills a box in this project/workspace would get from the bindings alone (before create flags): `{library, projectKey?, skills: [{name, description, included, from}]}`, `from` = `box | project | workspace | global | default`. `library: false` = never seeded. Backs the create modal's Skills picker.",
+          responses: {
+            '200': {
+              description: 'Preview',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
           },
         },
       },

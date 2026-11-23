@@ -349,6 +349,12 @@ export interface UserConfig {
     capture?: boolean;
     /** Days the hub keeps a session's transcript after its last activity (default 90). */
     retentionDays?: number;
+    /**
+     * Ship this PC's own (non-box) agent sessions to the hub (default false).
+     * Global: the opt-in toggle. Project: allow (true) / deny (false), winning
+     * over the global value.
+     */
+    hostSessions?: boolean;
   };
   update?: {
     /**
@@ -553,6 +559,7 @@ export interface EffectiveConfig {
   history: {
     capture: boolean;
     retentionDays: number;
+    hostSessions: boolean;
   };
   update: {
     check: boolean;
@@ -764,6 +771,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   history: {
     capture: true,
     retentionDays: 90,
+    hostSessions: false,
   },
   update: {
     check: true,
@@ -1496,6 +1504,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       "How many days the hub keeps a box session's transcript after the session's last activity (default 90). Read by the hub on its own machine; older sessions are deleted by the hub's hourly sweep.",
+  },
+  {
+    key: 'history.hostSessions',
+    type: 'bool',
+    description:
+      "Ship the agent sessions run directly on this PC (not in a box) to the hub's session history (default false). Set globally, it turns the relay's host-session watcher on for every project agentbox knows on this PC; set in a project's config, true allows and false denies that project whatever the global value. Only registered project folders are read. Sessions go to the configured hub (relay.controlPlaneUrl, with this PC's device token) or the local one. `agentbox sessions host` toggles it and shows the watcher's status.",
   },
   {
     key: 'update.check',

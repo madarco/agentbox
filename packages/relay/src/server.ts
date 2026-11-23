@@ -70,7 +70,7 @@ import {
 import { handleRemoteBoxesRequest, isRemoteBoxesPath } from './remote-boxes.js';
 import { readCreateJobLog } from './job-log-tail.js';
 import { handleStoreRpcRequest, isStoreRpcPath } from './store/store-rpc-routes.js';
-import { parseSkillSelection, runSkillsRpc } from './skills-rpc.js';
+import { parseSkillSelection, runSkillsRpc, skillContextForRegistration } from './skills-rpc.js';
 import type { CustodyStore } from './custody/store.js';
 import {
   custodySlugCandidates,
@@ -1277,7 +1277,17 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       // The box's share of the skills library: unprompted, box-scoped by its
       // registration's selection, not worktree-scoped.
       if (body.method.startsWith('skills.')) {
-        send(res, 200, await runSkillsRpc(custody, reg.skills, body.method, body.params));
+        send(
+          res,
+          200,
+          await runSkillsRpc(
+            custody,
+            reg.skills,
+            body.method,
+            body.params,
+            skillContextForRegistration(reg),
+          ),
+        );
         return;
       }
       if (body.method === 'agents.list') {
@@ -1336,7 +1346,8 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
             boxAgents: registrationAgents(reg),
             history: historyRpc(reg),
             mcp: mcpRpc(reg),
-            skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
+            skills: (method, params) =>
+              runSkillsRpc(custody, reg.skills, method, params, skillContextForRegistration(reg)),
             log,
           });
           send(res, result.exitCode === 0 ? 200 : 500, result);
@@ -2116,7 +2127,14 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                       ),
                       history: historyRpc(reg),
                       mcp: mcpRpc(reg),
-                      skills: (method, params) => runSkillsRpc(custody, reg.skills, method, params),
+                      skills: (method, params) =>
+                        runSkillsRpc(
+                          custody,
+                          reg.skills,
+                          method,
+                          params,
+                          skillContextForRegistration(reg),
+                        ),
                       log,
                     });
                     await respond(result);
