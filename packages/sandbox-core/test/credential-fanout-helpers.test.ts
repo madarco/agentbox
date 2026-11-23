@@ -136,6 +136,30 @@ describe('pushCredentialToBox', () => {
     });
     await expect(pushCredentialToBox(t, 'codex', '{"k":1}')).rejects.toThrow('denied');
   });
+
+  it('surfaces stdout when the transport returns everything there (Daytona)', async () => {
+    const t = makeRecordingTransport({
+      execResult: (cmd) =>
+        cmd.join(' ').includes('chmod')
+          ? { exitCode: 1, stdout: 'Operation not permitted', stderr: '' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+    });
+    await expect(pushCredentialToBox(t, 'opencode', '{"k":1}')).rejects.toThrow(
+      'Operation not permitted',
+    );
+  });
+
+  it('accepts a refused chown/chmod only when the file resolves into the credential volume', async () => {
+    const t = makeRecordingTransport();
+    await pushCredentialToBox(t, 'opencode', '{"k":1}');
+    const norm = t.ops
+      .filter((o) => o.op === 'exec')
+      .map((e) => (e.args['cmd'] as string[]).join(' '))
+      .find((c) => c.includes('chmod 600'));
+    expect(norm).toContain(
+      `case "$(readlink -f '/home/vscode/.local/share/opencode/auth.json')" in '/home/vscode/.agentbox-creds'/*) exit 0 ;; *) exit 1 ;; esac`,
+    );
+  });
 });
 
 describe('freshness is the agent`s declaration, not claude`s JSON inlined', () => {

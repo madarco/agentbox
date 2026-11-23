@@ -200,6 +200,18 @@ All seven phases are built (2026-09-21):
 - **Tray**: the tray's `feat/e2e-testability` branch builds a second bundle (`make e2e-app` → `AgentBoxE2E.app`, own bundle id and process name), adds accessibility identifiers (`agentbox.box.<name>`, …), honours `$HOME` for the setup marker, and decodes golden hub payloads in `HubFixtureTests`. The driver is `e2e/tray-driver` (AX + CGEvent, scoped by PID). The menu's AX tree is readable while closed, so lookups never touch the screen; it is opened for a screenshot only when the user has been idle for a minute.
 - **Gate**: `/release-notes` step 0 refuses a stable tag without a green run of the released commit.
 
+## Fixes for bugs the suite found
+
+### Fix: opencode `-i` launch (`fix/opencode-prompt-launch`)
+
+`agentbox opencode -i "<prompt>"` died on every cloud and silently on docker: the shared launcher passed the prompt as the first positional, which opencode reads as its project directory.
+
+1. **Seed prompt as registry data.** `AgentSyncSpec.seedPromptFlag` names the flag an agent takes its seed turn behind; absent means a leading positional. opencode declares `--prompt`; claude, codex and pi stay positional (checked against each CLI's `--help`: `claude [prompt]`, `codex [PROMPT]`, `pi [messages...]`, `opencode [project]` + `--prompt`). `resolveAgentLauncher(kind, spec)` reads it, so a plugin agent can declare one too. `buildPromptArgs` and the hub worker pass the spec.
+2. **Docker verifies the session.** The queued docker start runs the same stay-up probe as the cloud path (`verifyDetachedSession`, refactored onto an exec callback), so an agent that exits at launch fails the job instead of reporting `done`.
+3. **Credential push under a credential volume.** `pushCredentialToBox` treats a failed `chown`/`chmod` as success when the file resolves under `BOX_CREDS_DIR` (Daytona's virtiofs refuses both even for root), and its error carries stdout as well as stderr.
+
+Done: `agentbox opencode -i "say hi" --provider daytona` and the same on docker start a session that runs the turn; unit tests cover the launcher per agent.
+
 ## Open questions
 
 - **Clean-Mac install test.** A macOS VM (Tart locally, or Daytona's use.computer Macs) would test the tray's first-run wizard and login item on a machine that has never seen AgentBox. Needs a one-hour PoC of each before choosing; not needed for Phases 1–7.

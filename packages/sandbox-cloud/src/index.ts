@@ -30,7 +30,9 @@ export {
   buildCloudAttachInnerCommand,
   startDetachedCloudAgent,
   startDetachedSession,
+  verifyAgentSessionStaysUp,
   verifyDetachedSession,
+  type SessionProbeExec,
   type StartDetachedCloudAgentArgs,
 } from './detached-agent.js';
 export { kickCloudBootstrap, type KickCloudBootstrapArgs } from './bootstrap-launch.js';

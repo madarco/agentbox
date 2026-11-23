@@ -6,7 +6,7 @@
 
 Found while building and first running the suite on nightly `0.33.0-nightly.202609211038` (2026-09-21). Not fixed in the suite's branch; each needs its own change.
 
-- **`agentbox opencode -i "<prompt>"` never starts a turn.** The shared `positionalSeedLauncher` (`packages/core`, `resolveAgentLauncher`) passes the seed prompt as the first positional, but opencode's positional is the project directory: opencode 1.18 fails with "Failed to change directory to /workspace/<prompt>", exits, and the tmux session disappears. It needs `--prompt "<msg>"`. The queue job still reports `done` (see the next-but-one item), so the user sees a ready box with no agent.
+- ~~**`agentbox opencode -i "<prompt>"` never starts a turn.**~~ Fixed on `fix/opencode-prompt-launch`: opencode's registry row declares `seedPromptFlag: '--prompt'`.
 - **Cloud host-action approvals never reach the hub.** On daytona, hetzner, vercel and e2b an in-box `agentbox-ctl tool request` is denied at once with "no attached wrapper to confirm … or set AGENTBOX_GH_NO_SUB=allow" (exit 10) instead of appearing in `GET /api/v1/approvals`, so the web UI and the tray can't answer it. On docker the same request waits in `/api/v1/approvals` and works after approval. The message also names an unrelated gh variable.
 - **Vercel: starting the claude session fails** with "Sandbox API request failed … status code: 200 OK" on `GET /api/v2/sandboxes/<name>?…&resume=false`: the SDK rejects a 200 response, most likely an API/SDK shape drift (`@vercel/sandbox ^2.0.1`).
 - **E2B: the sandbox drops mid-scenario.** After claude committed, `agentbox shell` failed with "the connection to sandbox … ended before the stream completed: This error is likely due to sandbox timeout". The sandbox timeout isn't being extended while the box is in use.
@@ -18,7 +18,7 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 - **`openclaw --restore <bot>` names the new box `restored-<id>`**, not after the bot it restores, unless `-n` is given.
 - **A scratch `HOME` kills the user's hub.** `applyRelayPortAtStartup` (`apps/cli/src/relay-port-override.ts`) always pins the port to the effective `relay.port`, whose default is 8787, so the documented `AGENTBOX_RELAY_PORT` override is dead at CLI startup. A hub started from any other `HOME` then reclaims 8787 and kills the running hub. Seen when `agentbox install` ran in a scratch home with only the env var set. The suite works around it by writing `relay.port` into every scratch config.
 - **opencode boxes don't inherit the host's model.** Only the login is synced, not `~/.local/state/opencode/model.json`, so the box falls back to a provider the login doesn't cover (here Google, with no key). The suite pins `--model` from the host's last-used model.
-- **A queued docker create reports `done` although the agent session died.** The opencode job above logged `starting opencode session … done` with no tmux session left in the box. The cloud path verifies the detached session came up; the docker path doesn't.
+- ~~**A queued docker create reports `done` although the agent session died.**~~ Fixed on `fix/opencode-prompt-launch`: the docker queued start runs the cloud path's stay-up probe (`verifyAgentSessionStaysUp`).
 - **The agent-state probe lags.** `agent state` read `working` well after claude had committed and stopped; `agent wait-for input-needed` can also match `idle` before the turn starts. The suite waits on the git result instead.
 - **Nested `--help` prints the root help.** `agentbox workspace add --help`, `tasks add --help`, `manager start --help`, `checkpoint create --help` all print the top-level help instead of their own options.
 - **`doctor` says "docker not prepared" right after a bake.** The summary token maps any warning in a provider group to "not prepared"; the only docker warning was "portless not installed". The same happens for hetzner/digitalocean.
@@ -26,6 +26,10 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
 - **"local hub restarted" without restarting.** With a stale hub on the port whose home had been wiped, the install wizard printed "local hub restarted on :8798", then "The local hub reports no API token"; the stale process kept the port.
 - **Bare `agentbox` exits 1.** It prints the short help; the old checklist (BOOT-002) expected exit 0.
 - **Tray: the menu rebuilt 3–10 times a second against a quiet hub.** The tray branch `feat/e2e-testability` adds a fingerprint that skips unchanged rebuilds; why a quiet hub triggers that many refreshes is still open.
+
+- **pi reads a leading `@word` positional as a file.** `pi [@files...] [messages...]`, so an `-i` prompt that starts with `@` is taken as a file to attach rather than the first turn. Edge case, not fixed with the opencode launcher change.
+- **Daytona leaves the secret-bearing agent-env staging copy behind** (`/run/agentbox/.agent-env-<hex>`, mode 0644) when the first upload throws and the fallback to `/tmp` runs; the `install`/`rm` only touch the `/tmp` copy (`packages/sandbox-cloud/src/agent-env-file.ts`). Found in the same investigation; separate fix.
+- **docker@linux: claude sits on its first-run theme picker** when the host has no `~/.claude`, because `ensureClaudeVolume` returns before writing a pre-onboarded `_claude.json` (the cloud path has `buildBoxClaudeJsonFromHost`'s fallback). The new docker stay-up probe does not catch it: the session is alive.
 
 ## Harness gaps
 

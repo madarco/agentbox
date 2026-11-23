@@ -10,9 +10,30 @@ describe('buildPromptArgs', () => {
     ]);
   });
 
-  it('slots the prompt as the first positional for codex and opencode', () => {
-    expect(buildPromptArgs('codex', 'do it', ['-m', 'gpt-5.4'])).toEqual(['do it', '-m', 'gpt-5.4']);
-    expect(buildPromptArgs('opencode', 'go', [])).toEqual(['go']);
+  // Checked against each CLI's --help: `codex [PROMPT]`, `pi [messages...]`.
+  it('slots the prompt as the first positional for codex and pi', () => {
+    expect(buildPromptArgs('codex', 'do it', ['-m', 'gpt-5.4'])).toEqual([
+      'do it',
+      '-m',
+      'gpt-5.4',
+    ]);
+    expect(buildPromptArgs('pi', 'go', ['--model', 'x'])).toEqual(['go', '--model', 'x']);
+  });
+
+  // opencode's positional is `[project]`: a positional prompt made it `cd` into
+  // `/workspace/<prompt>` and exit.
+  it('puts the prompt behind --prompt for opencode', () => {
+    expect(buildPromptArgs('opencode', 'say hi', ['--model', 'openai/gpt-5'])).toEqual([
+      '--prompt',
+      'say hi',
+      '--model',
+      'openai/gpt-5',
+    ]);
+    expect(buildPromptArgs('opencode', '', ['--model', 'm'])).toEqual(['--model', 'm']);
+  });
+
+  it('falls back to a positional for an agent the registry does not know', () => {
+    expect(buildPromptArgs('not-an-agent', 'hi', [])).toEqual(['hi']);
   });
 
   it('is a no-op when prompt is empty (user args returned verbatim)', () => {

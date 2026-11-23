@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BoxRecord, ExecResult, Provider } from '@agentbox/core';
-import { startDetachedCloudAgent } from '../src/detached-agent.js';
+import { startDetachedCloudAgent, verifyAgentSessionStaysUp } from '../src/detached-agent.js';
 
 // A live, authenticated pane — verifyDetachedSession sees the session and no
 // auth-rejection markers, so it resolves.
@@ -257,5 +257,30 @@ describe('startDetachedCloudAgent — declared-file seeding', () => {
     expect(order).not.toContain('start');
     expect(order.indexOf('seed')).toBeGreaterThanOrEqual(0);
     expect(order.indexOf('seed')).toBeLessThan(order.indexOf('launch'));
+  });
+});
+
+describe('verifyAgentSessionStaysUp (the docker path runs it over docker exec)', () => {
+  it('fails when the session is gone', async () => {
+    const exec = vi.fn(async (_argv: string[]) => ({ exitCode: 7, stdout: '' }));
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', { windowMs: 0 }),
+    ).rejects.toThrow(/exited immediately after launch in box b1/);
+    expect(exec.mock.calls[0]![0]).toEqual([
+      'bash',
+      '-lc',
+      expect.stringContaining('tmux has-session -t'),
+    ]);
+  });
+
+  it('passes a live session and keeps polling through a transport error', async () => {
+    const exec = vi
+      .fn<(argv: string[]) => Promise<{ exitCode: number; stdout: string }>>()
+      .mockRejectedValueOnce(new Error('docker hiccup'))
+      .mockResolvedValue({ exitCode: 0, stdout: 'Working on it...' });
+    await expect(
+      verifyAgentSessionStaysUp(exec, 'b1', 'opencode', 'opencode', { windowMs: 5, pollMs: 1 }),
+    ).resolves.toBeUndefined();
+    expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

@@ -188,6 +188,30 @@ export async function verifyDetachedSession(
   binary: string,
   opts: { windowMs?: number; pollMs?: number } = {},
 ): Promise<void> {
+  await verifyAgentSessionStaysUp(
+    (argv) => provider.exec(box, argv, { user: 'vscode' }),
+    box.name,
+    sessionName,
+    binary,
+    opts,
+  );
+}
+
+/** Runs argv in the box as the box user; only `exitCode` and `stdout` are read. */
+export type SessionProbeExec = (argv: string[]) => Promise<{ exitCode: number; stdout: string }>;
+
+/**
+ * The provider-agnostic body of {@link verifyDetachedSession}, over a bare exec
+ * so the docker path (which drives `docker exec` directly, not a `Provider`)
+ * runs the same check.
+ */
+export async function verifyAgentSessionStaysUp(
+  exec: SessionProbeExec,
+  boxName: string,
+  sessionName: string,
+  binary: string,
+  opts: { windowMs?: number; pollMs?: number } = {},
+): Promise<void> {
   const windowMs = opts.windowMs ?? 10_000;
   const pollMs = opts.pollMs ?? 2_000;
   const q = tmuxTarget(sessionName);
@@ -198,11 +222,11 @@ export async function verifyDetachedSession(
   for (;;) {
     let pane = '';
     try {
-      const r = await provider.exec(box, ['bash', '-lc', probe], { user: 'vscode' });
+      const r = await exec(['bash', '-lc', probe]);
       if (r.exitCode === 7) {
         throw new Error(
-          `agent '${binary}' exited immediately after launch in box ${box.name} — the session did not stay up. ` +
-            `Attach to inspect: agentbox ${binary} attach ${box.name}`,
+          `agent '${binary}' exited immediately after launch in box ${boxName} — the session did not stay up. ` +
+            `Attach to inspect: agentbox ${binary} attach ${boxName}`,
         );
       }
       pane = r.stdout;

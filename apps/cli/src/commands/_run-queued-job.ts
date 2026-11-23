@@ -33,6 +33,7 @@ import {
   recordLastAgent,
   volumeClaudeCredentials,
 } from '@agentbox/sandbox-docker';
+import { verifyAgentSessionStaysUp } from '@agentbox/sandbox-cloud';
 import {
   rebuildPluginNativeDeps,
   SHARED_CLAUDE_VOLUME,
@@ -515,40 +516,55 @@ async function runDockerJob(
     );
   }
 
+  let sessionName: string;
   if (job.agent === 'claude-code') {
     log.write(`starting claude session`);
+    sessionName = cfg.effective.claude.sessionName;
     await startClaudeSession({
       container: result.record.container,
       claudeArgs: claudeRuntime.skipPermissions!.apply(promptedArgs, cfg.effective),
-      sessionName: cfg.effective.claude.sessionName,
+      sessionName,
       boxName: result.record.name,
       agentSettings: agentSettings(cfg.effective, 'claude'),
     });
   } else if (job.agent === 'codex') {
     log.write(`starting codex session`);
+    sessionName = cfg.effective.codex.sessionName;
     await startCodexSession({
       container: result.record.container,
       codexArgs: codexRuntime.skipPermissions!.apply(promptedArgs, cfg.effective),
-      sessionName: cfg.effective.codex.sessionName,
+      sessionName,
     });
   } else if (job.agent === 'opencode') {
     log.write(`starting opencode session`);
+    sessionName = cfg.effective.opencode.sessionName;
     await startOpencodeSession({
       container: result.record.container,
       opencodeArgs: promptedArgs,
-      sessionName: cfg.effective.opencode.sessionName,
+      sessionName,
     });
   } else {
     log.write(`starting pi session`);
+    sessionName = cfg.effective.pi.sessionName;
     await startPiSession({
       container: result.record.container,
       // No `skipPermissions.apply`: Pi has no bypass flag because it has no
       // permission prompts, so `piRuntime.skipPermissions` is null and the
       // prompted args go through untouched.
       piArgs: promptedArgs,
-      sessionName: cfg.effective.pi.sessionName,
+      sessionName,
     });
   }
+
+  // `tmux new-session -d` succeeds even when the agent exits at once, so without
+  // this an agent that dies at launch left a `done` job and a box with no
+  // session. Same probe the cloud start runs.
+  await verifyAgentSessionStaysUp(
+    (argv) => execInBox(result.record.container, argv, { user: 'vscode' }),
+    result.record.name,
+    sessionName,
+    plan.spec.binary,
+  );
 
   await maybeOpenQueuedTerminal(job, plan.spec.id, result.record.name, log);
 }

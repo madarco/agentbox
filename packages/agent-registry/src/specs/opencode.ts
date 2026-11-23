@@ -24,6 +24,7 @@ export const opencodeSpec: AgentSyncSpec = {
   aliases: [],
   sessionName: 'opencode',
   binary: 'opencode',
+  seedPromptFlag: '--prompt',
   install: {
     recipe: { kind: 'npm', package: 'opencode-ai' },
     runAs: 'root',

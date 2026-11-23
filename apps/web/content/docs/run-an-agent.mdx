@@ -384,6 +384,11 @@ export const agentSpec = {
 };
 ```
 
+`-i "<prompt>"` passes the prompt to your binary as its first positional argument. If your CLI
+takes the first user turn behind a flag instead, declare it as `seedPromptFlag` (for example
+`seedPromptFlag: '--prompt'`, which is what opencode uses, since its positional argument is the
+project directory).
+
 A complete, working example ships in the repo at
 [`examples/agentbox-agent-example`](https://github.com/madarco/agentbox/tree/main/examples/agentbox-agent-example)
 — one dependency-free file. Register it with

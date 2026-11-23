@@ -531,6 +531,9 @@ name; the render lints for a secret-shaped literal and warns.
    (recipe + `runAs` + any OS `packages` (+ `packagesOptional`) +
    `postInstall`), `sessionName`,
    `dockerVolume`, `staticPaths`, `forwardedEnvKeys`, `caps`,
+   plus `seedPromptFlag` if the binary takes its `-i` seed turn behind a flag
+   rather than as a leading positional (opencode: `--prompt`, because its
+   positional is the project directory; `resolveAgentLauncher` reads it),
    plus `seeds` / `launchFlags` if the agent needs an agentbox-owned file in
    place to work (see step 4), and `settings` (+ `install.alternatesFrom` /
    `tuiEnvFrom`) for anything the user should be able to configure per agent
