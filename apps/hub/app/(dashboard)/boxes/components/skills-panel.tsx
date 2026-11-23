@@ -33,6 +33,13 @@ interface Loaded {
 }
 
 export function SkillsPanel({ id, running }: { id: string; running: boolean }) {
+  // A box still being created (or whose create failed) is a synthetic `job:` row:
+  // it has no skills and isn't a valid binding scope, same guard as BotPanel.
+  if (id.startsWith('job:')) return null;
+  return <BoxSkills id={id} running={running} />;
+}
+
+function BoxSkills({ id, running }: { id: string; running: boolean }) {
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; bad?: boolean } | null>(null);

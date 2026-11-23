@@ -321,6 +321,28 @@ section, `GET|PUT /skills/{name}/skill-md`, `GET /skill-status`, and
   couldn't be read** (`unauthorized`). Approve is pinned to the version shown in
   the header, but the user hasn't seen its content. Goes with the session-as-
   elevated-read decision above.
+- **LATER (independent review of #458):**
+  - Approve is clickable before the diff and scan have loaded
+    (`update-dialog.tsx`); disable it while `!diff`.
+  - An added or removed text file over 256 KiB renders as an empty diff with no
+    "too large" note (`update-dialog.tsx`, `FileDiff`).
+  - `skillLocks` (`skills.ts`) is module-level, so the esbuild server bundle and
+    the Next routes each hold a copy: a PC upload, discard or policy change does
+    not serialize with an editor save, approve or refresh. Move the map to
+    `globalThis`.
+  - A refresh that started before an editor save turns the edited skill back
+    into a git skill, with the fetched version pending.
+  - `skills.mdx` says Fetch anyway leaves the version waiting for approval; under
+    the `auto` policy it applies to running boxes at once.
+  - `skill-status` re-reads every skill's meta per box; reuse what the call
+    already loaded.
+  - The Skills page's box-proposals panel answers through the
+    `answerApprovalAction` server action (via `ApprovalActions`); make it pure
+    REST.
+  - Refresh all is fanned out from the browser; add a backend refresh-all route.
+  - GET `skill-md` and `/diff` inflate the tarball with no cap, and the save path
+    uses the tarball cap as the unpacked limit; OpenAPI is missing the 401, 409
+    and 503 responses.
 - **The box Skills section's on/off doesn't sync by itself**: it saves the box
   binding and says to sync; one click more than needed.
 
