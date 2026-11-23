@@ -283,6 +283,35 @@ and stops. The files come from box agents and your PC's claude reads them, so re
 
 All four take `--local`.
 
+## Past sessions for agents (MCP)
+
+Agents in a box can read the same record. Every box registers an `agentbox` MCP server in its
+agents' own MCP config (claude `~/.claude.json`, codex `~/.codex/config.toml`, opencode
+`~/.config/opencode/opencode.json`; pi has no MCP client). Its tools:
+
+| Tool              | What it does                                                                                          |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `sessions_list`   | Recorded sessions, newest first (`agent`, `box`, `since`, `limit`, `offset`).                         |
+| `sessions_search` | Full-text over prompts and replies, with snippets and session ids.                                    |
+| `session_get`     | One session, condensed (prompts, replies, the tools between them) or `detail: full` for a range.      |
+| `memory_list`     | The repo's agent memory files on the hub.                                                             |
+| `memory_get`      | One memory file (`version` optional).                                                                 |
+| `memory_propose`  | New content for a memory file. It waits in the hub's approvals; nothing is written until you approve. |
+
+In a box, every tool is limited to the box's own repository: an agent sees the sessions and memory
+of earlier boxes of the same repo, never another project's. The box never holds the hub token:
+the server is `agentbox-ctl mcp`, which forwards each call through the box's relay channel, and
+the relay authenticates the box and applies its scope. A box built from an image or snapshot that
+predates this needs a rebuild or re-bake to get it.
+
+Outside a box, the hub serves the same tools at `POST /api/mcp` (streamable HTTP, JSON replies)
+with the hub token, unscoped; pass `repo` to limit a call. For example, for claude on the PC:
+
+```bash
+claude mcp add --transport http agentbox http://127.0.0.1:8787/api/mcp \
+  --header "Authorization: Bearer $(cat ~/.agentbox/hub/token)"
+```
+
 ## Lifecycle
 
 ```bash

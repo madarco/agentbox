@@ -2,7 +2,7 @@
 
 **Status:** Phases 1, 2 done (store, archive, ingest, read API + CLI for claude
 in boxes); Phase 3 implemented (codex, pi, opencode transcripts, re-parse job;
-openclaw deferred); Phase 4 (memory, claude) implemented; Phases 5-7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
+openclaw deferred); Phase 4 (memory, claude) implemented; Phase 6 (MCP) implemented; Phases 5 and 7 open. Open items: [agent-history-backlog.md](./agent-history-backlog.md). Phase 0 (measurement) is done — see
 [Phase 0 results](#phase-0-results-2026-11-22); its findings amend Phases 1–7.
 
 ## Goal

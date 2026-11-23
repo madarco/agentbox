@@ -333,3 +333,42 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
       images: one harmless log line.
     - A seed reply of 1000 x 256 KB could exceed the cloud bridge's body cap
       and fail forever. Real sets are KBs.
+
+## Phase 6 (MCP)
+
+- **Workspace scope.** A box is scoped to its repository only. The plan says
+  "project, or workspace when it has one", but sessions carry no workspace id
+  yet (`history_sessions` has no `workspace_id`), so there is nothing to scope
+  a workspace by. Add the column at ingest, then widen a box's scope to its
+  workspace's repos.
+- **Sessions with no repo URL are invisible to boxes.** A session is matched by
+  `repoKey(project_repo_url)`. `HistoryRelay` stamps that URL from the
+  registration's `originUrl` only, so a session shipped after a relay restart
+  (registration re-pushed without `originUrl`, see Phase 4's live-check note)
+  has none and no box can find it. Use the same folder-`origin` fallback the
+  memory relay uses (`MemoryRelay.boxIdentity`) when stamping transcripts.
+- **`local:` repos.** A repo with no `origin` keys as `local:<machine>:<root>`
+  for memory, but its sessions carry no URL, so such a box sees no sessions.
+- **`usage_query`.** In the plan's tool list; it waits for Phase 7's usage API.
+- **Registration timing on a fresh cloud box.** ctl writes the MCP entries when
+  `agents.list` first answers (retried with backoff). An agent launched before
+  that starts without the server until its next launch. Docker is unaffected
+  after the first box (the entry is on the shared config volume).
+- **Older images on a shared docker volume.** claude's and codex's MCP files are
+  on the shared config volume, so a box from an image older than this phase
+  sees the `agentbox` entry too, and its ctl has no `mcp` command: the agent
+  shows one failed MCP server. Harmless; goes away with a rebuild.
+- **openclaw** gets no registration. It is a service agent with its own MCP
+  config layer; needs an `mcp` spec kind for its config file.
+- **Host-reach path.** `mcp.*` from a box served through another PC's
+  host-reach executor (`daemon.ts`) is not routed (answers unknown method),
+  like `history.*`.
+- **Hub-scope proposals.** `memory_propose` from `/api/mcp` parks its approval
+  under the pseudo box id `hub`; the web approvals list shows it, the tray may
+  group it under no box. Its content is not redacted (the caller holds the hub
+  token already).
+- **No approval id in the reply.** `memory_propose` returns `pending` without
+  the approval id (`askPrompt` mints it internally), so an agent cannot poll
+  the outcome. A `memory_get` later shows whether it landed.
+- **`session_get` pages by turn index, not tokens.** A page stops at ~48k
+  characters; a single huge turn in `detail: full` is still returned whole.
