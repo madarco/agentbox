@@ -353,6 +353,7 @@ export class HistoryShipper {
     }
     if (res.code === 'disabled') {
       this.disabled = true;
+      stats.errors.push(`${rel}: disabled: ${res.message}`);
       return 'stop';
     }
     if (res.code !== 'offset_mismatch') {

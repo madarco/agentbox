@@ -377,3 +377,32 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   PC on a remote hub may run no local hub to ask. Both paths share
   `host-settings.ts`, so the rules cannot drift; only the folder argument is
   resolved by the CLI (project root of the cwd).
+
+## From the review of #449 (2026-11-23)
+
+Fixed in #449: B1 (a refusing or unreachable hub is backed off for 10
+minutes per target, shown as `backoffUntil` in the status, instead of every
+session being re-read and re-posted each pass) and B2 (claude's dashed key is
+lossy, so a session ships only when its transcript's first `cwd` is the allowed
+folder). Still open:
+
+- **L1: PUT/tray allow below an `agentbox.yaml`.** The project key is written
+  to the nearest project root, so allowing a subfolder of a project writes the
+  allow on the parent while reporting the subfolder. PUT also accepts a folder
+  that does not exist.
+- **L2: global off is not a kill switch.** A project `allow` ships with the
+  global toggle off (by design, it is the per-project opt-in). The tray must
+  not present "off" as "nothing ships": show the allowed projects next to it.
+- **L3: origin URL shipped raw.** `projectRepoUrl` comes from `.git/config`
+  verbatim, so an `https://user:token@…` origin reaches the hub and the status
+  file. Box sessions have the same gap. Strip userinfo at the edge.
+- **L4: host secrets miss the control-plane credentials.** `collectHostSecrets`
+  does not read `control-plane.env` (API key, admin token, admin password) or
+  this PC's `abdev_` device token, and falls back to formats-only redaction if
+  it throws.
+- **L5: status file rewritten every 60 s** even with the feature off.
+- **L6: `GET /history/host` answers device-token callers** with the hub
+  machine's project folder list. Refuse it for devices like the PUT.
+- **L7: `stop()` does not await a running pass.**
+- **L8: a project's `relay.controlPlaneUrl` is ignored.** The watcher always
+  ships to the global hub (the daemon's), not a per-project one.

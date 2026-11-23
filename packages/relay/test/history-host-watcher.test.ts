@@ -67,13 +67,13 @@ describe('host session watcher', () => {
   });
 
   it('ships allowed projects only, with a host origin, and resumes from the hub cursor', async () => {
-    const main = await session('-work-a', S, '{"n":1}\n');
+    const main = await session('-work-a', S, '{"n":1,"cwd":"/work/a"}\n');
     await mkdir(join(home, '.claude', 'projects', '-work-a', S, 'subagents'), { recursive: true });
     await writeFile(
       join(home, '.claude', 'projects', '-work-a', S, 'subagents', 'agent-1.jsonl'),
       '{"sub":1}\n',
     );
-    await session('-work-b', T, '{"n":2}\n');
+    await session('-work-b', T, '{"n":2,"cwd":"/work/b"}\n');
     const m = memSink();
     const statusFile = join(home, 'status.json');
     let resolved = 0;
@@ -103,7 +103,7 @@ describe('host session watcher', () => {
     await appendFile(main, '{"tok":"sekrit-value-1234567890"}\n');
     await w.tick();
     const last = m.frames[m.frames.length - 1]!;
-    expect(last.offset).toBe(Buffer.byteLength('{"n":1}\n'));
+    expect(last.offset).toBe(Buffer.byteLength('{"n":1,"cwd":"/work/a"}\n'));
     expect(Buffer.from(last.data, 'base64').toString()).not.toContain('sekrit');
 
     const written = JSON.parse(await readFile(statusFile, 'utf8')) as { projects: unknown[] };
@@ -111,7 +111,7 @@ describe('host session watcher', () => {
   });
 
   it('asks for no sink and reads nothing while every project is off', async () => {
-    await session('-work-a', S, '{"n":1}\n');
+    await session('-work-a', S, '{"n":1,"cwd":"/work/a"}\n');
     let resolved = 0;
     const w = new HostSessionWatcher({
       home,
@@ -131,7 +131,7 @@ describe('host session watcher', () => {
   });
 
   it('reports a missing hub in the status instead of shipping', async () => {
-    await session('-work-a', S, '{"n":1}\n');
+    await session('-work-a', S, '{"n":1,"cwd":"/work/a"}\n');
     const w = new HostSessionWatcher({
       home,
       statusFile: join(home, 'status.json'),
@@ -179,9 +179,93 @@ describe('httpHistorySink', () => {
       const bad = await httpHistorySink(`http://127.0.0.1:${String(port)}/x`, () => 'tok').ingest(
         frame,
       );
-      expect(bad).toMatchObject({ ok: false, code: 'unavailable' });
+      expect(bad).toMatchObject({ ok: false, code: 'disabled' });
     } finally {
       srv.close();
     }
+  });
+});
+
+describe('host session watcher: lossy keys and refusing hubs', () => {
+  it('ships only the sessions whose cwd is the allowed folder when keys collide', async () => {
+    // /work/my-app, /work/my.app and /work/my/app all key as -work-my-app.
+    await session('-work-my-app', S, '{"type":"summary"}\n{"cwd":"/work/my-app","n":1}\n');
+    await session('-work-my-app', T, '{"cwd":"/work/my.app","n":2}\n');
+    const U = 'cccccccc-1111-2222-3333-444444444444';
+    await session('-work-my-app', U, '{"cwd":"/work/my/app","n":3}\n');
+    const m = memSink();
+    const w = new HostSessionWatcher({
+      home,
+      statusFile: join(home, 'status.json'),
+      log: () => {},
+      machineId: () => 'pc-1',
+      hostSecrets: async () => [],
+      knownFolders: async () => [{ folder: '/work/my-app' }],
+      decide: decisions(true, { '/work/my-app': true }),
+      resolveSink: async () => ({ target: 'local', sink: m.sink }),
+    });
+    await w.tick();
+    expect(m.frames.map((f) => f.path)).toEqual([`projects/-work-my-app/${S}.jsonl`]);
+  });
+
+  it('backs off a hub that refuses, instead of re-posting every pass', async () => {
+    await session('-work-a', S, '{"n":1,"cwd":"/work/a"}\n');
+    await session('-work-a', T, '{"n":2,"cwd":"/work/a"}\n');
+    let calls = 0;
+    let refuse = true;
+    const accept = memSink();
+    let t = 1_000_000;
+    const w = new HostSessionWatcher({
+      home,
+      statusFile: join(home, 'status.json'),
+      log: () => {},
+      machineId: () => 'pc-1',
+      hostSecrets: async () => [],
+      now: () => t,
+      knownFolders: async () => [{ folder: '/work/a' }],
+      decide: decisions(true, { '/work/a': true }),
+      resolveSink: async () => ({
+        target: 'https://hub',
+        sink: {
+          ingest: async (f) => {
+            calls++;
+            return refuse
+              ? { ok: false, code: 'disabled', message: 'https://hub: HTTP 400: old hub' }
+              : accept.sink.ingest(f);
+          },
+        },
+      }),
+    });
+    const first = await w.tick();
+    expect(calls).toBe(1); // the first refusal stops the whole target
+    expect(first.backoffUntil).toBe(new Date(t + 10 * 60_000).toISOString());
+    expect(first.errors.join(' ')).toContain('HTTP 400');
+
+    t += 60_000;
+    const second = await w.tick();
+    expect(calls).toBe(1);
+    expect(second.backoffUntil).toBeDefined();
+
+    refuse = false;
+    t += 10 * 60_000;
+    const third = await w.tick();
+    expect(third.backoffUntil).toBeUndefined();
+    expect(accept.frames).toHaveLength(2);
+  });
+
+  it('maps a refused or unreachable POST to disabled', async () => {
+    const { httpHistorySink } = await import('../src/history/host-watcher.js');
+    const frame = {
+      origin: { kind: 'host' as const, boxId: '', hostId: 'pc' },
+      agent: 'claude',
+      path: 'p/x.jsonl',
+      offset: 0,
+      sha256Prefix: '',
+      sha256: 'h',
+      data: 'YWJj',
+    };
+    // Nothing listens on port 1.
+    const r = await httpHistorySink('http://127.0.0.1:1', () => 't').ingest(frame);
+    expect(r).toMatchObject({ ok: false, code: 'disabled' });
   });
 });

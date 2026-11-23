@@ -1,4 +1,13 @@
-import { open, readdir, readFile, stat, writeFile, rename, mkdir } from 'node:fs/promises';
+import {
+  open,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+  rename,
+  mkdir,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -54,7 +63,12 @@ export interface HostSessionsStatus {
   sessions: number;
   bytesShipped: number;
   errors: string[];
+  /** Set while the hub refused frames: no shipping until then (ISO time). */
+  backoffUntil?: string;
 }
+
+/** How long a refusing (or unreachable) hub is left alone. */
+export const HOST_SINK_BACKOFF_MS = 10 * 60_000;
 
 export interface HostSink {
   /** `local`, or the hub URL. */
@@ -74,6 +88,7 @@ export interface HostSessionWatcherDeps {
   decide?: typeof hostProjectDecisions;
   hostSecrets?: () => Promise<string[]>;
   machineId?: () => string | null;
+  now?: () => number;
 }
 
 interface WatchedAgent {
@@ -123,19 +138,76 @@ export async function knownProjectFolders(): Promise<
   return [...out.values()];
 }
 
+/** How far into a transcript to look for its first `cwd`. */
+const CWD_SCAN_BYTES = 1024 * 1024;
+
+/**
+ * The first `cwd` recorded in a claude transcript, `''` when none is found in
+ * the first {@link CWD_SCAN_BYTES} of a file at least that long, or null when
+ * the file is shorter and may still gain one.
+ */
+async function firstCwd(path: string): Promise<string | null> {
+  let fh;
+  try {
+    fh = await open(path, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const buf = Buffer.alloc(CWD_SCAN_BYTES);
+    const { bytesRead } = await fh.read(buf, 0, CWD_SCAN_BYTES, 0);
+    const text = buf.subarray(0, bytesRead).toString('utf8');
+    const lines = text.split('\n');
+    lines.pop(); // possibly partial
+    for (const line of lines) {
+      if (!line.includes('"cwd"')) continue;
+      try {
+        const v = JSON.parse(line) as { cwd?: unknown };
+        if (typeof v.cwd === 'string' && v.cwd) return v.cwd;
+      } catch {
+        /* not a JSON line */
+      }
+    }
+    return bytesRead >= CWD_SCAN_BYTES ? '' : null;
+  } finally {
+    await fh.close();
+  }
+}
+
 /**
  * A `HistoryFileSource` over this PC's disk. Its bindings are the session files
- * present in one project dir: every stem there is a host session (no box writes
- * a PC's `~/.claude/projects`), so nothing needs a binding log.
+ * present in one project dir whose transcript names `folder` as its cwd. The
+ * dashed key is lossy (`/x/my-app`, `/x/my.app` and `/x/my/app` share one dir),
+ * so the dir alone would ship other, possibly denied, folders' sessions.
  */
-export function localHostSource(agent: string, sessionDir: string): HistoryFileSource {
+export function localHostSource(
+  agent: string,
+  sessionDir: string,
+  folder: string,
+): HistoryFileSource {
+  // A session's cwd never changes once written: cache it per file.
+  const cwdOf = new Map<string, string>();
+  let folders: Set<string> | null = null;
   return {
     async readBindings(): Promise<HistoryBinding[]> {
-      const names = await readdir(sessionDir).catch(() => [] as string[]);
-      return names
+      if (!folders) {
+        folders = new Set([folder, await realpath(folder).catch(() => folder)]);
+      }
+      const names = (await readdir(sessionDir).catch(() => [] as string[]))
         .filter((n) => n.endsWith('.jsonl'))
-        .sort()
-        .map((n) => ({ ts: '', agent, sessionId: n.slice(0, -'.jsonl'.length) }));
+        .sort();
+      const out: HistoryBinding[] = [];
+      for (const n of names) {
+        let cwd = cwdOf.get(n);
+        if (cwd === undefined) {
+          const found = await firstCwd(join(sessionDir, n));
+          if (found === null) continue; // no cwd yet: ask again next pass
+          cwd = found;
+          cwdOf.set(n, cwd);
+        }
+        if (folders.has(cwd)) out.push({ ts: '', agent, sessionId: n.slice(0, -'.jsonl'.length) });
+      }
+      return out;
     },
     async size(path) {
       const s = await stat(path).catch(() => null);
@@ -162,20 +234,32 @@ export function httpHistorySink(hubUrl: string, bearer: () => string): HistoryIn
   const url = `${hubUrl.replace(/\/+$/, '')}/api/v1/history/chunks`;
   return {
     async ingest(frame: HistoryFrame): Promise<HistoryIngestResult> {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${bearer()}` },
-        body: JSON.stringify(frame),
-        signal: AbortSignal.timeout(60_000),
-      });
+      // Anything but an ingest answer is a refusal (an older hub's 400, a
+      // revoked token's 401, history off: 503) or no hub at all. Both are
+      // `disabled`: the watcher backs off rather than re-reading and
+      // re-posting every session each pass.
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${bearer()}` },
+          body: JSON.stringify(frame),
+          signal: AbortSignal.timeout(60_000),
+        });
+      } catch (e) {
+        return {
+          ok: false,
+          code: 'disabled',
+          message: `${url}: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
       // `/api/v1` answers the result itself on 200 and `{error}` otherwise.
       const body = (await res.json().catch(() => null)) as
         | (HistoryIngestResult & { error?: { message?: string } })
         | null;
       if (res.ok && body && typeof body.ok === 'boolean') return body;
-      const msg = body?.error?.message ?? `HTTP ${String(res.status)}`;
-      // 401/403: not this PC's to write (or not enrolled). Not a transient error.
-      return { ok: false, code: 'unavailable', message: `${url}: ${msg}` };
+      const msg = body?.error?.message ?? 'no ingest answer';
+      return { ok: false, code: 'disabled', message: `${url}: HTTP ${String(res.status)}: ${msg}` };
     },
   };
 }
@@ -223,6 +307,8 @@ export class HostSessionWatcher {
   private redactorAt = 0;
   private readonly home: string;
   private readonly statusFile: string;
+  /** Per target: refused until this time, and why. */
+  private readonly backoff = new Map<string, { until: number; reason: string }>();
 
   constructor(private readonly deps: HostSessionWatcherDeps) {
     this.home = deps.home ?? homedir();
@@ -295,6 +381,15 @@ export class HostSessionWatcher {
       return status;
     }
     status.target = resolved.target;
+    const now = (this.deps.now ?? Date.now)();
+    const held = this.backoff.get(resolved.target);
+    if (held && held.until > now) {
+      status.errors.push(held.reason);
+      status.backoffUntil = new Date(held.until).toISOString();
+      await this.writeStatus(status);
+      return status;
+    }
+    this.backoff.delete(resolved.target);
     const hostId = status.hostId;
     if (!hostId) {
       status.errors.push('this machine has no machine id');
@@ -325,7 +420,7 @@ export class HostSessionWatcher {
               ...(repoUrl ? { projectRepoUrl: repoUrl } : {}),
             },
             agents: [{ agent: a.agent, configDir: a.hostConfigDir, projectKey, spec: a.spec }],
-            source: localHostSource(a.agent, join(a.hostConfigDir, root)),
+            source: localHostSource(a.agent, join(a.hostConfigDir, root), p.folder),
             sink: resolved.sink,
             redactor: { redact: (b) => this.redactor.redact(b) },
             // Under the hub route's 12 MB body cap once base64'd.
@@ -339,10 +434,18 @@ export class HostSessionWatcher {
         status.bytesShipped += st.bytes;
         status.errors.push(...st.errors.slice(0, 5));
         if (st.disabled) {
-          status.errors.push(`${p.folder}: the hub refused (disabled)`);
-          // A disabled shipper never asks again; drop it so the next pass does.
-          this.shippers.delete(key);
-          live.delete(key);
+          // The hub refused (or could not be reached): stop this pass for the
+          // target, drop its shippers, and leave it alone for a while.
+          const until = now + HOST_SINK_BACKOFF_MS;
+          const why = st.errors[st.errors.length - 1] ?? 'the hub refused host sessions';
+          this.backoff.set(resolved.target, { until, reason: why });
+          for (const k of [...this.shippers.keys()]) {
+            if (k.startsWith(`${resolved.target}\0`)) this.shippers.delete(k);
+          }
+          status.backoffUntil = new Date(until).toISOString();
+          this.deps.log(`history-host: ${why}; retrying after ${status.backoffUntil}`);
+          await this.writeStatus(status);
+          return status;
         }
         const root = join(
           a.hostConfigDir,

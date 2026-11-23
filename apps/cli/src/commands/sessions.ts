@@ -269,6 +269,11 @@ sessionsCommand
           ? `last pass ${shortTime(status.lastPassAt)}, to ${status.target ?? 'nowhere'}, ${String(status.sessions)} session file(s) seen, ${String(status.bytesShipped)} B shipped`
           : 'has not run on this machine (is the relay up? `agentbox relay status`)'
       }`,
+      ...(status?.backoffUntil
+        ? [
+            `paused         the hub refused or was unreachable; retrying after ${shortTime(status.backoffUntil)}`,
+          ]
+        : []),
       ...(status?.errors.length ? [`errors         ${status.errors.slice(0, 5).join('; ')}`] : []),
     ];
     process.stdout.write(`${lines.join('\n')}\n\n`);

@@ -43,6 +43,11 @@ const hostSessionsViewSchema = {
         sessions: { type: 'integer' },
         bytesShipped: { type: 'integer' },
         errors: { type: 'array', items: { type: 'string' } },
+        backoffUntil: {
+          type: 'string',
+          description:
+            'Present while the hub refused frames (or was unreachable): nothing ships until this time.',
+        },
       },
     },
   },
