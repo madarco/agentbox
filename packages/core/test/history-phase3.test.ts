@@ -120,7 +120,9 @@ function rowCursorRig() {
         u: Number(r[t.updated]),
         ...(t.parent ? { parent: String(r[t.parent.column]) } : {}),
       })),
-    rows: (t, ids) => tables[t.name]!.filter((r) => ids.includes(String(r[t.id]))),
+    rows: (t, sid, ids) =>
+      tables[t.name]!.filter((r) => r[t.session] === sid && ids.includes(String(r[t.id]))),
+    sessions: () => [],
     close: () => {},
   };
   const files: HistoryRowFiles = {
@@ -220,6 +222,98 @@ describe('HistoryRowCursor', () => {
       validSqliteSource({ db: 'x.db', tables: [{ ...TABLES[0]!, name: 'session; drop' }] }),
     ).toBe(false);
     expect(validSqliteSource({ db: '../x.db', tables: TABLES })).toBe(false);
+    const zstd = { ...TABLES[1]!, zstd: { column: 'blob', into: 'text' } };
+    expect(validSqliteSource({ db: 'x.db', tables: [zstd] })).toBe(true);
+    expect(
+      validSqliteSource({
+        db: 'x.db',
+        tables: [{ ...zstd, zstd: { column: 'blob', into: 'text) --' } }],
+      }),
+    ).toBe(false);
+    expect(
+      validSqliteSource({
+        db: 'x.db',
+        tables: TABLES,
+        sessions: { table: 'session', column: 'id; drop' },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('HistoryRowCursor, a `sessions` source (openclaw)', () => {
+  const SID_A = '7241fdc1-21e3-4d4e-929a-e49794bad4c4';
+  const SID_B = '0bd2a7a0-0e3c-4f55-9a61-5b6f3a4c0d11';
+  const CLAW: ShippedAgent = {
+    agent: 'openclaw',
+    configDir: '/home/vscode/.openclaw',
+    projectKey: '-workspace',
+    spec: {
+      transcripts: [
+        {
+          root: 'agentbox-history',
+          format: 'sqlite',
+          mode: 'snapshot',
+          sessionFiles: ['<sessionId>.jsonl'],
+          sqlite: {
+            db: 'agents/main/agent/openclaw-agent.sqlite',
+            sessions: { table: 'session_windows', column: 'session_id' },
+            tables: [{ name: 'transcript_events', id: 'seq', session: 'session_id', updated: 'c' }],
+          },
+        },
+      ],
+    },
+  };
+
+  it('binds and copies every session in the db, with per-session ids in number order', async () => {
+    const events: Row[] = [
+      { session_id: SID_A, seq: 10, c: 5, event_json: 'a10' },
+      { session_id: SID_A, seq: 9, c: 5, event_json: 'a9' },
+      { session_id: SID_B, seq: 9, c: 5, event_json: 'b9' },
+    ];
+    const bindings: HistoryBinding[] = [
+      { ts: '', boxId: 'b1', agent: 'openclaw', sessionId: SID_A },
+    ];
+    const bound: string[] = [];
+    const disk = new Map<string, string>();
+    const cursor = new HistoryRowCursor({
+      agents: [CLAW],
+      boxId: 'b1',
+      readBindings: async () => bindings,
+      bind: (agent, sid) => {
+        bound.push(`${agent}:${sid}`);
+      },
+      open: () => ({
+        versions: (t, sid) =>
+          events
+            .filter((r) => r.session_id === sid)
+            .map((r) => ({ id: String(r[t.id]), u: Number(r[t.updated]) })),
+        rows: (t, sid, ids) =>
+          events.filter((r) => r.session_id === sid && ids.includes(String(r[t.id]))),
+        sessions: () => [SID_A, SID_B, 'bad id'],
+        close: () => {},
+      }),
+      files: {
+        readText: async (p) => disk.get(p) ?? null,
+        append: async (p, text) => {
+          disk.set(p, (disk.get(p) ?? '') + text);
+        },
+        writeText: async (p, text) => {
+          disk.set(p, text);
+        },
+        stamp: async () => 's1',
+      },
+      now: () => 100,
+    });
+    await cursor.pass();
+    // Only the unbound, well-formed session is bound; both are copied.
+    expect(bound).toEqual([`openclaw:${SID_B}`]);
+    const out = (sid: string) =>
+      (disk.get(`/home/vscode/.openclaw/agentbox-history/${sid}.jsonl`) ?? '')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => (JSON.parse(l) as { row: { event_json: string } }).row.event_json);
+    expect(out(SID_A)).toEqual(['a9', 'a10']);
+    expect(out(SID_B)).toEqual(['b9']);
   });
 });
 

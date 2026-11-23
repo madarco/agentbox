@@ -8,7 +8,7 @@ import type {
 } from './types.js';
 
 /**
- * The row cursor: turns a live sqlite store (opencode) into one append-only
+ * The row cursor: turns a live sqlite store (opencode, openclaw) into one append-only
  * JSONL file per bound session, which the byte-tailing shipper then ships like
  * any other transcript. Data-driven by the agent's `sqlite` block, so the edge
  * still loads no agent code.
@@ -30,7 +30,14 @@ export interface HistoryRowVersion {
 /** One open db. */
 export interface HistoryRowSource {
   versions(t: AgentHistorySqliteTable, sessionId: string): HistoryRowVersion[];
-  rows(t: AgentHistorySqliteTable, ids: string[]): Array<Record<string, unknown>>;
+  /** The rows of one session with these ids (an id may repeat across sessions). */
+  rows(
+    t: AgentHistorySqliteTable,
+    sessionId: string,
+    ids: string[],
+  ): Array<Record<string, unknown>>;
+  /** Every distinct session id in `table.column` (a `sessions` source). */
+  sessions(table: string, column: string): string[];
   close(): void;
 }
 
@@ -47,6 +54,8 @@ export interface HistoryRowCursorOptions {
   agents: ShippedAgent[];
   boxId: string;
   readBindings(): Promise<HistoryBinding[]>;
+  /** Bind a session found by a `sessions` source to this box (the binding log). */
+  bind?(agent: string, sessionId: string): Promise<void> | void;
   /** Open the db read-only, or null when it cannot be (absent, no driver). */
   open(path: string): HistoryRowSource | null;
   files: HistoryRowFiles;
@@ -69,20 +78,22 @@ export function validSqliteSource(src: AgentHistorySqliteSource | undefined): bo
     return false;
   }
   if (!Array.isArray(src.tables) || src.tables.length === 0) return false;
-  return src.tables.every(
-    (t) =>
-      IDENT.test(t.name) &&
-      IDENT.test(t.id) &&
-      IDENT.test(t.session) &&
-      IDENT.test(t.updated) &&
-      (!t.parent || (IDENT.test(t.parent.column) && IDENT.test(t.parent.table))),
+  return (
+    src.tables.every(
+      (t) =>
+        IDENT.test(t.name) &&
+        IDENT.test(t.id) &&
+        IDENT.test(t.session) &&
+        IDENT.test(t.updated) &&
+        (!t.parent || (IDENT.test(t.parent.column) && IDENT.test(t.parent.table))) &&
+        (!t.zstd || (IDENT.test(t.zstd.column) && IDENT.test(t.zstd.into))),
+    ) &&
+    (!src.sessions || (IDENT.test(src.sessions.table) && IDENT.test(src.sessions.column)))
   );
 }
 
 /** The agents' snapshot sources the row cursor can run. */
-export function snapshotSources(
-  agents: ShippedAgent[],
-): Array<{
+export function snapshotSources(agents: ShippedAgent[]): Array<{
   agent: ShippedAgent;
   t: AgentHistoryTranscripts & { sqlite: AgentHistorySqliteSource };
 }> {
@@ -101,6 +112,14 @@ export function snapshotSources(
 }
 
 type Cursor = Record<string, Record<string, number>>;
+
+/** Numeric ids (openclaw's per-session `seq`) in number order, others as strings. */
+function byId(a: string, b: string): number {
+  const na = Number(a);
+  const nb = Number(b);
+  if (a !== '' && b !== '' && Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 function join(...parts: string[]): string {
   return parts.filter(Boolean).join('/').replace(/\/+/g, '/');
@@ -157,7 +176,8 @@ export class HistoryRowCursor {
             .map((b) => b.sessionId),
         ),
       ];
-      if (ids.length === 0) continue;
+      const discover = t.sqlite.sessions;
+      if (ids.length === 0 && !discover) continue;
       const dbPath = join(agent.configDir, t.sqlite.db);
       const stampKey = `${agent.agent}\0${dbPath}\0${String(ids.length)}`;
       const stamp = await this.opts.files.stamp(dbPath).catch(() => null);
@@ -167,6 +187,16 @@ export class HistoryRowCursor {
       try {
         db = this.opts.open(dbPath);
         if (!db) continue;
+        if (discover) {
+          const known = new Set(ids);
+          for (const id of db.sessions(discover.table, discover.column)) {
+            if (!SESSION_ID.test(id) || known.has(id)) continue;
+            // The shippers ship bound sessions only: bind, then copy.
+            await this.opts.bind?.(agent.agent, id);
+            known.add(id);
+            ids.push(id);
+          }
+        }
         let pending = false;
         for (const sessionId of ids) {
           const r = await this.copySession(agent, t, db, sessionId, opts.final === true);
@@ -213,13 +243,14 @@ export class HistoryRowCursor {
             (final || now - v.u >= settle) &&
             (!parentSeen || (v.parent !== undefined && parentSeen[v.parent] !== undefined)),
         )
-        .sort((a, b) => a.u - b.u || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        .sort((a, b) => a.u - b.u || byId(a.id, b.id));
       for (let i = 0; i < due.length; i += ROWS_PER_QUERY) {
         const batch = due.slice(i, i + ROWS_PER_QUERY);
         const byId = new Map(
           db
             .rows(
               table,
+              sessionId,
               batch.map((v) => v.id),
             )
             .map((r) => [String(r[table.id]), r]),
