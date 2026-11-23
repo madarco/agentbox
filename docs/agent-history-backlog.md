@@ -144,8 +144,9 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   verbatim; a CR/LF or a character above U+00FF in a path makes the response
   throw (500). Use `encodeURIComponent(file.path)`.
 - **Phase 3 id shapes (LATER-7).**
-  - The prefix lookup refuses refs containing `_`; escape with `LIKE … ESCAPE`
-    instead.
+  - ~~The prefix lookup refuses refs containing `_`~~ — fixed in Phase 3 (`LIKE …
+    ESCAPE`), since an opencode id (`ses_…`) is otherwise unreachable by the
+    8-character id `sessions ls` prints.
   - `downloadTarget` skips session ids outside
     `^[0-9A-Za-z][0-9A-Za-z_-]{7,127}$` with a misleading "outside the folder"
     message.
