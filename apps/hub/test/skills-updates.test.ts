@@ -401,3 +401,24 @@ describe('box sync', () => {
     expect(out).toEqual([{ boxId: 'b1', status: 'failed', detail: 'ssh down' }]);
   });
 });
+
+describe('skills backend', () => {
+  it('lets a loopback caller add a file:// source (validated before the fetch)', async () => {
+    const { createSkillsBackend } = await import('../lib/backend/skills-backend');
+    const b = createSkillsBackend({
+      store: () => memStore(),
+      boxIds: () => Promise.resolve([]),
+      probeState: () => Promise.resolve('running'),
+      exec: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+      log: () => undefined,
+    });
+    // Refused before any git runs when not allowed...
+    await expect(b.addSkills({ git: { url: 'file:///nonexistent-p5' } })).rejects.toThrow(
+      /unsupported git URL/,
+    );
+    // ...and reaches git (which then fails on the missing path) when allowed.
+    await expect(
+      b.addSkills({ git: { url: 'file:///nonexistent-p5' } }, { allowFile: true }),
+    ).rejects.toThrow(/git /);
+  });
+});

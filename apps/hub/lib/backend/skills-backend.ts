@@ -95,14 +95,20 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
       };
       let res: AddResult;
       if (input.git) {
-        const spec = parseGitSpec(input.git.url, {
-          ...(input.git.ref ? { ref: input.git.ref } : {}),
-          ...(input.git.path ? { path: input.git.path } : {}),
-        });
+        const spec = parseGitSpec(
+          input.git.url,
+          {
+            ...(input.git.ref ? { ref: input.git.ref } : {}),
+            ...(input.git.path ? { path: input.git.path } : {}),
+          },
+          { allowFile: opts.allowFile === true },
+        );
         res = await addFromGit(d, spec, addOpts);
       } else if (input.marketplace) {
         const m = input.marketplace;
-        const spec = parseGitSpec(m.url, m.ref ? { ref: m.ref } : {});
+        const spec = parseGitSpec(m.url, m.ref ? { ref: m.ref } : {}, {
+          allowFile: opts.allowFile === true,
+        });
         res = await addFromMarketplace(
           d,
           {

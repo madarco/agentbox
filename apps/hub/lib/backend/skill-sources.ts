@@ -53,7 +53,11 @@ const FULL_SHA_RE = /^[0-9a-f]{40}$/;
  * suffixes. A `@` counts as a ref only after the last `/` (so `git@host:o/r`
  * keeps its user) or inside the `#` fragment.
  */
-export function parseGitSpec(input: string, flags: { ref?: string; path?: string } = {}): GitSpec {
+export function parseGitSpec(
+  input: string,
+  flags: { ref?: string; path?: string } = {},
+  opts: { allowFile?: boolean } = {},
+): GitSpec {
   let rest = input.trim();
   let path: string | undefined;
   let ref: string | undefined;
@@ -83,7 +87,7 @@ export function parseGitSpec(input: string, flags: { ref?: string; path?: string
   const p = flags.path ?? path;
   if (r) spec.ref = r;
   if (p) spec.path = p.replace(/^\.?\/+/, '').replace(/\/+$/, '');
-  validateGitSpec(spec);
+  validateGitSpec(spec, opts);
   return spec;
 }
 
