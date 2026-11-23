@@ -733,8 +733,6 @@ export function createCloudProvider(
     // into the sandbox env; re-read the config here since the host flag is
     // what the user controls).
     try {
-      const credentialSync = (await loadEffectiveConfig(box.workspacePath)).effective.box
-        .credentialSync;
       if (credentialSync) {
         // Per account: a named login reconciles against its own secret; a
         // pasted-kind account (a token, no login file) is left out.
@@ -1215,8 +1213,16 @@ export function createCloudProvider(
         });
         // The agents' env (forwarded keys, a named account's token, run-env) in
         // a 0600 file the launcher sources: a VPS has no sandbox-wide env to
-        // carry it, and the SDK providers get the same values either way.
-        await writeCloudAgentEnvFile(backend, handle, agentVolumes.env);
+        // carry it, and the SDK providers get the same values either way, so a
+        // failure is logged rather than failing a create that is otherwise up.
+        try {
+          await writeCloudAgentEnvFile(backend, handle, agentVolumes.env);
+        } catch (err) {
+          log(
+            `WARN: agent env not written (${err instanceof Error ? err.message : String(err)}); ` +
+              'forwarded API keys and a named account token may be missing on a VPS box',
+          );
+        }
 
         // Portless host alias + in-VPS mirror. Default-on for backends whose
         // `previewUrl()` returns a loopback URL (Hetzner); naturally skipped

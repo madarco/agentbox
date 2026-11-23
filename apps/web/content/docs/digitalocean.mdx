@@ -219,6 +219,7 @@ agentbox checkpoint create smoke setup
 - **Pause still bills.** DigitalOcean charges the full hourly rate even for a _stopped_ (powered-off) Droplet — the resources stay reserved. Destroy the box (`agentbox destroy <box> -y`) to stop billing entirely — it deletes the Droplet, its firewall, and the per-box SSH key.
 - **No live stats.** `agentbox top` and `dashboard` render `—` for CPU/mem; the create/list API doesn't stream per-Droplet metrics.
 - **No shared credential volume.** Agent credentials are pushed to each box via scp at create time (DigitalOcean has no shared-volume primitive).
+- **Agent env rides a 0600 file, not the VPS user data.** Cloud-init user data is readable from inside the box, so forwarded keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...) and a named account's token are written to `/run/agentbox/agent.env` (mode `0600`, box user) at create and on every start, and the agent launcher sources it. They are re-read from the host that starts the box, so start it from where those keys are set.
 - **IPv4 only.** SSH targets the Droplet's public IPv4 address; IPv6-only host networks aren't exercised yet.
 - **Clean up orphans** with `agentbox prune --provider digitalocean` (lists Droplets not tracked in this CLI's state and offers to delete them); the `DIGITALOCEAN_TOKEN` also lives in `~/.agentbox/secrets.env` if you prefer the DigitalOcean dashboard or REST API.
 

@@ -37,7 +37,7 @@ providers, which already have the same values sandbox-wide.
   uploaded to `/tmp` (scp keeps the 0600 mode) and `install -m 600` moves it to
   `/run/agentbox/agent.env`, owned by the box user. The values never reach an argv,
   `user_data` or `box.env`.
-- Written at create, after the bootstrap kick, and on every wake (`reEnsureCloudBox`),
+- Written at create (best-effort, a failure is logged), after the bootstrap kick, and on every wake (`reEnsureCloudBox`),
   because a hetzner/DO stop is a power-off and `/run` is tmpfs. Same file on every
   cloud provider, written through the shared path.
 - The launcher sources it (`set -a`) before its own exports, so the TUI env and
@@ -59,3 +59,15 @@ the ctl credential watcher ran on hetzner/DO even when it was turned off.
   default mode for the moment before `install` moves it. Those providers already hold
   the same values in every process's environ, so the file adds nothing an in-box
   process couldn't already read.
+- A wake rebuilds `agent.env` from the env and account store of the process that
+  starts the box (normally the hub, which also ran the create). A start from a
+  process without the forwarded keys writes the file without them, and the agent comes
+  back unauthenticated. Before this change a VPS box never got those keys at all, so
+  this is not a regression; the fix is to keep the create-time values (encrypted, or
+  only rewriting keys the waker actually has).
+- Only the TUI launcher sources `agent.env`. A service agent (openclaw) runs under the
+  ctl supervisor's env, so on a VPS a named account's token for it still does not
+  arrive (64588067 fixed only `boxRunEnv` for its units). openclaw forwards no host keys
+  today.
+- An agent added to a live box (`ensureAgentInstalled`) gets no `agent.env` entries
+  until the next wake.

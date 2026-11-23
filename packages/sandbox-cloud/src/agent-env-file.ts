@@ -53,9 +53,13 @@ export async function writeCloudAgentEnvFile(
     const r = await backend.exec(
       handle,
       `umask 077; if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi; ` +
-        `[ -d /run/agentbox ] || { $SUDO mkdir -p /run/agentbox && $SUDO chown "$(id -un):$(id -gn)" /run/agentbox; }; ` +
+        // The same mkdir + chown the in-box bootstrap does, so a /run/agentbox
+        // recreated by root does not make `install` fail.
+        `$SUDO mkdir -p /run/agentbox && $SUDO chown "$(id -un):$(id -gn)" /run/agentbox; ` +
         `install -m 600 ${remote} ${CLOUD_AGENT_ENV_FILE}.new && mv -f ${CLOUD_AGENT_ENV_FILE}.new ${CLOUD_AGENT_ENV_FILE}; ` +
-        `rc=$?; rm -f ${remote}; exit $rc`,
+        // sudo: an SDK upload may land the staging copy as another user, which
+        // sticky /tmp would not let the box user delete.
+        `rc=$?; $SUDO rm -f ${remote}; exit $rc`,
     );
     if (r.exitCode !== 0) {
       throw new Error(

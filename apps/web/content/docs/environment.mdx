@@ -85,6 +85,8 @@ When launching an agent, AgentBox forwards a fixed allowlist of host env vars in
 
 **OpenCode** does no host-env credential forwarding — its auth lives in a synced config volume (`auth.json`). See [Run an agent](/docs/run-an-agent).
 
+On Hetzner and DigitalOcean boxes these values reach the agent through a `0600` file, `/run/agentbox/agent.env`, rather than the box-wide environment, which on a VPS could only travel in user data readable from inside the box.
+
 For Claude auth the precedence is: host env (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`) wins, otherwise the long-lived OAuth token at `~/.agentbox/auth.json` (mode `0600`), which AgentBox captures on your first `agentbox claude` via `claude setup-token` and forwards as `CLAUDE_CODE_OAUTH_TOKEN`.
 
 Pick a model or effort for a box by exporting before launch:
@@ -163,10 +165,10 @@ AGENTBOX_CARRY_YES=1 agentbox create -y
 
 These govern the host actions the relay performs on a box's behalf (see [Sync & git](/docs/sync-and-git)):
 
-| Variable                        | Effect                                                                              |
-| ------------------------------- | ----------------------------------------------------------------------------------- |
-| `AGENTBOX_PROMPT=off`           | Auto-accept host-action permission prompts (e.g. `git push`). Headless mode.        |
-| `AGENTBOX_GH_PR_CHECKOUT=allow` | Opt in to `gh pr checkout` (it switches the host repo's branch; off by default).    |
+| Variable                        | Effect                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `AGENTBOX_PROMPT=off`           | Auto-accept host-action permission prompts (e.g. `git push`). Headless mode.     |
+| `AGENTBOX_GH_PR_CHECKOUT=allow` | Opt in to `gh pr checkout` (it switches the host repo's branch; off by default). |
 
 <Callout type="warn" title="HEADS UP">
   `AGENTBOX_PROMPT=off` lets a box run host git operations without asking. Use it only in trusted or
