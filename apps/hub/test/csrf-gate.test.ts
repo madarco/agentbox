@@ -125,6 +125,27 @@ describe('csrfOutcome', () => {
     }
     expect(csrfOutcome({ ...write, credential: 'bearer', contentType: 'text/plain' })).toBe('ok');
     expect(csrfOutcome({ ...write, credential: 'query' })).toBe('ok');
-    expect(csrfOutcome({ ...write, credential: 'none' })).toBe('ok');
+    // Auth off: a non-browser caller (no provenance headers) is unaffected.
+    expect(csrfOutcome({ ...write, credential: 'none', contentType: 'text/plain' })).toBe('ok');
+  });
+
+  it('with auth off, still refuses a cross-site browser page', () => {
+    expect(
+      csrfOutcome({
+        ...write,
+        credential: 'none',
+        origin: 'http://127.0.0.1:32768',
+        secFetchSite: 'same-site',
+        contentType: 'text/plain',
+      }),
+    ).toBe('cross-site');
+    expect(csrfOutcome({ ...write, credential: 'none', secFetchSite: 'same-origin' })).toBe('ok');
+  });
+
+  it('normalizes a proxied host: first X-Forwarded-Host entry, default port dropped', () => {
+    const cookie = { ...write, credential: 'cookie' as const, origin: 'https://hub.example.com' };
+    expect(csrfOutcome({ ...cookie, host: 'hub.example.com, 10.0.0.2:8787' })).toBe('ok');
+    expect(csrfOutcome({ ...cookie, host: 'hub.example.com:443' })).toBe('ok');
+    expect(csrfOutcome({ ...cookie, host: 'hub.example.com:8443' })).toBe('cross-site');
   });
 });

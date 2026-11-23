@@ -27,7 +27,7 @@ import {
 } from 'node:path';
 import { posix } from 'node:path';
 import type { CloudBackend, CloudHandle } from '@agentbox/core';
-import { rsyncPullToHost, workspaceExcludes } from '@agentbox/sandbox-core';
+import { rsyncPullToHost } from '@agentbox/sandbox-core';
 import { bashScript, quoteShellArg } from './shell.js';
 
 const REMOTE_UP_TAR = '/tmp/agentbox-cp-up.tar.gz';
@@ -139,9 +139,8 @@ async function uploadOneToCloudBox(
  * source basename for `docker cp` parity.
  *
  * The tarball is unpacked into a temp dir first, never straight over
- * `hostDst`: the landing is the shared `rsyncPullToHost`, with the same
- * workspace excludes as `agentbox download` and, with `backupDir`, every file
- * it replaces kept there first. That copy also never writes through a symlink
+ * `hostDst`: the landing is the shared `rsyncPullToHost`, which with
+ * `backupDir` keeps every file it replaces there first. That copy also never writes through a symlink
  * the destination already has.
  */
 export async function pullCloudDirContents(
@@ -186,7 +185,8 @@ export async function pullCloudDirContents(
       scratchDir: unpacked,
       destDir: dstAbs,
       fileList: null,
-      excludes: [...workspaceExcludes(), '.git'],
+      // The scope this path always had: everything but `.git`.
+      excludes: ['.git'],
       ...(opts.backupDir ? { backupDir: opts.backupDir } : {}),
     });
     return { finalPath: dstAbs, changes };

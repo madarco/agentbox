@@ -292,10 +292,9 @@ export function planPush(
  * the PC's older copy; pushing it back would start every new hub box logged
  * out. Compared by when the access token expires (a refresh moves it forward):
  *
- * - both known: upload only when the PC's is strictly later;
- * - the PC's copy already expired while custody's has not: never (validity);
- * - custody's known, the PC's not: keep custody's (it is a known-good login);
- * - neither known: the old last-writer-wins upload.
+ * - both known: upload only when the PC's is strictly later (so an expired PC
+ *   copy never replaces a live custody one);
+ * - either unknown: the old last-writer-wins upload.
  */
 export function credentialPushVerdict(
   agent: string,
@@ -312,10 +311,15 @@ export function credentialPushVerdict(
   };
   const mine = expiry(local);
   const theirs = expiry(remote);
-  if (theirs === null) return { upload: true, reason: 'changed' };
-  if (mine === null) return { upload: false, reason: 'custody copy is a known-good login' };
-  if (mine <= now && theirs > now) return { upload: false, reason: 'this copy has expired' };
-  if (mine <= theirs) return { upload: false, reason: 'custody copy is newer' };
+  // Unknown on either side (a switch to an API-key login has no expiry): not
+  // two copies of one login to order, so the old last-writer-wins upload.
+  if (mine === null || theirs === null) return { upload: true, reason: 'changed' };
+  if (mine <= theirs) {
+    return {
+      upload: false,
+      reason: mine <= now ? 'this copy has expired' : 'custody copy is newer',
+    };
+  }
   return { upload: true, reason: 'newer login' };
 }
 
@@ -332,27 +336,21 @@ export async function planCredentialPush(
 ): Promise<PushDecision[]> {
   const plan = planPush(items, manifest, opts);
   if (opts.force) return plan;
-  const out: PushDecision[] = [];
-  for (const [i, d] of plan.entries()) {
-    if (d.action !== 'upload' || d.reason !== 'changed') {
-      out.push(d);
-      continue;
-    }
-    const remote = await getRemote(d.path);
-    if (remote === null) {
-      out.push(d);
-      continue;
-    }
-    const agent = d.path.split('/')[1] ?? '';
-    const v = credentialPushVerdict(
-      agent,
-      items[i]!.data.toString('utf8'),
-      remote.toString('utf8'),
-      opts.now,
-    );
-    out.push({ path: d.path, action: v.upload ? 'upload' : 'skip', reason: v.reason });
-  }
-  return out;
+  return Promise.all(
+    plan.map(async (d, i): Promise<PushDecision> => {
+      if (d.action !== 'upload' || d.reason !== 'changed') return d;
+      const remote = await getRemote(d.path);
+      if (remote === null) return d;
+      const agent = d.path.split('/')[1] ?? '';
+      const v = credentialPushVerdict(
+        agent,
+        items[i]!.data.toString('utf8'),
+        remote.toString('utf8'),
+        opts.now,
+      );
+      return { path: d.path, action: v.upload ? 'upload' : 'skip', reason: v.reason };
+    }),
+  );
 }
 
 /**

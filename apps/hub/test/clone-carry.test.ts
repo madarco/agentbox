@@ -119,7 +119,9 @@ describe('cloneCarryOpts', () => {
     for (const k of ['size', 'location', 'inbound', 'providerOptions', 'remoteHost', 'memory']) {
       expect(moved).not.toHaveProperty(k);
     }
+    // The proxy upstream is engine-shaped too: config decides on a new provider.
+    expect(moved).not.toHaveProperty('llmProxy');
     // What the box IS still carries.
-    expect(moved).toMatchObject({ skills: { none: true }, llmProxy: 'forward' });
+    expect(moved).toMatchObject({ skills: { none: true }, accounts: { claude: 'work' } });
   });
 });

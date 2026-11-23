@@ -108,6 +108,8 @@ export const CLONE_CLOUD_POLICY = {
   resources: 'n/a', // what the backend reported; `size` is what was asked
   publicHost: 'n/a',
   inbound: 'carry',
+  // Reaches the create on the control-plane path; the local queue has no
+  // per-create class yet (backlog), so there it follows config.
   sandboxClass: 'carry',
   size: 'carry',
   location: 'carry',
@@ -154,9 +156,6 @@ export function cloneCarryOpts(src: CloneSource, targetProvider: string): Create
       ...(src.skills.exclude ? { exclude: [...src.skills.exclude] } : {}),
     };
   }
-  // Explicit both ways, so the hub's config can neither turn a proxied box's
-  // clone direct nor proxy a direct one behind the user's back.
-  out.llmProxy = src.llmProxy ? 'forward' : 'off';
   if (src.withPlaywright !== undefined) out.withPlaywright = src.withPlaywright;
   if (src.vncEnabled !== undefined) out.vnc = src.vncEnabled;
   if (src.persistent === true) out.persistent = true;
@@ -164,6 +163,12 @@ export function cloneCarryOpts(src: CloneSource, targetProvider: string): Create
   if (src.accounts && Object.keys(src.accounts).length > 0) out.accounts = { ...src.accounts };
 
   if (!same) return out;
+
+  // Explicit both ways, so the hub's config can neither turn a proxied box's
+  // clone direct nor proxy a direct one behind the user's back. Same provider
+  // only: the upstream is engine-shaped (a docker box dials host.docker.internal,
+  // a cloud box needs `llm.proxyUrl`), so on another provider config decides.
+  out.llmProxy = src.llmProxy ? 'forward' : 'off';
 
   if (src.dockerCacheShared !== undefined) out.sharedDockerCache = src.dockerCacheShared;
   if (src.portlessAlias !== undefined) out.portless = true;

@@ -28,7 +28,8 @@ Plan:
   when that header is set. Bearer callers (CLI, tray) are unchanged.
 - `/api/mcp` (POST) and `/api/events` (GET) go through the same gate: covered.
 - Tests: gate truth table (bearer POST without Origin allowed; cookie POST from
-  `127.0.0.1:<box port>` refused; same-origin allowed; `null` origin refused; GET untouched),
+  `127.0.0.1:<box port>` refused; same-origin allowed; `null` origin refused; GET untouched;
+  auth off still refuses a cross-site browser page; a proxied `X-Forwarded-Host` chain),
   and `readJson` with/without the cookie marker.
 
 ### 2. A cloud box's workspace download overwrites the PC's project unasked and without a backup
@@ -47,8 +48,7 @@ Plan (owner decision: always ask, back up what is overwritten):
 - `downloadBackupDir(boxId)` → `~/.agentbox/boxes/<id>/download-backups/<stamp>/`: on the
   host, outside the project (the box can't reach it). The 5 newest are kept.
 - The cloud relay path stops untarring over the project. It unpacks into a temporary
-  folder and runs the same `rsyncPullToHost` with the shared `workspaceExcludes()`
-  and the backup dir. The CLI `agentbox download` (which the docker relay path runs)
+  folder and runs the same `rsyncPullToHost` with the backup dir (the same everything-but-`.git` scope as before). The CLI `agentbox download` (which the docker relay path runs)
   passes the backup dir too, so every provider gets backups.
 - Tests: rsync backup keeps the replaced file; approval is no longer auto.
 
@@ -64,8 +64,8 @@ Plan:
 - `planCredentialPush` (custody-client): for each `changed` item, read custody's copy
   and skip the upload when custody's expiry is known and not older than the PC's
   (`custody copy is newer`). Validity check: a PC copy that has already expired never
-  replaces a custody copy that hasn't. Unknown on both sides keeps the old
-  last-writer-wins.
+  replaces a custody copy that hasn't. Unknown on either side (an API-key login has
+  no expiry) keeps the old last-writer-wins.
 - Applied to the automatic sync (`syncAgentCredentials`), `hub credentials push`
   (unless `--force`) and the per-account push after `login` (named accounts too).
 - Tests: newer custody skipped, newer PC uploaded, expired PC vs live custody skipped,
@@ -85,7 +85,7 @@ the clone's create options, and a unit test checks that removing any `carry` fie
 changes the result (it fails when a field is classified `carry` but never wired).
 
 - Carried: skills selection; `llmProxy`, mapped explicitly to `forward` / `off` so
-  the hub's config can't flip it; withPlaywright; VNC; persistent (an explicit
+  the hub's config can't flip it (same provider only); withPlaywright; VNC; persistent (an explicit
   input still wins); accounts; borrowed logins. On the same provider only: docker
   limits (memory/cpus/pids/disk), shared docker cache, Portless, cloud size,
   location, inbound policy, daytona sandbox class, and the remote-docker engine
@@ -115,6 +115,11 @@ a clone of a `--no-skills --llm-proxy forward` box keeps both.
   the other `providerOptions` (`timeoutMs`, `networkPolicy`) are not recorded on the
   box, so a clone can't carry them. Boxes created before this change have no
   `cloud.size` / `cloud.location`, so their clones use the provider default.
+- Clone: the daytona sandbox class reaches the create only on the control-plane
+  path. The local queue (`QueueJobCreateOpts`) has no per-create `providerOptions`,
+  so a local clone (like a local CLI create) follows `box.daytonaClass`.
+- Clone: the LLM proxy carries only when the provider is unchanged (its upstream
+  is engine-shaped); a clone onto another provider takes that hub's `llm.proxy`.
 - Clone: box-scope skill bindings land after the create job finishes, so the clone's
   first boot-time skills sync can run before them; the next sync applies them.
 - Clone: `autoApproveHostActions` / `autoApproveSafeHostActions` ride the registration

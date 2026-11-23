@@ -41,14 +41,17 @@ describe('credentialPushVerdict', () => {
   });
 
   it('never replaces a live login with an expired one', () => {
-    expect(credentialPushVerdict('claude', claude(NOW - 1), claude(NOW + 5), NOW).upload).toBe(
-      false,
-    );
+    expect(credentialPushVerdict('claude', claude(NOW - 1), claude(NOW + 5), NOW)).toEqual({
+      upload: false,
+      reason: 'this copy has expired',
+    });
   });
 
-  it('falls back to last-writer-wins only when custody has no readable expiry', () => {
+  it('falls back to last-writer-wins when either side has no readable expiry', () => {
     expect(credentialPushVerdict('claude', claude(NOW + 5), '{"x":1}', NOW).upload).toBe(true);
-    expect(credentialPushVerdict('claude', '{"x":1}', claude(NOW + 5), NOW).upload).toBe(false);
+    // Switched codex to an API-key auth.json: a different login, not an older one.
+    const apiKey = JSON.stringify({ OPENAI_API_KEY: 'k', tokens: null });
+    expect(credentialPushVerdict('codex', apiKey, codex(NOW / 1000 + 90), NOW).upload).toBe(true);
   });
 });
 

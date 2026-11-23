@@ -157,7 +157,8 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * the request's own host. Neither header present is refused too: every browser
  * sends at least one on a POST, and nothing but a browser holds the cookie.
  * Bearer and `?token=` callers never reach the check. A body on such a write
- * must also be JSON (`not-json`).
+ * must also be JSON (`not-json`). With no credential at all (auth off), a
+ * request that says it came from a browser page must still be same-origin.
  */
 export function csrfOutcome(a: {
   credential: GateCredential;
@@ -168,8 +169,16 @@ export function csrfOutcome(a: {
   contentType: string | null;
   hasBody: boolean;
 }): 'ok' | 'cross-site' | 'not-json' {
-  if (a.credential !== 'cookie') return 'ok';
+  if (a.credential === 'bearer' || a.credential === 'query') return 'ok';
   if (SAFE_METHODS.has(a.method.toUpperCase())) return 'ok';
+  if (a.credential === 'none') {
+    // No credential at all (auth off, a public path): anyone may call, so there
+    // is nothing to forge — except a browser page riding the user's network
+    // position. A browser always says where it came from; refuse it when that
+    // is not the hub. Non-browser clients send neither header and pass.
+    if (a.secFetchSite === null && a.origin === null) return 'ok';
+    return sameOrigin(a) ? 'ok' : 'cross-site';
+  }
   if (!sameOrigin(a)) return 'cross-site';
   // Belt and braces: the hub's pages send every body as JSON, and a JSON content
   // type is exactly what a no-preflight ("simple") cross-site request cannot set.
@@ -185,7 +194,13 @@ function sameOrigin(a: {
   if (a.secFetchSite !== null) return a.secFetchSite === 'same-origin';
   if (!a.origin || !a.host) return false;
   try {
-    return new URL(a.origin).host.toLowerCase() === a.host.toLowerCase();
+    const o = new URL(a.origin);
+    // A proxy chain sends `X-Forwarded-Host: a, b`: the first is the client's.
+    const host = a.host.split(',')[0]!.trim().toLowerCase();
+    const defaultPort = o.protocol === 'https:' ? ':443' : o.protocol === 'http:' ? ':80' : '';
+    const bare =
+      defaultPort && host.endsWith(defaultPort) ? host.slice(0, -defaultPort.length) : host;
+    return o.host.toLowerCase() === bare;
   } catch {
     // `Origin: null` (a sandboxed frame, a file: page) lands here.
     return false;
