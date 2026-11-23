@@ -121,6 +121,11 @@ export interface EnsureClaudeVolumeResult {
    */
   onboardingSeeded?: boolean;
   /**
+   * True when an existing `_claude.json` in the volume lacked
+   * `hasCompletedOnboarding` and got it set (host had no `~/.claude`).
+   */
+  onboardingPatched?: boolean;
+  /**
    * Number of hook entries dropped during sync because their `command` pointed
    * at a host path (under `$HOME/`) that wouldn't exist inside the container.
    * 0 when nothing was filtered or no sync ran.
@@ -177,12 +182,30 @@ async function volumeHasClaudeJson(volume: string, image: string): Promise<boole
 }
 
 /**
- * Write {@link defaultBoxClaudeJson} as the volume's `_claude.json` unless one
- * is already there (write-once, see {@link volumeHasClaudeJson}). The test and
- * the write run in one helper container, so a concurrent box seeding the shared
- * volume can't be clobbered between them. Returns true when it wrote the file.
+ * Shell step for a volume helper (volume at `/dst`, running as root): set
+ * `hasCompletedOnboarding: true` in an existing `_claude.json` that lacks it,
+ * leaving every other key alone. A merge, not a rewrite, so it doesn't break
+ * the write-once rule (see {@link volumeHasClaudeJson}). It repairs volumes a
+ * box already wrote while stuck on the first-run theme picker, and host
+ * `~/.claude.json` files that never finished onboarding. Prints `patched` when
+ * it changed the file. Unparseable JSON is left as is.
  */
-async function seedDefaultClaudeJson(volume: string, image: string): Promise<boolean> {
+const ENSURE_ONBOARDED_STEP =
+  'f=/dst/_claude.json; ' +
+  'if [ -f "$f" ] && ! jq -e ".hasCompletedOnboarding == true" "$f" >/dev/null 2>&1; then ' +
+  't=$(mktemp /dst/.claude-json.XXXXXX) && jq ".hasCompletedOnboarding = true" "$f" > "$t" && ' +
+  'chown 1000:1000 "$t" && mv "$t" "$f" && echo patched; rm -f "$t"; fi';
+
+/**
+ * For a host with no `~/.claude`: make sure the volume's `_claude.json` is
+ * pre-onboarded. With none there, write {@link defaultBoxClaudeJson} with a
+ * hard link (`ln` fails if the file exists, so a concurrent writer is never
+ * replaced); with one there, only {@link ENSURE_ONBOARDED_STEP} runs.
+ */
+async function seedDefaultClaudeJson(
+  volume: string,
+  image: string,
+): Promise<'seeded' | 'patched' | 'unchanged'> {
   const json = JSON.stringify(defaultBoxClaudeJson(CONTAINER_WORKSPACE), null, 2);
   const res = await execa(
     'docker',
@@ -197,19 +220,21 @@ async function seedDefaultClaudeJson(volume: string, image: string): Promise<boo
       image,
       'sh',
       '-c',
-      '[ -e /dst/_claude.json ] && exit 3; ' +
-        'cat > /dst/_claude.json.tmp && chown 1000:1000 /dst /dst/_claude.json.tmp && ' +
-        'mv /dst/_claude.json.tmp /dst/_claude.json',
+      'chown 1000:1000 /dst; ' +
+        'if [ ! -e /dst/_claude.json ]; then ' +
+        't=$(mktemp /dst/.claude-json.XXXXXX) && cat > "$t" && chown 1000:1000 "$t" && ' +
+        'ln "$t" /dst/_claude.json 2>/dev/null && echo seeded; rm -f "$t"; fi; ' +
+        ENSURE_ONBOARDED_STEP,
     ],
     { input: json, reject: false },
   );
-  if (res.exitCode === 3) return false;
   if (res.exitCode !== 0) {
     throw new Error(
       `seeding the default _claude.json into ${volume} failed (exit ${String(res.exitCode)}): ${res.stderr}`,
     );
   }
-  return true;
+  const out = res.stdout;
+  return out.includes('seeded') ? 'seeded' : out.includes('patched') ? 'patched' : 'unchanged';
 }
 
 /**
@@ -244,8 +269,13 @@ export async function ensureClaudeVolume(
     // Nothing to sync, but claude must still not boot into its first-run
     // theme picker (an `-i` turn would never start). Credentials keep coming
     // from their own paths; this only seeds the onboarding state, write-once.
-    const onboardingSeeded = await seedDefaultClaudeJson(spec.volume, opts.image);
-    return { created, synced: false, onboardingSeeded };
+    const seeded = await seedDefaultClaudeJson(spec.volume, opts.image);
+    return {
+      created,
+      synced: false,
+      onboardingSeeded: seeded === 'seeded',
+      onboardingPatched: seeded === 'patched',
+    };
   }
 
   // rsync (not cp -a) so repeat syncs skip unchanged files. rsync is installed in
@@ -466,6 +496,10 @@ export async function ensureClaudeVolume(
         'find /dst/plugins -maxdepth 1 -type f -name "*.json" ' +
         '-exec sed -i "s|$HOST_HOME/.claude/plugins/|/home/vscode/.claude/plugins/|g" {} +; true; }' +
         memoryRekeyStep +
+        // After every copy: whatever `_claude.json` the volume ends up with
+        // (host file, earlier box's, default) must not boot claude into the
+        // theme picker. Its output goes to stderr so stdout stays clean.
+        ` && { ${ENSURE_ONBOARDED_STEP}; } >&2` +
         ' && chown -R 1000:1000 /dst',
     );
     await execa('docker', args);

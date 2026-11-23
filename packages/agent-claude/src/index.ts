@@ -56,6 +56,11 @@ function ensureNotes(
       'seeded a pre-onboarded _claude.json (no host ~/.claude; skips the first-run screens)',
     );
   }
+  if (r.onboardingPatched) {
+    notes.push(
+      'marked onboarding complete in the volume .claude.json (skips the first-run screens)',
+    );
+  }
   if (r.workspaceTrusted) {
     notes.push('pre-trusted /workspace in synced .claude.json (skips the trust dialog)');
   }

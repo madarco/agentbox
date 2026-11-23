@@ -31,9 +31,15 @@ Found while building and first running the suite on nightly `0.33.0-nightly.2026
   1. One helper, `defaultBoxClaudeJson(workspace)` in `packages/agent-claude/src/claude-json-defaults.ts`: `hasCompletedOnboarding: true`, `installMethod: native`, the workspace trusted. The cloud default calls it.
   2. Docker, host has no `~/.claude`: write that default into the volume as `_claude.json`, write-once (skipped when `volumeHasClaudeJson`), chowned to the box user. Credentials are untouched.
   3. Docker, host has `~/.claude` but no `~/.claude.json`: the hand-written minimal file (which lacked `hasCompletedOnboarding`) becomes the same helper's output.
+  3b. Docker, any `_claude.json` already in the volume (a host file that never finished onboarding, or one claude wrote while stuck on the picker before this fix): merge `hasCompletedOnboarding: true` in with `jq`, keeping every other key, so existing stuck volumes recover without breaking write-once.
   4. remote-docker needs nothing: it runs through `createCloudProvider`, so it already stages the cloud overlay.
-  5. Unit test for the helper; live check on a scratch `HOME` with no `~/.claude`.
-- **A host `~/.claude.json` without `hasCompletedOnboarding` still reaches a docker box as is.** The cloud path forces the flag to `true`; the docker filter chain (`maybeFilterTo`) doesn't. Rare (a host that has a `~/.claude.json` but never finished onboarding), not seen in the suite.
+  5. Unit test for the helper; live check on a scratch `HOME` with no `~/.claude`. Done 2026-11-23: on a scratch `HOME` with no `~/.claude` (relay on 8811), `agentbox claude -i "Say hi…"` on docker logged "seeded a pre-onboarded _claude.json" and claude answered the turn with no onboarding screen; a second ensure left claude's own `_claude.json` untouched.
+- **Follow-ups from the docker onboarding fix's review** (none blocking):
+  - Seeding the default into the shared volume also keeps a host `~/.claude.json` created later out of it (write-once), so its MCP servers and project state never reach docker boxes until the volume is recreated. The throwaway login container already had this effect.
+  - Three helpers now edit `/dst/_claude.json` in a volume with their own tmp/chown conventions (`seedDefaultClaudeJson`, `approveAccountApiKey`, the account-state scrub). Fold them into one "edit `_claude.json` in a volume" helper.
+  - The volume helpers chown by uid `1000`, not by name; true for every docker image today.
+
+- **A docker box whose host repo sits under `/tmp/claude-<uid>/` can't start claude.** The `.git` is bind-mounted at its host path, so docker creates `/tmp/claude-1000` in the box as root, and claude refuses it as its temp dir ("owned by uid 0 … Refusing to use it") and exits; the `-i` job still reports `done`. Hit only when the repo lives in a Claude Code scratch dir (e.g. testing from inside a box). Setting `CLAUDE_CODE_TMPDIR` in the box would avoid it.
 
 ## Harness gaps
 
