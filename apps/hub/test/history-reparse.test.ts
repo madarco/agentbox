@@ -45,7 +45,22 @@ function moduleAt(version: 1 | 2): AgentHistoryModule {
       let at =
         chunk.offset - Buffer.byteLength(typeof state.partial === 'string' ? state.partial : '');
       for (const raw of lines) {
-        const l = JSON.parse(raw) as { role: 'user' | 'assistant'; text: string };
+        const l = JSON.parse(raw) as {
+          role: 'user' | 'assistant';
+          text: string;
+          usage?: number;
+        };
+        if (l.usage) {
+          records.push({
+            kind: 'usage',
+            messageId: `u${String(at)}`,
+            inputTokens: l.usage,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            at,
+          });
+        }
         if (version === 1 && l.role === 'user') {
           records.push({ kind: 'turn', role: 'user', text: l.text, at });
         }
@@ -131,7 +146,7 @@ describe('history re-parse job', () => {
     const repo = await openSqliteHistoryRepo(':memory:');
     const archive = memArchive();
     const svc = createHistoryService({ repo, archive, retentionDays: 90 });
-    const body = `${JSON.stringify({ role: 'user', text: 'a' })}\n`;
+    const body = `${JSON.stringify({ role: 'user', text: 'a', usage: 7 })}\n`;
     await svc.ingest({
       origin: { boxId: 'box1' },
       agent: AGENT,
@@ -147,5 +162,9 @@ describe('history re-parse job', () => {
     };
     expect(await svc.reparse()).toBe(0);
     expect((await repo.getSession(`${AGENT}:${SID}`))?.parserVersion).toBe(1);
+    // The usage the old parser stored survives the failed re-parse.
+    const u = await svc.usage({ by: [], tzOffsetMin: 0, limit: 10 });
+    expect(u.totals).toMatchObject({ inputTokens: 7, messages: 1 });
+    expect((await repo.getSession(`${AGENT}:${SID}`))?.inputTokens).toBe(7);
   });
 });

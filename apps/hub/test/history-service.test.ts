@@ -272,18 +272,32 @@ describe('history service', () => {
     expect(sessions[0]!.turns).toBe(2);
   });
 
-  it('deletes sessions past retention, with their archive objects and orphan blobs', async () => {
+  it('purges transcripts past retention, keeping the session row and its usage', async () => {
     const now = { t: 1_000_000 };
     const { svc, repo, archive } = await service(now);
     const edge = new Edge(svc);
     await edge.append(line({ type: 'user', message: { content: 'x' }, blob: 'B'.repeat(5000) }));
+    await edge.append(
+      line({
+        type: 'assistant',
+        timestamp: '2026-11-20T10:00:00.000Z',
+        message: { id: 'm1', content: [], usage: { input_tokens: 7, output_tokens: 3 } },
+      }),
+    );
     now.t += SEAL_IDLE_MS + 1;
     await svc.sweep();
     now.t += 91 * 24 * 60 * 60_000;
     const r = await svc.sweep({ retention: true });
     expect(r).toMatchObject({ expired: 1, blobs: 1 });
-    expect(await repo.listSessions()).toHaveLength(0);
     expect(archive.keys()).toHaveLength(0);
+    // Hidden from the session reads, still counted by usage.
+    expect(await svc.listSessions({})).toHaveLength(0);
+    expect(await svc.resolveSession(S)).toMatchObject({ ok: false, code: 'not_found' });
+    expect(await repo.filesOfSession(`claude:${S}`)).toHaveLength(0);
+    const u = await svc.usage({ by: ['agent'], tzOffsetMin: 0, limit: 10 });
+    expect(u.totals).toMatchObject({ inputTokens: 7, outputTokens: 3, messages: 1, sessions: 1 });
+    // A second sweep does not purge it again.
+    expect((await svc.sweep({ retention: true })).expired).toBe(0);
   });
 });
 

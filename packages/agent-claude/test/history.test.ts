@@ -83,6 +83,44 @@ describe('claude parse', () => {
     expect(r.records[4]).toMatchObject({ title: 'My session' });
   });
 
+  it('drops usage copied from another session (/branch, desktop continuation)', () => {
+    const msg = (id: string) => ({
+      id,
+      content: [],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    const usageIds = (path: string, ls: object[]) =>
+      m
+        .parse({ path, offset: 0, bytes: enc(ls) }, {})
+        .records.flatMap((r) => (r.kind === 'usage' ? [r.messageId] : []));
+    expect(
+      usageIds('projects/-w/new.jsonl', [
+        {
+          type: 'assistant',
+          sessionId: 'new',
+          forkedFrom: { sessionId: 'old' },
+          message: msg('a'),
+        },
+        { type: 'assistant', sessionId: 'old', message: msg('b') },
+        { type: 'assistant', sessionId: 'new', message: msg('c') },
+        { type: 'assistant', message: msg('d') },
+        // A forkedFrom naming the file's own session is not a copy.
+        {
+          type: 'assistant',
+          sessionId: 'new',
+          forkedFrom: { sessionId: 'new' },
+          message: msg('e'),
+        },
+      ]),
+    ).toEqual(['c', 'd', 'e']);
+    // A subagent's lines carry its parent's id: they are its own.
+    expect(
+      usageIds('projects/-w/par/subagents/agent-1.jsonl', [
+        { type: 'assistant', sessionId: 'par', isSidechain: true, message: msg('s') },
+      ]),
+    ).toEqual(['s']);
+  });
+
   it('carries a split line to the next chunk with the right offset', () => {
     const bytes = enc(lines.slice(0, 2));
     const cut = 30;

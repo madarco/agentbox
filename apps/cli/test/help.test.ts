@@ -36,6 +36,7 @@ import { skillsCommand } from '../src/commands/skills.js';
 import { sessionsCommand } from '../src/commands/sessions.js';
 import { memoryCommand } from '../src/commands/memory.js';
 import { mcpCommand } from '../src/commands/mcp.js';
+import { usageCommand } from '../src/commands/usage.js';
 import { inboundCommand } from '../src/commands/inbound.js';
 import { installCommand } from '../src/commands/install.js';
 import { listCommand } from '../src/commands/list.js';
@@ -114,6 +115,7 @@ function buildProgram(): Command {
     hubCommand,
     skillsCommand,
     sessionsCommand,
+    usageCommand,
     memoryCommand,
     mcpCommand,
     daytonaCommand,
