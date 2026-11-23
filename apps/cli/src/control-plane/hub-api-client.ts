@@ -946,6 +946,8 @@ export interface HubApiHistorySession {
   provider: string | null;
   hostId: string | null;
   projectRepoUrl: string | null;
+  /** The box's named LLM account for this agent; null when unknown. */
+  account?: string | null;
   parentSessionId: string | null;
   title: string | null;
   firstTs: string | null;
@@ -997,6 +999,57 @@ export interface HubApiHistoryFilter {
   host?: string;
   since?: string;
   q?: string;
+  limit?: number;
+}
+
+// ── usage (/api/v1/usage) ──
+
+export type HubApiUsageDimension =
+  | 'day'
+  | 'agent'
+  | 'account'
+  | 'box'
+  | 'project'
+  | 'host'
+  | 'model'
+  | 'session';
+
+export interface HubApiUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  messages: number;
+  sessions: number;
+}
+
+export interface HubApiUsageGroup extends HubApiUsageTotals {
+  keys: Partial<Record<HubApiUsageDimension, string | null>>;
+  labels: Partial<Record<HubApiUsageDimension, string | null>>;
+}
+
+export interface HubApiUsageReport {
+  by: HubApiUsageDimension[];
+  since: string | null;
+  until: string | null;
+  tzOffset: number;
+  totals: HubApiUsageTotals;
+  groups: HubApiUsageGroup[];
+  truncated: boolean;
+}
+
+export interface HubApiUsageQuery {
+  by?: HubApiUsageDimension[];
+  since?: string;
+  until?: string;
+  tzOffset?: number;
+  agent?: string;
+  account?: string;
+  box?: string;
+  project?: string;
+  host?: string;
+  model?: string;
   limit?: number;
 }
 
@@ -1667,6 +1720,18 @@ export class HubApiClient {
       `/history/memory/file?${this.memoryQs(q, { path, ...(version ? { version: String(version) } : {}) })}`,
     );
     return { file: r.file, bytes: Buffer.from(r.content, 'base64') };
+  }
+
+  // ── usage ──
+
+  usage(q: HubApiUsageQuery = {}): Promise<HubApiUsageReport> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) {
+      if (v === undefined || v === '') continue;
+      qs.set(k, Array.isArray(v) ? v.join(',') : String(v));
+    }
+    const s = qs.toString();
+    return this.request<HubApiUsageReport>('GET', `/usage${s ? `?${s}` : ''}`);
   }
 
   // ── session history ──

@@ -48,8 +48,18 @@ function textBlocks(content: unknown): string {
     .join('\n');
 }
 
-/** Records for one parsed line at byte offset `at`. */
-export function claudeLineRecords(line: Json, at: number): HistoryRecord[] {
+/** The session a file's own lines belong to: its stem, or a subagent's parent dir. */
+function fileSessionId(path: string): string {
+  return SUBAGENT_PATH.exec(path)?.[1] ?? stemOf(path);
+}
+
+/**
+ * Records for one parsed line at byte offset `at`. With `sessionId` (the
+ * file's session), usage on a line copied from another session (a `/branch`
+ * copy carries `forkedFrom`, a desktop continuation the parent's id) is
+ * dropped: the parent session already counted it.
+ */
+export function claudeLineRecords(line: Json, at: number, sessionId?: string): HistoryRecord[] {
   const ts = str(line.timestamp);
   const out: HistoryRecord[] = [];
   const type = line.type;
@@ -80,7 +90,15 @@ export function claudeLineRecords(line: Json, at: number): HistoryRecord[] {
     }
     const usage = asObj(message.usage);
     const messageId = str(message.id);
-    if (usage && messageId) {
+    const lineSession = str(line.sessionId);
+    // The same rule `identify` uses for lineage: another session's id, on the
+    // line or in its `forkedFrom`.
+    const forkedFrom = str(asObj(line.forkedFrom)?.sessionId);
+    const copied =
+      sessionId !== undefined &&
+      ((forkedFrom !== undefined && forkedFrom !== sessionId) ||
+        (lineSession !== undefined && lineSession !== sessionId));
+    if (usage && messageId && !copied) {
       const model = str(message.model);
       out.push({
         kind: 'usage',
@@ -100,7 +118,8 @@ export function claudeLineRecords(line: Json, at: number): HistoryRecord[] {
 
 export const claudeHistoryModule: AgentHistoryModule = {
   id: 'claude',
-  parserVersion: 1,
+  // 2: usage on lines copied from another session is no longer counted.
+  parserVersion: 2,
 
   identify(head, path) {
     const sub = SUBAGENT_PATH.exec(path);
@@ -130,6 +149,7 @@ export const claudeHistoryModule: AgentHistoryModule = {
     const buf = carry ? Buffer.concat([carry, Buffer.from(chunk.bytes)]) : Buffer.from(chunk.bytes);
     const base = chunk.offset - (carry?.length ?? 0);
     const records: HistoryRecord[] = [];
+    const sessionId = fileSessionId(chunk.path);
     let start = 0;
     for (;;) {
       const nl = buf.indexOf(0x0a, start);
@@ -138,7 +158,7 @@ export const claudeHistoryModule: AgentHistoryModule = {
       if (raw.trim()) {
         try {
           const line = asObj(JSON.parse(raw));
-          if (line) records.push(...claudeLineRecords(line, base + start));
+          if (line) records.push(...claudeLineRecords(line, base + start, sessionId));
         } catch {
           /* a non-JSON line is kept in raw, skipped here */
         }

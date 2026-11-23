@@ -71,6 +71,7 @@ import { doctorCommand } from './commands/doctor.js';
 import { toolsCommand } from './commands/tools.js';
 import { skillsCommand } from './commands/skills.js';
 import { sessionsCommand } from './commands/sessions.js';
+import { usageCommand } from './commands/usage.js';
 import { memoryCommand } from './commands/memory.js';
 import { mcpCommand } from './commands/mcp.js';
 import { isFirstRun } from './lib/first-run.js';
@@ -291,6 +292,7 @@ program.addCommand(doctorCommand);
 program.addCommand(toolsCommand);
 program.addCommand(skillsCommand);
 program.addCommand(sessionsCommand);
+program.addCommand(usageCommand);
 program.addCommand(memoryCommand);
 program.addCommand(mcpCommand);
 

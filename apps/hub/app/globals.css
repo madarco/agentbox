@@ -76,6 +76,15 @@
   --green-line: #bfe3cd;
   --green-ink: #0c6b3d;
   --faint: #a4a9b0;
+  /* categorical chart series, fixed order (usage page) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
 }
 
 * {
