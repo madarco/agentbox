@@ -312,9 +312,11 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
     LABEL_SQL[d] ? [`${LABEL_SQL[d]!} AS l${String(i)}`] : [],
   );
   const groupBy = q.by.map((_, i) => `k${String(i)}`).join(', ');
-  // Days read in time order; everything else by size.
+  // Newest days first, so a truncated report keeps the recent ones; they are
+  // put back in time order below. Everything else by size.
+  const dayCols = q.by.flatMap((d, i) => (d === 'day' ? [`k${String(i)}`] : []));
   const order = [
-    ...q.by.flatMap((d, i) => (d === 'day' ? [`k${String(i)}`] : [])),
+    ...dayCols.map((c) => `${c} DESC`),
     '(input + output + cache_read + cache_write) DESC',
     groupBy,
   ].join(', ');
@@ -324,7 +326,13 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
        GROUP BY ${groupBy} ORDER BY ${order} LIMIT ?`,
     )
     .all(...args, q.limit + 1) as Row[];
-  const groups = rows.slice(0, q.limit).map((r) => {
+  const kept = rows.slice(0, q.limit);
+  if (dayCols.length > 0) {
+    const col = dayCols[0]!;
+    // Stable: within a day the size order stays.
+    kept.sort((a, b) => String(a[col] ?? '').localeCompare(String(b[col] ?? '')));
+  }
+  const groups = kept.map((r) => {
     const keys: Partial<Record<UsageDimension, string | null>> = {};
     const labels: Partial<Record<UsageDimension, string | null>> = {};
     q.by.forEach((d, i) => {
@@ -657,13 +665,13 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         return keys;
       });
     },
-    async sessionsWithoutAccount(limit) {
+    async sessionsWithoutAccount(afterKey, limit) {
       return (
         db
           .prepare(
-            'SELECT key, box_id, agent FROM history_sessions WHERE account IS NULL AND box_id IS NOT NULL ORDER BY key LIMIT ?',
+            'SELECT key, box_id, agent FROM history_sessions WHERE account IS NULL AND box_id IS NOT NULL AND key > ? ORDER BY key LIMIT ?',
           )
-          .all(limit) as Row[]
+          .all(afterKey, limit) as Row[]
       ).map((r) => ({ key: String(r.key), boxId: String(r.box_id), agent: String(r.agent) }));
     },
     async setSessionAccount(key, account) {

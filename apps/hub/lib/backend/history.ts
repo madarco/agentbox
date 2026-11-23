@@ -223,8 +223,9 @@ export interface HistoryRepo {
    * (stamped purged) and its usage rows. Returns archive keys to delete.
    */
   purgeSession(key: string, nowMs: number): Promise<string[]>;
-  /** Sessions with no account stamped yet, that name a box. */
+  /** Sessions with no account stamped yet, that name a box, keyed after `afterKey`. */
   sessionsWithoutAccount(
+    afterKey: string,
     limit: number,
   ): Promise<Array<{ key: string; boxId: string; agent: string }>>;
   setSessionAccount(key: string, account: string): Promise<void>;
@@ -691,21 +692,20 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
 
     async backfillAccounts() {
       let done = 0;
-      // Boxes this hub no longer knows stay null; `seen` stops the loop there.
-      const seen = new Set<string>();
+      // A key cursor: sessions of boxes this hub no longer knows stay null and
+      // are walked once per run.
+      let after = '';
       for (;;) {
-        const rows = (await repo.sessionsWithoutAccount(200 + seen.size)).filter(
-          (r) => !seen.has(r.key),
-        );
+        const rows = await repo.sessionsWithoutAccount(after, 200);
         if (rows.length === 0) break;
         for (const r of rows) {
-          seen.add(r.key);
           const account = await accountFor(r.boxId, r.agent);
           if (account) {
             await repo.setSessionAccount(r.key, account);
             done++;
           }
         }
+        after = rows[rows.length - 1]!.key;
       }
       return done;
     },

@@ -365,3 +365,15 @@ success, reporting the bytes actually written (LATER-2), and `sessions` is in
   `history_usage` joined to sessions, with a time filter on an expression
   (`COALESCE(ts_ms, …)`) that the `ts_ms` index does not serve. Fine at
   hundreds of thousands of rows; a daily rollup table is the fix if it shows.
+- **From the Phase 7 review, not fixed:**
+  - *Store-only boxes have no account.* `accountOf` reads this hub's
+    `state.json`. A box a control box knows only from a Store registration
+    (`reg.accounts`, another PC's box) is stamped unknown, and the backfill
+    cannot reach it either. Read the registration's accounts too.
+  - *A purged session named by usage cannot be opened.* `usage --by session`
+    and the page's Top sessions list sessions whose transcript retention
+    deleted; `sessions show <id>` then answers "not found" with no hint why.
+    Say "purged by retention" instead.
+  - *Shared shapes copied.* `shortRepo` and the dimension list exist in the CLI
+    (`usage-format.ts`), the hub backend and the page. A nested GitLab path
+    (`group/sub/repo`) shortens to `sub/repo` in both copies.

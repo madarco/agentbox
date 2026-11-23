@@ -175,6 +175,12 @@ describe('usage (Phase 7)', () => {
     });
     expect(window.totals.messages).toBe(1);
 
+    // A truncated day report keeps the newest days, still in time order.
+    const lastDay = await svc.usage({ by: ['day'], tzOffsetMin: 0, limit: 1 });
+    expect(lastDay).toMatchObject({ truncated: true, groups: [{ keys: { day: '2026-11-21' } }] });
+    const days = await svc.usage({ by: ['day', 'agent'], tzOffsetMin: 0, limit: 50 });
+    expect(days.groups.map((g) => g.keys.day)).toEqual(['2026-11-20', '2026-11-21']);
+
     const one = await svc.usage({ by: ['agent'], tzOffsetMin: 0, limit: 1 });
     expect(one).toMatchObject({ truncated: true, groups: [{ keys: { agent: 'claude' } }] });
   });

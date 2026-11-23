@@ -104,8 +104,15 @@ describe('claude parse', () => {
         { type: 'assistant', sessionId: 'old', message: msg('b') },
         { type: 'assistant', sessionId: 'new', message: msg('c') },
         { type: 'assistant', message: msg('d') },
+        // A forkedFrom naming the file's own session is not a copy.
+        {
+          type: 'assistant',
+          sessionId: 'new',
+          forkedFrom: { sessionId: 'new' },
+          message: msg('e'),
+        },
       ]),
-    ).toEqual(['c', 'd']);
+    ).toEqual(['c', 'd', 'e']);
     // A subagent's lines carry its parent's id: they are its own.
     expect(
       usageIds('projects/-w/par/subagents/agent-1.jsonl', [

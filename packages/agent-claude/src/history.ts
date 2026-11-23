@@ -91,9 +91,13 @@ export function claudeLineRecords(line: Json, at: number, sessionId?: string): H
     const usage = asObj(message.usage);
     const messageId = str(message.id);
     const lineSession = str(line.sessionId);
+    // The same rule `identify` uses for lineage: another session's id, on the
+    // line or in its `forkedFrom`.
+    const forkedFrom = str(asObj(line.forkedFrom)?.sessionId);
     const copied =
       sessionId !== undefined &&
-      (line.forkedFrom !== undefined || (lineSession !== undefined && lineSession !== sessionId));
+      ((forkedFrom !== undefined && forkedFrom !== sessionId) ||
+        (lineSession !== undefined && lineSession !== sessionId));
     if (usage && messageId && !copied) {
       const model = str(message.model);
       out.push({
