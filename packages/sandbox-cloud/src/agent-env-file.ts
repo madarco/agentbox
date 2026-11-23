@@ -31,7 +31,13 @@ export function renderAgentEnvFile(env: Readonly<Record<string, string>>): strin
   return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
 
-const SUDO_PREFIX = `if command -v sudo >/dev/null 2>&1; then SUDO='sudo -n'; else SUDO=''; fi; `;
+/**
+ * Defines `asroot`, which runs its arguments under `sudo -n` when sudo exists.
+ * A function, not a `$SUDO` variable: daytona's exec shell is zsh, which does
+ * not word-split an unquoted `$SUDO`, so `$SUDO rm` looked up a command named
+ * `sudo -n` and every privileged step failed silently.
+ */
+const SUDO_PREFIX = `asroot() { if command -v sudo >/dev/null 2>&1; then sudo -n "$@"; else "$@"; fi; }; `;
 
 const STAGING_PREFIX = '.agent-env-';
 const STAGING_DIRS = ['/run/agentbox', '/tmp'] as const;
@@ -40,14 +46,14 @@ const STAGING_DIRS = ['/run/agentbox', '/tmp'] as const;
  * Remove both staging paths of this write, plus any staging copy an earlier
  * failed write left behind (`/tmp/agentbox.agent-env-*` is the pre-fix /tmp
  * name). The sweep skips files younger than a minute so it cannot pull the
- * staging copy out from under a concurrent write to the same box. sudo: an SDK
+ * staging copy out from under a concurrent write to the same box. asroot: an SDK
  * upload may land a copy as another user, which sticky /tmp would not let the
  * box user delete.
  */
 function stagingCleanup(staged: readonly string[]): string {
   return (
-    `$SUDO rm -f ${staged.join(' ')}; ` +
-    `$SUDO find ${STAGING_DIRS.join(' ')} -maxdepth 1 -type f ` +
+    `asroot rm -f ${staged.join(' ')}; ` +
+    `asroot find ${STAGING_DIRS.join(' ')} -maxdepth 1 -type f ` +
     `\\( -name '${STAGING_PREFIX}*' -o -name 'agentbox${STAGING_PREFIX}*' \\) ` +
     `-mmin +1 -delete 2>/dev/null`
   );
@@ -90,10 +96,10 @@ export async function writeCloudAgentEnvFile(
     const r = await backend.exec(
       handle,
       `umask 077; ${SUDO_PREFIX}` +
-        `$SUDO chmod 600 ${remote}; ` +
+        `asroot chmod 600 ${remote}; ` +
         // The same mkdir + chown the in-box bootstrap does, so a /run/agentbox
         // recreated by root does not make `install` fail.
-        `$SUDO mkdir -p /run/agentbox && $SUDO chown "$(id -un):$(id -gn)" /run/agentbox; ` +
+        `asroot mkdir -p /run/agentbox && asroot chown "$(id -un):$(id -gn)" /run/agentbox; ` +
         `install -m 600 ${remote} ${CLOUD_AGENT_ENV_FILE}.new && mv -f ${CLOUD_AGENT_ENV_FILE}.new ${CLOUD_AGENT_ENV_FILE}; ` +
         `rc=$?; ${stagingCleanup(staged)}; exit $rc`,
     );
@@ -124,7 +130,7 @@ export async function removeCloudAgentEnvFile(
   handle: CloudHandle,
 ): Promise<void> {
   try {
-    await backend.exec(handle, `${SUDO_PREFIX}$SUDO rm -f ${CLOUD_AGENT_ENV_FILE}`);
+    await backend.exec(handle, `${SUDO_PREFIX}asroot rm -f ${CLOUD_AGENT_ENV_FILE}`);
   } catch {
     // best-effort: the box is already in trouble if this exec fails too
   }
