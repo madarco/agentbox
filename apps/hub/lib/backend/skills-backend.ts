@@ -52,6 +52,8 @@ export interface SkillsBackend {
   /** Apply pending versions and sync the boxes that hold them. */
   approveSkills(
     names: string[],
+    /** Approve only if the pending version is still this one (what the user reviewed). */
+    opts?: { version?: string },
   ): Promise<{ applied: { name: string; from: string; to: string; skill: SkillSummary }[] }>;
   skillDiff(name: string, opts?: { from?: string; to?: string }): Promise<SkillDiff>;
   syncSkillBoxes(opts?: { boxIds?: string[]; names?: string[] }): Promise<SkillSyncOutcome[]>;
@@ -156,10 +158,22 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
       return out;
     },
 
-    async approveSkills(names) {
+    async approveSkills(names, opts = {}) {
       const store = storeOrThrow(deps);
       const applied = [];
-      for (const n of names) applied.push(await approveSkillUpdate(store, n));
+      for (const n of names) {
+        applied.push(
+          opts.version
+            ? await approveSkillUpdate(
+                store,
+                n,
+                await resolveSkillVersion(store, n, opts.version),
+                new Date(),
+                { onlyPending: true },
+              )
+            : await approveSkillUpdate(store, n),
+        );
+      }
       fanOut(applied.filter((a) => a.from !== a.to).map((a) => a.name));
       return { applied };
     },

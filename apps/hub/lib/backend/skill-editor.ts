@@ -116,16 +116,17 @@ export async function saveSkillMd(
   }
 
   const meta = await readSkillMeta(store, name);
-  if (input.base !== undefined && (!meta || meta.current !== input.base)) {
+  // A cheap early answer; the authoritative check runs again under the skill's
+  // lock in importSkill (expectCurrent), so two concurrent saves can't both land.
+  if ((meta?.current ?? null) !== (input.base ?? null)) {
     throw new SkillsError(
-      'invalid_request',
-      meta
-        ? `skill '${name}' changed since the editor opened it (now ${meta.current.slice(0, 12)}); reload and edit again`
-        : `skill '${name}' was discarded since the editor opened it`,
+      'conflict',
+      !meta
+        ? `skill '${name}' was discarded since the editor opened it`
+        : input.base === undefined
+          ? `skill '${name}' already exists; open it to edit`
+          : `skill '${name}' changed since the editor opened it (now ${meta.current.slice(0, 12)}); reload and edit again`,
     );
-  }
-  if (input.base === undefined && meta) {
-    throw new SkillsError('invalid_request', `skill '${name}' already exists; open it to edit`);
   }
 
   const others = meta
@@ -153,6 +154,7 @@ export async function saveSkillMd(
     },
     body: Readable.from([writeTar(files)]),
     origin: { kind: 'upload' },
+    expectCurrent: input.base ?? null,
     // The user's own edit: no approval round, whatever the skill's policy.
     apply: true,
     ...(opts.maxTarballBytes !== undefined ? { maxBytes: opts.maxTarballBytes } : {}),

@@ -16,8 +16,9 @@ export interface DiffGap {
 const MAX_CELLS = 4_000_000;
 
 export function lineDiff(before: string, after: string): DiffLine[] {
-  const a = before.split('\n');
-  const b = after.split('\n');
+  // An empty side (an added or removed file) has no lines, not one empty line.
+  const a = before === '' ? [] : before.split('\n');
+  const b = after === '' ? [] : after.split('\n');
   if (a.length * b.length > MAX_CELLS) {
     return [
       ...a.map((text) => ({ op: '-' as const, text })),

@@ -122,7 +122,11 @@ export function UpdateDialog({
     setBusy(true);
     setError(null);
     try {
-      await api(`/skills/${encodeURIComponent(skill.name)}/approve`, { method: 'POST' });
+      // Pin the version reviewed here: a refresh that moved `pending` meanwhile is refused.
+      await api(`/skills/${encodeURIComponent(skill.name)}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ version: pending?.version }),
+      });
       onApproved();
       onClose();
     } catch (err) {

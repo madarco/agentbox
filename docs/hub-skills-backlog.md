@@ -312,6 +312,15 @@ section, `GET|PUT /skills/{name}/skill-md`, `GET /skill-status`, and
   only boxes behind on a skill they already hold, so a skill created in the web
   editor (or uploaded from a PC) lands in a running box at its next sync or
   restart, or with Sync now. Same as Phase 5; the UI doesn't promise otherwise.
+- **Add from git doesn't pin the commit the dry run showed** (review of this
+  phase). The import re-fetches the ref, so a branch that moves between Look up
+  and Add imports content the user didn't see, and a ticked "add anyway" covers
+  that content's findings too. Fix: `POST /skills` takes `expectCommit` and
+  refuses on a mismatch (pinning `ref` to the sha would freeze later refreshes).
+- **On a non-local hub, Review update still offers Approve when the diff
+  couldn't be read** (`unauthorized`). Approve is pinned to the version shown in
+  the header, but the user hasn't seen its content. Goes with the session-as-
+  elevated-read decision above.
 - **The box Skills section's on/off doesn't sync by itself**: it saves the box
   binding and says to sync; one click more than needed.
 

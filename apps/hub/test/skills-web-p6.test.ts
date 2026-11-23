@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { treeHash, writeTar, type TarFile } from '@agentbox/sandbox-core';
-import { importSkill, readSkillMeta } from '../lib/backend/skills';
+import { approveSkillUpdate, importSkill, readSkillMeta } from '../lib/backend/skills';
 import { readSkillMd, saveSkillMd } from '../lib/backend/skill-editor';
 import { diffSkillVersions } from '../lib/backend/skill-diff';
 import { boxSkillsRecordPath, skillsStatusOverview } from '../lib/backend/skill-boxes';
@@ -98,6 +98,38 @@ describe('SKILL.md editor', () => {
   });
 });
 
+describe('review pinning and concurrency', () => {
+  it('refuses to approve a pending version other than the reviewed one', async () => {
+    const store = memStore();
+    const origin = {
+      kind: 'git' as const,
+      url: 'https://example.com/r.git',
+      commit: 'c'.repeat(40),
+    };
+    await seed(store, 'p', [file('SKILL.md', md('p'))], origin);
+    const b = await seed(store, 'p', [file('SKILL.md', md('p', 'b'))], origin);
+    const c = await seed(store, 'p', [file('SKILL.md', md('p', 'c'))], origin);
+    expect(c.held).toBe(true);
+    await expect(
+      approveSkillUpdate(store, 'p', b.version, new Date(), { onlyPending: true }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    const ok = await approveSkillUpdate(store, 'p', c.version, new Date(), { onlyPending: true });
+    expect(ok.to).toBe(c.version);
+  });
+
+  it('lets only one of two concurrent saves from the same base land', async () => {
+    const store = memStore();
+    const first = await saveSkillMd(store, 'race', { content: md('race') });
+    const results = await Promise.allSettled([
+      saveSkillMd(store, 'race', { content: md('race', 'one'), base: first.version }),
+      saveSkillMd(store, 'race', { content: md('race', 'two'), base: first.version }),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: 'conflict' });
+  });
+});
+
 describe('diff findings', () => {
   it("reports the hub's scan of the target version", async () => {
     const store = memStore();
@@ -134,6 +166,11 @@ describe('skill status overview', () => {
 });
 
 describe('lineDiff', () => {
+  it('diffs an added file without a phantom empty line', () => {
+    expect(lineDiff('', 'foo')).toEqual([{ op: '+', text: 'foo' }]);
+    expect(lineDiff('foo', '')).toEqual([{ op: '-', text: 'foo' }]);
+  });
+
   it('marks changed lines and folds unchanged ones', () => {
     const before = Array.from({ length: 20 }, (_, i) => `l${String(i)}`).join('\n');
     const after = before.replace('l10', 'L10');

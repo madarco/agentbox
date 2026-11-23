@@ -5185,7 +5185,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Apply a pending update',
           description:
-            'The pending version becomes current and every running box behind on the skill runs `agentbox-ctl skills sync`. Answers `{name, from, to, skill}`. `400` when nothing is pending. Backs `agentbox skills update`.',
+            'The pending version becomes current and every running box behind on the skill runs `agentbox-ctl skills sync`. Answers `{name, from, to, skill}`. `400` when nothing is pending. Optional body `{version}`: the version the caller reviewed; a pending version that moved since answers `409 conflict` instead of approving something unseen. Backs `agentbox skills update` and the web Review update.',
           responses: {
             '200': {
               description: 'Applied',
@@ -5194,6 +5194,7 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+            '409': errorResponse,
           },
         },
       },
@@ -5275,7 +5276,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Save SKILL.md as a new version',
           description:
-            "Body `{content, base?, allowFindings?}`. The hub copies the `base` version's other files, swaps SKILL.md, checks the frontmatter (name matches, description present) and the secret scan, and stores the tree as a new `upload` version that becomes current; running boxes holding the skill sync. A `base` other than the current version is refused (the skill moved since the editor opened it). Without `base` the skill must not exist yet: a new skill with SKILL.md only. Answers the import result plus `findings`.",
+            "Body `{content, base?, allowFindings?}`. The hub copies the `base` version's other files, swaps SKILL.md, checks the frontmatter (name matches, description present) and the secret scan, and stores the tree as a new `upload` version that becomes current; running boxes holding the skill sync. A `base` other than the current version is refused with `409 conflict` (the skill moved since the editor opened it), checked under the skill's lock. Without `base` the skill must not exist yet: a new skill with SKILL.md only. Answers the import result plus `findings`.",
           requestBody: {
             required: true,
             content: { 'application/json': { schema: { type: 'object' } } },

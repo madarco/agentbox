@@ -108,16 +108,21 @@ export default function SkillsPage() {
     run('refresh-all', async () => {
       const targets = listing?.skills.filter((s) => refreshable(s.origin)) ?? [];
       if (targets.length === 0) return 'No git or marketplace skills to refresh.';
-      const out: RefreshOutcome[] = [];
-      for (const s of targets) {
-        out.push(
-          await api<RefreshOutcome>(`/skills/${encodeURIComponent(s.name)}/refresh`, {
+      const settled = await Promise.allSettled(
+        targets.map((s) =>
+          api<RefreshOutcome>(`/skills/${encodeURIComponent(s.name)}/refresh`, {
             method: 'POST',
             body: '{}',
           }),
-        );
-      }
-      return out.map(refreshLine).join(' · ');
+        ),
+      );
+      return settled
+        .map((r, i) =>
+          r.status === 'fulfilled'
+            ? refreshLine(r.value)
+            : `${targets[i]!.name}: failed (${errText(r.reason)})`,
+        )
+        .join(' · ');
     });
 
   const setPolicy = (s: SkillRow, policy: SkillPolicy) =>

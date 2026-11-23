@@ -32,7 +32,13 @@ function template(name: string): string {
 
 /** Keep the frontmatter `name:` in step with the name field while creating. */
 function withName(content: string, name: string): string {
-  return content.replace(/^(---\r?\n(?:.*\r?\n)*?)name:.*$/m, `$1name: ${name}`);
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  if (!m) return content;
+  const fm = m[1]!;
+  const next = /^name:.*$/m.test(fm)
+    ? fm.replace(/^name:.*$/m, `name: ${name}`)
+    : `name: ${name}\n${fm}`;
+  return content.replace(fm, next);
 }
 
 export function EditorDialog({
@@ -129,6 +135,12 @@ export function EditorDialog({
                 lowercase letters, digits and hyphens; not agentbox or agentbox-*
               </div>
             ) : null}
+          </div>
+        ) : null}
+        {skill?.pending ? (
+          <div className="rounded-lg border border-[var(--amber-line)] bg-[var(--amber-soft)] px-3 py-2 text-xs">
+            An update to this skill is waiting for approval. Saving here replaces it: the waiting
+            version is dropped.
           </div>
         ) : null}
         {origin && origin !== 'upload' ? (
