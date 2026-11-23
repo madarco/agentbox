@@ -31,6 +31,7 @@ import { getMachineId } from '@agentbox/config';
 import { accountCustodyPath, isDefaultAccount } from '@agentbox/core';
 import {
   AGENT_SYNC_SPECS,
+  credentialExpiry,
   isRealAgentCredential,
   readAccounts,
   readAccountSecret,
@@ -283,6 +284,75 @@ export function planPush(
     }
     return { path: item.path, action: 'upload', reason: existing ? 'changed' : 'new' };
   });
+}
+
+/**
+ * Whether this PC's copy of a login should replace the one custody holds —
+ * keep the NEWEST, not this PC's. A hub box that refreshed the login revoked
+ * the PC's older copy; pushing it back would start every new hub box logged
+ * out. Compared by when the access token expires (a refresh moves it forward):
+ *
+ * - both known: upload only when the PC's is strictly later;
+ * - the PC's copy already expired while custody's has not: never (validity);
+ * - custody's known, the PC's not: keep custody's (it is a known-good login);
+ * - neither known: the old last-writer-wins upload.
+ */
+export function credentialPushVerdict(
+  agent: string,
+  local: string,
+  remote: string,
+  now: number = Date.now(),
+): { upload: boolean; reason: string } {
+  const expiry = (text: string): number | null => {
+    try {
+      return credentialExpiry(agent as AgentId, text);
+    } catch {
+      return null;
+    }
+  };
+  const mine = expiry(local);
+  const theirs = expiry(remote);
+  if (theirs === null) return { upload: true, reason: 'changed' };
+  if (mine === null) return { upload: false, reason: 'custody copy is a known-good login' };
+  if (mine <= now && theirs > now) return { upload: false, reason: 'this copy has expired' };
+  if (mine <= theirs) return { upload: false, reason: 'custody copy is newer' };
+  return { upload: true, reason: 'newer login' };
+}
+
+/**
+ * {@link planPush} for agent credentials: a `changed` item is uploaded only when
+ * it is newer than custody's copy ({@link credentialPushVerdict}). `force` still
+ * uploads everything. `agents/<agent>/...` names the agent, for every account.
+ */
+export async function planCredentialPush(
+  items: UploadItem[],
+  manifest: CustodyEntry[],
+  getRemote: (path: string) => Promise<Buffer | null>,
+  opts: { force?: boolean; now?: number } = {},
+): Promise<PushDecision[]> {
+  const plan = planPush(items, manifest, opts);
+  if (opts.force) return plan;
+  const out: PushDecision[] = [];
+  for (const [i, d] of plan.entries()) {
+    if (d.action !== 'upload' || d.reason !== 'changed') {
+      out.push(d);
+      continue;
+    }
+    const remote = await getRemote(d.path);
+    if (remote === null) {
+      out.push(d);
+      continue;
+    }
+    const agent = d.path.split('/')[1] ?? '';
+    const v = credentialPushVerdict(
+      agent,
+      items[i]!.data.toString('utf8'),
+      remote.toString('utf8'),
+      opts.now,
+    );
+    out.push({ path: d.path, action: v.upload ? 'upload' : 'skip', reason: v.reason });
+  }
+  return out;
 }
 
 /**

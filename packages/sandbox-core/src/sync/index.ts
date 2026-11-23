@@ -148,6 +148,7 @@ export {
   parseCredentialsUpdate,
   jsonNumberAt,
   credentialFreshness,
+  credentialExpiry,
   oauthRefreshExpiresAt,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,

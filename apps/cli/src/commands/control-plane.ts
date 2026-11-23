@@ -107,6 +107,7 @@ import {
 import {
   CustodyClient,
   collectAgentCredentialUploads,
+  planCredentialPush,
   planPush,
   type UploadItem,
 } from '../control-plane/custody-client.js';
@@ -1380,26 +1381,34 @@ async function pushItems(
   items: UploadItem[],
   prefix: string,
   force: boolean,
+  opts: { credentials?: boolean } = {},
 ): Promise<void> {
   if (items.length === 0) {
     log.info('Nothing to push.');
     return;
   }
   const manifest = await client.list(prefix);
-  const plan = planPush(items, manifest, { force });
+  // A login is pushed only when it is newer than custody's copy: a hub box may
+  // have refreshed it since, revoking this machine's.
+  const plan = opts.credentials
+    ? await planCredentialPush(items, manifest, (p) => client.get(p), { force })
+    : planPush(items, manifest, { force });
   let uploaded = 0;
   let skipped = 0;
   for (const item of items) {
     const decision = plan.find((d) => d.path === item.path)!;
     if (decision.action === 'skip') {
       skipped++;
+      if (decision.reason !== 'hash match') {
+        log.info(`${item.path}: not pushed (${decision.reason}; --force to push anyway)`);
+      }
       continue;
     }
     const res = await client.put(item.path, item.data);
     if (res.changed) uploaded++;
     else skipped++;
   }
-  log.success(`Pushed ${String(uploaded)} item(s), skipped ${String(skipped)} unchanged.`);
+  log.success(`Pushed ${String(uploaded)} item(s), skipped ${String(skipped)}.`);
 }
 
 const credentialsPushSub = new Command('push')
@@ -1411,7 +1420,7 @@ const credentialsPushSub = new Command('push')
     '--agent <id>',
     'push only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)',
   )
-  .option('--force', 'upload even when the stored hash matches')
+  .option('--force', 'upload even when the stored copy is the same or newer')
   .action(async (opts: { url?: string; agent?: string; force?: boolean }) => {
     try {
       const target = await resolveCustodyApiTarget(opts.url);
@@ -1429,7 +1438,7 @@ const credentialsPushSub = new Command('push')
       }
       const items = await collectAgentCredentialUploads(only);
       const client = new CustodyClient(target);
-      await pushItems(client, items, 'agents', opts.force === true);
+      await pushItems(client, items, 'agents', opts.force === true, { credentials: true });
     } catch (err) {
       handleLifecycleError(err);
     }
@@ -2741,7 +2750,7 @@ async function syncAgentCredentials(
       ...target,
       fetchImpl: deadlineFetch(AbortSignal.timeout(CREDENTIAL_SYNC_FETCH_MS)),
     });
-    const plan = planPush(items, await client.list('agents'), {});
+    const plan = await planCredentialPush(items, await client.list('agents'), (p) => client.get(p));
     if (!hasCredentialChanges(plan)) {
       if (opts.announce) log.info('Agent logins already up to date on the control box.');
       return 0;
