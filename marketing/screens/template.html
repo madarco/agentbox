@@ -1,0 +1,345 @@
+<!doctype html>
+<!-- The gallery's page. `pnpm screens` fills in the data from catalog.mjs and
+     setups.mjs (and frame() from scripts/frame.mjs) and writes index.html next
+     to this file. Edit this file, not index.html. Mirrors the ControlClaw
+     screens gallery (ControlClaw/marketing/ai-videos/screens/). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentBox screens</title>
+<style>
+:root {
+  --bg: #fafaf7; --bg2: #f3f2ed; --surface: #fff; --ink: #0d1117; --ink2: #3b4252;
+  --muted: #6b7280; --line: #e7e4dc; --brand: #128a4f;
+  --brand-soft: #eaf4ee; --code: #f3f2ed; --shade: rgb(13 17 23 / 0.5);
+  --y: 86px; /* where a flow line meets a node: its label and half its picture */
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216; --bg2: #171a20; --surface: #1b1e25; --ink: #e9eaee; --ink2: #c3c7d0;
+    --muted: #949ba8; --line: #2b2f39; --brand: #4cc185;
+    --brand-soft: #173a29; --code: #12141a; --shade: rgb(0 0 0 / 0.65);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 Inter, system-ui, sans-serif; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+code, pre { font: 12px/1.5 "JetBrains Mono", ui-monospace, Menlo, monospace; }
+
+header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  padding: 12px 20px; background: var(--bg); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 16px; margin: 0; }
+header .count { color: var(--muted); }
+header input { flex: 1; min-width: 180px; max-width: 420px; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface); }
+.tabs { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-left: auto; }
+.tabs button { border: 0; background: var(--surface); padding: 7px 14px; }
+.tabs button[aria-pressed="true"] { background: var(--brand); color: #fff; }
+
+main { padding: 8px 20px 60px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 28px 0 10px; }
+h2 small { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 400; margin-left: 6px; }
+.empty { color: var(--muted); padding: 40px 0; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+.card { display: block; width: 100%; height: 100%; padding: 0; text-align: left; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.card:hover, .card:focus-visible { border-color: var(--brand); outline: none; }
+.card img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left;
+  background: var(--bg2); border-bottom: 1px solid var(--line); }
+.card .t { display: block; padding: 8px 10px 2px; font-weight: 600; }
+.card .m { display: block; padding: 0 10px 9px; color: var(--muted); font-size: 12px; }
+
+/* The flow: a tree that grows to the right. */
+.flow { overflow-x: auto; padding-bottom: 20px; }
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree li { display: flex; align-items: flex-start; position: relative; }
+.tree li > ul { margin-left: 56px; }
+.tree ul > li::before { content: ""; position: absolute; left: -28px; top: 0; bottom: 0; border-left: 1px solid var(--muted); }
+.tree ul > li:first-child::before { top: var(--y); }
+.tree ul > li:last-child::before { bottom: auto; height: var(--y); }
+.tree ul > li:only-child::before { display: none; }
+.tree ul > li::after { content: ""; position: absolute; left: -28px; width: 28px; top: var(--y); border-top: 1px solid var(--muted); }
+.node { position: relative; flex: none; width: 200px; margin-bottom: 14px; }
+.node.kids::after { content: ""; position: absolute; right: -28px; width: 28px; top: var(--y); border-top: 1px solid var(--muted); }
+.node .via { display: flex; align-items: flex-end; height: 34px; padding-bottom: 4px; font-size: 11.5px; line-height: 1.25;
+  color: var(--brand); overflow: hidden; }
+.node .via span { width: 100%; }
+.node .card { height: auto; }
+.node .card img { height: 104px; aspect-ratio: auto; }
+.node.dim { opacity: 0.25; }
+
+dialog { width: min(1500px, 96vw); height: 92vh; padding: 0; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); color: var(--ink); }
+dialog::backdrop { background: var(--shade); }
+.detail { display: grid; grid-template-columns: minmax(0, 1fr) 440px; height: 100%; }
+.stage { display: flex; flex-direction: column; min-width: 0; background: var(--bg2); border-right: 1px solid var(--line); }
+.stage .pic { flex: 1; min-height: 0; overflow: auto; padding: 16px; text-align: center; }
+.stage .pic img { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.stage .pic.fit img { max-height: calc(92vh - 96px); }
+.frames { display: flex; gap: 6px; overflow-x: auto; padding: 10px 16px; border-top: 1px solid var(--line); }
+.frames button { flex: none; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+  padding: 4px 9px; font-size: 12px; white-space: nowrap; }
+.frames button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); }
+.info { overflow: auto; padding: 18px 20px 30px; }
+.info h3 { font-size: 18px; margin: 0 28px 4px 0; }
+.info .topic { color: var(--muted); font-size: 12px; }
+.info h4 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 20px 0 6px; }
+.info p { margin: 6px 0; }
+.info ol, .info ul { margin: 6px 0; padding-left: 20px; }
+.info li { margin: 3px 0; }
+.info pre { margin: 6px 0; padding: 8px 10px; background: var(--code); border: 1px solid var(--line); border-radius: 6px;
+  white-space: pre-wrap; word-break: break-word; }
+.info details { margin: 6px 0; }
+.info summary { cursor: pointer; color: var(--brand); }
+.path { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+.path code { flex: 1; min-width: 0; padding: 5px 8px; background: var(--code); border: 1px solid var(--line);
+  border-radius: 6px; overflow-x: auto; white-space: nowrap; }
+.copy { flex: none; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 4px 8px; font-size: 12px; }
+.crumbs { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.crumbs button { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 3px 8px; font-size: 12px; }
+.crumbs span { color: var(--brand); font-size: 12px; }
+.warn { color: oklch(0.58 0.19 25); }
+.social { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; }
+.card img { background: repeating-conic-gradient(var(--bg2) 0 25%, var(--surface) 0 50%) 0 0 / 16px 16px; }
+.close { position: absolute; top: 10px; right: 12px; border: 0; background: none; font-size: 22px; line-height: 1; color: var(--muted); }
+@media (max-width: 900px) {
+  dialog { height: 96vh; }
+  .detail { grid-template-columns: 1fr; grid-template-rows: 45% 1fr; }
+  .stage { border-right: 0; border-bottom: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>AgentBox screens</h1>
+  <span class="count" id="count"></span>
+  <input id="q" type="search" placeholder="Search: title, surface, state, route" aria-label="Search screens">
+  <div class="tabs">
+    <button id="tab-topic" aria-pressed="true">By topic</button>
+    <button id="tab-flow" aria-pressed="false">By flow</button>
+  </div>
+</header>
+<main id="main"></main>
+<dialog id="dlg"></dialog>
+
+<script>
+const DATA = __DATA__;
+const { screens, setups, topics } = DATA;
+const byId = Object.fromEntries(screens.map((s) => [s.id, s]));
+/* frame() and FORMATS, from scripts/frame.mjs: the export's own layout. */
+/* __FRAME__ */
+const fileOf = (s, file) => s.files.find((f) => f.file === file);
+const src = (file) => screens.flatMap((s) => s.files).find((f) => f.file === file)?.url ?? file;
+const repoPath = (file) => screens.flatMap((s) => s.files).find((f) => f.file === file)?.path ?? file;
+
+/* h("div", {class: "x"}, child, "text") */
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs ?? {})) {
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+  return el;
+}
+
+const text = (s) =>
+  [s.id, s.title, s.topic, s.what, s.url, s.setup, ...(s.usedIn ?? []), ...s.files.map((f) => f.file + " " + (f.state ?? ""))]
+    .join(" ")
+    .toLowerCase();
+const matches = (s, q) => q.split(/\s+/).every((w) => text(s).includes(w));
+
+function card(s) {
+  const n = s.files.length;
+  const meta = [n > 1 ? n + " states" : null, ...(s.usedIn ?? [])].filter(Boolean).join(" · ");
+  return h(
+    "button",
+    { class: "card", onclick: () => open(s.id) },
+    h("img", { src: src((s.files[s.cover ?? 0]).file), loading: "lazy", alt: "" }),
+    h("span", { class: "t" }, s.title),
+    h("span", { class: "m" }, meta || s.topic),
+  );
+}
+
+function topicView(q) {
+  const out = [];
+  for (const topic of topics) {
+    const list = screens.filter((s) => s.topic === topic && matches(s, q));
+    if (!list.length) continue;
+    out.push(h("h2", {}, topic, h("small", {}, String(list.length))), h("div", { class: "grid" }, list.map(card)));
+  }
+  return out.length ? out : [h("p", { class: "empty" }, "No screen matches.")];
+}
+
+function flowView(q) {
+  const kids = (id) => screens.filter((s) => s.from === id);
+  const node = (s) => {
+    const k = kids(s.id);
+    return h(
+      "li",
+      {},
+      h("div", { class: "node" + (k.length ? " kids" : "") + (q && !matches(s, q) ? " dim" : "") },
+        h("div", { class: "via" }, h("span", {}, s.via ?? "")), card(s)),
+      k.length ? h("ul", {}, k.map(node)) : null,
+    );
+  };
+  const roots = screens.filter((s) => !s.from);
+  return [
+    h("p", { class: "empty", style: "padding: 14px 0 0" },
+      "Each line is one step: the blue label says what to click or do on the screen to its left."),
+    h("div", { class: "flow" }, h("ul", { class: "tree" }, roots.map(node))),
+  ];
+}
+
+let view = "topic";
+function render() {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  document.getElementById("main").replaceChildren(...(view === "flow" ? flowView(q) : topicView(q)));
+  for (const v of ["topic", "flow"]) document.getElementById("tab-" + v).setAttribute("aria-pressed", String(view === v));
+}
+
+function copyButton(value) {
+  const b = h("button", { class: "copy", onclick: () => {
+    navigator.clipboard.writeText(value);
+    b.textContent = "Copied";
+    setTimeout(() => (b.textContent = "Copy"), 1200);
+  } }, "Copy");
+  return b;
+}
+const pathRow = (value) => h("div", { class: "path" }, h("code", {}, value), copyButton(value));
+const block = (title, lines, code) =>
+  lines?.length
+    ? [h("h4", {}, title), h(code ? "ol" : "ul", {}, lines.map((l) => h("li", {}, code ? h("pre", {}, l) : l)))]
+    : [];
+const commands = (title, lines) =>
+  lines?.length ? [h("h4", {}, title), h("pre", {}, lines.join("\n"))] : [];
+
+/* The social preview: the export's own frame in an iframe, at each format. */
+let format = "16x9";
+function social(s, f) {
+  if (!f.w) return [];
+  const o = { kind: "page", ...(s.social ?? {}) };
+  const F = FORMATS[format];
+  const box = 400;
+  const k = Math.min(box / F.w, box / F.h);
+  const doc = frame(f.url, f.w, f.h, format, o);
+  const iframe = h("iframe", { srcdoc: doc, scrolling: "no", style: `width:${F.w}px;height:${F.h}px;border:0;transform:scale(${k});transform-origin:0 0;` });
+  const cmd = "pnpm export " + s.id + (s.files.length > 1 ? " --file " + s.files.indexOf(f) : "") + " --format " + format;
+  return [
+    h("h4", {}, "Social"),
+    h("div", { class: "crumbs" }, Object.keys(FORMATS).map((k2) =>
+      h("button", { "aria-pressed": String(k2 === format), style: k2 === format ? "border-color: var(--brand)" : "",
+        onclick: () => { format = k2; draw(); } }, k2 + " · " + FORMATS[k2].w + "×" + FORMATS[k2].h))),
+    h("div", { class: "social", style: `width:${Math.round(F.w * k)}px;height:${Math.round(F.h * k)}px` }, iframe),
+    h("p", { class: "topic" }, FORMATS[format].use + (o.title ? " · headline: " + o.title : "")),
+    pathRow(cmd),
+  ];
+}
+
+/* The chain of screens from the start of the flow to this one. */
+function trail(s) {
+  const chain = [];
+  for (let x = s; x; x = byId[x.from]) chain.unshift(x);
+  return chain;
+}
+
+let current = null;
+let shown = 0;
+function open(id, at = 0) {
+  current = byId[id];
+  if (!current) return;
+  shown = Math.min(at, current.files.length - 1);
+  history.replaceState(null, "", "#" + (view === "flow" ? "flow/" : "") + id);
+  draw();
+  const dlg = document.getElementById("dlg");
+  if (!dlg.open) dlg.showModal();
+}
+
+function draw() {
+  const s = current;
+  const f = s.files[shown];
+  const setup = setups[s.setup];
+  const chain = trail(s);
+  const pic = h("div", { class: "pic fit", title: "Click to switch between fitted and full size",
+    onclick: () => pic.classList.toggle("fit") }, h("img", { src: src(f.file), alt: s.title }));
+  const stage = h("div", { class: "stage" }, pic,
+    s.files.length > 1
+      ? h("div", { class: "frames" }, s.files.map((x, i) =>
+          h("button", { "aria-pressed": String(i === shown), onclick: () => { shown = i; draw(); } },
+            x.state ?? x.file.split("/").pop())))
+      : null);
+
+  const info = h("div", { class: "info" },
+    h("div", { class: "topic" }, s.topic + " · " + s.id),
+    h("h3", {}, s.title),
+    s.what ? h("p", {}, s.what) : null,
+    f.state ? h("p", {}, h("b", {}, "This state: "), f.state) : null,
+    pathRow(repoPath(f.file)),
+    s.check ? h("p", { class: "warn" }, s.check) : null,
+
+    h("h4", {}, "How to reach it"),
+    chain.length > 1
+      ? h("div", { class: "crumbs" }, chain.flatMap((x, i) => [
+          i ? h("span", {}, "→ " + (x.via ?? "")) : null,
+          h("button", { onclick: () => open(x.id) }, x.title),
+        ]))
+      : null,
+    setup ? h("p", {}, h("b", {}, "Environment: "), setup.title) : null,
+    s.url ? pathRow(s.url) : null,
+    f.shoot ? h("h4", {}, "Take it again") : null,
+    f.shoot ? pathRow(f.shoot) : null,
+    ...social(s, f),
+    ...block("Changed in the page before the shot", s.edits),
+    ...block("Done to the file after the shot", s.post, true),
+    ...block("Good to know", s.notes),
+    setup
+      ? h("details", {}, h("summary", {}, "Start the environment: " + setup.title),
+          h("p", {}, setup.what), ...commands("Commands", setup.commands), ...block("Good to know", setup.notes))
+      : null,
+
+    ...block("Used in", s.usedIn),
+    h("p", { class: "topic", style: "margin-top: 22px" }, "Entry: screens/catalog.mjs, id \"" + s.id + "\""),
+  );
+
+  const dlg = document.getElementById("dlg");
+  dlg.replaceChildren(h("div", { class: "detail" }, stage, info),
+    h("button", { class: "close", "aria-label": "Close", onclick: () => dlg.close() }, "×"));
+}
+
+document.getElementById("dlg").addEventListener("close", () => {
+  current = null;
+  history.replaceState(null, "", view === "flow" ? "#flow" : "#");
+});
+document.addEventListener("keydown", (e) => {
+  if (!current || current.files.length < 2) return;
+  const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+  if (!d) return;
+  shown = (shown + d + current.files.length) % current.files.length;
+  draw();
+});
+document.getElementById("q").addEventListener("input", render);
+for (const v of ["topic", "flow"])
+  document.getElementById("tab-" + v).addEventListener("click", () => {
+    view = v;
+    history.replaceState(null, "", v === "flow" ? "#flow" : "#");
+    render();
+  });
+
+/* index.html#flow opens the flow, index.html#<id> opens one screen. */
+function route() {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (hash.startsWith("flow")) view = "flow";
+  render();
+  const id = hash.replace(/^flow\/?/, "");
+  if (id) open(id);
+}
+document.getElementById("count").textContent =
+  screens.length + " screens, " + screens.reduce((n, s) => n + s.files.length, 0) + " files";
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
