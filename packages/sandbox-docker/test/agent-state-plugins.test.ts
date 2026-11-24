@@ -103,6 +103,34 @@ describe('opencode plugin tracker', () => {
     ).toEqual(['waiting', 'working']);
   });
 
+  it('an Esc interrupt (MessageAbortedError) is not an error: the idle that follows wins', async () => {
+    const t = await loadOpencodeTracker();
+    expect(
+      states(t, [
+        status('ses_root', 'busy'),
+        ev('session.error', { sessionID: 'ses_root', error: { name: 'MessageAbortedError' } }),
+        ev('session.idle', { sessionID: 'ses_root' }),
+      ]),
+    ).toEqual(['working', null, 'idle']);
+  });
+
+  it('drops a permission nobody will answer when the root goes idle or errors', async () => {
+    const t = await loadOpencodeTracker();
+    t.handle(status('ses_root', 'busy'));
+    t.handle(ev('permission.asked', { id: 'per_1', sessionID: 'ses_child' }));
+    expect(t.handle(ev('session.idle', { sessionID: 'ses_root' }))?.state).toBe('idle');
+    // The stale permission no longer holds the next turn at waiting.
+    t.handle(status('ses_root', 'busy'));
+    expect(t.handle(ev('permission.replied', { requestID: 'per_other' }))).toBe(null);
+
+    t.handle(ev('permission.asked', { id: 'per_2', sessionID: 'ses_root' }));
+    expect(
+      t.handle(ev('session.error', { sessionID: 'ses_root', error: { name: 'APIError' } }))?.state,
+    ).toBe('error');
+    t.handle(status('ses_root', 'busy'));
+    expect(t.handle(ev('session.idle', { sessionID: 'ses_root' }))?.state).toBe('idle');
+  });
+
   it('falls back to message.part.delta only on an opencode without session.status', async () => {
     const old = await loadOpencodeTracker();
     expect(old.handle(ev('message.part.delta', { sessionID: 's1' }))?.state).toBe('working');
@@ -123,17 +151,37 @@ describe('pi extension tracker', () => {
     expect(Object.keys(mod)).toEqual(['default']);
   });
 
-  it('goes idle on agent_settled, not agent_end', async () => {
+  const ok = { message: { role: 'assistant', stopReason: 'stop' } };
+  const failed = { message: { role: 'assistant', stopReason: 'error' } };
+
+  it('goes idle on agent_settled, not agent_end, once this pi has shown it emits settle', async () => {
     const t = await loadPiTracker();
     const run = (name: string, event: unknown = {}) => t.handle(name, event, s1)?.state ?? null;
+    run('session_start');
+    run('agent_start');
+    run('agent_settled', { aborted: false }); // pi has agent_settled
     expect([
-      run('session_start'),
       run('agent_start'),
       run('tool_execution_start'),
-      run('message_end', { message: { role: 'assistant', stopReason: 'stop' } }),
+      run('message_end', ok),
       run('agent_end'),
-      run('agent_settled'),
-    ]).toEqual(['idle', 'working', null, null, null, 'idle']);
+      run('agent_settled', { aborted: false }),
+    ]).toEqual(['working', null, null, null, 'idle']);
+  });
+
+  it('an older pi with no agent_settled still goes idle on agent_end', async () => {
+    const t = await loadPiTracker();
+    const run = (name: string, event: unknown = {}) => t.handle(name, event, s1)?.state ?? null;
+    run('session_start');
+    expect([run('agent_start'), run('message_end', ok), run('agent_end')]).toEqual([
+      'working',
+      null,
+      'idle',
+    ]);
+    // ...and a failed last message never reads `error` on that path (it may be retried).
+    run('agent_start');
+    run('message_end', failed);
+    expect(run('agent_end')).toBe('idle');
   });
 
   it('waits on a ui prompt', async () => {
@@ -143,25 +191,29 @@ describe('pi extension tracker', () => {
     expect(t.handle('ui_prompt_end', {}, s1)?.state).toBe('working');
   });
 
-  it('reports a stopReason error and keeps it over the settle', async () => {
+  it('reports error only when the failure is still standing when the run settles', async () => {
     const t = await loadPiTracker();
     t.handle('agent_start', {}, s1);
-    expect(
-      t.handle('message_end', { message: { role: 'assistant', stopReason: 'error' } }, s1)?.state,
-    ).toBe('error');
-    expect(t.handle('agent_settled', {}, s1)).toBe(null);
+    // The failed request is retried after a backoff: still working, so the -i
+    // stay-up probe sees no error in between.
+    expect(t.handle('message_end', failed, s1)).toBe(null);
+    expect(t.handle('agent_end', {}, s1)?.state).toBe('idle'); // first run: no settle seen yet
+    expect(t.handle('message_end', failed, s1)?.state).toBe('working');
+    expect(t.handle('agent_settled', { aborted: false }, s1)?.state).toBe('error');
     expect(t.handle('agent_start', {}, s1)?.state).toBe('working');
   });
 
-  it('clears the error when a retry inside the same run works', async () => {
+  it('a retry that works ends idle, and an aborted run is not an error', async () => {
     const t = await loadPiTracker();
     t.handle('agent_start', {}, s1);
-    t.handle('message_end', { message: { role: 'assistant', stopReason: 'error' } }, s1);
-    expect(t.handle('message_end', { message: { role: 'toolResult' } }, s1)).toBe(null);
-    expect(
-      t.handle('message_end', { message: { role: 'assistant', stopReason: 'stop' } }, s1)?.state,
-    ).toBe('working');
-    expect(t.handle('agent_settled', {}, s1)?.state).toBe('idle');
+    t.handle('agent_settled', { aborted: false }, s1);
+    t.handle('agent_start', {}, s1);
+    t.handle('message_end', failed, s1);
+    t.handle('message_end', ok, s1);
+    expect(t.handle('agent_settled', { aborted: false }, s1)?.state).toBe('idle');
+    t.handle('agent_start', {}, s1);
+    t.handle('message_end', failed, s1);
+    expect(t.handle('agent_settled', { aborted: true }, s1)?.state).toBe('idle');
   });
 
   it('carries the session, and reports a session switch even when the state is unchanged', async () => {

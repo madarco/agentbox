@@ -27,12 +27,14 @@
 //   waiting — an extension or tool is asking the user (`ui_prompt_start`).
 //   idle    — `agent_settled`, Pi's real end of turn, and `session_start` as the
 //             baseline. NOT `agent_end`: Pi stays busy past it across retries,
-//             compaction and follow-up work.
-//   error   — an assistant `message_end` with `stopReason: "error"`. It holds
-//             over the `agent_settled` that follows, so the settle cannot hide
-//             it, and clears on any sign of new work: Pi retries a failed
-//             request inside the same run, and a retry that works must not
-//             leave the box in `error`.
+//             compaction and follow-up work. A Pi too old to emit
+//             `agent_settled` would then never go idle, so `agent_end` ends the
+//             turn until the first `agent_settled` shows this Pi has it.
+//   error   — the run ended with its last assistant message failed
+//             (`stopReason: "error"`) and not aborted. Decided at the end of the
+//             run, not at the failed message: Pi auto-retries after a backoff
+//             (`auto_retry_start` is a session event extensions do not get), and
+//             reporting the first failure failed healthy `-i` launches.
 //
 // Session id: every report carries the current session's id and file on stdin
 // to `--capture-session`. ctl appends it to the box's binding log (sessions on
@@ -46,7 +48,13 @@ import { spawn } from 'node:child_process';
 function createPiTracker() {
   let state = null;
   let session = null;
-  let errorSticky = false;
+  // The run's last assistant message failed. Held, not reported: Pi retries a
+  // failed request after a backoff inside the same run, and only a failure
+  // that is still standing when the run ends is the run's outcome.
+  let failed = false;
+  // Whether this Pi emits `agent_settled` (added in newer builds). Until one is
+  // seen, `agent_end` ends the turn, so an older Pi still reaches idle.
+  let sawSettled = false;
   let last = null;
 
   function report() {
@@ -58,8 +66,12 @@ function createPiTracker() {
   }
 
   function work() {
-    errorSticky = false;
     state = 'working';
+    return report();
+  }
+
+  function end(aborted) {
+    state = failed && !aborted ? 'error' : 'idle';
     return report();
   }
 
@@ -69,33 +81,33 @@ function createPiTracker() {
       if (sessionInfo) session = sessionInfo;
       switch (name) {
         case 'session_start':
-          errorSticky = false;
+          failed = false;
           state = 'idle';
           return report();
         case 'agent_start':
+          failed = false;
+          return work();
         case 'tool_execution_start':
         case 'ui_prompt_end':
           return work();
         case 'ui_prompt_start':
-          errorSticky = false;
           state = 'waiting';
           return report();
         case 'message_end': {
           const m = event && event.message;
-          if (m && m.role === 'assistant' && m.stopReason === 'error') {
-            errorSticky = true;
-            state = 'error';
-            return report();
-          }
-          // A user or tool-result message ends while the error stands too; only
-          // a successful assistant message is new work.
-          if (errorSticky && !(m && m.role === 'assistant')) return null;
+          if (m && m.role === 'assistant') failed = m.stopReason === 'error';
           return work();
         }
-        case 'agent_settled':
-          if (errorSticky) return null;
+        case 'agent_end':
+          // The fallback end for a Pi without `agent_settled`. Idle only, never
+          // error: on a Pi that has it, the first run's `agent_end` (before any
+          // settle was seen) can still be followed by a retry.
+          if (sawSettled) return null;
           state = 'idle';
           return report();
+        case 'agent_settled':
+          sawSettled = true;
+          return end(Boolean(event && event.aborted));
         default:
           return null;
       }
@@ -166,6 +178,7 @@ const EVENTS = [
   'message_end',
   'ui_prompt_start',
   'ui_prompt_end',
+  'agent_end',
   'agent_settled',
 ];
 

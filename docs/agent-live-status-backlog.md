@@ -21,9 +21,14 @@ done; Phase 3 (hub side) and Phase 4 (surfaces) track their own items in the pla
   (nothing breaks: every new flag they pass is one an older ctl already has), and a re-bake on each
   provider ends it. A content-version guard in the seed script (skip when the destination is newer)
   would stop the flip-flop.
-- **pi before `agent_settled`.** The extension no longer maps `agent_end` to idle, as the plan asks.
-  A pi build older than `agent_settled` (pre-1.6) would stay `working` after a turn until the next
-  `session_start`. Measured only on 1.6.0.
+- **pi before `agent_settled`.** `agent_end` ends the turn until the first `agent_settled` shows
+  this pi emits it, so an older pi (pinned by `pi.version`, or an older-image box's reseeded
+  extension) still reaches idle. On that path a failed last message reads idle, not error: the
+  extension cannot tell a run that ended from one about to retry. Measured only on 1.6.0.
+- **pi's error is decided at the settle.** Pi auto-retries a failed request after a backoff, and
+  `auto_retry_start` is a session event extensions do not receive, so the extension holds a failed
+  message and reports `error` only if it is still the run's last word at `agent_settled` (and the
+  run was not aborted). A turn whose retries all fail reads `working` until then.
 - **codex compaction reads `working`.** The scraper follows the title's spinner, which also shows
   during compaction, so a PreCompact `compacting` can be overwritten by the scraper's next
   transition. Cosmetic; `compacting` and `working` both count as busy for the queue gate.
@@ -35,6 +40,10 @@ done; Phase 3 (hub side) and Phase 4 (surfaces) track their own items in the pla
 - **codex reports no `error`.** The old pane-text rules (`Error:`, `Failed:`) were its only error
   source, and they matched prose. No codex hook maps to an error, so the `-i` first-turn error
   check catches opencode, claude (StopFailure) and pi, but not codex.
+- **codex's synchronous question hooks can stall.** The `request_user_input` PreToolUse and
+  PostToolUse run without `&` (so the leave cannot land after Stop); with the ctl socket dead, each
+  waits out the client's connect timeout, about 3 s, before codex goes on. Buffer-and-background
+  like the capture hooks would trade that for the ordering.
 - **The codex title states are baked.** The scraper's spinner and `Action Required` regexes live in
   ctl, while the title cleanup is registry data. Moving them to the row (for example
   `paneTitle.states: { working, waiting }`) would let a new codex title format ship without a

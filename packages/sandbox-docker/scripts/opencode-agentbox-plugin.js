@@ -26,7 +26,10 @@
 //   idle    — the root session's `session.idle` (or status idle).
 //   error   — `session.error`, STICKY until the next busy: an unsupported model
 //             fires session.error and then session.idle 2 ms later, which used
-//             to overwrite it and hide the failure.
+//             to overwrite it and hide the failure. Except `MessageAbortedError`,
+//             which is an Esc interrupt, not a failure.
+// A root session's idle or error also drops every unanswered permission: one
+// left open by an aborted turn or a deleted child is never replied to.
 // Sessions with a `parentID` (subagents) are ignored for state: their busy and
 // idle flipped the parent to idle mid-turn.
 //
@@ -76,8 +79,12 @@ function createTracker() {
   }
 
   function idle() {
+    // A root session that went idle is asking nothing: a prompt left open by an
+    // aborted turn, or by a child session that was deleted, never gets its
+    // `permission.replied`, and would otherwise hold the box `waiting`.
+    pending.clear();
     if (errorSticky) return;
-    state = pending.size > 0 ? 'waiting' : 'idle';
+    state = 'idle';
   }
 
   return {
@@ -111,6 +118,10 @@ function createTracker() {
           return report();
         case 'session.error':
           if (isChild(sid)) return null;
+          // Esc in the TUI aborts the turn with this error, which opencode's own
+          // TUI does not show as one; the session.idle that follows is the truth.
+          if (p.error && p.error.name === 'MessageAbortedError') return null;
+          pending.clear();
           state = 'error';
           errorSticky = true;
           return report();
