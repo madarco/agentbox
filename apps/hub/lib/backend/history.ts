@@ -196,6 +196,38 @@ export function ftsQuery(q: string): string | null {
     .join(' ');
 }
 
+/**
+ * A session's live-status inputs (docs/agent-live-status-plan.md, Phase 3):
+ * the newest working-on line, the plan line, context fill, the agent's own
+ * cumulative totals (codex, opencode) and the sum of its usage rows.
+ */
+export interface HistoryLiveRow {
+  activity: string | null;
+  activityTs: string | null;
+  /** An in-progress todo (opencode); wins over `activity` while set. */
+  plan: string | null;
+  contextTokens: number | null;
+  contextWindow: number | null;
+  totals: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    reasoning?: number;
+    costUsd?: number;
+    ts?: string;
+  } | null;
+  sums: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    costUsd: number | null;
+    ts: string | null;
+  } | null;
+  updatedAt: number;
+}
+
 /** Rows. Async so a postgres implementation fits the same seam. */
 export interface HistoryRepo {
   getFile(originKey: string, agent: string, path: string): Promise<HistoryFileRow | null>;
@@ -250,6 +282,12 @@ export interface HistoryRepo {
   /** Forget a session's title (a re-parse derives it again). */
   clearSessionTitle(key: string): Promise<void>;
   setSessionParserVersion(key: string, version: number): Promise<void>;
+  /** Forget a session's live row (a re-parse derives it again). */
+  clearLive(key: string): Promise<void>;
+  /** A session's live-status inputs, or null when it has none. */
+  liveRow(key: string): Promise<HistoryLiveRow | null>;
+  /** The most recent session `agent` ran in box `boxId`, by its own last activity. */
+  latestBoxSession(boxId: string, agent: string): Promise<string | null>;
 
   // ---- reads (Phase 2) ----
   querySessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
@@ -347,6 +385,11 @@ export interface HistoryService extends HistoryIngestSink {
    * agent module's, from the raw archive. Returns how many sessions it redid.
    */
   reparse(): Promise<number>;
+  /**
+   * Called after a frame added records to a session, with the session's key and
+   * the box it ran in (null for a host session). Returns an unsubscribe fn.
+   */
+  onSessionUpdated(fn: (sessionKey: string, boxId: string | null) => void): () => void;
   /** Seal idle files and apply retention. */
   sweep(opts?: {
     retention?: boolean;
@@ -362,6 +405,16 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   const log = deps.log ?? (() => {});
   // One writer: frames for one file must apply in order, and sqlite is
   // single-writer anyway.
+  const updateListeners = new Set<(sessionKey: string, boxId: string | null) => void>();
+  const sessionUpdated = (key: string, boxId: string | null): void => {
+    for (const fn of updateListeners) {
+      try {
+        fn(key, boxId);
+      } catch {
+        /* a listener must not fail an ingest */
+      }
+    }
+  };
   let queue: Promise<unknown> = Promise.resolve();
   const serialized = <T>(fn: () => Promise<T>): Promise<T> => {
     const run = queue.then(fn, fn);
@@ -553,6 +606,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         parseState = r.state;
         if (r.records.length > 0) await repo.insertRecords(file.sessionKey, file.id, r.records);
         await repo.refreshSessionTotals(file.sessionKey, now());
+        if (r.records.length > 0) sessionUpdated(file.sessionKey, host ? null : boxId);
       } catch (e) {
         // A parser bug must not lose raw bytes: the projection is re-derivable.
         log(`history: parse ${frame.path}: ${e instanceof Error ? e.message : String(e)}`);
@@ -576,6 +630,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
     const usageBefore = await repo.usageRowsOf(key);
     for (const f of files) await repo.clearFileRecords(f.id);
     await repo.clearSessionTitle(key);
+    await repo.clearLive(key);
     let ok = true;
     for (const f of files) {
       let state: ParseState = {};
@@ -775,6 +830,11 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         return done;
       })();
       return reparsing;
+    },
+
+    onSessionUpdated(fn) {
+      updateListeners.add(fn);
+      return () => updateListeners.delete(fn);
     },
 
     sweep: (opts = {}) =>

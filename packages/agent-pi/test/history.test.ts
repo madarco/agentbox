@@ -67,7 +67,15 @@ describe('pi history module', () => {
       { path: PATH, offset: 0, bytes: Buffer.from(session) },
       {},
     );
-    expect(records.map((r) => r.kind)).toEqual(['meta', 'turn', 'turn', 'tool', 'usage', 'meta']);
+    expect(records.map((r) => r.kind)).toEqual([
+      'meta',
+      'turn',
+      'turn',
+      'tool',
+      'activity',
+      'usage',
+      'meta',
+    ]);
     expect(records.find((r) => r.kind === 'usage')).toMatchObject({
       messageId: 'a2',
       model: 'gpt-5.5',

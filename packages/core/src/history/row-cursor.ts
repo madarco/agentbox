@@ -80,6 +80,7 @@ export function validSqliteSource(src: AgentHistorySqliteSource | undefined): bo
     return false;
   }
   if (!Array.isArray(src.tables) || src.tables.length === 0) return false;
+  if (src.format === 'jsonl' && (src.tables.length !== 1 || src.sessions)) return false;
   return (
     src.tables.every(
       (t) =>
@@ -152,6 +153,39 @@ function rowLine(table: string, id: string, u: number, row: Record<string, unkno
   });
 }
 
+/**
+ * A JSONL file as one table (`format: 'jsonl'`): each line is a row with a
+ * synthetic 1-based `line` column, which is both its id and its version. Lines
+ * are only ever appended, so a seen line never changes.
+ */
+export function jsonlRowSource(text: string | null): HistoryRowSource | null {
+  if (text === null) return null;
+  const rows: Array<Record<string, unknown>> = [];
+  text.split('\n').forEach((raw, i) => {
+    if (!raw.trim()) return;
+    try {
+      const v = JSON.parse(raw) as unknown;
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        rows.push({ ...(v as Record<string, unknown>), line: i + 1 });
+      }
+    } catch {
+      /* a torn last line is read again next pass */
+    }
+  });
+  const ofSession = (t: AgentHistorySqliteTable, sessionId: string) =>
+    rows.filter((r) => r[t.session] === sessionId);
+  return {
+    versions: (t, sessionId) =>
+      ofSession(t, sessionId).map((r) => ({ id: String(r.line), u: Number(r.line) })),
+    rows: (t, sessionId, ids) => {
+      const want = new Set(ids);
+      return ofSession(t, sessionId).filter((r) => want.has(String(r.line)));
+    },
+    sessions: () => [],
+    close: () => undefined,
+  };
+}
+
 export class HistoryRowCursor {
   /**
    * Last db stamp per agent, set only when that pass left no row waiting to
@@ -193,7 +227,10 @@ export class HistoryRowCursor {
       if (!opts.final && this.stamps.get(stampKey) === stamp) continue;
       let db: HistoryRowSource | null = null;
       try {
-        db = this.opts.open(dbPath);
+        db =
+          t.sqlite.format === 'jsonl'
+            ? jsonlRowSource(await this.opts.files.readText(dbPath))
+            : this.opts.open(dbPath);
         if (!db) continue;
         const found = new Set<string>();
         if (discover) {

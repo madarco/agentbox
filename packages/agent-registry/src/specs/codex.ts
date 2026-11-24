@@ -80,6 +80,8 @@ export const codexSpec: AgentSyncSpec = {
         '.personality_migration',
         'shell_snapshots',
         'session_index.jsonl',
+        // The history row cursor's per-session output (box-written).
+        'agentbox-history',
         'models_cache.json',
         'installation_id',
         'version.json',
@@ -109,6 +111,21 @@ export const codexSpec: AgentSyncSpec = {
         format: 'jsonl',
         mode: 'append',
         sessionFiles: ['*/*/*/rollout-*-<sessionId>.jsonl'],
+      },
+      // Session names (docs/agent-live-status-plan.md, Phase 3). The rollout
+      // never has one; `session_index.jsonl` gets a row per auto-name and
+      // rename. It is shared with every box and the host, so the row cursor
+      // copies only this box's bound sessions' rows.
+      {
+        root: 'agentbox-history',
+        format: 'jsonl',
+        mode: 'snapshot',
+        sessionFiles: ['<sessionId>.index.jsonl'],
+        sqlite: {
+          db: 'session_index.jsonl',
+          format: 'jsonl',
+          tables: [{ name: 'session_index', id: 'line', session: 'id', updated: 'line' }],
+        },
       },
     ],
   },

@@ -101,6 +101,10 @@ export const opencodeSpec: AgentSyncSpec = {
               parent: { column: 'message_id', table: 'message' },
               settleMs: 20_000,
             },
+            // The todo list, for the live working-on line
+            // (docs/agent-live-status-plan.md). Keyed (session_id, position):
+            // the cursor reads rows per session, so `position` is the id.
+            { name: 'todo', id: 'position', session: 'session_id', updated: 'time_updated' },
           ],
         },
       },

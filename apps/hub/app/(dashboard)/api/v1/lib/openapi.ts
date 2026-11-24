@@ -6009,12 +6009,42 @@ export function buildOpenApi(): Record<string, unknown> {
             agentStatus: {
               type: 'object',
               description:
-                "Every agent reporting in this box, keyed by agent id. The source of truth; the named fields below are its projection over the three built-ins, kept for older clients. An agent outside those three appears only here. Each value is { state, sessionTitle? }, where state is 'working | idle | waiting | end-plan | question | compacting | error | unknown'.",
+                "Every agent reporting in this box, keyed by agent id. The source of truth; the named fields below are its projection over the three built-ins, kept for older clients. An agent outside those three appears only here. Each value is { state, sessionTitle?, sessionId?, activity?, usage? }, where state is 'working | idle | waiting | end-plan | question | compacting | error | unknown'. sessionTitle, activity and usage are derived hub-side from the current session's shipped transcript and may lag by a ship interval; absent means no data, never zero.",
               additionalProperties: {
                 type: 'object',
                 properties: {
                   state: { type: 'string' },
-                  sessionTitle: { type: 'string' },
+                  sessionTitle: {
+                    type: 'string',
+                    description:
+                      "The current session's title: the transcript's (AI title, rename, session name, else the first prompt) once the hub has it, else the agent's pane title.",
+                  },
+                  sessionId: {
+                    type: 'string',
+                    description: 'Opaque id of the session the agent is in now.',
+                  },
+                  activity: {
+                    type: 'string',
+                    description:
+                      'What the agent is working on: one line, at most 120 chars, redacted (an in-progress todo, else the last tool call or progress note).',
+                  },
+                  usage: {
+                    type: 'object',
+                    description:
+                      "Token usage of the current session. costUsd only where the agent records a cost (opencode, pi); contextTokens is the last request's context size (not for pi), contextWindow the model's window when the agent records it.",
+                    properties: {
+                      input: { type: 'number' },
+                      output: { type: 'number' },
+                      cacheRead: { type: 'number' },
+                      cacheWrite: { type: 'number' },
+                      reasoning: { type: 'number' },
+                      contextTokens: { type: 'number' },
+                      contextWindow: { type: 'number' },
+                      costUsd: { type: 'number' },
+                      updatedAt: { type: 'string', format: 'date-time' },
+                    },
+                    required: ['input', 'output', 'cacheRead', 'cacheWrite', 'updatedAt'],
+                  },
                 },
               },
             },

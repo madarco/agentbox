@@ -104,8 +104,9 @@ describe('HistoryRelay', () => {
     });
     const docker = await relay.config(reg({ containerName: 'agentbox-smoke' }));
     expect(docker.enabled).toBe(false);
-    // ...but its ctl still runs the row cursor for sqlite-backed agents.
-    expect(docker.materialize?.map((a) => a.agent)).toEqual(['opencode', 'openclaw']);
+    // ...but its ctl still runs the row cursor for snapshot sources (sqlite
+    // stores, and codex's shared session index).
+    expect(docker.materialize?.map((a) => a.agent)).toEqual(['codex', 'opencode', 'openclaw']);
     const cloud = await relay.config(reg({ kind: 'cloud', backend: 'hetzner' }));
     expect(cloud.enabled).toBe(true);
     expect(cloud.agents.map((a) => a.agent).sort()).toEqual([

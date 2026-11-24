@@ -23,6 +23,7 @@ export type {
   ParseState,
   RawChunk,
 } from './types.js';
+export { ACTIVITY_MAX, activityLine, toolActivity } from './activity.js';
 export { agentHistoryModule, agentHistoryModules, registerAgentHistoryModule } from './registry.js';
 export {
   createRedactor,
@@ -52,6 +53,7 @@ export { HISTORY_BINDINGS_FILE, bindingsForBox, parseBindingLog } from './bindin
 export { HISTORY_MAX_FRAME_BYTES, parseHistoryFrame } from './frame.js';
 export {
   HistoryRowCursor,
+  jsonlRowSource,
   snapshotSources,
   validSqliteSource,
   type HistoryRowCursorOptions,

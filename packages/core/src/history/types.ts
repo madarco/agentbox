@@ -29,7 +29,7 @@ export interface AgentHistoryTranscripts {
    * cursor writes.
    */
   sessionFiles: string[];
-  /** The db a `snapshot` source reads. */
+  /** The db a `snapshot` source reads (or, with `format: 'jsonl'`, the file). */
   sqlite?: AgentHistorySqliteSource;
 }
 
@@ -56,6 +56,13 @@ export interface AgentHistorySqliteTable {
 export interface AgentHistorySqliteSource {
   /** The db, relative to the agent's config dir. */
   db: string;
+  /**
+   * `jsonl`: `db` is a shared JSONL file (codex's `session_index.jsonl`) read as
+   * one table whose rows are its lines. Exactly one table; its `id` and
+   * `updated` name the synthetic 1-based `line` column, `session` a field of
+   * the line. Only the bound sessions' lines are copied, as with a db.
+   */
+  format?: 'sqlite' | 'jsonl';
   /** In write order: a parent table before its children. */
   tables: AgentHistorySqliteTable[];
   /**
@@ -198,10 +205,36 @@ export type HistoryRecord =
       outputTokens: number;
       cacheReadTokens: number;
       cacheWriteTokens: number;
+      /** Only when the agent records a cost (opencode, pi). */
+      costUsd?: number;
       ts?: string;
       at: number;
     }
-  | { kind: 'meta'; title?: string; cwd?: string; model?: string; ts?: string; at: number };
+  | { kind: 'meta'; title?: string; cwd?: string; model?: string; ts?: string; at: number }
+  /**
+   * What the agent is doing, one line (`activityLine`). The newest wins, except
+   * that a `plan` line (an in-progress todo) wins while one is set; a `plan`
+   * record with empty text clears it. docs/agent-live-status-plan.md, Phase 3.
+   */
+  | { kind: 'activity'; text: string; plan?: boolean; ts?: string; at: number }
+  /**
+   * The session's cumulative token totals as the agent itself counts them
+   * (codex `token_count`, opencode's session row). The last one replaces the
+   * sum of `usage` records for the live summary; history usage is unchanged.
+   */
+  | {
+      kind: 'totals';
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+      reasoningTokens?: number;
+      costUsd?: number;
+      ts?: string;
+      at: number;
+    }
+  /** Size of the last request's context, and the model's window when the agent records it. */
+  | { kind: 'context'; tokens: number; window?: number; ts?: string; at: number };
 
 /** New bytes of one file, line-aligned at the start (the parser buffers the tail). */
 export interface RawChunk {

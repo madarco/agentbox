@@ -71,16 +71,26 @@ describe('claude parse', () => {
     const bytes = enc(lines);
     const r = m.parse({ path: 'x.jsonl', offset: 100, bytes }, {});
     expect(r.state.partial).toBeUndefined();
-    expect(r.records.map((x) => x.kind)).toEqual(['turn', 'turn', 'tool', 'usage', 'meta']);
+    expect(r.records.map((x) => x.kind)).toEqual([
+      'turn',
+      'turn',
+      'tool',
+      'activity',
+      'usage',
+      'context',
+      'meta',
+    ]);
     expect(r.records[0]).toMatchObject({ role: 'user', text: 'hello there', at: 100 });
     const second = JSON.stringify(lines[0]).length + 1 + 100;
     expect(r.records[1]).toMatchObject({ role: 'assistant', text: 'hi', at: second });
-    expect(r.records[3]).toMatchObject({
+    expect(r.records[3]).toMatchObject({ kind: 'activity', text: 'Bash' });
+    expect(r.records[4]).toMatchObject({
       messageId: 'msg_1',
       inputTokens: 10,
       cacheWriteTokens: 2,
     });
-    expect(r.records[4]).toMatchObject({ title: 'My session' });
+    expect(r.records[5]).toMatchObject({ kind: 'context', tokens: 15 });
+    expect(r.records[6]).toMatchObject({ title: 'My session' });
   });
 
   it('drops usage copied from another session (/branch, desktop continuation)', () => {
