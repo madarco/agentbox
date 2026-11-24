@@ -30,6 +30,7 @@ export command to copy.
 | `scripts/fixture-hub.mjs` | The real hub UI (`apps/hub`'s production build) on the fixtures, at 127.0.0.1:3126. |
 | `scripts/shoot.mjs` | A hub page screenshot (Playwright, 1440x900 at 2x, clock pinned). |
 | `scripts/shoot-tray.mjs` | A tray screenshot: `AgentBoxE2E.app --fixtures`, driven through Accessibility. |
+| `scripts/backdrop.mjs` | Redraws a tray menu or alert's see-through material over a light desktop (`shoot:tray` runs it; the bare capture is dark gray). |
 | `scripts/shoot-cli.mjs` | A CLI screenshot: the real CLI in a PTY, drawn into a terminal window. |
 | `scripts/frame.mjs` | The social canvas, shared by the export and the gallery preview. |
 | `scripts/export.mjs` | Writes the social PNGs to `out/social/`. |
