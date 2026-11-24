@@ -10,7 +10,7 @@
  *   pnpm shoot:cli cli/install.png --rows 30 --wait-for "Which" -- install
  *   pnpm shoot:cli cli/dashboard.png --cols 150 --rows 40 --wait-for "Sessions" -- dashboard
  *
- * The CLI runs with HOME set to a scratch folder (marketing/.cache/cli-home)
+ * The CLI runs with HOME set to a scratch folder (catalog/.cache/cli-home)
  * whose config points `relay.port` at the fixture hub (3126), so every command
  * that reads boxes through the hub sees the Acme demo data and nothing of the
  * owner's ~/.agentbox. Start `pnpm fixture-hub` first.
