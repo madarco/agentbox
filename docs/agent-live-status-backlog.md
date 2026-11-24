@@ -32,11 +32,24 @@ done; Phase 3 (hub side) and Phase 4 (surfaces) track their own items in the pla
   spinner glyphs and the no-name forms were not captured verbatim. The host recipe in the PR covers
   them; adjust the registry rows (no re-bake needed) if a sample disagrees.
 
+- **codex reports no `error`.** The old pane-text rules (`Error:`, `Failed:`) were its only error
+  source, and they matched prose. No codex hook maps to an error, so the `-i` first-turn error
+  check catches opencode, claude (StopFailure) and pi, but not codex.
+- **The codex title states are baked.** The scraper's spinner and `Action Required` regexes live in
+  ctl, while the title cleanup is registry data. Moving them to the row (for example
+  `paneTitle.states: { working, waiting }`) would let a new codex title format ship without a
+  re-bake.
+
 ## Deferred from Phase 2
 
 - **codex between a switch and the next prompt.** SessionStart fires only at the first prompt
   after `/new` or `/resume`, so the old id stays until then (accepted in the plan).
 - **The opencode title match needs a title.** A brand-new session shows `OpenCode` (a
   placeholder) until its first prompt is titled, so until then the plugin's last busy id stands.
+- **`claude -p` in the box takes over the session id.** Its capture hooks move the one current-id
+  slot (and the resume pointer) to the `-p` session, and its SessionEnd then clears it, so the box
+  reports no session until the TUI's next Stop. The hook payload does not say which process it
+  came from; the TUI's pid (or `CLAUDE_CODE_ENTRYPOINT`, if it is set in the hook env) could tell
+  them apart.
 - **No push on a TUI-only switch.** The opencode match runs on each 15s snapshot; a `/sessions`
   switch with no new state change shows up on the next periodic push, not at once.

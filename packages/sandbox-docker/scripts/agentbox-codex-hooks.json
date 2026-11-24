@@ -1,5 +1,5 @@
 {
-  "description": "AgentBox activity-state hooks, the primary state source for codex (they fire reliably on 0.172; packages/ctl/src/codex-scraper.ts is only a safety net that reads the pane title). Codex's strict parser allows only `description` and `hooks` at the top level. Loading needs `codex --enable hooks --dangerously-bypass-hook-trust` (both supplied by the launch flags on codex's registry row). SessionStart, UserPromptSubmit and Stop pass --capture-session: they buffer the hook's stdin JSON in the shell (at most 1 s) and hand it to a backgrounded agentbox-ctl, which appends its session_id to the box's session-history binding log (how a session on the shared codex volume is attributed to this box) and reports it as the box's current session. UserPromptSubmit carries it because SessionStart fires only at the first prompt after /new or /resume, never at the switch itself. Buffering first keeps the payload (a bare & would detach stdin) while codex never waits on ctl, whose client can spend 5 s restarting a dead daemon. In YOLO mode PermissionRequest never fires; the ask-the-user tool (`request_user_input`, `request_user_input_async`) shows only as a PreToolUse, so a matcher maps it to `waiting`. That report is delayed 0.5 s because the catch-all PreToolUse `working` fires for the same call and the two race; the matcher is a Rust regex, which has no lookahead to exclude the tool from the catch-all. This file sits on the codex config volume shared between boxes and can be read by an older baked ctl, so it uses only the frozen `codex-state` command and flags every ctl has.",
+  "description": "AgentBox activity-state hooks, the primary state source for codex (they fire reliably on 0.172; packages/ctl/src/codex-scraper.ts is only a safety net that reads the pane title). Codex's strict parser allows only `description` and `hooks` at the top level. Loading needs `codex --enable hooks --dangerously-bypass-hook-trust` (both supplied by the launch flags on codex's registry row). SessionStart, UserPromptSubmit and Stop pass --capture-session: they buffer the hook's stdin JSON in the shell (at most 1 s) and hand it to a backgrounded agentbox-ctl, which appends its session_id to the box's session-history binding log (how a session on the shared codex volume is attributed to this box) and reports it as the box's current session. UserPromptSubmit carries it because SessionStart fires only at the first prompt after /new or /resume, never at the switch itself. Buffering first keeps the payload (a bare & would detach stdin) while codex never waits on ctl, whose client can spend 5 s restarting a dead daemon. In YOLO mode PermissionRequest never fires; the ask-the-user tool (`request_user_input`, `request_user_input_async`) shows only as a PreToolUse, so a matcher reports `question`, the sticky ask-the-user state (input-needed, like `waiting`): the catch-all PreToolUse `working` fires for the same call and races it, and the reporter swallows a `working` while `question` stands. The matching PostToolUse leaves it with `--clear-pending`. Both run synchronously (no `&`) so the leave cannot land after the turn's Stop. (The matcher is a Rust regex, which has no lookahead to exclude the tool from the catch-all instead.) This file sits on the codex config volume shared between boxes and can be read by an older baked ctl, so it uses only the frozen `codex-state` command and flags every ctl has.",
   "hooks": {
     "SessionStart": [
       {
@@ -38,7 +38,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "(sleep 0.5; agentbox-ctl codex-state waiting) >/dev/null 2>&1 &",
+            "command": "agentbox-ctl codex-state question >/dev/null 2>&1",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^request_user_input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agentbox-ctl codex-state working --clear-pending >/dev/null 2>&1",
             "timeout": 3
           }
         ]

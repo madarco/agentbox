@@ -12,7 +12,7 @@
  * volume every opencode box shares, so "the latest row" is another box's as
  * often as this one's. The candidates are the ids in this box's binding log.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { bindingsForBox, parseBindingLog } from '@agentbox/core';
@@ -112,11 +112,31 @@ export function readOpencodeCandidates(
   }
 }
 
-/** The reporter's hook: resolve opencode's current session from its pane title. */
+let cache: { key: string; result: string | undefined } | null = null;
+
+/**
+ * The reporter's hook: resolve opencode's current session from its pane title.
+ *
+ * Runs on every snapshot (the 15s heartbeat included), so the answer is cached
+ * on its inputs: the title, the reported id and the binding log's size and
+ * mtime (a new session of this box appends to it). A rename shows up as a new
+ * title. The log and the db are read again only when one of those moved.
+ */
 export function resolveOpencodeSession(
   paneTitle: string | null,
   reported: string | undefined,
 ): string | undefined {
   if (!paneTitle) return reported;
-  return pickOpencodeSession(paneTitle, readOpencodeCandidates(), reported);
+  let stamp = '';
+  try {
+    const st = statSync(HISTORY_BINDINGS_PATH);
+    stamp = `${String(st.size)}:${String(st.mtimeMs)}`;
+  } catch {
+    return reported; // no bindings yet: nothing of this box's to match
+  }
+  const key = `${paneTitle}\0${reported ?? ''}\0${stamp}`;
+  if (cache?.key === key) return cache.result;
+  const result = pickOpencodeSession(paneTitle, readOpencodeCandidates(), reported);
+  cache = { key, result };
+  return result;
 }

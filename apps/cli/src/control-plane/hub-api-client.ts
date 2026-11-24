@@ -59,7 +59,7 @@ export interface HubApiBox {
    * Read it through `hubBoxAgentStatus`, never directly — that helper falls back
    * to the named fields so an older hub still renders.
    */
-  agentStatus?: Record<string, { state?: string; sessionTitle?: string }>;
+  agentStatus?: Record<string, { state?: string; sessionTitle?: string; sessionId?: string }>;
   claudeActivity?: string;
   codexActivity?: string;
   opencodeActivity?: string;
@@ -111,6 +111,7 @@ export function hubBoxAgentStatus(b: HubApiBox): AgentStatusMap {
         state: body?.state ?? 'unknown',
         sessionRunning: false,
         ...(body?.sessionTitle ? { sessionTitle: body.sessionTitle } : {}),
+        ...(body?.sessionId ? { sessionId: body.sessionId } : {}),
       });
       if (entry) out[agent] = entry;
     }

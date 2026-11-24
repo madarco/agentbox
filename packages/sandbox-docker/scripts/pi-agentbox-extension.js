@@ -28,9 +28,11 @@
 //   idle    — `agent_settled`, Pi's real end of turn, and `session_start` as the
 //             baseline. NOT `agent_end`: Pi stays busy past it across retries,
 //             compaction and follow-up work.
-//   error   — an assistant `message_end` with `stopReason: "error"`, sticky
-//             until the next `agent_start` so the settle that follows cannot
-//             hide it.
+//   error   — an assistant `message_end` with `stopReason: "error"`. It holds
+//             over the `agent_settled` that follows, so the settle cannot hide
+//             it, and clears on any sign of new work: Pi retries a failed
+//             request inside the same run, and a retry that works must not
+//             leave the box in `error`.
 //
 // Session id: every report carries the current session's id and file on stdin
 // to `--capture-session`. ctl appends it to the box's binding log (sessions on
@@ -55,9 +57,9 @@ function createPiTracker() {
     return { state, session };
   }
 
-  function set(next) {
-    if (errorSticky && next !== 'error') return report();
-    state = next;
+  function work() {
+    errorSticky = false;
+    state = 'working';
     return report();
   }
 
@@ -71,13 +73,13 @@ function createPiTracker() {
           state = 'idle';
           return report();
         case 'agent_start':
-          errorSticky = false;
-          return set('working');
         case 'tool_execution_start':
         case 'ui_prompt_end':
-          return set('working');
+          return work();
         case 'ui_prompt_start':
-          return set('waiting');
+          errorSticky = false;
+          state = 'waiting';
+          return report();
         case 'message_end': {
           const m = event && event.message;
           if (m && m.role === 'assistant' && m.stopReason === 'error') {
@@ -85,10 +87,15 @@ function createPiTracker() {
             state = 'error';
             return report();
           }
-          return set('working');
+          // A user or tool-result message ends while the error stands too; only
+          // a successful assistant message is new work.
+          if (errorSticky && !(m && m.role === 'assistant')) return null;
+          return work();
         }
         case 'agent_settled':
-          return set('idle');
+          if (errorSticky) return null;
+          state = 'idle';
+          return report();
         default:
           return null;
       }
@@ -109,7 +116,7 @@ function sessionOf(ctx) {
   }
 }
 
-function pushReport(r) {
+function runReport(r, done) {
   try {
     const args = ['agent-state', 'pi', r.state];
     if (r.session) args.push('--capture-session');
@@ -117,16 +124,39 @@ function pushReport(r) {
       stdio: [r.session ? 'pipe' : 'ignore', 'ignore', 'ignore'],
       detached: true,
     });
-    p.on('error', () => {});
+    p.on('error', done);
+    p.on('exit', done);
     if (r.session) {
       p.stdin.on('error', () => {});
       p.stdin.end(JSON.stringify({ session_id: r.session.id, transcript_path: r.session.file }));
     }
     p.unref();
   } catch {
+    done();
     // Fire-and-forget. A missing agentbox-ctl bin (test env, older box image)
     // must not throw out of this handler.
   }
+}
+
+// Reports go out ONE AT A TIME, each after the previous ctl exits. Each is its
+// own process that reads stdin and appends a binding before it reaches the
+// daemon, so two spawned together (busy then idle a few ms apart) could land in
+// either order and leave the wrong state standing. The chain never blocks an
+// event handler, and a ctl that hangs is given up on after 3 s.
+let chain = Promise.resolve();
+
+function pushReport(r) {
+  chain = chain.then(
+    () =>
+      new Promise((resolve) => {
+        const t = setTimeout(resolve, 3000);
+        if (typeof t.unref === 'function') t.unref();
+        runReport(r, () => {
+          clearTimeout(t);
+          resolve();
+        });
+      }),
+  );
 }
 
 const EVENTS = [

@@ -141,7 +141,7 @@ function createTracker() {
   };
 }
 
-function pushReport(r) {
+function runReport(r, done) {
   try {
     const args = ['opencode-state', r.state];
     if (r.sessionId) args.push('--capture-session');
@@ -149,16 +149,39 @@ function pushReport(r) {
       stdio: [r.sessionId ? 'pipe' : 'ignore', 'ignore', 'ignore'],
       detached: true,
     });
-    p.on('error', () => {});
+    p.on('error', done);
+    p.on('exit', done);
     if (r.sessionId) {
       p.stdin.on('error', () => {});
       p.stdin.end(JSON.stringify({ session_id: r.sessionId }));
     }
     p.unref();
   } catch {
+    done();
     // Fire-and-forget. A missing agentbox-ctl bin (test env, older box image)
     // must not throw out of this handler.
   }
+}
+
+// Reports go out ONE AT A TIME, each after the previous ctl exits. Each is its
+// own process that reads stdin and appends a binding before it reaches the
+// daemon, so two spawned together (busy then idle a few ms apart) could land in
+// either order and leave the wrong state standing. The chain never blocks an
+// event handler, and a ctl that hangs is given up on after 3 s.
+let chain = Promise.resolve();
+
+function pushReport(r) {
+  chain = chain.then(
+    () =>
+      new Promise((resolve) => {
+        const t = setTimeout(resolve, 3000);
+        if (typeof t.unref === 'function') t.unref();
+        runReport(r, () => {
+          clearTimeout(t);
+          resolve();
+        });
+      }),
+  );
 }
 
 export const AgentboxStatePlugin = async () => {

@@ -153,6 +153,17 @@ describe('pi extension tracker', () => {
     expect(t.handle('agent_start', {}, s1)?.state).toBe('working');
   });
 
+  it('clears the error when a retry inside the same run works', async () => {
+    const t = await loadPiTracker();
+    t.handle('agent_start', {}, s1);
+    t.handle('message_end', { message: { role: 'assistant', stopReason: 'error' } }, s1);
+    expect(t.handle('message_end', { message: { role: 'toolResult' } }, s1)).toBe(null);
+    expect(
+      t.handle('message_end', { message: { role: 'assistant', stopReason: 'stop' } }, s1)?.state,
+    ).toBe('working');
+    expect(t.handle('agent_settled', {}, s1)?.state).toBe('idle');
+  });
+
   it('carries the session, and reports a session switch even when the state is unchanged', async () => {
     const t = await loadPiTracker();
     expect(t.handle('session_start', {}, s1)).toEqual({ state: 'idle', session: s1 });

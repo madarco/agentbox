@@ -17,7 +17,9 @@ import type { AgentId } from '@agentbox/core';
 // with a value it already reported.
 
 import { spawn } from 'node:child_process';
+import { hostname } from 'node:os';
 import type { StatusReporter } from './status-reporter.js';
+import { sanitizePaneTitle } from './tmux.js';
 import type { AgentActivityState } from './types.js';
 
 const DEFAULT_INTERVAL_MS = 1_000;
@@ -139,5 +141,7 @@ async function defaultCapture(sessionName: string): Promise<CodexPaneCapture | n
   if (title === null) return null;
   const pane = await tmuxOut(['capture-pane', '-p', '-t', sessionName]);
   if (pane === null) return null;
-  return { title: title.replace(/\n$/, ''), pane };
+  // tmux shows the hostname (or the shell) until codex sets a title: that is
+  // "no title", which keeps the last state, not a plain title reading idle.
+  return { title: sanitizePaneTitle(title, { hostname: hostname(), sessionName }) ?? '', pane };
 }

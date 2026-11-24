@@ -201,7 +201,7 @@ const STATUS_MARKER = '__AGENTBOX_CTL_STATUS__';
 
 /**
  * True when `agentbox-ctl status --json` shows the agent in `error`, reported
- * after the probe started (an older error from a previous session is not this
+ * at or after `sinceMs` (the box clock) (an older error from a previous session is not this
  * launch's). opencode is the case this exists for: a model it does not support
  * fails the first turn with `session.error`, the session stays up, and the job
  * used to report done.
@@ -221,8 +221,7 @@ export function reportedError(
       const a = v.agents?.[id];
       if (!a || a.state !== 'error') return false;
       const at = typeof a.updatedAt === 'string' ? Date.parse(a.updatedAt) : NaN;
-      // A clock-skew allowance: the box and the host compare their own clocks.
-      return Number.isFinite(at) && at >= sinceMs - 5_000;
+      return Number.isFinite(at) && at >= sinceMs;
     });
   } catch {
     return false;
@@ -270,9 +269,13 @@ export async function verifyAgentSessionStaysUp(
   // One round-trip per tick: bail (exit 7) if the session is gone, else echo the
   // pane so we can sniff for an auth dead-end, then what the agent last reported
   // to ctl (an older ctl prints no `agents`, and the check is skipped).
-  const probe = `tmux has-session -t ${q} 2>/dev/null || exit 7; tmux capture-pane -p -t ${q} 2>/dev/null; printf '\\n%s\\n' '${STATUS_MARKER}'; agentbox-ctl status --json 2>/dev/null || true`;
-  const startedAt = Date.now();
-  const deadline = startedAt + windowMs;
+  const probe = `tmux has-session -t ${q} 2>/dev/null || exit 7; tmux capture-pane -p -t ${q} 2>/dev/null; printf '\\n%s %s\\n' '${STATUS_MARKER}' "$(date +%s%3N)"; agentbox-ctl status --json 2>/dev/null || true`;
+  const deadline = Date.now() + windowMs;
+  // On the BOX's clock (the probe prints it), since ctl stamps `updatedAt` with
+  // that clock and a resumed microVM's can be well off the host's. The first
+  // probe runs moments after the launch; the margin covers a first turn that
+  // failed before it, and is short against an error left by an earlier session.
+  let errorsSince: number | null = null;
   for (;;) {
     let pane = '';
     try {
@@ -285,9 +288,15 @@ export async function verifyAgentSessionStaysUp(
       }
       const cut = r.stdout.lastIndexOf(STATUS_MARKER);
       pane = cut === -1 ? r.stdout : r.stdout.slice(0, cut);
+      const status = cut === -1 ? '' : r.stdout.slice(cut + STATUS_MARKER.length);
+      const nl = status.indexOf('\n');
+      const boxNow = Number(status.slice(0, nl === -1 ? undefined : nl).trim());
+      if (errorsSince === null && Number.isFinite(boxNow) && boxNow > 0) {
+        errorsSince = boxNow - 10_000;
+      }
       if (
-        cut !== -1 &&
-        reportedError(r.stdout.slice(cut + STATUS_MARKER.length), [binary, sessionName], startedAt)
+        errorsSince !== null &&
+        reportedError(status.slice(nl + 1), [binary, sessionName], errorsSince)
       ) {
         throw new Error(
           `agent '${binary}' reported an error on its first turn in box ${boxName} (an unsupported model, a rejected request). ` +
