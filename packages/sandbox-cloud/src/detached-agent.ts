@@ -197,6 +197,38 @@ export async function verifyDetachedSession(
   );
 }
 
+const STATUS_MARKER = '__AGENTBOX_CTL_STATUS__';
+
+/**
+ * True when `agentbox-ctl status --json` shows the agent in `error`, reported
+ * after the probe started (an older error from a previous session is not this
+ * launch's). opencode is the case this exists for: a model it does not support
+ * fails the first turn with `session.error`, the session stays up, and the job
+ * used to report done.
+ */
+export function reportedError(
+  statusJson: string,
+  agent: string | readonly string[],
+  sinceMs: number,
+): boolean {
+  try {
+    const v = JSON.parse(statusJson) as {
+      agents?: Record<string, { state?: unknown; updatedAt?: unknown }>;
+    };
+    // Status is keyed by agent id; the caller knows the binary and the session
+    // name, which are the id for every built-in.
+    return (typeof agent === 'string' ? [agent] : agent).some((id) => {
+      const a = v.agents?.[id];
+      if (!a || a.state !== 'error') return false;
+      const at = typeof a.updatedAt === 'string' ? Date.parse(a.updatedAt) : NaN;
+      // A clock-skew allowance: the box and the host compare their own clocks.
+      return Number.isFinite(at) && at >= sinceMs - 5_000;
+    });
+  } catch {
+    return false;
+  }
+}
+
 /** Runs argv in the box as the box user; only `exitCode` and `stdout` are read. */
 export type SessionProbeExec = (argv: string[]) => Promise<{ exitCode: number; stdout: string }>;
 
@@ -236,9 +268,11 @@ export async function verifyAgentSessionStaysUp(
   const pollMs = opts.pollMs ?? 2_000;
   const q = tmuxTarget(sessionName);
   // One round-trip per tick: bail (exit 7) if the session is gone, else echo the
-  // pane so we can sniff for an auth dead-end.
-  const probe = `tmux has-session -t ${q} 2>/dev/null || exit 7; tmux capture-pane -p -t ${q} 2>/dev/null`;
-  const deadline = Date.now() + windowMs;
+  // pane so we can sniff for an auth dead-end, then what the agent last reported
+  // to ctl (an older ctl prints no `agents`, and the check is skipped).
+  const probe = `tmux has-session -t ${q} 2>/dev/null || exit 7; tmux capture-pane -p -t ${q} 2>/dev/null; printf '\\n%s\\n' '${STATUS_MARKER}'; agentbox-ctl status --json 2>/dev/null || true`;
+  const startedAt = Date.now();
+  const deadline = startedAt + windowMs;
   for (;;) {
     let pane = '';
     try {
@@ -249,7 +283,17 @@ export async function verifyAgentSessionStaysUp(
             `Attach to inspect: agentbox ${binary} attach ${boxName}`,
         );
       }
-      pane = r.stdout;
+      const cut = r.stdout.lastIndexOf(STATUS_MARKER);
+      pane = cut === -1 ? r.stdout : r.stdout.slice(0, cut);
+      if (
+        cut !== -1 &&
+        reportedError(r.stdout.slice(cut + STATUS_MARKER.length), [binary, sessionName], startedAt)
+      ) {
+        throw new Error(
+          `agent '${binary}' reported an error on its first turn in box ${boxName} (an unsupported model, a rejected request). ` +
+            `Attach to see it: agentbox ${binary} attach ${boxName}`,
+        );
+      }
     } catch (err) {
       // Re-throw our own diagnosis; a transport-level probe error is NOT proof
       // of death (don't false-fail on a flaky exec) — keep polling.

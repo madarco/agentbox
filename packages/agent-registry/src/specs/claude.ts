@@ -51,6 +51,13 @@ export const claudeSpec: AgentSyncSpec = {
   aliases: ['claude-code'],
   wireId: 'claude-code',
   sessionName: 'claude',
+  // Measured on 2.1.325 (docs/agent-live-status-plan.md, Phase 0): a status
+  // glyph prefix (`✳ ` when idle, a spinner while working), and `Claude Code`
+  // right after `/new`, before the session has a title.
+  paneTitle: {
+    strip: ['^[^\\p{L}\\p{N}]+\\s+'],
+    placeholders: ['Claude Code'],
+  },
   binary: 'claude',
   // Anthropic's native installer is the canonical path (code.claude.com/docs/en/setup)
   // and drops the binary at ~/.local/bin/claude, which is what the host's

@@ -1,6 +1,6 @@
 # Agent live status: title, working-on line and tokens per box
 
-**Status:** plan. Phase 0 (live PoC) is done; Phases 1-4 not started.
+**Status:** Phases 0-2 done (Phases 1-2 on `feat/live-status-box`); Phases 3-4 not started. Open items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
 
 Every box should tell the hub, the web UI and the tray four things about the agent in it:
 
@@ -138,7 +138,9 @@ lookup goes by this box's session id.
 Each phase is one session, merged to nightly on its own. Keep `docs/agent-live-status-backlog.md`
 live from Phase 1.
 
-### Phase 1: fix status (box-side)
+### Phase 1: fix status (box-side) — done
+
+**Done (2026-11-24).** Bugs 1-5 and 7 are fixed in the hook, plugin and extension files and in ctl, as listed below, with these specifics: claude's SubagentStart/SubagentStop and SessionEnd buffer their stdin and pass it to `--skip-unnamed-subagent` / a conditional `--clear-session`; codex's request_user_input waiting report is delayed 0.5s so the catch-all `working` for the same call cannot land after it (codex matchers are Rust regexes, with no lookahead); the opencode plugin and the pi extension carry their mapping as a pure tracker with unit tests (`packages/sandbox-docker/test/agent-state-plugins.test.ts`); the `-i` stay-up probe (`verifyAgentSessionStaysUp`, every provider) reads `agentbox-ctl status --json`, which now lists each agent's last state, and fails on an `error` reported during the launch. The pane-title rules ride `AgentSyncSpec.paneTitle` and `agents.list`.
 
 Fix bugs 1-5 and 7, all in the hook, plugin and extension files and in ctl:
 
@@ -171,7 +173,9 @@ the seeder refreshes an existing volume's copy.
 working during a tool call, and codex reads waiting on a question. Verify live in a box per agent,
 the way Phase 0 did.
 
-### Phase 2: the current session id (box-side)
+### Phase 2: the current session id (box-side) — done
+
+**Done (2026-11-24).** Every `--capture-session` report hands its `session_id` to the reporter, which publishes `agents[<id>].sessionId` (after a daemon restart, claude's resume pointer until the next hook). The hub passes it through on `Box.agentStatus[agent].sessionId`. The opencode pane-title match reads this box's bound root sessions from `opencode.db` (`packages/ctl/src/opencode-session.ts`).
 
 Put `sessionId` on each agent's status entry:
 

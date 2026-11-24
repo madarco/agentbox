@@ -1,14 +1,20 @@
 import type { AgentId } from '@agentbox/core';
-// Tmux-pane scraper for Codex activity state. Codex 0.134.0's JSON-hook firing
-// is still unreliable in TUI mode (the `~/.codex/hooks.json` discovery path
-// often silently skips even with `--enable hooks --dangerously-bypass-hook-trust`
-// — see the comment in `packages/sandbox-docker/scripts/agentbox-codex-hooks.json`).
-// Until upstream stabilizes, we approximate activity state by polling the
-// rendered codex tmux pane and matching a small ordered pattern table.
+// Tmux safety net for Codex's activity state. Codex's hooks
+// (`agentbox-codex-hooks.json`) are the primary signal and fire reliably on
+// 0.172 (Phase 0, docs/agent-live-status-plan.md); this backstops a hook that
+// did not fire, and the startup dialogs no hook can see.
 //
-// Cheap: one `tmux capture-pane -p` per tick (default 1s), only pushes on
-// state TRANSITIONS, so the relay's box-status stream only carries real
-// changes — no 1Hz heartbeat.
+// It reads the pane TITLE, not the pane text. Codex prefixes its terminal title
+// with a spinner glyph while a turn runs and with `[ ! ] Action Required` while
+// it waits on the user, which is exactly the state, with none of the false hits
+// of matching prose in the pane (0.172's `Worked for 2s` turn footer read as
+// `working` and held every codex box `working` after its turn ended). The pane
+// text is still read for the startup dialogs (directory trust, hook review),
+// which show before codex sets a title.
+//
+// Cheap: one tmux title read and one `capture-pane` per tick (default 1s), and it
+// pushes only on a change of its OWN derived state, so it never overrides a hook
+// with a value it already reported.
 
 import { spawn } from 'node:child_process';
 import type { StatusReporter } from './status-reporter.js';
@@ -17,42 +23,24 @@ import type { AgentActivityState } from './types.js';
 const DEFAULT_INTERVAL_MS = 1_000;
 const DEFAULT_SESSION = 'codex';
 
-/**
- * Patterns are tried in declared order; first match wins. Designed to
- * over-rather-than-under-match: an extra `working` push on a noisy frame is
- * cheap (the reporter coalesces 300ms anyway), but missing a `waiting` frame
- * is bad — the host won't know codex is blocked on the user.
- */
-const PATTERNS: ReadonlyArray<{ re: RegExp; state: AgentActivityState }> = [
-  // Permission / approval prompts (highest priority — these mean codex is blocked).
-  { re: /Hooks need review|Trust all and continue/i, state: 'waiting' },
-  { re: /Do you trust the contents of this directory/i, state: 'waiting' },
-  {
-    re: /Allow this command\?|Approve this (command|tool)\?|Press y\/n|\[Y\/n\]/m,
-    state: 'waiting',
-  },
-  { re: /Waiting for (your |user )?(response|input|approval|permission)/i, state: 'waiting' },
-  // Compaction (codex's `/compact` command and auto-compaction).
-  {
-    re: /Compacting (conversation|context)|Summariz(e|ing) (the )?conversation/i,
-    state: 'compacting',
-  },
-  // Failure / fatal-error frames.
-  { re: /\bError:|\bFailed:|^Traceback /m, state: 'error' },
-  // Active work signals — pinned to specific codex TUI fragments to avoid
-  // matching every line of english that contains "working" or "running"
-  // (e.g. the directory-trust prompt's "Working with untrusted contents"
-  // warning is NOT a working state).
-  {
-    re: /\b(Thinking\.\.\.|Worked for \d|Streaming response|tool call \w|Running command|Generating response|Reasoning\.\.\.|Editing \w)/m,
-    state: 'working',
-  },
-  // Idle: codex shows a status line `gpt-5.5 high · /workspace` (or similar
-  // model · cwd footer) at the bottom of the input prompt when ready for
-  // input. Lower priority than every "busy" pattern above so an in-flight
-  // turn that still shows the footer correctly registers as working.
-  { re: /gpt-\d+(\.\d+)?(-\w+)?\s+(low|medium|high|xhigh)\b|OpenAI Codex \(v\d/i, state: 'idle' },
+/** Dialogs that block codex on the user, matched in the pane text. */
+const PANE_WAITING: readonly RegExp[] = [
+  /Hooks need review|Trust all and continue/i,
+  /Do you trust the contents of this directory/i,
+  /Allow this command\?|Approve this (command|tool)\?|Press y\/n|\[Y\/n\]/m,
 ];
+
+const TITLE_WAITING = /Action Required/i;
+// A leading glyph that is not a letter, a digit or the `[` of `[ ! ]`, then a
+// space: codex's spinner frame.
+const TITLE_SPINNER = /^[^\p{L}\p{N}[\s]+\s/u;
+
+export interface CodexPaneCapture {
+  /** `#{pane_title}`, raw. */
+  title: string;
+  /** `capture-pane -p` text. */
+  pane: string;
+}
 
 export interface CodexScraperOptions {
   reporter: StatusReporter;
@@ -61,7 +49,7 @@ export interface CodexScraperOptions {
   sessionName?: string;
   intervalMs?: number;
   /** Override the tmux runner — used by unit tests to feed fake pane output. */
-  capturePane?: (sessionName: string) => Promise<string | null>;
+  capture?: (sessionName: string) => Promise<CodexPaneCapture | null>;
 }
 
 export interface CodexScraperHandle {
@@ -69,16 +57,14 @@ export interface CodexScraperHandle {
 }
 
 /**
- * Start the codex tmux-pane scraper. Returns a handle so the daemon can stop
- * it on shutdown. Idempotent w.r.t. state: a re-asserted state push is a
- * no-op at the reporter level (debounced and coalesced), so the scraper
- * doesn't need to track its own last-pushed state.
+ * Start the codex tmux safety net. Returns a handle so the daemon can stop it
+ * on shutdown.
  */
 export function startCodexScraper(opts: CodexScraperOptions): CodexScraperHandle {
   const agent = opts.agent ?? 'codex';
   const sessionName = opts.sessionName ?? DEFAULT_SESSION;
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
-  const capture = opts.capturePane ?? defaultCapturePane;
+  const capture = opts.capture ?? defaultCapture;
   let lastState: AgentActivityState | null = null;
   let lastSessionPresent = false;
   let stopped = false;
@@ -86,8 +72,8 @@ export function startCodexScraper(opts: CodexScraperOptions): CodexScraperHandle
   const tick = async (): Promise<void> => {
     if (stopped) return;
     try {
-      const pane = await capture(sessionName);
-      if (pane === null) {
+      const frame = await capture(sessionName);
+      if (frame === null) {
         // No codex session running. Don't push state — preserve whatever the
         // last known value was so a paused/stopped box keeps its prior state
         // until something concrete supersedes it.
@@ -95,20 +81,19 @@ export function startCodexScraper(opts: CodexScraperOptions): CodexScraperHandle
         return;
       }
       if (!lastSessionPresent) {
-        // Session just came up: emit `idle` as a baseline. The pattern below
-        // will overwrite it within a tick if codex is mid-work.
+        // Session just came up: emit `idle` as a baseline.
         opts.reporter.setAgentState(agent, 'idle');
         lastState = 'idle';
         lastSessionPresent = true;
       }
-      const matched = matchState(pane);
+      const matched = matchState(frame.title, frame.pane);
       if (matched !== null && matched !== lastState) {
         opts.reporter.setAgentState(agent, matched);
         lastState = matched;
       }
     } catch {
-      // Pane capture failures (tmux not yet ready, transient docker errors)
-      // are non-fatal — the next tick retries.
+      // Capture failures (tmux not yet ready, transient errors) are non-fatal —
+      // the next tick retries.
     }
   };
 
@@ -125,27 +110,34 @@ export function startCodexScraper(opts: CodexScraperOptions): CodexScraperHandle
 }
 
 /**
- * Pure pattern matcher — exported for unit testing without spawning tmux.
- * Returns null when no pattern matches (caller preserves last-known state).
+ * Pure: the state one frame shows. A blocking dialog in the pane wins; then the
+ * title prefix (`Action Required` waiting, a spinner working, anything else
+ * idle). Null for an empty title, which codex has not set yet: the caller keeps
+ * the last known state.
  */
-export function matchState(pane: string): AgentActivityState | null {
-  for (const { re, state } of PATTERNS) {
-    if (re.test(pane)) return state;
-  }
-  return null;
+export function matchState(title: string, pane: string): AgentActivityState | null {
+  if (PANE_WAITING.some((re) => re.test(pane))) return 'waiting';
+  const t = title.trim();
+  if (t.length === 0) return null;
+  if (TITLE_WAITING.test(t)) return 'waiting';
+  if (TITLE_SPINNER.test(t)) return 'working';
+  return 'idle';
 }
 
-function defaultCapturePane(sessionName: string): Promise<string | null> {
+function tmuxOut(args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawn('tmux', ['capture-pane', '-p', '-t', sessionName], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    const child = spawn('tmux', args, { stdio: ['ignore', 'pipe', 'ignore'] });
     let stdout = '';
     child.stdout.on('data', (b: Buffer) => (stdout += b.toString('utf8')));
     child.on('error', () => resolve(null));
-    child.on('close', (code) => {
-      if (code === 0) resolve(stdout);
-      else resolve(null); // exit 1 = session not present
-    });
+    child.on('close', (code) => resolve(code === 0 ? stdout : null)); // 1 = no session
   });
+}
+
+async function defaultCapture(sessionName: string): Promise<CodexPaneCapture | null> {
+  const title = await tmuxOut(['display-message', '-p', '-t', sessionName, '#{pane_title}']);
+  if (title === null) return null;
+  const pane = await tmuxOut(['capture-pane', '-p', '-t', sessionName]);
+  if (pane === null) return null;
+  return { title: title.replace(/\n$/, ''), pane };
 }

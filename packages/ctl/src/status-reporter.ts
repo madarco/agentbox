@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
 import type { RelayClient } from './relay-client.js';
-import { clearAgentSessionPointer, markAgentActive } from './session-pointer.js';
+import { resolveOpencodeSession } from './opencode-session.js';
+import { cleanPaneTitle, type PaneTitleRules } from './pane-title.js';
+import {
+  clearAgentSessionPointer,
+  markAgentActive,
+  readAgentSessionId,
+} from './session-pointer.js';
 import type { Supervisor } from './supervisor.js';
 import { probeAgentSession } from './tmux.js';
 import {
@@ -21,7 +27,26 @@ export interface WatchedAgentSession {
   agent: AgentId;
   /** tmux session name to probe (`tmux has-session -t <name>`). */
   sessionName: string;
+  /** Cleanup rules for the probed pane title, from the host's registry row. */
+  paneTitle?: PaneTitleRules;
 }
+
+/**
+ * Picks the session on screen when the agent's own report can go stale: given
+ * the cleaned pane title and the reported id, answers the id to publish.
+ */
+export type SessionResolver = (
+  paneTitle: string | null,
+  reported: string | undefined,
+) => string | undefined;
+
+/**
+ * Per-agent resolvers. Only opencode needs one: its TUI switches sessions
+ * without any plugin event, while claude, codex and pi report the switch.
+ */
+const SESSION_RESOLVERS: Readonly<Record<string, SessionResolver>> = {
+  opencode: resolveOpencodeSession,
+};
 
 /**
  * The list compiled into this binary. Used until (and unless) the host answers
@@ -41,6 +66,8 @@ interface AgentRuntimeState {
   updatedAt: string | null;
   plan?: AgentPlanPayload;
   question?: AgentQuestionPayload;
+  /** The agent's current session id, as its hooks/plugin last reported it. */
+  sessionId?: string;
   /** Whether the first-activity pointer write has already fired. */
   marked: boolean;
 }
@@ -56,6 +83,8 @@ export interface StatusReporterOptions {
   debounceMs?: number;
   /** Liveness heartbeat so the host file stays fresh while idle. Default 15000ms. */
   periodicMs?: number;
+  /** Override the per-agent session resolvers (tests). */
+  sessionResolvers?: Readonly<Record<string, SessionResolver>>;
 }
 
 /**
@@ -76,6 +105,7 @@ export class StatusReporter {
   private readonly debounceMs: number;
   private readonly periodicMs: number;
   private sessions: readonly WatchedAgentSession[];
+  private readonly sessionResolvers: Readonly<Record<string, SessionResolver>>;
   private readonly agents = new Map<AgentId, AgentRuntimeState>();
   /** Last-seen tmux liveness per agent, for the running->stopped edge. */
   private readonly lastRunning = new Map<AgentId, boolean>();
@@ -90,6 +120,7 @@ export class StatusReporter {
     this.sessions = opts.sessions ?? BAKED_AGENT_SESSIONS;
     this.debounceMs = opts.debounceMs ?? 300;
     this.periodicMs = opts.periodicMs ?? 15_000;
+    this.sessionResolvers = opts.sessionResolvers ?? SESSION_RESOLVERS;
   }
 
   start(): void {
@@ -158,11 +189,29 @@ export class StatusReporter {
       plan?: AgentPlanPayload;
       question?: AgentQuestionPayload;
       clearPending?: boolean;
+      /** The session the report came from; becomes the current one. */
+      sessionId?: string;
+      /** A session that ended; forgotten only while it is still the current one. */
+      endSessionId?: string;
     },
   ): void {
     const cur = this.agentState(agent);
+    // Session bookkeeping first: a swallowed state (below) still names the
+    // session it came from.
+    let sessionChanged = false;
+    if (payload?.endSessionId && cur.sessionId === payload.endSessionId) {
+      cur.sessionId = undefined;
+      sessionChanged = true;
+    }
+    if (payload?.sessionId && payload.sessionId !== cur.sessionId) {
+      cur.sessionId = payload.sessionId;
+      sessionChanged = true;
+    }
     const sticky = cur.state === 'end-plan' || cur.state === 'question';
-    if (state === 'working' && sticky && !payload?.clearPending) return;
+    if (state === 'working' && sticky && !payload?.clearPending) {
+      if (sessionChanged) this.schedulePush();
+      return;
+    }
 
     cur.state = state;
     cur.updatedAt = new Date().toISOString();
@@ -199,6 +248,18 @@ export class StatusReporter {
     cur.updatedAt = new Date().toISOString();
     this.schedulePush();
     return true;
+  }
+
+  /**
+   * Each agent's last reported state, for the in-box `status` op. In-memory
+   * only: no tmux probe, so it is cheap enough for a launch check to poll.
+   */
+  agentStates(): Record<AgentId, { state: AgentActivityState; updatedAt: string | null }> {
+    const out: Record<AgentId, { state: AgentActivityState; updatedAt: string | null }> = {};
+    for (const [agent, cur] of this.agents) {
+      out[agent] = { state: cur.state, updatedAt: cur.updatedAt };
+    }
+    return out;
   }
 
   /** Forced immediate push (used on shutdown). */
@@ -280,7 +341,7 @@ export class StatusReporter {
    */
   private async agentStatusMap(): Promise<AgentStatusMap> {
     const out: AgentStatusMap = {};
-    for (const { agent, sessionName } of this.sessions) {
+    for (const { agent, sessionName, paneTitle } of this.sessions) {
       const probe = await probeAgentSession(sessionName);
 
       // Clear the per-box session pointer/marker when an agent's tmux session
@@ -290,23 +351,50 @@ export class StatusReporter {
       // `false`, so a just-restored agent (rising edge) is never cleared.
       if (this.lastRunning.get(agent) && !probe.running) {
         clearAgentSessionPointer(agent);
+        const ended = this.agents.get(agent);
+        if (ended) ended.sessionId = undefined;
       }
       this.lastRunning.set(agent, probe.running);
 
       const cur = this.agents.get(agent);
       if (!probe.running && (!cur || cur.state === 'unknown')) continue;
 
+      const title = probe.title ? cleanPaneTitle(probe.title, paneTitle) : null;
+      const sessionId = this.currentSessionId(agent, cur?.sessionId, title, probe.running);
       const entry: AgentStatusEntry = {
         state: cur?.state ?? 'unknown',
         updatedAt: cur?.updatedAt ?? null,
         sessionRunning: probe.running,
-        ...(probe.title ? { sessionTitle: probe.title } : {}),
+        ...(title ? { sessionTitle: title } : {}),
+        ...(sessionId ? { sessionId } : {}),
         ...(cur?.plan ? { plan: cur.plan } : {}),
         ...(cur?.question ? { question: cur.question } : {}),
       };
       out[agent] = entry;
     }
     return out;
+  }
+
+  /**
+   * The session id to publish: the agent's own report, else (after a daemon
+   * restart, before the next hook) its resume pointer, then refined by the
+   * agent's resolver when it has one. Best-effort: a resolver failure keeps the
+   * reported id.
+   */
+  private currentSessionId(
+    agent: AgentId,
+    reported: string | undefined,
+    title: string | null,
+    running: boolean,
+  ): string | undefined {
+    const base = reported ?? readAgentSessionId(agent) ?? undefined;
+    const resolve = this.sessionResolvers[agent];
+    if (!resolve || !running) return base;
+    try {
+      return resolve(title, base) ?? base;
+    } catch {
+      return base;
+    }
   }
 }
 

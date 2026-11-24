@@ -154,14 +154,16 @@ interface SqliteDb {
   prepare(sql: string): SqliteStatement;
   close(): void;
 }
-type SqliteModule = { DatabaseSync: new (path: string, opts?: { readOnly?: boolean }) => SqliteDb };
+export type SqliteModule = {
+  DatabaseSync: new (path: string, opts?: { readOnly?: boolean }) => SqliteDb;
+};
 
 /**
  * `node:sqlite` when this node has it (22.5+). Through `getBuiltinModule` so the
  * Node 20 boxes some providers still bake load ctl fine and just skip the row
  * cursor.
  */
-function loadSqlite(): SqliteModule | null {
+export function loadSqlite(): SqliteModule | null {
   try {
     const get = (process as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
     return (get?.('node:sqlite') as SqliteModule | undefined) ?? null;
