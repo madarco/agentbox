@@ -17,7 +17,7 @@
  *
  * It needs the hub's production build in apps/hub/.next (`pnpm --filter
  * @agentbox/hub build`, or the build:standalone the CLI uses). It never
- * touches ~/.agentbox: HOME is a scratch folder under marketing/.cache.
+ * touches ~/.agentbox: HOME is a scratch folder under catalog/.cache.
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";

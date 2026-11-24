@@ -13,7 +13,7 @@
  *
  * The headline, crop and kind default to the entry's `social` in
  * screens/catalog.mjs. Set MARKETING_ASSETS to also copy each file there
- * (e.g. the shared ../../marketing folder).
+ * (e.g. a marketing assets folder).
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

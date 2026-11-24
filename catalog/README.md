@@ -8,9 +8,9 @@ AgentBox-branded canvas.
 ## Quick start
 
 ```bash
-cd marketing
+cd catalog
 pnpm install --ignore-workspace     # its own package, outside the repo's workspace
-pnpm screens serve                  # http://127.0.0.1:3124/marketing/screens/
+pnpm screens serve                  # http://127.0.0.1:3124/catalog/screens/
 ```
 
 `pnpm screens open` opens `screens/index.html` from disk instead. Click a card

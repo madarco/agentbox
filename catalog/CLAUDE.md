@@ -1,4 +1,4 @@
-# marketing/ — context for Claude Code
+# catalog/ — context for Claude Code
 
 The AgentBox screen catalog: hub, tray and CLI screenshots on demo data, plus
 the social-size export. README.md covers the commands; read it first.

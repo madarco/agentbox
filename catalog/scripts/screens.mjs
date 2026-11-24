@@ -26,7 +26,7 @@ const frameSource = readFileSync(join(root, "scripts/frame.mjs"), "utf8");
 /* "docs:x.png" is a docs-site screenshot; anything else is under shots/. */
 const pathOf = (file) => (file.startsWith("docs:") ? join(DOCS, file.slice(5)) : join(shots, file));
 const urlOf = (file) => (file.startsWith("docs:") ? "../../apps/web/public/screenshots/" + file.slice(5) : "../shots/" + file);
-const repoPath = (file) => (file.startsWith("docs:") ? "apps/web/public/screenshots/" + file.slice(5) : "marketing/shots/" + file);
+const repoPath = (file) => (file.startsWith("docs:") ? "apps/web/public/screenshots/" + file.slice(5) : "catalog/shots/" + file);
 
 const mode = process.argv[2];
 
@@ -104,13 +104,13 @@ if (mode === "serve") {
   const repo = join(root, "..");
   createServer((req, res) => {
     let path = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname));
-    if (path === "/" || path === "/screens") return res.writeHead(302, { location: "/marketing/screens/" }).end();
-    if (path === "/marketing/screens/") path = "/marketing/screens/index.html";
+    if (path === "/" || path === "/screens") return res.writeHead(302, { location: "/catalog/screens/" }).end();
+    if (path === "/catalog/screens/") path = "/catalog/screens/index.html";
     const file = join(repo, path);
     const ok =
-      (path === "/marketing/screens/index.html" || path.startsWith("/marketing/shots/") || path.startsWith("/apps/web/public/screenshots/")) &&
+      (path === "/catalog/screens/index.html" || path.startsWith("/catalog/shots/") || path.startsWith("/apps/web/public/screenshots/")) &&
       types[extname(file)];
     if (!ok || !existsSync(file)) return res.writeHead(404).end("not found");
     res.writeHead(200, { "content-type": types[extname(file)] }).end(readFileSync(file));
-  }).listen(port, "127.0.0.1", () => console.log(`http://127.0.0.1:${port}/marketing/screens/`));
+  }).listen(port, "127.0.0.1", () => console.log(`http://127.0.0.1:${port}/catalog/screens/`));
 }

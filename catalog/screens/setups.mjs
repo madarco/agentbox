@@ -1,6 +1,6 @@
 /* The environments the screens are taken in: what each one is and the
    commands that start it. An entry in catalog.mjs names one in `setup`.
-   Paths are relative to marketing/ unless they start with ../ (the repo) or
+   Paths are relative to catalog/ unless they start with ../ (the repo) or
    ../../ (a sibling repo). None of them touches the owner's ~/.agentbox or
    the hub on 8787. */
 
