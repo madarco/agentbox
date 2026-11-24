@@ -7,7 +7,7 @@ import { AGENT_SYNC_SPECS, buildAgentDescriptors } from '@agentbox/sandbox-core'
 import { parseAgentStatusEntry } from '@agentbox/core';
 import { cleanPaneTitle, parsePaneTitleRules } from '../src/pane-title.js';
 import { parseAgentDescriptors } from '../src/agent-registry.js';
-import { pickOpencodeSession, readOpencodeCandidates } from '../src/opencode-session.js';
+import { pickSessionByTitle, readSessionCandidates } from '../src/session-by-title.js';
 import { loadSqlite } from '../src/history-shipper.js';
 import type { BoxStatus } from '../src/types.js';
 
@@ -283,17 +283,17 @@ describe('opencode session by pane title', () => {
       c('ses_a', 'Review server.js for bugs and fix the race', 2),
       c('ses_b', 'Add a health endpoint', 3),
     ];
-    expect(pickOpencodeSession('Review server.js for bugs and fix th…', cands, 'ses_b')).toBe(
+    expect(pickSessionByTitle('Review server.js for bugs and fix th…', cands, 'ses_b')).toBe(
       'ses_a',
     );
-    expect(pickOpencodeSession('Something else', cands, 'ses_b')).toBe('ses_b');
-    expect(pickOpencodeSession(null, cands, 'ses_b')).toBe('ses_b');
+    expect(pickSessionByTitle('Something else', cands, 'ses_b')).toBe('ses_b');
+    expect(pickSessionByTitle(null, cands, 'ses_b')).toBe('ses_b');
   });
 
   it('on a tie keeps the reported session, else the newest', () => {
     const cands = [c('ses_a', 'Same', 1), c('ses_b', 'Same', 5)];
-    expect(pickOpencodeSession('Same', cands, 'ses_a')).toBe('ses_a');
-    expect(pickOpencodeSession('Same', cands, 'ses_x')).toBe('ses_b');
+    expect(pickSessionByTitle('Same', cands, 'ses_a')).toBe('ses_a');
+    expect(pickSessionByTitle('Same', cands, 'ses_x')).toBe('ses_b');
   });
 
   it.skipIf(loadSqlite() === null)('reads only this box’s bound root sessions', () => {
@@ -323,8 +323,19 @@ describe('opencode session by pane title', () => {
         .map((l) => JSON.stringify(l))
         .join('\n'),
     );
-    expect(readOpencodeCandidates({ db: dbPath, bindings, boxId: 'b1' })).toEqual([
-      { id: 'ses_mine', title: 'Mine', updated: 10 },
-    ]);
+    expect(
+      readSessionCandidates(
+        {
+          agent: 'opencode',
+          db: dbPath,
+          table: 'session',
+          idColumn: 'id',
+          titleColumn: 'title',
+          updatedColumn: 'time_updated',
+          parentColumn: 'parent_id',
+        },
+        { bindings, boxId: 'b1' },
+      ),
+    ).toEqual([{ id: 'ses_mine', title: 'Mine', updated: 10 }]);
   });
 });

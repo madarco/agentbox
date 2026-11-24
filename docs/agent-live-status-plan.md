@@ -175,7 +175,7 @@ the way Phase 0 did.
 
 ### Phase 2: the current session id (box-side) — done
 
-**Done (2026-11-24).** Every `--capture-session` report hands its `session_id` to the reporter, which publishes `agents[<id>].sessionId` (after a daemon restart, claude's resume pointer until the next hook). The hub passes it through on `Box.agentStatus[agent].sessionId`. The opencode pane-title match reads this box's bound root sessions from `opencode.db` (`packages/ctl/src/opencode-session.ts`).
+**Done (2026-11-24).** Every `--capture-session` report hands its `session_id` to the reporter, which publishes `agents[<id>].sessionId` (after a daemon restart, claude's resume pointer until the next hook). The hub passes it through on `Box.agentStatus[agent].sessionId`. The opencode pane-title match reads this box's bound root sessions from `opencode.db` (`packages/ctl/src/session-by-title.ts`).
 
 Put `sessionId` on each agent's status entry:
 

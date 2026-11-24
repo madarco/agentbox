@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import type { RelayClient } from './relay-client.js';
-import { resolveOpencodeSession } from './opencode-session.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { sessionByTitleResolver } from './session-by-title.js';
 import { cleanPaneTitle, type PaneTitleRules } from './pane-title.js';
 import {
   clearAgentSessionPointer,
@@ -41,11 +43,20 @@ export type SessionResolver = (
 ) => string | undefined;
 
 /**
- * Per-agent resolvers. Only opencode needs one: its TUI switches sessions
- * without any plugin event, while claude, codex and pi report the switch.
+ * Per-agent resolvers, ctl-internal like the scrapers. Only opencode needs one:
+ * its TUI switches sessions without any plugin event, while claude, codex and pi
+ * report the switch. Its titles are the `session` table of its sqlite db.
  */
 const SESSION_RESOLVERS: Readonly<Record<string, SessionResolver>> = {
-  opencode: resolveOpencodeSession,
+  opencode: sessionByTitleResolver({
+    agent: 'opencode',
+    db: join(homedir(), '.local', 'share', 'opencode', 'opencode.db'),
+    table: 'session',
+    idColumn: 'id',
+    titleColumn: 'title',
+    updatedColumn: 'time_updated',
+    parentColumn: 'parent_id',
+  }),
 };
 
 /**
