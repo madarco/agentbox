@@ -1,6 +1,7 @@
 # Agent live status: title, working-on line and tokens per box
 
-**Status:** plan. Phase 0 (live PoC) is done; Phases 1-4 not started.
+**Status:** Phase 0 (live PoC) and Phase 3 (hub-side title, working-on line, tokens) are done;
+Phases 1, 2 and 4 are open. Deferred items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
 
 Every box should tell the hub, the web UI and the tray four things about the agent in it:
 
@@ -189,6 +190,35 @@ Put `sessionId` on each agent's status entry:
 a prompt, for codex) and after a `/resume`.
 
 ### Phase 3: title, working-on line and tokens (hub-side)
+
+**Done.** What landed:
+
+- Parsers emit three new record kinds (`packages/core/src/history/types.ts`): `activity` (one
+  line; a `plan` line from an in-progress todo wins while set), `totals` (the agent's own
+  cumulative count: codex `token_count`, opencode's session row) and `context`. Usage records carry
+  `costUsd` where the agent records one. Every parser version is bumped, so the existing re-parse
+  job re-derives stored sessions; no migration.
+- The line is built by `activityLine` / `toolActivity` (`packages/core/src/history/activity.ts`):
+  only a call's short named fields (`description`, `command`, `file_path`, `path`, ...), collapsed
+  to one line, run through the history redactor, then clipped to 120 chars.
+- claude: `ai-title` (a rename wins for the rest of the file), last `tool_use` or assistant text,
+  context from the main thread only. Subagent transcripts were already shipped (`sessionFiles`
+  includes `<sessionId>/subagents/*.jsonl`), and their usage lands on the parent session.
+- codex: `commentary` messages and `exec_command_begin` `parsed_cmd`; `token_count` totals and
+  context (`rate_limits` is never projected; the raw archive keeps the line as shipped). Names come
+  from `session_index.jsonl` through a new `format: 'jsonl'` row source: the row cursor copies only
+  the bound sessions' lines to `agentbox-history/<sessionId>.index.jsonl`.
+- opencode: the `todo` table (keyed by `position`, since the cursor reads per session) and tool
+  parts; totals and cost from the `session` row's `tokens_*` columns, which count a session alone,
+  so subagent sessions stay out of the parent's total.
+- pi: usage from every entry carrying one (bug 6), with cost; last `toolCall`, else assistant text.
+- Hub: an additive `history_live` table plus `history_usage.cost_usd`; the slice
+  `apps/hub/lib/backend/live-status.ts` joins a box to its current session
+  (`agentStatus[agent].sessionId`, else the box's latest session: `currentSessionKey`), enriches
+  `Box.agentStatus[agent]` with `activity`, `usage` and the derived `sessionTitle`, and fires the
+  notifier only on a change of the current session's summary, at most once per box every 30s.
+
+The plan as written:
 
 1. **A hub-side "live summary" per box.** When a history chunk for a box's current session is
    ingested, recompute `{title, activity, usage}` from that session's parsed rows. Store it, and
