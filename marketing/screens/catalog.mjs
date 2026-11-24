@@ -43,8 +43,8 @@ const hub = ({ files, ...entry }) => ({
 const tray = ({ files, ...entry }) => ({
   topic: "macOS tray",
   setup: "fixture-tray",
-  social: { kind: "cutout", ...entry.social },
   ...entry,
+  social: { kind: "cutout", ...entry.social },
   files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2] })),
 });
 
@@ -53,8 +53,8 @@ const cli = ({ files, ...entry }) => ({
   topic: "CLI",
   setup: "fixture-cli",
   url: "agentbox " + files[0].shoot.split(" -- ")[1],
-  social: { kind: "cutout", ...entry.social },
   ...entry,
+  social: { kind: "cutout", ...entry.social },
   files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2] })),
 });
 
@@ -67,10 +67,7 @@ export const SCREENS = [
     id: "hub/boxes",
     title: "Hub dashboard: every box, grouped by project",
     what: "The boxes list with a pending approval banner on top: running, paused, creating, failed and stopped boxes on docker, vercel, hetzner and e2b.",
-    files: [
-      { state: "light", shoot: "pnpm shoot hub/boxes.png / --full" },
-      { state: "dark", shoot: "pnpm shoot hub/boxes-dark.png / --full --dark" },
-    ],
+    files: [{ shoot: "pnpm shoot hub/boxes.png / --full" }],
     social: { title: "Every coding agent in its own box", crop: [0, 0, 2880, 1800] },
   }),
   hub({

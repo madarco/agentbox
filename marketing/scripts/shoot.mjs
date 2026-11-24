@@ -18,7 +18,6 @@
  *   --scale <n>        pixel density (default 2)
  *   --full             grow the window until the page's whole height fits
  *   --el <selector>    capture one element, not the window
- *   --dark             dark theme
  *   --base <url>       the fixture hub (default $HUB_FIXTURE_URL or http://127.0.0.1:3126)
  *
  * Steps run in the order given, after the page loads. Selectors are Playwright's.
@@ -55,7 +54,7 @@ for (let i = 0; i < args.length; i++) {
     else if (action === "fill")
       steps.push({ action, target: value.slice(0, value.indexOf("=")), value: value.slice(value.indexOf("=") + 1) });
     else steps.push({ action, target: value });
-  } else if (a === "--full" || a === "--dark") opts[a.slice(2)] = true;
+  } else if (a === "--full") opts.full = true;
   else if (["--size", "--scale", "--el", "--base"].includes(a)) opts[a.slice(2)] = args[++i];
   else if (a.startsWith("--")) throw new Error(`Unknown option ${a}`);
   else rest.push(a);
@@ -79,7 +78,6 @@ async function run(page, step) {
 }
 
 const [width, height] = opts.size.split("x").map(Number);
-const theme = opts.dark ? "dark" : "light";
 const url = opts.base.replace(/\/$/, "") + path;
 
 const browser = await chromium.launch();
@@ -87,13 +85,12 @@ try {
   const context = await browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: Number(opts.scale),
-    colorScheme: theme,
+    colorScheme: "light",
     reducedMotion: "reduce",
     locale: "en-US",
     timezoneId: "UTC",
   });
   await context.clock.setFixedTime(new Date(NOW));
-  await context.addInitScript((t) => localStorage.setItem("theme", t), theme);
   const page = await context.newPage();
   const missing = [];
   page.on("response", (r) => {
