@@ -101,6 +101,12 @@ export interface AgentStatusEntry {
   sessionRunning: boolean;
   /** Sanitized in-box tmux pane title the agent's TUI set. Additive. */
   sessionTitle?: string;
+  /**
+   * The agent session the user is in now, as the agent itself names it (claude's
+   * and codex's hook `session_id`, opencode's root `sessionID`, pi's session id).
+   * An opaque id, absent until the agent reported one. Additive.
+   */
+  sessionId?: string;
   /** Populated while `state === 'end-plan'`; cleared by the matching post-hook. */
   plan?: AgentPlanPayload;
   /** Populated while `state === 'question'`; cleared by the matching post-hook. */
@@ -136,6 +142,9 @@ export function parseAgentStatusEntry(raw: unknown): AgentStatusEntry | null {
   };
   if (typeof o.sessionTitle === 'string' && o.sessionTitle.length > 0) {
     entry.sessionTitle = o.sessionTitle;
+  }
+  if (typeof o.sessionId === 'string' && o.sessionId.length > 0) {
+    entry.sessionId = o.sessionId;
   }
   const plan = o.plan as Record<string, unknown> | undefined;
   if (plan && typeof plan === 'object' && typeof plan.plan === 'string') {

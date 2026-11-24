@@ -29,6 +29,7 @@ export type {
   AgentSeedSpec,
   AgentSkillsSpec,
   AgentMcpSpec,
+  AgentPaneTitleSpec,
   AgentServiceExpose,
   AgentServiceReadyWhen,
   AgentServiceSpec,

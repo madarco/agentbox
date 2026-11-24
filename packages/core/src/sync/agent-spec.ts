@@ -495,9 +495,8 @@ export interface AgentCapabilities {
   /**
    * Every mechanism that reports this agent's in-box activity. A LIST because
    * the real answer is plural and a single value described it wrongly: Claude is
-   * hooks-primary with a promote-only scraper backstop, Codex declares hooks but
-   * is scraper-primary in practice (its own hooks file calls itself
-   * defense-in-depth), and OpenCode is plugin-only.
+   * hooks-primary with a promote-only scraper backstop, Codex is hooks-primary
+   * with a pane-title scraper backstop, and OpenCode is plugin-only.
    *
    *  - `hooks`   — the agent invokes `agentbox-ctl agent-state` from its own
    *    lifecycle hooks.
@@ -511,6 +510,19 @@ export interface AgentCapabilities {
    * all — a permanently-`unknown` entry in every snapshot is worse than absence.
    */
   activitySource: readonly ('hooks' | 'plugin' | 'scraper')[];
+}
+
+/**
+ * Pane-title cleanup rules (`AgentSyncSpec.paneTitle`). Applied by ctl to the
+ * sanitized `#{pane_title}`: every `strip` pattern is removed in order, the
+ * result is trimmed, and a result equal to a `placeholders` entry (ignoring
+ * case) means "no title".
+ */
+export interface AgentPaneTitleSpec {
+  /** JavaScript regex sources, compiled with the `u` flag. Anchor them yourself. */
+  strip?: readonly string[];
+  /** Titles the agent shows when there is no session title yet. */
+  placeholders?: readonly string[];
 }
 
 /**
@@ -874,6 +886,15 @@ export interface AgentSyncSpec {
   hidden?: boolean;
   /** Default tmux session name. */
   sessionName: string;
+  /**
+   * How to turn the TUI's raw tmux pane title into a session title. Absent means
+   * the title is used as the agent set it.
+   *
+   * Data on the row, shipped to ctl over `agents.list`, because the rules follow
+   * the agent's own version (a new spinner glyph, a new suffix): ctl is baked into
+   * the image, the host's registry is not.
+   */
+  paneTitle?: AgentPaneTitleSpec;
   /** Command name to probe with `command -v` — how we tell "already installed". */
   binary: string;
   /** How to install the binary into a box that lacks it. */

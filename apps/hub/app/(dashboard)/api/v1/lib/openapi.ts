@@ -6009,12 +6009,13 @@ export function buildOpenApi(): Record<string, unknown> {
             agentStatus: {
               type: 'object',
               description:
-                "Every agent reporting in this box, keyed by agent id. The source of truth; the named fields below are its projection over the three built-ins, kept for older clients. An agent outside those three appears only here. Each value is { state, sessionTitle? }, where state is 'working | idle | waiting | end-plan | question | compacting | error | unknown'.",
+                "Every agent reporting in this box, keyed by agent id. The source of truth; the named fields below are its projection over the three built-ins, kept for older clients. An agent outside those three appears only here. Each value is { state, sessionTitle?, sessionId? }, where state is 'working | idle | waiting | end-plan | question | compacting | error | unknown' and sessionId is the opaque id of the agent session the user is in now (absent until the agent reported one).",
               additionalProperties: {
                 type: 'object',
                 properties: {
                   state: { type: 'string' },
                   sessionTitle: { type: 'string' },
+                  sessionId: { type: 'string' },
                 },
               },
             },

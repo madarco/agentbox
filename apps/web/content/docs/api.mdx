@@ -568,9 +568,11 @@ never idle-lapsed, skipped by prune, restarted by the relay's boot reconcile; se
 has no guard on it, unlike `agentbox destroy -y`, so a client that offers destroy
 should confirm on this field), `gitWorktrees`,
 `shellCount`, and `agentStatus` —
-every agent reporting in the box, keyed by agent id, each `{ state, sessionTitle? }`
-where `state` is one of `working | idle | waiting | end-plan | question |
-compacting | error | unknown`. The older named fields (`claudeSessionTitle`,
+every agent reporting in the box, keyed by agent id, each
+`{ state, sessionTitle?, sessionId? }` where `state` is one of `working | idle |
+waiting | end-plan | question | compacting | error | unknown` and `sessionId` is the
+opaque id of the agent session the user is in now (it follows `/new` and
+`/resume`; absent until the agent reported one). The older named fields (`claudeSessionTitle`,
 `codexSessionTitle`, `opencodeSessionTitle`, `claudeActivity`, `codexActivity`,
 `opencodeActivity`) are still sent, but they are a projection of `agentStatus`
 over the three built-in agents — read `agentStatus` if you want to see any

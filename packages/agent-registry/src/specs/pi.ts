@@ -47,6 +47,12 @@ export const piSpec: AgentSyncSpec = {
   id: 'pi',
   aliases: [],
   sessionName: 'pi',
+  // Measured on 1.6.0: `π - <name> - <cwd>`; with no `/name`, only the cwd.
+  // An extension can rewrite it, so these rules are a best effort.
+  paneTitle: {
+    strip: ['^π\\s+-\\s+', '\\s+-\\s+(?:[~/]\\S*|workspace)$'],
+    placeholders: ['workspace', 'pi'],
+  },
   binary: 'pi',
   install: {
     // The `pi.dev/install.sh` script is only an npm wrapper (it shells

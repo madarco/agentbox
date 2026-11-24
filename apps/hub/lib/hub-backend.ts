@@ -358,12 +358,13 @@ function firstSessionTitle(b: ListedBox): string | undefined {
 
 function wireAgentStatus(
   agents: ListedBox['agentStatus'],
-): Record<string, { state: string; sessionTitle?: string }> {
-  const out: Record<string, { state: string; sessionTitle?: string }> = {};
+): Record<string, { state: string; sessionTitle?: string; sessionId?: string }> {
+  const out: Record<string, { state: string; sessionTitle?: string; sessionId?: string }> = {};
   for (const [id, entry] of Object.entries(agents)) {
     out[id] = {
       state: entry.state,
       ...(entry.sessionTitle ? { sessionTitle: entry.sessionTitle } : {}),
+      ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
     };
   }
   return out;

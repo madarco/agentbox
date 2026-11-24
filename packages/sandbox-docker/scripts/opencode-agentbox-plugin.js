@@ -9,104 +9,199 @@
 // OpenCode session. The spawned process is detached + unrefed so a slow
 // ctl response never blocks an event handler.
 //
-// Seeded by `seedOpencodePlugin` (packages/sandbox-docker/src/opencode.ts)
-// from the image-baked copy at /usr/local/share/agentbox/opencode-plugin/
-// into the box's `$OPENCODE_CONFIG_DIR/plugins/agentbox-state.js` on every
-// create / start. Idempotent overwrite.
+// Seeded from the image-baked copy at /usr/local/share/agentbox/ into
+// `$OPENCODE_CONFIG_DIR/plugins/agentbox-state.js` by the `seeds` entry on
+// OpenCode's registry row, on every create and agent start. Idempotent
+// overwrite. The volume is shared between boxes, so this file can be read by an
+// older baked ctl: it uses only the frozen `opencode-state` command and flags
+// every ctl has.
 //
-// Event coverage (mirrors the Claude / Codex state machine):
-//   working   — agent is generating. Driven by `message.part.delta` (streamed
-//               tokens) — these fire only DURING active generation, never after
-//               the turn ends, so they don't fight the `session.idle` end
-//               signal. (Empirically `tool.execute.before` does NOT reach the
-//               plugin event bus in opencode 1.15, and `message.updated` fires
-//               once AFTER `session.idle` — so neither is safe to map to
-//               working.)
-//   idle      — turn complete / ready for input (`session.idle`, plus
-//               `session.created` as a baseline at session start).
-//   waiting   — user input required (`permission.asked`).
-//   error     — `session.error`.
-//   compacting — opencode has no PreCompact event; `session.compacted` fires
-//                AFTER compaction completes, so it maps to `working` (the next
-//                event supersedes) rather than `compacting`.
+// State machine (measured on 1.19.6, docs/agent-live-status-plan.md Phase 0):
+//   working — the root session's `session.status` is busy or retry. (Not
+//             `message.part.delta`: that fires only while the final text
+//             streams, so most of a turn, tool calls included, read idle.)
+//   waiting — an unanswered `permission.asked`, from any session (a
+//             subagent's prompt blocks the user just the same), until its
+//             `permission.replied`.
+//   idle    — the root session's `session.idle` (or status idle).
+//   error   — `session.error`, STICKY until the next busy: an unsupported model
+//             fires session.error and then session.idle 2 ms later, which used
+//             to overwrite it and hide the failure. Except `MessageAbortedError`,
+//             which is an Esc interrupt, not a failure.
+// A root session's idle or error also drops every unanswered permission: one
+// left open by an aborted turn or a deleted child is never replied to.
+// Sessions with a `parentID` (subagents) are ignored for state: their busy and
+// idle flipped the parent to idle mid-turn.
 //
-// Session history: `session.idle` (`properties.sessionID`) also hands the
-// session id to `agentbox-ctl opencode-state
-// idle --capture-session` on stdin, which appends it to the box's binding log.
-// Sessions in opencode's shared sqlite db are attributed to a box only through
-// that log; the box's history row cursor copies the bound sessions out. Only
-// `session.idle` binds: the bind reports `idle` from its own process, and any
-// other event (a sub-agent's `session.created` mid-turn) could land that idle
-// after a later `working`. The row cursor copies the whole session at its
-// first idle, so nothing is lost by binding then.
+// Session id: every report names the root session that last went busy, on
+// stdin to `--capture-session`, so ctl appends it to the box's binding log
+// (how a session in the shared sqlite db is attributed to this box) and
+// publishes it as the box's current session. A TUI `/sessions` switch emits no
+// event, so ctl also matches the pane title against this box's sessions.
 //
-// The plugin shape comes from https://opencode.ai/docs/plugins/ — `event` is
-// a single handler that receives `{ event }` with a `type` field. Multiple
-// exports = multiple plugin functions; we ship one.
+// Only `AgentboxStatePlugin` is exported: opencode calls every export as a
+// plugin. The pure tracker rides on it as a property, for the unit tests.
 
 import { spawn } from 'node:child_process';
 
-const EVENT_TO_STATE = {
-  'session.created': 'idle',
-  'session.idle': 'idle',
-  'session.error': 'error',
-  'session.compacted': 'working',
-  'permission.asked': 'waiting',
-  'permission.replied': 'working',
-  'message.part.delta': 'working',
-  // tool.execute.before kept as a defensive mapping — harmless if a future
-  // opencode build starts surfacing it (it doesn't today).
-  'tool.execute.before': 'working',
-};
+/** Pure event -> report mapping. `handle` answers the report to send, or null. */
+function createTracker() {
+  let state = null;
+  let sessionId = null;
+  let errorSticky = false;
+  let sawStatus = false;
+  const children = new Set();
+  const pending = new Set();
+  let last = null;
 
-// Dedupe: `message.part.delta` fires dozens of times per streamed turn. Only
-// spawn agentbox-ctl when the mapped state actually changes, so a turn costs
-// ~2 spawns (working on the first delta, idle on session.idle) instead of ~50.
-let lastState = null;
+  const props = (event) =>
+    event && event.properties && typeof event.properties === 'object' ? event.properties : {};
+  const sidOf = (p) =>
+    typeof p.sessionID === 'string'
+      ? p.sessionID
+      : p.info && typeof p.info.id === 'string'
+        ? p.info.id
+        : null;
+  const isChild = (sid) => sid !== null && children.has(sid);
 
-function pushState(state) {
-  if (!state || state === lastState) return;
-  lastState = state;
+  function report() {
+    if (state === null) return null;
+    const key = `${state}\0${sessionId ?? ''}`;
+    if (key === last) return null;
+    last = key;
+    return { state, sessionId };
+  }
+
+  function busy(sid) {
+    state = 'working';
+    errorSticky = false;
+    if (sid) sessionId = sid;
+  }
+
+  function idle() {
+    // A root session that went idle is asking nothing: a prompt left open by an
+    // aborted turn, or by a child session that was deleted, never gets its
+    // `permission.replied`, and would otherwise hold the box `waiting`.
+    pending.clear();
+    if (errorSticky) return;
+    state = 'idle';
+  }
+
+  return {
+    handle(event) {
+      const type = event && event.type;
+      const p = props(event);
+      const sid = sidOf(p);
+      switch (type) {
+        case 'session.created':
+        case 'session.updated': {
+          const info = p.info;
+          if (info && typeof info.id === 'string' && typeof info.parentID === 'string') {
+            children.add(info.id);
+            return null;
+          }
+          // Baseline at startup: a root session exists and nothing ran yet.
+          if (type === 'session.created' && state === null) state = 'idle';
+          return report();
+        }
+        case 'session.status': {
+          if (isChild(sid)) return null;
+          sawStatus = true;
+          const s = p.status && p.status.type;
+          if (s === 'busy' || s === 'retry') busy(sid);
+          else if (s === 'idle') idle();
+          return report();
+        }
+        case 'session.idle':
+          if (isChild(sid)) return null;
+          idle();
+          return report();
+        case 'session.error':
+          if (isChild(sid)) return null;
+          // Esc in the TUI aborts the turn with this error, which opencode's own
+          // TUI does not show as one; the session.idle that follows is the truth.
+          if (p.error && p.error.name === 'MessageAbortedError') return null;
+          pending.clear();
+          state = 'error';
+          errorSticky = true;
+          return report();
+        case 'permission.asked':
+        case 'permission.updated': {
+          pending.add(typeof p.id === 'string' ? p.id : `${sid ?? ''}:${pending.size}`);
+          state = 'waiting';
+          return report();
+        }
+        case 'permission.replied': {
+          const id = [p.requestID, p.permissionID, p.id].find((v) => typeof v === 'string');
+          // An id this tracker never saw (another event shape) answers them all:
+          // a stuck `waiting` is worse than one that clears early.
+          if (id !== undefined && pending.has(id)) pending.delete(id);
+          else pending.clear();
+          if (pending.size === 0 && state === 'waiting') state = 'working';
+          return report();
+        }
+        case 'message.part.delta':
+          // Only for an opencode without session.status: the older signal.
+          if (sawStatus || isChild(sid) || errorSticky) return null;
+          busy(sid);
+          return report();
+        default:
+          return null;
+      }
+    },
+  };
+}
+
+function runReport(r, done) {
   try {
-    const p = spawn('agentbox-ctl', ['opencode-state', state], {
-      stdio: 'ignore',
+    const args = ['opencode-state', r.state];
+    if (r.sessionId) args.push('--capture-session');
+    const p = spawn('agentbox-ctl', args, {
+      stdio: [r.sessionId ? 'pipe' : 'ignore', 'ignore', 'ignore'],
       detached: true,
     });
+    p.on('error', done);
+    p.on('exit', done);
+    if (r.sessionId) {
+      p.stdin.on('error', () => {});
+      p.stdin.end(JSON.stringify({ session_id: r.sessionId }));
+    }
     p.unref();
   } catch {
+    done();
     // Fire-and-forget. A missing agentbox-ctl bin (test env, older box image)
     // must not throw out of this handler.
   }
 }
 
-const bound = new Set();
+// Reports go out ONE AT A TIME, each after the previous ctl exits. Each is its
+// own process that reads stdin and appends a binding before it reaches the
+// daemon, so two spawned together (busy then idle a few ms apart) could land in
+// either order and leave the wrong state standing. The chain never blocks an
+// event handler, and a ctl that hangs is given up on after 3 s.
+let chain = Promise.resolve();
 
-function sessionIdOf(event) {
-  const p = event && event.properties;
-  if (!p || typeof p !== 'object') return null;
-  return event.type === 'session.idle' && typeof p.sessionID === 'string' ? p.sessionID : null;
+function pushReport(r) {
+  chain = chain.then(
+    () =>
+      new Promise((resolve) => {
+        const t = setTimeout(resolve, 3000);
+        if (typeof t.unref === 'function') t.unref();
+        runReport(r, () => {
+          clearTimeout(t);
+          resolve();
+        });
+      }),
+  );
 }
 
-function bindSession(id) {
-  if (!id || bound.has(id)) return;
-  bound.add(id);
-  try {
-    const p = spawn('agentbox-ctl', ['opencode-state', 'idle', '--capture-session'], {
-      stdio: ['pipe', 'ignore', 'ignore'],
-      detached: true,
-    });
-    p.on('error', () => {});
-    p.stdin.on('error', () => {});
-    p.stdin.end(JSON.stringify({ session_id: id }));
-    p.unref();
-  } catch {
-    // Fire-and-forget, like pushState.
-  }
-}
-
-export const AgentboxStatePlugin = async () => ({
-  event: async ({ event }) => {
-    pushState(EVENT_TO_STATE[event?.type]);
-    bindSession(sessionIdOf(event));
-  },
-});
+export const AgentboxStatePlugin = async () => {
+  const tracker = createTracker();
+  return {
+    event: async ({ event }) => {
+      const r = tracker.handle(event);
+      if (r) pushReport(r);
+    },
+  };
+};
+AgentboxStatePlugin.createTracker = createTracker;

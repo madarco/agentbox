@@ -130,7 +130,9 @@ export interface Box {
   // the macOS tray decodes the three title keys BY NAME and a client older than
   // this build reads nothing else. An agent outside the built-in three appears
   // only here.
-  agentStatus?: Record<string, { state: string; sessionTitle?: string }>;
+  // `sessionId` is the agent's current session, an opaque id (the hub joins it to
+  // that session's history); clients other than the hub need not read it.
+  agentStatus?: Record<string, { state: string; sessionTitle?: string; sessionId?: string }>;
   claudeSessionTitle?: string;
   codexSessionTitle?: string;
   opencodeSessionTitle?: string;
