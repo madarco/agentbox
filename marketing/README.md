@@ -52,7 +52,7 @@ tray runs as a second app with its own bundle id.
 
    ```bash
    pnpm shoot hub/skills.png /skills
-   pnpm shoot hub/boxes-dark.png / --full --dark
+   pnpm shoot hub/boxes.png / --full
    pnpm shoot hub/create-box.png /projects/fx-payments-worker --click "text=Create box"
    pnpm shoot:tray tray/skill-updates.png --press agentbox.footer.skillUpdates
    pnpm shoot:cli cli/ls.png --cols 122 --rows 22 -- ls --global
@@ -79,7 +79,7 @@ telling the same story.
 ```bash
 pnpm export hub/skills                                  # all four formats
 pnpm export tray/skill-updates --format 4x5,16x9
-pnpm export hub/boxes --file 1 --title "Dark mode too"  # the entry's second picture
+pnpm export cli/install --file 1                        # the entry's second picture (the Hetzner step)
 pnpm export hub/usage --crop 0,0,2880,1800              # part of a tall page, in image pixels
 pnpm export cli/ls --format 1x1 --no-title
 ```

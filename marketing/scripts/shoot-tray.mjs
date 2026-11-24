@@ -152,6 +152,8 @@ try {
     }
     await sleep(300);
     const wins = windows(pid).filter((w) => w.layer !== STATUS_LAYER && w.w > 30 && w.h > 30);
+    if (!wins.length)
+      throw new Error(`no ${opts.alert ? "alert" : "menu"} window on screen: it closed before the capture (was the Mac in use?). shots/${file} was not updated`);
     if (opts.alert) {
       const alert = wins.find((w) => w.layer === 0) ?? wins.at(-1);
       capture(alert.id, out);
