@@ -24,13 +24,16 @@ export function frame(src, imgW, imgH, format, o = {}) {
     "9x16": { w: 1080, h: 1920 },
   }[format];
   const pad = Math.round(Math.min(F.w, F.h) * 0.075);
-  const head = o.title ? Math.round(F.h * (F.h > F.w ? 0.16 : 0.17)) : Math.round(F.h * 0.08);
+  const titleSize = Math.round(Math.min(F.w, F.h) * (F.w > F.h ? 0.05 : 0.062));
+  const titleTop = Math.round(pad * 0.62 + titleSize * 1.05);
+  /* Room for the headline as it wraps: ~0.42em per character at this weight (mostly lower case). */
+  const lines = o.title ? Math.ceil((String(o.title).length * titleSize * 0.42) / (F.w - pad * 2)) : 0;
+  const head = o.title ? Math.round(titleTop + lines * titleSize * 1.12 + pad * 0.35) : Math.round(F.h * 0.08);
   const boxW = F.w - pad * 2;
   const boxH = F.h - head - pad * 1.2;
   const scale = Math.min(boxW / w, boxH / h, o.maxScale ?? 1);
   const dw = Math.round(w * scale);
   const dh = Math.round(h * scale);
-  const titleSize = Math.round(Math.min(F.w, F.h) * (F.w > F.h ? 0.05 : 0.062));
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const card = o.kind === "cutout"
     ? "filter: drop-shadow(0 18px 40px rgb(22 26 32 / .22));"
@@ -45,7 +48,7 @@ html, body { margin: 0; }
 .brand { position: absolute; left: ${pad}px; top: ${Math.round(pad * 0.62)}px; display: flex; align-items: center; gap: 12px;
   font: 600 ${Math.round(titleSize * 0.55)}px "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: -.01em; }
 .brand svg { width: ${Math.round(titleSize * 0.8)}px; height: ${Math.round(titleSize * 0.8)}px; }
-.title { position: absolute; left: ${pad}px; right: ${pad}px; top: ${Math.round(pad * 0.62 + titleSize * 1.05)}px;
+.title { position: absolute; left: ${pad}px; right: ${pad}px; top: ${titleTop}px;
   font-size: ${titleSize}px; line-height: 1.12; font-weight: 650; letter-spacing: -.02em; }
 .shot { position: absolute; left: ${Math.round((F.w - dw) / 2)}px; top: ${Math.round(head + (boxH - dh) / 2 + pad * 0.2)}px;
   width: ${dw}px; height: ${dh}px; ${card} }

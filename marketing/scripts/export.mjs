@@ -7,7 +7,7 @@
  *   pnpm export hub/skills                      # every format: 16x9, 1x1, 4x5, 9x16
  *   pnpm export hub/skills --format 16x9,1x1
  *   pnpm export tray/menu --title "Every box, one click away"
- *   pnpm export hub/boxes --file 1              # the entry's second picture (dark)
+ *   pnpm export cli/install --file 1            # the entry's second picture
  *   pnpm export hub/usage --crop 0,0,2880,1800  # a part of a tall page, in image pixels
  *   pnpm export cli/ls --no-title
  *
