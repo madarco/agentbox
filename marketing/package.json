@@ -1,0 +1,19 @@
+{
+  "name": "agentbox-marketing",
+  "version": "0.0.0",
+  "private": true,
+  "description": "AgentBox screen catalog: every hub, tray and CLI screen on demo data, exported at social sizes",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "screens": "node scripts/screens.mjs",
+    "fixture-hub": "node scripts/fixture-hub.mjs",
+    "shoot": "node scripts/shoot.mjs",
+    "shoot:tray": "node scripts/shoot-tray.mjs",
+    "shoot:cli": "node scripts/shoot-cli.mjs",
+    "export": "node scripts/export.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.60.0"
+  }
+}
