@@ -20,7 +20,9 @@
  * The capture is `screencapture -l <window id>` of the app's own windows only,
  * never a screen region: a region would pick up whatever else is on the
  * owner's screen. A menu and its open submenus come out as one picture with a
- * transparent background.
+ * transparent background. The translucent material of menus and alerts would
+ * come out over black (dark gray), so scripts/backdrop.mjs redraws it over a
+ * light desktop.
  *
  * Opening a menu takes the screen for a moment, so this waits until the Mac
  * has been idle for --idle seconds (default 3).
@@ -38,6 +40,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { addBackdrop } from "./backdrop.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = resolve(root, "..");
@@ -157,6 +160,7 @@ try {
     if (opts.alert) {
       const alert = wins.find((w) => w.layer === 0) ?? wins.at(-1);
       capture(alert.id, out);
+      addBackdrop(out);
     } else {
       /* Capturing one menu window gives that menu with its open parents/children
          composited; keep the largest of the pictures to be sure every level is in. */
@@ -169,6 +173,7 @@ try {
           copyFileSync(f, out);
         }
       }
+      addBackdrop(out);
     }
   }
   console.log(`shots/${file}  ←  ${PROC} --fixtures${opts.press.length ? " · " + opts.press.join(" → ") : ""}`);
