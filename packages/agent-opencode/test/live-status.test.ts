@@ -37,6 +37,40 @@ describe('opencode live status', () => {
     expect(plans(second.records)).toEqual(['']);
   });
 
+  it('rows of one write stamped a few ms apart are one list', () => {
+    const r = parse(todo(0, 5000, 'completed', 'first') + todo(1, 5003, 'in_progress', 'second'));
+    // Without the spread, row 1 (created 3ms later) would hide row 0's list.
+    expect(plans(r.records)).toEqual(['second']);
+    const later = parse(
+      L('todo', '0', 5010, {
+        session_id: SID,
+        position: 0,
+        status: 'in_progress',
+        content: 'first again',
+        priority: 'high',
+        time_created: 5002,
+        time_updated: 5010,
+      }),
+      r.state,
+    );
+    expect(plans(later.records)).toEqual(['first again']);
+  });
+
+  it('NULL session token columns emit no totals (the sum is used instead)', () => {
+    const records = parse(
+      L('session', SID, 5, {
+        id: SID,
+        title: 'T',
+        directory: '/workspace',
+        cost: null,
+        tokens_input: null,
+        tokens_output: null,
+        time_updated: 5,
+      }),
+    ).records;
+    expect(records.some((r) => r.kind === 'totals')).toBe(false);
+  });
+
   it('a new prompt ends a plan line whose list was deleted', () => {
     const first = parse(
       L('message', 'msg_u', 1, {

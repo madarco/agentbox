@@ -74,6 +74,8 @@ export interface AgentLiveUsage {
 /** One agent's entry in `Box.agentStatus`. */
 export interface AgentStatusWire {
   state: string;
+  /** ISO time of the agent's last state report (every hook report, same state or not). */
+  updatedAt?: string;
   /**
    * The current session's title: the transcript's (AI title, rename, session
    * name) once the hub has it, else the agent's cleaned pane title.

@@ -23,7 +23,7 @@ export type {
   ParseState,
   RawChunk,
 } from './types.js';
-export { ACTIVITY_MAX, activityLine, toolActivity } from './activity.js';
+export { ACTIVITY_MAX, activityLine, commandSummary, toolActivity } from './activity.js';
 export { agentHistoryModule, agentHistoryModules, registerAgentHistoryModule } from './registry.js';
 export {
   createRedactor,

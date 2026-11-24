@@ -561,6 +561,9 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       // The edge saw the file rewritten. Old generations stay in the archive
       // until retention; the projection is re-derived from the new one.
       await repo.clearFileRecords(file.id);
+      // The live row is derived from every file of the session; the rewritten
+      // one's values must not outlive it. The other files refill it as they ship.
+      if (file.sessionKey) await repo.clearLive(file.sessionKey);
       file = { ...file, generation: file.generation + 1, offset: 0, sha256: '', parseState: null };
       await repo.updateFile(file.id, {
         generation: file.generation,

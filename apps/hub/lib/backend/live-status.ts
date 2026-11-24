@@ -2,12 +2,21 @@
 // Phase 3): the current session's title, working-on line and tokens, derived
 // from the transcripts the history pipeline already ships and parses. Nothing
 // here is pushed by the box: the summary changes when a history frame of the
-// box's current session is ingested, and the change notifier fires at most
-// once per box every 30s, only when a value changed.
+// box's current session is ingested, and the change notifier fires only when
+// a value changed, at most once every 30s for the whole hub (the notifier is
+// global: every client refetches every box on it).
 import type { HistoryLiveRow, HistoryRepo, HistoryService } from './history';
 import type { AgentLiveUsage, AgentStatusWire, Box } from '../boxes/types';
 
 export const LIVE_NOTIFY_MIN_INTERVAL_MS = 30_000;
+/**
+ * On the fallback join, a session whose last line is older than the agent's
+ * last state report by more than this is not the one on screen (a `/clear` or
+ * `/new` started another that has not shipped yet). Not zero: every hook report
+ * (each tool call) moves `updatedAt`, while the transcript ships up to 60s
+ * behind it, so the current session always trails a little.
+ */
+export const FALLBACK_STALE_MS = 90_000;
 /** Fingerprints kept for change detection; the oldest go first. */
 const MAX_SEEN = 5_000;
 /** The built-ins' label order, as the pane-title fallback ranks them. */
@@ -34,18 +43,30 @@ export interface LiveStatusDeps {
 
 /**
  * The session an agent's live summary is read from: the id the box reports
- * (`agentStatus[agent].sessionId`), else the box's most recent session of that
- * agent. The fallback covers boxes whose ctl predates `sessionId`; drop it once
- * every supported box reports one.
+ * (`agentStatus[agent].sessionId`), when the hub has it as this box's, else
+ * the box's most recent session of that agent unless it is stale against the
+ * agent's last state report. The fallback covers boxes whose ctl predates
+ * `sessionId`; drop it once every supported box reports one.
  */
 export async function currentSessionKey(
-  repo: Pick<HistoryRepo, 'latestBoxSession'>,
+  repo: Pick<HistoryRepo, 'getSession' | 'latestBoxSession'>,
   boxId: string,
   agent: string,
-  entry: Pick<AgentStatusWire, 'sessionId'>,
+  entry: Pick<AgentStatusWire, 'sessionId' | 'updatedAt'>,
 ): Promise<string | null> {
-  if (entry.sessionId) return `${agent}:${entry.sessionId}`;
-  return repo.latestBoxSession(boxId, agent);
+  if (entry.sessionId) {
+    const key = `${agent}:${entry.sessionId}`;
+    // Keys are global: a session another box ran is not this box's to show.
+    const session = await repo.getSession(key);
+    return session?.boxId && session.boxId !== boxId ? null : key;
+  }
+  const key = await repo.latestBoxSession(boxId, agent);
+  if (!key || !entry.updatedAt) return key;
+  const last = Date.parse((await repo.getSession(key))?.lastTs ?? '');
+  const reported = Date.parse(entry.updatedAt);
+  return Number.isFinite(last) && Number.isFinite(reported) && last < reported - FALLBACK_STALE_MS
+    ? null
+    : key;
 }
 
 function maxTs(...ts: Array<string | null | undefined>): string | undefined {
@@ -116,8 +137,8 @@ export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
   const current = new Map<string, { key: string; explicit: boolean }>();
   /** session key -> fingerprint of the summary last seen. */
   const seen = new Map<string, string>();
-  const lastNotify = new Map<string, number>();
-  const timers = new Map<string, NodeJS.Timeout>();
+  let lastNotify = -Infinity;
+  let timer: NodeJS.Timeout | null = null;
   let unsubscribe: (() => void) | null = null;
   let chain: Promise<void> = Promise.resolve();
 
@@ -127,24 +148,24 @@ export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
     if (seen.size > MAX_SEEN) seen.delete(seen.keys().next().value!);
   };
 
-  const fire = (boxId: string): void => {
-    lastNotify.set(boxId, now());
+  const fire = (): void => {
+    lastNotify = now();
     deps.notify();
   };
 
-  const schedule = (boxId: string): void => {
-    if (timers.has(boxId)) return;
-    const wait = (lastNotify.get(boxId) ?? -Infinity) + minInterval - now();
+  /** One notify for every box that changed in the window: the notifier is hub-wide. */
+  const schedule = (): void => {
+    if (timer) return;
+    const wait = lastNotify + minInterval - now();
     if (wait <= 0) {
-      fire(boxId);
+      fire();
       return;
     }
-    const t = setTimeout(() => {
-      timers.delete(boxId);
-      fire(boxId);
+    timer = setTimeout(() => {
+      timer = null;
+      fire();
     }, wait);
-    t.unref?.();
-    timers.set(boxId, t);
+    timer.unref?.();
   };
 
   const onUpdated = async (sessionKey: string, boxId: string | null): Promise<void> => {
@@ -160,7 +181,7 @@ export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
     const fp = fingerprint(await liveSummary(h.repo, sessionKey));
     if (seen.get(sessionKey) === fp) return;
     remember(sessionKey, fp);
-    schedule(boxId);
+    schedule();
   };
 
   return {
@@ -234,8 +255,8 @@ export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
     stop() {
       unsubscribe?.();
       unsubscribe = null;
-      for (const t of timers.values()) clearTimeout(t);
-      timers.clear();
+      if (timer) clearTimeout(timer);
+      timer = null;
     },
   };
 }

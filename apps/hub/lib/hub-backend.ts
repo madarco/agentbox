@@ -365,6 +365,7 @@ function wireAgentStatus(agents: ListedBox['agentStatus']): Record<string, Agent
     const sessionId = (entry as { sessionId?: unknown }).sessionId;
     out[id] = {
       state: entry.state,
+      ...(entry.updatedAt ? { updatedAt: entry.updatedAt } : {}),
       ...(entry.sessionTitle ? { sessionTitle: entry.sessionTitle } : {}),
       ...(typeof sessionId === 'string' && sessionId ? { sessionId } : {}),
     };

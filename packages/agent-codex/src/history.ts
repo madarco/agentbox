@@ -60,13 +60,20 @@ function parentOf(meta: JsonObject): string | undefined {
   );
 }
 
-/** A command's working-on line: codex's own parse of it, else the argv. */
+/**
+ * A command's working-on line: codex's own parse of it (a read names its file),
+ * else the argv. Either way only the program and a plain first argument of a
+ * command are shown (`commandSummary`), never a script, heredoc or env value.
+ */
 function commandActivity(p: JsonObject): string {
   if (Array.isArray(p.parsed_cmd)) {
     for (const c of p.parsed_cmd) {
       const o = asObject(c);
+      const type = nonEmptyString(o?.type) ?? 'exec';
+      const name = nonEmptyString(o?.name);
+      if (type === 'read' && name) return toolActivity(type, { path: name });
       const cmd = nonEmptyString(o?.cmd);
-      if (cmd) return toolActivity(nonEmptyString(o?.type) ?? 'exec', { command: cmd });
+      if (cmd) return toolActivity(type, { command: cmd });
     }
   }
   const argv = Array.isArray(p.command) ? p.command : undefined;

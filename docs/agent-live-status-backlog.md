@@ -12,8 +12,11 @@ phases land.
   are unaffected). Until then a codex box's title falls back to its first prompt.
 - **The `sessionId` fallback.** `currentSessionKey` falls back to the box's most recent session of
   that agent while ctl reports no `sessionId` (Phase 2). It prefers sessions with no parent, so a
-  claude `/branch` session is never picked by the fallback. Drop the fallback once every supported
-  box reports `sessionId`.
+  claude `/branch` session is never picked by the fallback, and it skips a latest session whose last
+  line is more than 90s (`FALLBACK_STALE_MS`) older than the agent's last state report, so after a
+  `/clear` the old session can still show for up to that long. The grace cannot be zero: every hook
+  report moves `updatedAt` while the transcript ships up to 60s behind. Drop the fallback once every
+  supported box reports `sessionId`.
 - **The slice's per-box maps** (`current`, `lastNotify`) keep an entry per box ever listed while the
   hub runs; `seen` is capped at 5000 sessions. Prune destroyed boxes if a long-lived hub shows it.
 - **An idle claude or pi box shows its final reply as the working-on line**, since the plan takes the

@@ -232,6 +232,80 @@ describe('live status slice', () => {
     live.stop();
   });
 
+  it('a reported session id of another box is not joined', async () => {
+    const { repo, ship } = await rig();
+    await ship('b1', 'mine', [{ kind: 'activity', text: 'x' }]);
+    expect(await currentSessionKey(repo, 'b1', AGENT, { sessionId: 'mine' })).toBe(`${AGENT}:mine`);
+    expect(await currentSessionKey(repo, 'b2', AGENT, { sessionId: 'mine' })).toBeNull();
+    // Not shipped yet: the key is kept (it simply has no data).
+    expect(await currentSessionKey(repo, 'b2', AGENT, { sessionId: 'unseen' })).toBe(
+      `${AGENT}:unseen`,
+    );
+  });
+
+  it('the fallback skips a latest session older than the last state report', async () => {
+    const { repo, svc, ship } = await rig();
+    await ship('b1', 'before-clear', [
+      { kind: 'turn', role: 'user', text: 'old', ts: '2026-11-24T10:00:00Z' },
+      { kind: 'meta', title: 'Old task' },
+    ]);
+    // A report within the grace (the transcript trails the hooks): still shown.
+    expect(await currentSessionKey(repo, 'b1', AGENT, { updatedAt: '2026-11-24T10:01:00Z' })).toBe(
+      `${AGENT}:before-clear`,
+    );
+    // After a /clear the agent reports again; the new session has not shipped.
+    expect(
+      await currentSessionKey(repo, 'b1', AGENT, { updatedAt: '2026-11-24T10:05:00Z' }),
+    ).toBeNull();
+    const live = createLiveStatus({ history: () => svc, notify: () => {} });
+    const out = await live.apply(
+      box('b1', { state: 'working', sessionTitle: 'pane', updatedAt: '2026-11-24T10:05:00Z' }),
+    );
+    expect(out.agentStatus?.[AGENT]).toEqual({
+      state: 'working',
+      sessionTitle: 'pane',
+      updatedAt: '2026-11-24T10:05:00Z',
+    });
+  });
+
+  it('coalesces changes of several boxes into one notify per window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-24T10:00:00Z'));
+    const { svc, ship } = await rig();
+    let notified = 0;
+    const live = createLiveStatus({ history: () => svc, notify: () => notified++ });
+    live.start();
+    await ship('b1', 's1', [{ kind: 'activity', text: 'one' }]);
+    await ship('b2', 's2', [{ kind: 'activity', text: 'two' }]);
+    await ship('b3', 's3', [{ kind: 'activity', text: 'three' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notified).toBe(1);
+    await ship('b2', 's2', [{ kind: 'activity', text: 'two again' }]);
+    await ship('b3', 's3', [{ kind: 'activity', text: 'three again' }]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(notified).toBe(2);
+    live.stop();
+  });
+
+  it('a file reset clears the live row', async () => {
+    const { repo, svc, ship } = await rig();
+    await ship('b1', 'rw', [{ kind: 'activity', text: 'stale line' }]);
+    expect((await repo.liveRow(`${AGENT}:rw`))?.activity).toBe('stale line');
+    const data = Buffer.from(`${JSON.stringify({ kind: 'turn', role: 'user', text: 'new' })}\n`);
+    const r = await svc.ingest({
+      origin: { boxId: 'b1', boxName: 'b1', provider: 'docker' },
+      agent: AGENT,
+      path: 'rw.jsonl',
+      offset: 0,
+      sha256Prefix: '',
+      sha256: createHash('sha256').update(data).digest('hex'),
+      data: data.toString('base64'),
+      reset: true,
+    });
+    expect(r.ok).toBe(true);
+    expect((await repo.liveRow(`${AGENT}:rw`))?.activity ?? null).toBeNull();
+  });
+
   it('without a reported session id, a newer session of the box still notifies', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-24T10:00:00Z'));

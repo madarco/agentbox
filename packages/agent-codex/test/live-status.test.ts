@@ -38,7 +38,22 @@ describe('codex live status', () => {
         content: [{ type: 'output_text', text: 'Done.' }],
       }),
     ]).flatMap((r) => (r.kind === 'activity' ? [r.text] : []));
-    expect(acts).toEqual(['Checking the routes first.', 'search: rg -n health server.js']);
+    expect(acts).toEqual(['Checking the routes first.', 'search: rg -n']);
+  });
+
+  it('a read names its file; a raw argv shows no script or heredoc body', () => {
+    const acts = parse(ROLLOUT, [
+      line('event_msg', {
+        type: 'exec_command_begin',
+        command: ['bash', '-lc', 'sed -n 1,40p server.js'],
+        parsed_cmd: [{ type: 'read', cmd: 'sed -n 1,40p server.js', name: 'server.js' }],
+      }),
+      line('event_msg', {
+        type: 'exec_command_begin',
+        command: ['bash', '-lc', "cat > .env <<'EOF'\nOPENAI_API_KEY=abc123def456ghi789\nEOF"],
+      }),
+    ]).flatMap((r) => (r.kind === 'activity' ? [r.text] : []));
+    expect(acts).toEqual(['read: server.js', 'exec: cat']);
   });
 
   it('token_count gives cumulative totals and context fill; rate_limits are never projected', () => {

@@ -5,6 +5,7 @@ import {
   ACTIVITY_MAX,
   HistoryRowCursor,
   activityLine,
+  commandSummary,
   toolActivity,
   validSqliteSource,
   type HistoryBinding,
@@ -129,5 +130,44 @@ describe('activityLine / toolActivity', () => {
     );
     expect(toolActivity('exec', { command: ['git', 'status'] })).toBe('exec: git status');
     expect(toolActivity('TodoWrite', { todos: [{ content: 'x' }] })).toBe('TodoWrite');
+  });
+});
+
+describe('commandSummary', () => {
+  it('keeps the program and a plain first argument', () => {
+    expect(commandSummary('npm test')).toBe('npm test');
+    expect(commandSummary('git status --short')).toBe('git status');
+    expect(commandSummary(['/usr/bin/node', '--check', 'server.js'])).toBe('node --check');
+  });
+
+  it('never shows a heredoc body, a redirect target or a second command', () => {
+    const cmd = 'cat > .env <<EOF\nFOO=s3cr3tValue-1234567890abcdef\nEOF';
+    expect(commandSummary(cmd)).toBe('cat');
+    expect(commandSummary(`bash -lc "${cmd}"`)).toBe('cat');
+    expect(commandSummary(['bash', '-lc', cmd])).toBe('cat');
+    expect(commandSummary('echo hi && curl -H "Authorization: Bearer abc" x')).toBe('echo hi');
+  });
+
+  it('drops leading assignments, prefixes, quoted payloads and inline scripts', () => {
+    expect(commandSummary('API_KEY=abcdef1234567890XYZ npm run deploy')).toBe('npm run');
+    expect(commandSummary('sudo env FOO=1 apt-get install -y jq')).toBe('apt-get install');
+    expect(commandSummary(`node -e 'console.log(process.env.TOKEN)'`)).toBe('node -e');
+    expect(commandSummary(`python3 -c "import os; print(os.environ)"`)).toBe('python3 -c');
+    expect(commandSummary(`curl "https://x.test/?token=abc"`)).toBe('curl');
+    expect(commandSummary('$(cat secret) --flag')).toBe('');
+  });
+
+  it('a secret-shaped argument is left out', () => {
+    expect(commandSummary('login ghp_A1b2C3d4E5f6G7h8I9j0K1l2')).toBe('login');
+  });
+
+  it('toolActivity prefers the description and summarizes a command', () => {
+    expect(toolActivity('Bash', { command: 'cat > .env <<EOF\nX=1\nEOF' })).toBe('Bash: cat');
+    expect(toolActivity('Bash', { command: 'cat > .env', description: 'Write env' })).toBe(
+      'Bash: Write env',
+    );
+    expect(toolActivity('WebFetch', { url: 'https://api.test/v1?key=abc#frag' })).toBe(
+      'WebFetch: https://api.test/v1',
+    );
   });
 });

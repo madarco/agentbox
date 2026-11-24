@@ -68,7 +68,9 @@ export function opencodeLineRecords(
     // opencode keeps the session's cumulative tokens and cost on its row
     // (columns since 1.x). A subagent session is its own session: its row
     // counts only itself, so the parent's total never includes it.
-    if (row.tokens_input !== undefined) {
+    // A NULL (or absent) column is "not counted here", not zero: the live
+    // summary then falls back to the sum of the message usage.
+    if (typeof row.tokens_input === 'number') {
       const cost = finiteNumber(row.cost);
       out.push({
         kind: 'totals',
@@ -151,11 +153,14 @@ export function opencodeLineRecords(
   return [turn];
 }
 
+const TODO_WRITE_SPREAD_MS = 250;
+
 /**
  * One `todo` row. A todo write replaces the whole list, so the current list is
- * the rows of the newest write (the highest `time_created`); its in-progress
- * item is the plan line, and a list with none clears it. A row of an older,
- * longer list is never re-copied once deleted, hence the write-time filter.
+ * the rows of the newest write (within 250ms of the highest `time_created`);
+ * its in-progress item is the plan line, and a list with none clears it. A row
+ * of an older, longer list is never re-copied once deleted, hence the
+ * write-time filter.
  */
 function todoRecords(row: JsonObject, at: number, state: ParseState): HistoryRecord[] {
   const todos = bag(state, 'todos');
@@ -169,8 +174,9 @@ function todoRecords(row: JsonObject, at: number, state: ParseState): HistoryRec
   const rows = Object.values(todos).map(
     (v) => JSON.parse(v) as { c: number; s: string; t: string },
   );
+  // One write's rows can be stamped a few ms apart.
   const newest = Math.max(...rows.map((r) => r.c));
-  const doing = rows.find((r) => r.c === newest && r.s === 'in_progress');
+  const doing = rows.find((r) => r.c >= newest - TODO_WRITE_SPREAD_MS && r.s === 'in_progress');
   const text = doing ? activityLine(doing.t) : '';
   if (text === (state.plan ?? '')) return [];
   state.plan = text;

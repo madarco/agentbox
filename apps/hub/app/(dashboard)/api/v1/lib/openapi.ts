@@ -6009,11 +6009,16 @@ export function buildOpenApi(): Record<string, unknown> {
             agentStatus: {
               type: 'object',
               description:
-                "Every agent reporting in this box, keyed by agent id. The source of truth; the named fields below are its projection over the three built-ins, kept for older clients. An agent outside those three appears only here. Each value is { state, sessionTitle?, sessionId?, activity?, usage? }, where state is 'working | idle | waiting | end-plan | question | compacting | error | unknown'. sessionTitle, activity and usage are derived hub-side from the current session's shipped transcript and may lag by a ship interval; absent means no data, never zero.",
+                "Every agent reporting in this box, keyed by agent id. The source of truth; the named fields below are its projection over the three built-ins, kept for older clients. An agent outside those three appears only here. Each value is { state, updatedAt?, sessionTitle?, sessionId?, activity?, usage? }, where state is 'working | idle | waiting | end-plan | question | compacting | error | unknown'. sessionTitle, activity and usage are derived hub-side from the current session's shipped transcript and may lag by a ship interval; absent means no data, never zero.",
               additionalProperties: {
                 type: 'object',
                 properties: {
                   state: { type: 'string' },
+                  updatedAt: {
+                    type: 'string',
+                    format: 'date-time',
+                    description: "Time of the agent's last state report.",
+                  },
                   sessionTitle: {
                     type: 'string',
                     description:
