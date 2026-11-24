@@ -8,6 +8,10 @@ import type { HistoryLiveRow, HistoryRepo, HistoryService } from './history';
 import type { AgentLiveUsage, AgentStatusWire, Box } from '../boxes/types';
 
 export const LIVE_NOTIFY_MIN_INTERVAL_MS = 30_000;
+/** Fingerprints kept for change detection; the oldest go first. */
+const MAX_SEEN = 5_000;
+/** The built-ins' label order, as the pane-title fallback ranks them. */
+const TITLE_RANK = ['claude', 'codex', 'opencode'];
 
 export interface AgentLiveSummary {
   title?: string;
@@ -105,14 +109,23 @@ export interface LiveStatus {
 export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
   const now = deps.now ?? Date.now;
   const minInterval = deps.minIntervalMs ?? LIVE_NOTIFY_MIN_INTERVAL_MS;
-  /** `box\0agent` -> the session key the last listing resolved as current. */
-  const current = new Map<string, string>();
+  /**
+   * `box\0agent` -> the session the last listing resolved as current, and
+   * whether the box reported it (`explicit`) or it is the latest-session guess.
+   */
+  const current = new Map<string, { key: string; explicit: boolean }>();
   /** session key -> fingerprint of the summary last seen. */
   const seen = new Map<string, string>();
   const lastNotify = new Map<string, number>();
   const timers = new Map<string, NodeJS.Timeout>();
   let unsubscribe: (() => void) | null = null;
   let chain: Promise<void> = Promise.resolve();
+
+  const remember = (key: string, fp: string): void => {
+    seen.delete(key);
+    seen.set(key, fp);
+    if (seen.size > MAX_SEEN) seen.delete(seen.keys().next().value!);
+  };
 
   const fire = (boxId: string): void => {
     lastNotify.set(boxId, now());
@@ -139,12 +152,14 @@ export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
     const h = deps.history();
     if (!h) return;
     const agent = sessionKey.slice(0, sessionKey.indexOf(':'));
-    // Before any listing resolved it, any session of the box may be current.
+    // Another session than the one the box reports is not on screen. Without a
+    // reported id (or before any listing) a newer session may have become the
+    // latest, so it counts.
     const cur = current.get(`${boxId}\0${agent}`);
-    if (cur && cur !== sessionKey) return;
+    if (cur?.explicit && cur.key !== sessionKey) return;
     const fp = fingerprint(await liveSummary(h.repo, sessionKey));
     if (seen.get(sessionKey) === fp) return;
-    seen.set(sessionKey, fp);
+    remember(sessionKey, fp);
     schedule(boxId);
   };
 
@@ -165,10 +180,10 @@ export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
           summary = null;
         }
         if (key) {
-          current.set(`${box.id}\0${agent}`, key);
+          current.set(`${box.id}\0${agent}`, { key, explicit: Boolean(entry.sessionId) });
           // Seed the change baseline, so the first ingest after a listing
           // fires only when it moved something.
-          if (!seen.has(key)) seen.set(key, fingerprint(summary));
+          if (!seen.has(key)) remember(key, fingerprint(summary));
         }
         if (summary?.title && summary.title !== entry.sessionTitle) {
           titles[agent] = {
@@ -193,8 +208,14 @@ export function createLiveStatus(deps: LiveStatusDeps): LiveStatus {
         const moved = Object.values(titles).find((t) => t.from === box.task);
         if (moved) out.task = moved.to;
         else if (box.task === box.name) {
-          const first = Object.values(titles)[0];
-          if (first) out.task = first.to;
+          const rank = (id: string): number => {
+            const i = TITLE_RANK.indexOf(id);
+            return i === -1 ? TITLE_RANK.length : i;
+          };
+          const first = Object.entries(titles).sort(
+            ([x], [y]) => rank(x) - rank(y) || x.localeCompare(y),
+          )[0];
+          if (first) out.task = first[1].to;
         }
       }
       return out;

@@ -14,8 +14,15 @@ phases land.
   that agent while ctl reports no `sessionId` (Phase 2). It prefers sessions with no parent, so a
   claude `/branch` session is never picked by the fallback. Drop the fallback once every supported
   box reports `sessionId`.
-- **The `seen` map in the slice is unbounded.** One small fingerprint per session ever ingested
-  while the hub runs. Prune by age if a long-lived hub shows it.
+- **The slice's per-box maps** (`current`, `lastNotify`) keep an entry per box ever listed while the
+  hub runs; `seen` is capped at 5000 sessions. Prune destroyed boxes if a long-lived hub shows it.
+- **An idle claude or pi box shows its final reply as the working-on line**, since the plan takes the
+  last assistant text when it is newer than the last tool call (codex uses commentary only). Phase 4
+  can show `activity` only while the state is `working`, or the parser can drop text-only final
+  turns.
+- **`session_index.jsonl` is read whole** on every change of its stamp, and its rows are keyed by line
+  number. Fine at its size today; if codex ever rewrites or compacts it, a rename between the
+  rewrite and the next pass is skipped.
 - **The Postgres box source** (`apps/hub/lib/boxes/postgres-source.ts`, the hosted plane path) does
   not enrich `agentStatus`: it has no history store.
 - **Cost for claude** is still absent (the plan's open question).

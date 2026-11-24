@@ -488,6 +488,20 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     fts = false;
   }
 
+  const live = liveStatements(db);
+  const liveGet = db.prepare('SELECT * FROM history_live WHERE session_key = ?');
+  const liveSums = db.prepare(
+    `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
+       SUM(cache_write_tokens) AS cw, SUM(cost_usd) AS cost, MAX(ts) AS ts
+     FROM history_usage WHERE session_key = ?`,
+  );
+  // A session that is not a child of another (a subagent's or fork's) first:
+  // the fallback for a box whose ctl reports no session id.
+  const latestOfBox = db.prepare(
+    `SELECT key FROM history_sessions WHERE box_id = ? AND agent = ? AND purged_at IS NULL
+     ORDER BY parent_session_id IS NOT NULL, COALESCE(last_ts, '') DESC, updated_at DESC LIMIT 1`,
+  );
+
   const tx = <T>(fn: () => T): T => {
     db.exec('BEGIN IMMEDIATE');
     try {
@@ -710,7 +724,6 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
              cache_read_tokens, cache_write_tokens, ts, ts_ms, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const meta = db.prepare('UPDATE history_sessions SET title = ? WHERE key = ?');
-        const live = liveStatements(db);
         const seqAt = new Map<number, number>();
         for (const r of records) {
           if (r.kind === 'usage') {
@@ -855,28 +868,13 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
     },
     async liveRow(key) {
-      const r = db.prepare('SELECT * FROM history_live WHERE session_key = ?').get(key) as
-        | Row
-        | undefined;
-      const u = db
-        .prepare(
-          `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
-             SUM(cache_write_tokens) AS cw, SUM(cost_usd) AS cost, MAX(ts) AS ts
-           FROM history_usage WHERE session_key = ?`,
-        )
-        .get(key) as Row;
+      const r = liveGet.get(key) as Row | undefined;
+      const u = liveSums.get(key) as Row;
       if (!r && n(u.c) === 0) return null;
       return toLive(r, u);
     },
     async latestBoxSession(boxId, agent) {
-      // A session that is not a child of another (a subagent's or fork's)
-      // first: the fallback for a box whose ctl reports no session id.
-      const r = db
-        .prepare(
-          `SELECT key FROM history_sessions WHERE box_id = ? AND agent = ? AND purged_at IS NULL
-           ORDER BY parent_session_id IS NOT NULL, COALESCE(last_ts, '') DESC, updated_at DESC LIMIT 1`,
-        )
-        .get(boxId, agent) as Row | undefined;
+      const r = latestOfBox.get(boxId, agent) as Row | undefined;
       return r ? String(r.key) : null;
     },
     async setSessionParserVersion(key, version) {

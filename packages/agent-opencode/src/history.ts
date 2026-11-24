@@ -141,7 +141,14 @@ export function opencodeLineRecords(
   const text = typeof data.text === 'string' ? data.text.trim() : '';
   if ((role !== 'user' && role !== 'assistant') || !text) return [];
   seen[id] = '1';
-  return [{ kind: 'turn', role, text: clipText(text), ...tsPart, at }];
+  const turn: HistoryRecord = { kind: 'turn', role, text: clipText(text), ...tsPart, at };
+  // A todo list emptied by deleting its rows leaves no row to copy, so a new
+  // prompt ends the old plan line; a new in-progress todo sets it again.
+  if (role === 'user' && state.plan) {
+    state.plan = '';
+    return [turn, { kind: 'activity', text: '', plan: true, ...tsPart, at }];
+  }
+  return [turn];
 }
 
 /**

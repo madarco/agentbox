@@ -231,4 +231,21 @@ describe('live status slice', () => {
     expect(notified).toBe(3);
     live.stop();
   });
+
+  it('without a reported session id, a newer session of the box still notifies', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-24T10:00:00Z'));
+    const { svc, ship } = await rig();
+    let notified = 0;
+    const live = createLiveStatus({ history: () => svc, notify: () => notified++ });
+    live.start();
+    await ship('b1', 'first', [{ kind: 'activity', text: 'one' }]);
+    await live.apply(box('b1', { state: 'working' }));
+    await vi.advanceTimersByTimeAsync(60_000);
+    const before = notified;
+    await ship('b1', 'second', [{ kind: 'activity', text: 'after /new' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notified).toBe(before + 1);
+    live.stop();
+  });
 });

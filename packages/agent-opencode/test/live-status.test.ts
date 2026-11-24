@@ -37,6 +37,25 @@ describe('opencode live status', () => {
     expect(plans(second.records)).toEqual(['']);
   });
 
+  it('a new prompt ends a plan line whose list was deleted', () => {
+    const first = parse(
+      L('message', 'msg_u', 1, {
+        session_id: SID,
+        data: JSON.stringify({ role: 'user', time: { created: 1 } }),
+      }) + todo(0, 1000, 'in_progress', 'add GET /time'),
+    );
+    expect(plans(first.records)).toEqual(['add GET /time']);
+    const next = parse(
+      L('part', 'prt_u', 3000, {
+        session_id: SID,
+        message_id: 'msg_u',
+        data: JSON.stringify({ type: 'text', text: 'now something else' }),
+      }),
+      first.state,
+    );
+    expect(plans(next.records)).toEqual(['']);
+  });
+
   it('a tool part is the working-on line, built from its input, not its output', () => {
     const records = parse(
       L('message', 'msg_a', 1, {
