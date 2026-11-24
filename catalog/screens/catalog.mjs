@@ -72,7 +72,7 @@ export const SCREENS = [
   }),
   hub({
     id: "hub/box-detail",
-    title: "Box detail: payment-retries",
+    title: "Box detail",
     what: "One box: status, git, services, the skills it holds, access links and its approvals.",
     from: "hub/boxes",
     via: "Click a box row",
@@ -81,7 +81,7 @@ export const SCREENS = [
   }),
   hub({
     id: "hub/project",
-    title: "Project page: payments-worker",
+    title: "Project page",
     what: "A project's boxes, its seed in custody and its service bot with backups.",
     from: "hub/boxes",
     via: "Click a project in the sidebar",
@@ -210,7 +210,7 @@ export const SCREENS = [
   }),
   tray({
     id: "tray/manager",
-    title: "Manager window: the Commerce plan",
+    title: "Manager window",
     what: "Tasks grouped by box with progress, the latest activity (a PR ready to merge with Approve), and the manager session pane.",
     from: "tray/menu",
     via: "Open Manager (⌘M)",
@@ -222,11 +222,11 @@ export const SCREENS = [
 
   cli({
     id: "cli/install",
-    title: "Setup wizard: pick a provider",
+    title: "Setup wizard",
     what: "`agentbox install` (and the first command on a new machine): the system check, then the provider choice.",
     files: [
-      { state: "provider", shoot: "pnpm shoot:cli cli/install-provider.png --first-run --cols 122 --rows 22 --wait-for Which -- install" },
-      { state: "Hetzner", shoot: "pnpm shoot:cli cli/install-hetzner.png --first-run --cols 110 --rows 34 --wait-for Which --send '<Down><Down>' --send '<Enter>' --settle 2500 -- install" },
+      { state: "pick a provider", shoot: "pnpm shoot:cli cli/install-provider.png --first-run --cols 122 --rows 22 --wait-for Which -- install" },
+      { state: "Hetzner API token", shoot: "pnpm shoot:cli cli/install-hetzner.png --first-run --cols 110 --rows 34 --wait-for Which --send '<Down><Down>' --send '<Enter>' --settle 2500 -- install" },
     ],
     notes: ["The \"system warn: optional sshfs, macfuse\" line is this Mac's real check result."],
     social: { title: "Set up in one command" },
