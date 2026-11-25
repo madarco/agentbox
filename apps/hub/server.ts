@@ -58,7 +58,7 @@ import {
   sourceAddress,
 } from './lib/peer';
 import { createDeviceService, type DeviceService } from './lib/backend/devices';
-import { subscriptionOf } from './lib/backend/accounts';
+import { borrowingAgentIds, subscriptionOf } from './lib/backend/accounts';
 import { createHistoryService, type HistoryService } from './lib/backend/history';
 import { createMemoryService, type MemoryService } from './lib/backend/history-memory';
 import { createMcpServer, MCP_INSTRUCTIONS, type McpHubScope } from './lib/backend/mcp';
@@ -141,7 +141,7 @@ async function openHistoryService(dbPath: string, archiveDir: string): Promise<H
     .then((c) => c.effective.history.retentionDays)
     .catch(() => 90);
   return createHistoryService({
-    repo: await openSqliteHistoryRepo(dbPath),
+    repo: await openSqliteHistoryRepo(dbPath, { borrowingAgents: borrowingAgentIds() }),
     archive: fsHistoryArchive(archiveDir),
     retentionDays: Math.max(1, retentionDays),
     // The subscription (`agent/account`) a session's agent ran on, from this

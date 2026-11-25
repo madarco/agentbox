@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { setDefaultCheckpointRefusal, subscriptionOf } from '../lib/backend/accounts';
+import {
+  borrowingAgentIds,
+  setDefaultCheckpointRefusal,
+  subscriptionOf,
+} from '../lib/backend/accounts';
 import { accountIdProblem } from '@agentbox/core';
 import { ACCOUNT_ID_RE, parseCreateBox } from '../app/(dashboard)/api/v1/lib/validate';
 
@@ -66,6 +70,7 @@ describe('subscriptionOf', () => {
             sources: [
               { kind: 'agent' as const, agent: 'claude', label: 'Claude' },
               { kind: 'agent' as const, agent: 'codex', label: 'Codex' },
+              { kind: 'env' as const, envKey: 'ANTHROPIC_API_KEY', label: 'Anthropic key' },
             ],
           },
         };
@@ -96,5 +101,45 @@ describe('subscriptionOf', () => {
     expect(subscriptionOf({ borrowedCredentials: ['env:OPENAI_API_KEY'] }, 'pi', specs)).toBe(
       'pi/default',
     );
+  });
+
+  it("stays on the agent's own key when the box mixes a lender with an env key", () => {
+    expect(
+      subscriptionOf(
+        { borrowedCredentials: ['codex', 'env:ANTHROPIC_API_KEY'], accounts: { codex: 'team' } },
+        'pi',
+        specs,
+      ),
+    ).toBe('pi/default');
+  });
+
+  it("stays on the agent's own key with two lenders", () => {
+    expect(
+      subscriptionOf(
+        { borrowedCredentials: ['claude', 'codex'], accounts: { pi: 'own' } },
+        'pi',
+        specs,
+      ),
+    ).toBe('pi/own');
+  });
+
+  it('ignores a source the agent does not declare when counting', () => {
+    // env:OPENAI_API_KEY is some other agent's source in this box.
+    expect(
+      subscriptionOf({ borrowedCredentials: ['codex', 'env:OPENAI_API_KEY'] }, 'pi', specs),
+    ).toBe('codex/default');
+  });
+});
+
+describe('borrowingAgentIds', () => {
+  it('lists the agents with an agent model-auth source', () => {
+    expect(
+      borrowingAgentIds([
+        { id: 'claude' },
+        { id: 'pi', modelAuth: { sources: [{ kind: 'agent', agent: 'codex', label: 'x' }] } },
+        { id: 'k', modelAuth: { sources: [{ kind: 'env', envKey: 'K', label: 'k' }] } },
+      ]),
+    ).toEqual(['pi']);
+    expect(borrowingAgentIds()).toContain('opencode');
   });
 });

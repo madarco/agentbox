@@ -7,7 +7,8 @@
 // filter (`agent/account`) lives in the URL (`?subscription=claude/personal`)
 // so a Subscriptions card links here. No cost: prices are not modelled yet.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -111,12 +112,6 @@ async function fetchUsage(params: Record<string, string>): Promise<Report> {
   return body;
 }
 
-/** The subscription filter carried in the page URL. */
-function subscriptionFromUrl(): string | undefined {
-  if (typeof window === 'undefined') return undefined;
-  return new URLSearchParams(window.location.search).get('subscription')?.trim() || undefined;
-}
-
 /** Every subscription key with recorded usage, whatever the page's filters. */
 async function fetchUsedSubscriptions(): Promise<string[]> {
   const r = await fetchUsage({ by: 'account', limit: '1000' });
@@ -129,38 +124,45 @@ async function fetchAccounts(): Promise<SubscriptionAccount[]> {
   return ((await r.json()) as { accounts?: SubscriptionAccount[] }).accounts ?? [];
 }
 
+// useSearchParams needs a Suspense boundary for the static build.
 export default function UsagePage() {
+  return (
+    <Suspense fallback={null}>
+      <UsageView />
+    </Suspense>
+  );
+}
+
+function UsageView() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  // The subscription filter is the URL's (`?subscription=`), so the sidebar's
+  // plain Usage link clears it; the other filters are page state.
+  const subscription = params.get('subscription')?.trim() || undefined;
   const [range, setRange] = useState<RangeId>('7d');
-  // Unset until the URL is read on mount, so the first load already filters.
-  const [filters, setFilters] = useState<Partial<Record<FilterDim, string>> | null>(null);
-  const [accounts, setAccounts] = useState<SubscriptionAccount[]>([]);
-  const [usedKeys, setUsedKeys] = useState<string[]>([]);
+  const [others, setOthers] = useState<Partial<Record<FilterDim, string>>>({});
+  const filters = useMemo<Partial<Record<FilterDim, string>>>(
+    () => ({ ...others, ...(subscription ? { account: subscription } : {}) }),
+    [others, subscription],
+  );
+  // Null until loaded: an unknown subscription is only known once both are in.
+  const [accounts, setAccounts] = useState<SubscriptionAccount[] | null>(null);
+  const [usedKeys, setUsedKeys] = useState<string[] | null>(null);
   const [daily, setDaily] = useState<Report | null>(null);
   const [tables, setTables] = useState<Partial<Record<Dim, Report>>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const sub = subscriptionFromUrl();
-    setFilters(sub ? { account: sub } : {});
     void fetchAccounts()
-      .then(setAccounts)
-      .catch(() => {});
+      .catch(() => [])
+      .then(setAccounts);
     void fetchUsedSubscriptions()
-      .then(setUsedKeys)
-      .catch(() => {});
+      .catch(() => [])
+      .then(setUsedKeys);
   }, []);
 
-  // Keep `?subscription=` in step with the filter, without a navigation.
-  useEffect(() => {
-    if (!filters) return;
-    const url = new URL(window.location.href);
-    if (filters.account) url.searchParams.set('subscription', filters.account);
-    else url.searchParams.delete('subscription');
-    if (url.href !== window.location.href) window.history.replaceState(null, '', url);
-  }, [filters]);
-
   const load = useCallback(async () => {
-    if (!filters) return;
     const base: Record<string, string> = {
       tzOffset: String(-new Date().getTimezoneOffset()),
       ...(filters as Record<string, string>),
@@ -187,24 +189,39 @@ export default function UsagePage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const setFilter = (dim: FilterDim, value: string | undefined): void =>
-    setFilters((f) => {
+  const setFilter = (dim: FilterDim, value: string | undefined): void => {
+    if (dim === 'account') {
+      const q = new URLSearchParams(params.toString());
+      if (value) q.set('subscription', value);
+      else q.delete('subscription');
+      const qs = q.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      return;
+    }
+    setOthers((f) => {
       const next = { ...f };
       if (value) next[dim] = value;
       else delete next[dim];
       return next;
     });
+  };
+  const known = useMemo(() => accounts ?? [], [accounts]);
+  const unknownSubscription =
+    subscription !== undefined &&
+    accounts !== null &&
+    usedKeys !== null &&
+    !accounts.some((a) => subscriptionKey(a) === subscription) &&
+    !usedKeys.includes(subscription);
   // Every stored account, plus keys that only have usage (a default never
   // captured here, a removed account) and the one in the URL.
   const subscriptionOptions = useMemo(() => {
     const opts = new Map<string, string>(
-      accounts.map((a) => [subscriptionKey(a), subscriptionLabel(a)]),
+      known.map((a) => [subscriptionKey(a), subscriptionLabel(a)]),
     );
-    for (const k of usedKeys) if (!opts.has(k)) opts.set(k, k);
-    const cur = filters?.account;
-    if (cur && !opts.has(cur)) opts.set(cur, usageKeyLabel(cur, accounts));
+    for (const k of usedKeys ?? []) if (!opts.has(k)) opts.set(k, k);
+    if (subscription && !opts.has(subscription)) opts.set(subscription, subscription);
     return [...opts.entries()].sort(([, x], [, y]) => x.localeCompare(y));
-  }, [accounts, usedKeys, filters?.account]);
+  }, [known, usedKeys, subscription]);
 
   const totals = daily?.totals;
   const days = RANGES.find((r) => r.id === range)!.days;
@@ -231,7 +248,7 @@ export default function UsagePage() {
         <select
           aria-label="Subscription"
           className="h-8 rounded-md border bg-background px-2 text-[13px]"
-          value={filters?.account ?? ''}
+          value={subscription ?? ''}
           onChange={(ev) => setFilter('account', ev.target.value || undefined)}
         >
           <option value="">All subscriptions</option>
@@ -241,7 +258,7 @@ export default function UsagePage() {
             </option>
           ))}
         </select>
-        {Object.entries(filters ?? {})
+        {Object.entries(others)
           .filter(([k]) => k !== 'account')
           .map(([k, v]) => (
             <Button
@@ -262,6 +279,15 @@ export default function UsagePage() {
           <EmptyBox>
             <div>Couldn’t load usage.</div>
             <div className="mt-1.5 font-mono text-xs text-red-400">{error}</div>
+          </EmptyBox>
+        </div>
+      ) : unknownSubscription ? (
+        <div className="mt-6">
+          <EmptyBox>
+            <div>Unknown subscription.</div>
+            <div className="mt-1.5 font-mono text-xs text-muted-foreground">
+              {subscription} is not an account on this hub and has no recorded usage.
+            </div>
           </EmptyBox>
         </div>
       ) : !daily || !totals ? (
@@ -299,7 +325,7 @@ export default function UsagePage() {
             const r = tables[b.dim];
             if (!r || r.groups.length === 0) return null;
             // A dimension already filtered to one value says nothing new.
-            if (b.filter && filters?.[b.filter]) return null;
+            if (b.filter && filters[b.filter]) return null;
             return (
               <div key={b.dim}>
                 <SectionLabel
@@ -314,7 +340,7 @@ export default function UsagePage() {
                 <Breakdown
                   dim={b.dim}
                   report={r}
-                  accounts={accounts}
+                  accounts={known}
                   total={totals.totalTokens}
                   onPick={b.filter ? (key) => setFilter(b.filter!, key) : undefined}
                 />

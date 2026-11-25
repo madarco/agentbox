@@ -173,8 +173,10 @@ and a borrowed login's usage counts under the lender, as on the cards.
 
 **Built (3a):** as above, with these notes. A session is stamped with its subscription,
 `agent/account`, in the existing `history_sessions.account` column; bare ids stamped before are
-rewritten to the session agent's own once, when the store opens. A borrower counts under the lender
-only when the agent declares that login among its `modelAuth.sources` (`subscriptionOf`,
+rewritten to the session agent's own once, when the store opens, except for an agent that can borrow
+a login (`borrowingAgentIds`): its bare ids are cleared so the backfill restamps them from the box
+record. A borrower counts under the lender
+only when that login is the one source of the box the agent consumes (`subscriptionOf`,
 `lib/backend/accounts.ts`), so another agent in the same box keeps its own. `GET /usage?account=`
 takes `<agent>/<account>`, and a bare id still matches that id of any agent. The cards show the last 7
 days, the Usage page's default window, so a card's figure matches the page it links to. The
@@ -270,7 +272,15 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - **Vendor per agent** (3a): the Anthropic / OpenAI grouping is a map in `apps/hub/lib/subscriptions.ts`
   (claude, codex); any other agent is grouped under its own id. A `vendor` field on the agent registry
   row would cover `agentbox agent add` agents.
-- **Several lenders** (3a): a box that borrows two logins its agent can both consume counts that
-  agent's usage under the first one. Per-session attribution would need the model's provider.
+- **Mixed model-auth sources** (3a): an agent consuming more than one of its box's sources (two
+  lenders, or a lender plus an `env:` key, e.g. `--model-auth codex,env:ANTHROPIC_API_KEY`) is
+  counted under its own key, not guessed. Per-turn attribution needs the provider that served each
+  turn from the transcript.
+- **Host sessions on the default card** (3a): a session from a host (not a box) has no account
+  stamped (`account` null), so it counts under no subscription, and the default card's tokens leave
+  it out.
+- **Pre-3a sessions of a destroyed borrowing box** (3a): the migration clears a borrowing agent's
+  bare account id for the backfill to restamp from the box record; a box this hub no longer records
+  leaves it null (not counted under any subscription) rather than guessed.
 - **Default account's boxes** (3a): `GET /accounts` lists no boxes for a `default` account (it would be
   every box without a named one); the card says so instead of listing them.

@@ -1416,7 +1416,12 @@ export function buildOpenApi(): Record<string, unknown> {
                             provider: { type: 'string', nullable: true },
                             hostId: { type: 'string', nullable: true },
                             projectRepoUrl: { type: 'string', nullable: true },
-                            account: { type: 'string', nullable: true },
+                            account: {
+                              type: 'string',
+                              nullable: true,
+                              description:
+                                "The subscription the session ran on, as `<agent>/<account>` (`claude/default`); a session of an agent running on another agent's login (`--model-auth`) names the lender's. Null when the box was unknown (host sessions, a box this hub never recorded).",
+                            },
                             parentSessionId: { type: 'string', nullable: true },
                             title: { type: 'string', nullable: true },
                             firstTs: { type: 'string', nullable: true },
@@ -1477,7 +1482,12 @@ export function buildOpenApi(): Record<string, unknown> {
                           provider: { type: 'string', nullable: true },
                           hostId: { type: 'string', nullable: true },
                           projectRepoUrl: { type: 'string', nullable: true },
-                          account: { type: 'string', nullable: true },
+                          account: {
+                            type: 'string',
+                            nullable: true,
+                            description:
+                              "The subscription the session ran on, as `<agent>/<account>` (`claude/default`); a session of an agent running on another agent's login (`--model-auth`) names the lender's. Null when the box was unknown (host sessions, a box this hub never recorded).",
+                          },
                           parentSessionId: { type: 'string', nullable: true },
                           title: { type: 'string', nullable: true },
                           firstTs: { type: 'string', nullable: true },

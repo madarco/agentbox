@@ -967,7 +967,10 @@ export interface HubApiHistorySession {
   provider: string | null;
   hostId: string | null;
   projectRepoUrl: string | null;
-  /** The box's named LLM account for this agent; null when unknown. */
+  /**
+   * The subscription the session ran on, `<agent>/<account>` (the lender's for
+   * an agent on a borrowed login); null when the box was unknown.
+   */
   account?: string | null;
   parentSessionId: string | null;
   title: string | null;
