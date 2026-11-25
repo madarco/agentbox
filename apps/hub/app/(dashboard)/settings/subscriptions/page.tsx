@@ -1,6 +1,6 @@
 'use client';
 
-// Accounts page — the named LLM accounts of this hub's machine (logins, setup
+// Subscriptions page (Settings → Subscriptions) — the named LLM accounts of this hub's machine (logins, setup
 // tokens, API keys per agent; docs/llm-accounts-plan.md, Phase 5). PURE REST
 // CLIENT over /api/v1/accounts: list, add a pasted key or setup token, relabel,
 // remove. A login is interactive and runs on the machine, so it is a command
@@ -55,7 +55,7 @@ function identityOf(a: Account): string {
   return [a.identity?.email, a.identity?.org, a.identity?.plan].filter(Boolean).join(' · ');
 }
 
-export default function AccountsPage() {
+export default function SubscriptionsPage() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [agents, setAgents] = useState<AgentKinds[]>([]);
   const [error, setError] = useState<string | null>(null);

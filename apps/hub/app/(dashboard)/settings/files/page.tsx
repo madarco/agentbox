@@ -1,6 +1,6 @@
 'use client';
 
-// Custody page — a read-only window on what the control box holds in custody:
+// Files page (Settings → Files) — a read-only window on what the control box holds in custody:
 // agent credentials, project seeds, provider bake records, and per-box SSH keys.
 // PURE REST CLIENT: one fetch of /api/v1/custody, which returns metadata only
 // (path, size, sha256, mtime) — never a credential value. Grouped by scope with a
@@ -30,7 +30,7 @@ interface CustodyResponse {
   entries: CustodyEntry[];
 }
 
-export default function CustodyPage() {
+export default function FilesPage() {
   const [data, setData] = useState<CustodyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scope, setScope] = useState<CustodyScope | null>(null);

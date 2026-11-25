@@ -92,9 +92,11 @@ PROJECTS
 
 Routes: `/settings` (General), `/settings/subscriptions`, `/settings/skills`, `/settings/files`,
 `/settings/devices`, `/settings/system`. The old `/accounts`, `/custody`, `/skills`, `/devices`,
-`/system` pages are deleted. Two have callers outside the hub that already shipped, so they get a
+`/system` pages are deleted. Three have callers outside the hub that already shipped, so they get a
 permanent redirect instead of a 404: `/skills` (the tray's "Review skills in Hub",
-`AppDelegate.swift:550`) and `/devices` (the enrollment `verificationPath` an older hub printed).
+`AppDelegate.swift:550`), `/devices` (the enrollment `verificationPath` an older hub printed) and
+`/system` (a PC hub's "Bake details on the control box" link, `<control box>/system`, which must
+work against control boxes of either version).
 Usage stays top-level: it is a report, not configuration.
 
 ## Phases
@@ -110,7 +112,7 @@ page; Phases 2, 3 and 4 then run **in parallel** (disjoint route folders and bac
 - Move the pages under `app/(dashboard)/settings/`: `subscriptions` (today's Accounts page, renamed,
   no behavior change yet), `skills`, `files` (today's Custody page, renamed), `devices`, `system`.
   General is today's Settings page.
-- Redirects for `/skills` and `/devices`, query string kept (so `?code=` still pre-fills). The hub's
+- Redirects for `/skills`, `/devices` and `/system`, query string kept (so `?code=` still pre-fills). The hub's
   `verificationPath` points at `/settings/devices`.
 - Breadcrumbs: `control / settings / <sub>`. Every in-app link to the old paths updated (System, the
   skills dialogs, the custody page, the box detail skills panel).
@@ -119,10 +121,8 @@ page; Phases 2, 3 and 4 then run **in parallel** (disjoint route folders and bac
   screenshots per `apps/web/images.md` and the catalog's hub shots (`catalog/`).
 
 **Built:** as above, with two notes. The breadcrumb root stays `hub` (`hub / settings / <sub>`),
-matching every other page. The CLI's control-box hint keeps printing `<hub>/devices`: it redirects on
-a new hub and is still served by an older one, while `hub login` takes the path from
-`verificationPath`. `/accounts`, `/custody` and `/system` have no redirect, so an older PC hub's
-"Bake details on the control box" link (`<control box>/system`) 404s against a new control box.
+matching every other page. The CLI's control-box hint prints `<hub>/settings/devices`; `hub login` takes
+the path from `verificationPath`. `/accounts` and `/custody` have no redirect.
 `hub-dashboard.png` in the public docs still needs real boxes to recapture (marked stale in
 `apps/web/images.md`); the catalog's hub shots are retaken.
 

@@ -139,7 +139,7 @@ function SideGroup({
         <button
           type="button"
           aria-expanded={open}
-          aria-controls={listId}
+          aria-controls={open ? listId : undefined}
           aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
           onClick={() => setOpen(!open)}
           className="mr-1 grid size-6 flex-none cursor-pointer place-items-center rounded-md border-0 bg-transparent text-[#a4a9b0] hover:text-foreground"

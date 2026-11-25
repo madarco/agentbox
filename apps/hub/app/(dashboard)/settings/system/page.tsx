@@ -104,9 +104,7 @@ export default function SystemPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">
-        System &amp; Build
-      </h1>
+      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">System</h1>
       <div className="mt-1.5 text-sm text-muted-foreground">
         What this hub is running, and whether any provider base needs re-baking.
       </div>
@@ -264,7 +262,7 @@ function ProviderBakeRow({
       {p.baseStatus === 'stale' ? <StaleDiff p={p} /> : null}
       {p.origin === 'hub' && p.hubUrl ? (
         <a
-          href={`${p.hubUrl}/settings/system`}
+          href={`${p.hubUrl}/system`}
           target="_blank"
           rel="noreferrer"
           className="text-[12.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
@@ -421,7 +419,10 @@ function CarriedSection({
           custody
         </Link>
         , plus the{' '}
-        <Link href="/settings/skills" className="underline underline-offset-2 hover:text-foreground">
+        <Link
+          href="/settings/skills"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
           skills library
         </Link>
         .
