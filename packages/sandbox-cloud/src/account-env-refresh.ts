@@ -17,9 +17,13 @@ import { buildCloudAgentEnv, cloudAccountAuthority } from './sync/agent-credenti
 export async function rewriteCloudAgentEnv(provider: Provider, box: BoxRecord): Promise<void> {
   if (!provider.uploadPath) throw new Error(`provider ${box.provider} cannot upload files`);
   const accounts = box.accounts ?? {};
+  const env = await buildCloudAgentEnv(box.agents, accounts);
   const text = renderAgentEnvFile(
-    await buildCloudAgentEnv(box.agents, accounts),
-    await cloudAccountAuthority(box.agents, accounts),
+    env,
+    await cloudAccountAuthority(box.agents, accounts, {
+      switched: (box.accountSwitches ?? []).map((x) => x.agent),
+      forwarded: env,
+    }),
   );
   const dir = await mkdtemp(join(tmpdir(), 'agentbox-agent-env-'));
   const local = join(dir, `.agent-env-${randomBytes(6).toString('hex')}`);

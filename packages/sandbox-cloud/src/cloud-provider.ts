@@ -642,11 +642,15 @@ export function createCloudProvider(
     // auth. Best-effort, like the reconcile below: a box that comes up without
     // it still runs, its agent just lacks the forwarded keys.
     try {
+      const agentEnv = await buildCloudAgentEnv(box.agents, box.accounts ?? {});
       await writeCloudAgentEnvFile(
         backend,
         h,
-        await buildCloudAgentEnv(box.agents, box.accounts ?? {}),
-        await cloudAccountAuthority(box.agents, box.accounts ?? {}),
+        agentEnv,
+        await cloudAccountAuthority(box.agents, box.accounts ?? {}, {
+          switched: (box.accountSwitches ?? []).map((x) => x.agent),
+          forwarded: agentEnv,
+        }),
       );
     } catch (err) {
       // The message names the step and the exec's exit, never the values.

@@ -1085,7 +1085,6 @@ export interface HubApiUsageQuery {
   limit?: number;
 }
 
-/** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
 /** `POST /api/v1/boxes/{id}/account`: what a switch did. */
 export interface BoxAccountSwitchView {
   boxId: string;
@@ -1098,6 +1097,7 @@ export interface BoxAccountSwitchView {
   restarted: boolean;
 }
 
+/** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
 export class HubApiError extends Error {
   constructor(
     message: string,

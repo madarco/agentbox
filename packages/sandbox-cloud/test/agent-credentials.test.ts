@@ -513,3 +513,23 @@ describe('extractCloudAgentCredentials', () => {
     expect(logs.some((l) => l.includes('extract failed'))).toBe(true);
   });
 });
+
+describe('cloudAccountAuthority (hub settings 3c)', () => {
+  it('adds nothing for a default account that was never switched', async () => {
+    const { cloudAccountAuthority } = await import('../src/sync/agent-credentials.js');
+    expect(await cloudAccountAuthority(['claude'], {})).toEqual({ set: {}, unset: [] });
+  });
+
+  it("a box switched back to default takes the host's keys and drops the rest", async () => {
+    const { cloudAccountAuthority } = await import('../src/sync/agent-credentials.js');
+    const r = await cloudAccountAuthority(
+      ['claude'],
+      {},
+      { switched: ['claude'], forwarded: { ANTHROPIC_API_KEY: 'host-key' } },
+    );
+    expect(r).toEqual({
+      set: { ANTHROPIC_API_KEY: 'host-key' },
+      unset: ['CLAUDE_CODE_OAUTH_TOKEN'],
+    });
+  });
+});

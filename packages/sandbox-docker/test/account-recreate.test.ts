@@ -55,7 +55,13 @@ describe('respecFromInspect', () => {
 
   it("keeps env and ports, drops the agent's account keys, keeps limits and init", () => {
     const r = run();
-    expect(r.spec.env).toEqual({ PATH: '/usr/bin', AGENTBOX_RELAY_TOKEN: 't0k' });
+    expect(r.spec.env).toEqual({
+      PATH: '/usr/bin',
+      AGENTBOX_RELAY_TOKEN: 't0k',
+      // Blanked, not dropped: the committed image carries the old values.
+      ANTHROPIC_API_KEY: '',
+      CLAUDE_CODE_OAUTH_TOKEN: '',
+    });
     expect(r.spec.portMappings).toEqual([
       { containerPort: 80, hostPort: 0, hostIp: '127.0.0.1' },
       { containerPort: 6080, hostPort: 0 },

@@ -550,6 +550,12 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - **Hub-side session start and `AGENTBOX_HUB_BIN`** (3c): the hub restarts a docker agent with
   `runtime.startSession`, which forwards the HUB's env (`ANTHROPIC_API_KEY` etc.) for a default
   account, where the CLI forwards the user's shell env. Same for every hub-driven start today.
+- **The switch runs in the request, not the queue worker** (3c review): `POST /boxes/{id}/account`
+  does the whole switch inline (a docker recreate took 9-16 s live). A client that times out loses
+  the answer while the switch finishes. A job the client polls, like create, would fix it.
+- **`default` with no store row** (3c review): the limit watch reads limits per account row, so a box
+  on a `default` login the store has no row for is never matched, and such a `default` is never
+  offered as the next account. A default login normally has a row (the store migrates it).
 - **A new named login volume made by hand** (3c live check): the stand-in volume held only the
   credentials, so the box's in-box hooks and settings were missing after the switch. A real one made
   by `agentbox claude login --account` is seeded from the host config, so this only bites a volume

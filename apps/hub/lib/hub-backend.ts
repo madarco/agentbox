@@ -150,6 +150,7 @@ import {
   accountEnvPolicy,
   findBox as findBoxRecord,
   recordAccountSwitch,
+  revertAccountSwitch,
   resolveAgentSpec,
   type FileManifest,
 } from '@agentbox/sandbox-core';
@@ -3611,6 +3612,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           restartAgent: async (box, agent) =>
             restartBoxAgent(await providerForBox(box), box, agent),
           recordSwitch: (boxId, entry) => recordAccountSwitch(boxId, entry),
+          revertSwitch: (boxId, previous) => revertAccountSwitch(boxId, previous),
           reregister: async (box) => {
             const reg = await handle.store.getBox(box.id).catch(() => undefined);
             if (reg) await handle.store.registerBox({ ...reg, ...registrationFromRecord(box) });

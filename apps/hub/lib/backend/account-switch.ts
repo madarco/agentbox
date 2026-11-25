@@ -42,6 +42,11 @@ export interface AccountSwitchDeps {
   /** Kill the agent's session and start it again, resuming its conversation. */
   restartAgent(box: BoxRecord, agent: string): Promise<void>;
   recordSwitch(boxId: string, entry: AccountSwitchRecord): Promise<BoxRecord | undefined>;
+  /** Undo the last `recordSwitch`: `accounts` back to `previous`, the entry dropped. */
+  revertSwitch(
+    boxId: string,
+    previous: Record<string, string> | undefined,
+  ): Promise<BoxRecord | undefined>;
   /** Re-register the box with the relay from its record (its `accounts`). */
   reregister(box: BoxRecord): Promise<void>;
   now(): Date;
@@ -96,6 +101,9 @@ export function tokenShapeProblem(
     : `the stored ${kind} does not look like a ${spec.id} ${kind} (${spec.id} would ignore it); paste it again`;
 }
 
+/** Boxes with a switch in progress: a second one (a click while the limit watch moves it) is refused. */
+const switching = new Set<string>();
+
 export async function switchBoxAccount(
   deps: AccountSwitchDeps,
   ref: string,
@@ -103,6 +111,22 @@ export async function switchBoxAccount(
 ): Promise<SwitchResult> {
   const box = await deps.findBox(ref);
   if (!box) return { kind: 'not_found' };
+  if (switching.has(box.id)) {
+    return { kind: 'refused', error: `${box.name} is already switching accounts` };
+  }
+  switching.add(box.id);
+  try {
+    return await switchLocked(deps, box, req);
+  } finally {
+    switching.delete(box.id);
+  }
+}
+
+async function switchLocked(
+  deps: AccountSwitchDeps,
+  box: BoxRecord,
+  req: SwitchRequest,
+): Promise<SwitchResult> {
   const agent = req.agent ?? primaryAgent(box);
   if (!agent || agent === 'none') return { kind: 'invalid', error: 'the box runs no agent' };
   const spec = deps.agentSpec(agent);
@@ -168,8 +192,32 @@ export async function switchBoxAccount(
     // that is not running picks the record up at its next start.
     let restarted = false;
     if (running) {
-      if (!isDocker) await deps.rewriteCloudEnv(current);
-      await deps.restartAgent(current, agent);
+      try {
+        if (!isDocker) await deps.rewriteCloudEnv(current);
+        await deps.restartAgent(current, agent);
+      } catch (err) {
+        // A token switch changed nothing but the record: put it back and bring
+        // the agent back on the old account. A rebuilt box IS on the new
+        // volume, so its record stays.
+        if (how === 'recreate') {
+          return {
+            kind: 'error',
+            error: `${box.name} now runs on ${to}, but ${agent} did not restart: ${errText(err)}`,
+          };
+        }
+        const back = (await deps.revertSwitch(box.id, box.accounts).catch(() => undefined)) ?? box;
+        await deps.reregister(back).catch(() => undefined);
+        try {
+          if (!isDocker) await deps.rewriteCloudEnv(back);
+          await deps.restartAgent(back, agent);
+        } catch {
+          /* reported below */
+        }
+        return {
+          kind: 'error',
+          error: `could not restart ${agent} on ${to}, so the box stays on ${from}: ${errText(err)}`,
+        };
+      }
       restarted = true;
     }
     return { kind: 'ok', boxId: box.id, agent, from, to, how, restarted };

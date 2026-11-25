@@ -172,13 +172,6 @@ export async function recordLastAgent(
 }
 
 /**
- * Add `agent` to a box's `agents` (the agents it runs, which its registration
- * names via `primaryAgent`). For a box adopted into an agent it was not
- * created for (`agentbox openclaw <existing-box>`): a service agent's units go
- * only to a box whose registration names it. Returns the updated record, or
- * undefined when the box is not in state.
- */
-/**
  * Record that `agent` in a box now runs on `account` (hub settings 3c): moves
  * `accounts` (a `default` account leaves no entry) and appends `entry` to the
  * box's switch history, newest last, capped. Returns the updated record.
@@ -213,6 +206,46 @@ export async function recordAccountSwitch(
   return updated;
 }
 
+/**
+ * Undo the last `recordAccountSwitch` of a box: `accounts` back to `previous`
+ * and that entry dropped from the history. For a switch whose agent could not
+ * be restarted (hub settings 3c), so the record never claims an account the
+ * agent does not run on.
+ */
+export async function revertAccountSwitch(
+  boxId: string,
+  previous: Readonly<Record<string, string>> | undefined,
+  path: string = STATE_FILE,
+): Promise<BoxRecord | undefined> {
+  let updated: BoxRecord | undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        const rest = { ...b };
+        delete rest.accounts;
+        const history = (b.accountSwitches ?? []).slice(0, -1);
+        updated = {
+          ...rest,
+          ...(previous && Object.keys(previous).length ? { accounts: { ...previous } } : {}),
+          accountSwitches: history,
+        };
+        return updated;
+      }),
+    }),
+    path,
+  );
+  return updated;
+}
+
+/**
+ * Add `agent` to a box's `agents` (the agents it runs, which its registration
+ * names via `primaryAgent`). For a box adopted into an agent it was not
+ * created for (`agentbox openclaw <existing-box>`): a service agent's units go
+ * only to a box whose registration names it. Returns the updated record, or
+ * undefined when the box is not in state.
+ */
 export async function recordAgentAdded(
   boxId: string,
   agent: string,

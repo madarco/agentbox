@@ -76,12 +76,14 @@ export function createLimitWatch(deps: LimitWatchDeps): {
       if (!views.some(usableAtLimit)) return;
       const mode = await deps.onLimit().catch(() => 'ask' as OnLimit);
       const boxes = await deps.runningBoxes().catch(() => [] as WatchedBox[]);
+      const live = new Set<string>();
       for (const box of boxes) {
         for (const agent of box.agents) {
           const current = box.accounts?.[agent] ?? 'default';
           const view = views.find((v) => v.agent === agent && v.id === current);
           if (!view || !usableAtLimit(view)) continue;
           const key = `${box.id}|${agent}|${current}|${limitKey(view)}`;
+          live.add(key);
           if (handled.has(key) || asking.has(key)) continue;
           const next = nextAccount(views, agent, current, box.provider);
           if (!next) {
@@ -136,6 +138,9 @@ export function createLimitWatch(deps: LimitWatchDeps): {
             });
         }
       }
+      // A key leaves once its box is no longer at that limit (it moved, the
+      // window reset, it stopped), so the set stays as small as the fleet.
+      for (const k of handled) if (!live.has(k)) handled.delete(k);
     },
   };
 }

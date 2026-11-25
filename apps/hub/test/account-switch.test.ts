@@ -39,6 +39,10 @@ function deps(o: Partial<AccountSwitchDeps> & { kinds?: Record<string, string> }
       return undefined;
     },
     reregister: async () => void calls.push('register'),
+    revertSwitch: async () => {
+      calls.push('revert');
+      return undefined;
+    },
     now: () => new Date('2026-11-25T00:00:00Z'),
     log: () => {},
     ...o,
@@ -138,6 +142,42 @@ describe('switchBoxAccount', () => {
       error: 'docker said no',
     });
     expect(calls).toEqual([]);
+  });
+});
+
+describe('switchBoxAccount failures', () => {
+  it('a token switch whose restart fails reverts the record and restarts on the old account', async () => {
+    let n = 0;
+    const { d, calls } = deps({
+      restartAgent: async () => {
+        calls.push('restart');
+        if (n++ === 0) throw new Error('tmux died');
+      },
+    });
+    const r = await switchBoxAccount(d, 'web', { account: 'tok' });
+    expect(r).toEqual({
+      kind: 'error',
+      error: 'could not restart claude on tok, so the box stays on default: tmux died',
+    });
+    expect(calls).toEqual([
+      'record:default>tok:env:manual',
+      'register',
+      'restart',
+      'revert',
+      'register',
+      'restart',
+    ]);
+  });
+
+  it('refuses a second switch of a box while one runs', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { d } = deps({ restartAgent: () => gate });
+    const first = switchBoxAccount(d, 'web', { account: 'tok' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect((await switchBoxAccount(d, 'web', { account: 'tok' })).kind).toBe('refused');
+    release();
+    expect((await first).kind).toBe('ok');
   });
 });
 

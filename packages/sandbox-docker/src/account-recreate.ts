@@ -124,6 +124,9 @@ export function respecFromInspect(
     if (o.clearEnv.includes(k)) continue;
     env[k] = line.slice(i + 1);
   }
+  // `docker commit` writes the old container's env into the image, so a key
+  // left out of `-e` would come back from the image: blank it instead.
+  for (const k of o.clearEnv) env[k] = '';
   Object.assign(env, o.setEnv);
   const portMappings: NonNullable<RunBoxSpec['portMappings']> = [];
   for (const [key, binds] of Object.entries(ins.HostConfig?.PortBindings ?? {})) {
@@ -251,13 +254,18 @@ export async function recreateBoxOnAccount(
   const credRel = spec.credential?.boxRelPath;
   const imageForHelpers = live.Image ?? box.image;
   if (credRel) {
-    const probe = await withVolumes(
-      imageForHelpers,
-      toVolume,
-      toVolume,
-      'f="/from/$1"; [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]',
-      [credRel],
-    );
+    // Checked first: mounting a volume that does not exist would create it.
+    const exists =
+      (await execa('docker', ['volume', 'inspect', toVolume], { reject: false })).exitCode === 0;
+    const probe = !exists
+      ? { code: 1, out: '' }
+      : await withVolumes(
+          imageForHelpers,
+          toVolume,
+          toVolume,
+          'f="/from/$1"; [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]',
+          [credRel],
+        );
     if (probe.code !== 0) {
       throw new Error(
         `${o.agent} account '${o.account}' has no login in ${toVolume}; run \`agentbox ${o.agent} login${isDefaultAccount(o.account) ? '' : ` --account ${o.account}`}\` first`,
@@ -300,7 +308,12 @@ export async function recreateBoxOnAccount(
     await stopContainer(container);
   }
   log('committing the box');
-  await docker(['commit', '--change', `LABEL ${SWITCH_IMAGE_LABEL}=${box.id}`, container, image]);
+  try {
+    await docker(['commit', '--change', `LABEL ${SWITCH_IMAGE_LABEL}=${box.id}`, container, image]);
+  } catch (err) {
+    if (wasRunning) await startBox(box.id).catch(() => undefined);
+    throw err;
+  }
 
   if (o.sessionId) {
     const globs = sessionGlobs(spec.sessionFiles ?? [], o.sessionId);
