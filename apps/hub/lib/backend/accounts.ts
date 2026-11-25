@@ -5,7 +5,8 @@
 // (Phase 5), so a named account is refused there with a message naming it.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
+import { loadEffectiveConfig, setConfigValue, tryGetMachineId } from '@agentbox/config';
+import { homedir } from 'node:os';
 import {
   accountConfigVolume,
   modelAuthSourceId,
@@ -18,7 +19,7 @@ import {
   type BoxRuntimeState,
   type LlmAccount,
 } from '@agentbox/core';
-import type { AccountBackend, AccountView } from '../boxes/backend-types';
+import type { AccountBackend, AccountPolicyView, AccountView } from '../boxes/backend-types';
 import type { LimitsSource } from './account-limits';
 import {
   AGENT_SYNC_SPECS,
@@ -91,6 +92,8 @@ export interface AccountBackendDeps {
    */
   removeVolume?: (name: string) => Promise<{ removed: boolean; error?: string }>;
   store?: AccountStoreOptions;
+  /** Where the global config is read and written (tests); default: the home dir. */
+  configHome?: string;
   /** This hub's machine id, the `<machine>` its named accounts sit under in custody. */
   machineId?: () => string | undefined;
 }
@@ -170,7 +173,22 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     return typeof agent === 'string' ? (findAgentSpec(agent) ?? null) : null;
   }
 
+  const configHome = deps.configHome ?? homedir();
+  async function policy(): Promise<AccountPolicyView> {
+    const cfg = await loadEffectiveConfig(configHome).catch(() => null);
+    return { onLimit: cfg?.effective.accounts?.onLimit === 'switch' ? 'switch' : 'ask' };
+  }
+
   return {
+    getAccountPolicy: policy,
+    async setAccountPolicy(input) {
+      const onLimit = (input as { onLimit?: unknown } | null)?.onLimit;
+      if (onLimit !== 'ask' && onLimit !== 'switch') {
+        return { ok: false, code: 'invalid_request', error: 'onLimit must be "ask" or "switch"' };
+      }
+      await setConfigValue('global', 'accounts.onLimit', onLimit, configHome);
+      return { ok: true, value: await policy() };
+    },
     async listAccounts() {
       const { accounts } = await readAccounts(store);
       const all = await boxes().catch(() => []);

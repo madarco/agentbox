@@ -25,6 +25,7 @@ export {
   type EffectiveConfig,
   type EngineKind,
   type GitPushMode,
+  type AccountsOnLimit,
   type LlmProxyMode,
   type HubGitAuthMode,
   type IdeFlavor,

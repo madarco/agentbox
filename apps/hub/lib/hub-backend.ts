@@ -537,6 +537,9 @@ function mapBox(
     ...(b.agents && b.agents.length > 0 ? { agents: [...b.agents] } : {}),
     borrowedCredentials: b.borrowedCredentials,
     ...(b.accounts ? { accounts: { ...b.accounts } } : {}),
+    ...(b.accountSwitches?.length
+      ? { accountSwitches: b.accountSwitches.map((x) => ({ ...x })) }
+      : {}),
     ...(b.llmProxy ? { llmProxy: { ...b.llmProxy } } : {}),
     topology: b.cloud?.topology,
   };

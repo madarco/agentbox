@@ -1514,6 +1514,11 @@ export type AccountResult<T> =
   | { ok: true; value: T }
   | { ok: false; code: 'invalid_request' | 'not_found' | 'conflict'; error: string };
 
+/** What the hub does when a box's account is at its limit. */
+export interface AccountPolicyView {
+  onLimit: 'ask' | 'switch';
+}
+
 export interface AccountBackend {
   listAccounts(): Promise<{
     accounts: AccountView[];
@@ -1521,6 +1526,9 @@ export interface AccountBackend {
     /** The machine id these accounts belong to (custody keys named accounts by it). */
     machine?: string;
   }>;
+  /** `accounts.onLimit` from this machine's global config (hub settings 3c). */
+  getAccountPolicy(): Promise<AccountPolicyView>;
+  setAccountPolicy(input: unknown): Promise<AccountResult<AccountPolicyView>>;
   /** A pasteable kind (`api-key` / `setup-token`); a login is interactive only. */
   addPastedAccount(input: unknown): Promise<AccountResult<AccountView>>;
   labelAccount(agent: string, id: string, label: unknown): Promise<AccountResult<AccountView>>;
