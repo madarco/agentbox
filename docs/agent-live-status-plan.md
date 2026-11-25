@@ -1,6 +1,6 @@
 # Agent live status: title, working-on line and tokens per box
 
-**Status:** Phases 0-3 done; Phase 4 done for the hub web, the CLI and the public docs (the tray is tracked separately). Open items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
+**Status:** Phases 0-4 done: hub web, CLI and public docs (PR #473), tray (`agentbox-tray` nightly, 0eb4a55). Open items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
 
 Every box should tell the hub, the web UI and the tray four things about the agent in it:
 
@@ -270,8 +270,9 @@ and cost appears only when positive. The box detail has an **Agent session** car
 
 - **Hub web:** the box row and box detail show the title, the working-on line and a token figure
   with an inline context-fill bar; hover gives the per-kind breakdown.
-- **Tray:** the box row shows the working-on line under the title, and tokens in the box submenu.
-  Update `../agentbox-tray/CLAUDE.md`, since this changes the `/api/v1` Box payload.
+- **Tray (done, `agentbox-tray` 0eb4a55):** the box row shows the working-on line under the name
+  while the agent is mid-turn, and the box submenu a tokens line (context fill, cost when above 0)
+  with the breakdown on hover. Its `CLAUDE.md` documents the new payload fields.
 - **CLI:** `agentbox ls` adds the working-on line, and `agentbox inspect` adds everything.
 - **Public docs:** update the box status page in `apps/web/content/docs/`, and recapture the
   figures that change, per `apps/web/images.md`.
