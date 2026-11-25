@@ -180,6 +180,9 @@ export const claudeSpec: AgentSyncSpec = {
   accountEnv: { 'api-key': 'ANTHROPIC_API_KEY', 'setup-token': 'CLAUDE_CODE_OAUTH_TOKEN' },
   // A setup token is an OAuth token: claude ignores one too short to be real
   // (3c Phase 0: a 49-character one read as "Not logged in").
+  // A session's transcript and its subagent dir, under the cwd key
+  // (`-workspace`); 3c Phase 0 resumed one copied into another volume.
+  sessionFiles: ['projects/*/{id}.jsonl', 'projects/*/{id}'],
   accountTokenPattern: {
     'setup-token': '^sk-ant-oat01-[A-Za-z0-9_-]{60,}$',
     'api-key': '^sk-ant-[a-z0-9]+-[A-Za-z0-9_-]{40,}$',

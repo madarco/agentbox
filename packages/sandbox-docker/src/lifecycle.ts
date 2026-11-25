@@ -50,6 +50,7 @@ import {
 } from './docker.js';
 import { CHECKPOINT_IMAGE_PREFIX, listAllCheckpointImages } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
+import { removeSwitchImages } from './switch-images.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
@@ -728,6 +729,8 @@ export async function destroyBox(
   }
   const beforeContainer = await inspectContainerStatus(box.container);
   await removeContainer(box.container);
+  // The image an account switch rebuilt the box from (hub settings 3c).
+  await removeSwitchImages(box.id);
   const afterContainer = await inspectContainerStatus(box.container);
   const removedContainer = beforeContainer !== 'missing' && afterContainer === 'missing';
 
