@@ -56,7 +56,7 @@ describe('codex live status', () => {
     expect(acts).toEqual(['read: server.js', 'exec: cat']);
   });
 
-  it('token_count gives cumulative totals and context fill; rate_limits are never projected', () => {
+  it('token_count gives cumulative totals and context fill; rate_limits only as a limits record', () => {
     const records = parse(ROLLOUT, [
       line('event_msg', {
         type: 'token_count',
@@ -86,8 +86,88 @@ describe('codex live status', () => {
         at: 0,
       },
       { kind: 'context', tokens: 6_500, window: 258_400, ts: '2026-11-24T10:00:01Z', at: 0 },
+      {
+        kind: 'limits',
+        windows: [{ id: 'primary', pct: 42, windowMinutes: 300 }],
+        ts: '2026-11-24T10:00:01Z',
+        at: 0,
+      },
     ]);
     expect(JSON.stringify(records)).not.toContain('used_percent');
+  });
+
+  it("rate_limits: a Pro plan's single weekly window, with its reset and plan", () => {
+    const records = parse(ROLLOUT, [
+      line('event_msg', {
+        type: 'token_count',
+        info: null,
+        rate_limits: {
+          limit_id: 'codex',
+          primary: { used_percent: 6.0, window_minutes: 10080, resets_at: 1_795_000_000 },
+          secondary: null,
+          credits: { has_credits: true, unlimited: false, balance: '0' },
+          plan_type: 'pro',
+          rate_limit_reached_type: null,
+        },
+      }),
+    ]);
+    expect(records).toEqual([
+      {
+        kind: 'limits',
+        windows: [
+          {
+            id: 'primary',
+            pct: 6,
+            windowMinutes: 10080,
+            resetsAt: new Date(1_795_000_000_000).toISOString(),
+          },
+        ],
+        plan: 'pro',
+        ts: '2026-11-24T10:00:01Z',
+        at: 0,
+      },
+    ]);
+  });
+
+  it('rate_limits: an older resets_in_seconds counts from the record time', () => {
+    const records = parse(ROLLOUT, [
+      line('event_msg', {
+        type: 'token_count',
+        info: null,
+        rate_limits: {
+          primary: { used_percent: 30, window_minutes: 300, resets_in_seconds: 3600 },
+        },
+      }),
+    ]);
+    expect(records).toMatchObject([
+      { kind: 'limits', windows: [{ id: 'primary', resetsAt: '2026-11-24T11:00:01.000Z' }] },
+    ]);
+  });
+
+  it('rate_limits: a reached limit is kept; no windows is no record', () => {
+    const [r] = parse(ROLLOUT, [
+      line('event_msg', {
+        type: 'token_count',
+        rate_limits: {
+          primary: { used_percent: 100, window_minutes: 300 },
+          secondary: { used_percent: 40, window_minutes: 10080 },
+          rate_limit_reached_type: 'primary',
+        },
+      }),
+    ]);
+    expect(r).toMatchObject({
+      kind: 'limits',
+      reached: 'primary',
+      windows: [
+        { id: 'primary', pct: 100 },
+        { id: 'secondary', pct: 40 },
+      ],
+    });
+    expect(
+      parse(ROLLOUT, [
+        line('event_msg', { type: 'token_count', rate_limits: { primary: null, secondary: null } }),
+      ]),
+    ).toEqual([]);
   });
 
   it('session_index rows name the session; the last one wins', () => {

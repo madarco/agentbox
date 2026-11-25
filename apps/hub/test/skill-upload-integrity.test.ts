@@ -10,6 +10,7 @@ import { treeHash, writeTar, type AgentSkillDirs } from '@agentbox/sandbox-core'
 import { importSkill, listSkills, readSkillMeta } from '../lib/backend/skills';
 import { createPcSkillsBackend, type PcReach } from '../lib/backend/skills-pc';
 import { syncSkillBoxes } from '../lib/backend/skill-boxes';
+import { setSkillSkipped } from '../lib/backend/skill-skips';
 import { memStore } from './_skills-mem-store';
 
 const AGENTS: AgentSkillDirs[] = [{ id: 'codex', dirs: ['.agents/skills'] }];
@@ -166,7 +167,8 @@ async function breakStored(store: ReturnType<typeof memStore>, name: string) {
   const full = (await store.get(path))!.data;
   const cut = full.subarray(0, Math.floor(full.length / 2));
   await store.put(path, cut);
-  const { verified: _v, ...legacy } = v;
+  const legacy = { ...v };
+  delete legacy.verified;
   await store.put(
     `skills/${name}/meta.json`,
     Buffer.from(
@@ -278,6 +280,11 @@ describe('a library entry stored truncated', () => {
     const out = await syncSkillBoxes(deps, { holding: ['fix-me'] });
     expect(out.map((o) => o.boxId)).toEqual(['b1']);
 
+    // A skipped skill is never pushed to a box, repaired or not.
+    await setSkillSkipped(store, 'fix-me', true);
+    expect(await syncSkillBoxes(deps, { holding: ['fix-me'] })).toEqual([]);
+    await setSkillSkipped(store, 'fix-me', false);
+
     // Re-uploading identical bytes is no repair.
     const again = await backend.pullSkills('self-id', ['fix-me']);
     expect(again[0]).toMatchObject({ status: 'unchanged' });
@@ -289,7 +296,8 @@ describe('a library entry stored truncated', () => {
     const s = bigSkill('gone', 10);
     await importSkill(store, { name: 'gone', meta: meta(s.sha), body: Readable.from([s.tar]) });
     const m = (await readSkillMeta(store, 'gone'))!;
-    const { verified: _v, ...legacy } = m.versions[0]!;
+    const legacy = { ...m.versions[0]! };
+    delete legacy.verified;
     await store.put(
       'skills/gone/meta.json',
       Buffer.from(JSON.stringify({ ...m, versions: [legacy] })),
@@ -304,7 +312,8 @@ describe('a library entry stored truncated', () => {
     const s = bigSkill('ok', 10);
     await importSkill(store, { name: 'ok', meta: meta(s.sha), body: Readable.from([s.tar]) });
     const m = (await readSkillMeta(store, 'ok'))!;
-    const { verified: _v, ...legacy } = m.versions[0]!;
+    const legacy = { ...m.versions[0]! };
+    delete legacy.verified;
     await store.put(
       'skills/ok/meta.json',
       Buffer.from(JSON.stringify({ ...m, versions: [legacy] })),

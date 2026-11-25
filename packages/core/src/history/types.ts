@@ -234,7 +234,33 @@ export type HistoryRecord =
       at: number;
     }
   /** Size of the last request's context, and the model's window when the agent records it. */
-  | { kind: 'context'; tokens: number; window?: number; ts?: string; at: number };
+  | { kind: 'context'; tokens: number; window?: number; ts?: string; at: number }
+  /**
+   * The plan-limit windows of the account the session runs on, as the agent
+   * last saw them (codex `token_count.rate_limits`). Account data, not the
+   * session's: the hub keeps the newest per account (hub settings Phase 3b).
+   */
+  | {
+      kind: 'limits';
+      windows: HistoryLimitWindow[];
+      /** The agent says a limit is hit (codex `rate_limit_reached_type`). */
+      reached?: string;
+      /** The plan the agent reports (codex `plan_type`). */
+      plan?: string;
+      ts?: string;
+      at: number;
+    };
+
+/** One plan-limit window: how much of it is used and when it resets. */
+export interface HistoryLimitWindow {
+  /** Stable within the source (`primary`, `secondary`). */
+  id: string;
+  /** Percent used, 0-100 (may exceed 100 at the limit). */
+  pct: number;
+  windowMinutes?: number;
+  /** ISO time the window resets. */
+  resetsAt?: string;
+}
 
 /** New bytes of one file, line-aligned at the start (the parser buffers the tail). */
 export interface RawChunk {
@@ -257,9 +283,40 @@ export interface HistoryIdentity {
   child?: boolean;
 }
 
+/** One plan-limit window as an agent's limits reader reports it. */
+export interface PlanLimitWindow {
+  /** Stable within the agent. */
+  id: string;
+  /** `5-hour`, `Weekly`, `Weekly, Fable`. */
+  label: string;
+  /** Percent used, 0-100 (100 or more is at the limit). */
+  pct: number;
+  /** ISO time the window resets. */
+  resetsAt?: string;
+  windowMinutes?: number;
+}
+
+/**
+ * Reads an account's plan limits with its stored secret, with no turn and no
+ * quota (hub settings Phase 3b). The hub calls it at most every 5 minutes per
+ * account and only while a box on the account runs. It must never refresh a
+ * login: a refresh rotates the refresh token and logs out its other holders.
+ * An agent without one reports limits through its transcripts instead (a
+ * `limits` history record), or not at all.
+ */
+export interface AgentPlanLimits {
+  /** The windows, or null when there is no data (no usable token, a refusal). */
+  read(
+    secret: string | null,
+    ctx: { fetch: typeof fetch; now: number; signal: AbortSignal; log?: (line: string) => void },
+  ): Promise<PlanLimitWindow[] | null>;
+}
+
 /** Hub-side parser facet of an agent module. */
 export interface AgentHistoryModule {
   readonly id: string;
+  /** Reads plan limits from the agent's own usage endpoint, when it has one. */
+  readonly planLimits?: AgentPlanLimits;
   /** Bumped when the projection changes, so Phase 3's re-parse knows what to redo. */
   readonly parserVersion: number;
   parse(chunk: RawChunk, state: ParseState): { records: HistoryRecord[]; state: ParseState };

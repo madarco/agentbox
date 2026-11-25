@@ -4,6 +4,8 @@
 //        capped by AGENTBOX_CUSTODY_MAX_BLOB_BYTES.
 //        Under the skill's `auto` policy the version becomes current and every
 //        running box behind on it syncs; under `manual` it waits as pending.
+//        A skipped name (`/api/v1/skill-skips`) is refused with 409: this is how
+//        a PC uploads (the TUI, the automatic first seed).
 // PATCH  /api/v1/skills/{name} {policy: 'auto'|'manual'} — the update policy.
 // DELETE /api/v1/skills/{name} — discard the skill and every stored version.
 //        Its skill bindings stay, so a global `disable` still holds if a skill
@@ -16,6 +18,7 @@ import {
   parsePolicy,
   setSkillPolicy,
 } from '@/lib/backend/skills';
+import { assertNotSkipped } from '@/lib/backend/skill-skips';
 import { backendOrNull } from '../../lib/backend';
 import { fail, ok } from '../../lib/envelope';
 import { failFromSkills, readJson, skillsStoreOrFail } from '../_service';
@@ -43,6 +46,7 @@ export async function PUT(
       return fail('invalid_request', `${SKILL_META_HEADER} must be base64-encoded JSON`);
     }
     const meta = parseImportMeta(decoded);
+    await assertNotSkipped(store, [name]);
     // DOM ReadableStream → node stream; the same bridge the custody blob route uses.
     const webBody = req.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>;
     // The declared length: a body that arrives shorter (or longer) is refused

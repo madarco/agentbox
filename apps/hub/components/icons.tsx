@@ -1,9 +1,10 @@
 import type { ReactElement, SVGProps } from 'react';
 import type { AgentMode } from '@agentbox/core';
+import { AGENT_LOGOS } from './agent-logos';
 
 // lucide-style stroke icons (24 box) ported from the shadcn prototype
-// (../agentbox-design/control-shadcn/icons.jsx). Three brand glyphs
-// (claude/codex/opencode) have no lucide equivalent, so the whole set is kept.
+// (../agentbox-design/control-shadcn/icons.jsx). Agents use their real brand
+// marks (agent-logos.ts) inside the same 24-box svg, so callers size them alike.
 
 export type IconProps = SVGProps<SVGSVGElement>;
 export type Icon = (props: IconProps) => ReactElement;
@@ -26,11 +27,13 @@ const mk =
     </svg>
   );
 
-const codex: Icon = (props: IconProps) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
-    <path d="M12 2.6 3.2 7v10l8.8 4.4L20.8 17V7L12 2.6Zm0 3.1a6.3 6.3 0 1 1 0 12.6 6.3 6.3 0 0 1 0-12.6Zm0 2.4a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8Z" />
-  </svg>
-);
+const logo =
+  (agent: string): Icon =>
+  (props: IconProps) => (
+    <svg viewBox="0 0 24 24" {...props}>
+      <image href={AGENT_LOGOS[agent]} x="1" y="1" width="22" height="22" />
+    </svg>
+  );
 
 const github: Icon = (props: IconProps) => (
   <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
@@ -112,12 +115,12 @@ export const Icons = {
     'M15.5 7.5a3.5 3.5 0 1 1-4.6 4.6L4 19l1.5 1.5M8 16l2 2M20 4l-4.5 4.5',
     'M15.5 7.5 20 4',
   ]),
-  claude: mk(['M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13']),
-  codex,
-  opencode: mk(['M9 8l-4 4 4 4', 'M15 8l4 4-4 4', 'M13 6l-2 12']),
-  // A pi glyph: the top bar plus two legs, the right one flicking out the way
-  // the letterform does.
-  pi: mk(['M5 8h14', 'M9.5 8v10', 'M15 8v7.5a2.5 2.5 0 0 0 2.5 2.5']),
+  gauge: mk(['M12 14l4-5', 'M5.6 18a8 8 0 1 1 12.8 0']),
+  claude: logo('claude'),
+  codex: logo('codex'),
+  opencode: logo('opencode'),
+  pi: logo('pi'),
+  openclaw: logo('openclaw'),
   github,
 } satisfies Record<string, Icon>;
 
@@ -137,6 +140,11 @@ export function LangDot({ lang }: { lang: string }) {
       style={{ background: langColor[lang] ?? '#9aa0a6' }}
     />
   );
+}
+
+/** An agent's brand mark, or a fallback glyph for agents with none (plugins). */
+export function agentIcon(agent: string, fallback: Icon = Icons.box): Icon {
+  return (AGENT_LOGOS[agent] && (Icons as Record<string, Icon>)[agent]) || fallback;
 }
 
 export const AGENTS: { id: AgentMode; label: string; icon: Icon }[] = [

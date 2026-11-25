@@ -5,6 +5,7 @@
 //   skills/<name>/meta.json          SkillMeta: description, current version, version list
 //   skills/<name>/<treeSha>.tar.gz   one normalized tree per version
 //   skills/.seeded                   written by the first import ever; never removed
+//   skills/.skipped.json             names never synced (lib/backend/skill-skips.ts)
 //
 // The version id is the TREE hash the uploading PC computed over the normalized
 // files (sorted paths, modes, content hashes), not the tarball's bytes: the same
@@ -15,6 +16,7 @@
 // Pure over a structural slice of the custody store, so it runs against an
 // in-memory fake in tests and against `globalThis.__AGENTBOX_HUB_CUSTODY` in the
 // routes (which keeps @agentbox/relay out of Next's bundle).
+import { readSkips, skippedNames } from '@agentbox/core';
 import { readTar, treeHash } from '@agentbox/sandbox-core';
 
 export interface SkillsStoreEntry {
@@ -142,6 +144,8 @@ export interface SkillsListing {
   /** True once any skill was ever imported here, even if every one was since discarded. */
   seeded: boolean;
   skills: SkillSummary[];
+  /** Names the owner marked "never sync" (may include names the library doesn't hold). */
+  skipped: string[];
 }
 
 /** What the uploading PC states about the tarball it streams. */
@@ -172,6 +176,8 @@ export class SkillsError extends Error {
   constructor(
     readonly code: 'invalid_request' | 'not_found' | 'conflict' | 'payload_too_large',
     message: string,
+    /** Machine-readable `error.details` for the envelope (e.g. `{reason: 'skipped'}`). */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'SkillsError';
@@ -391,7 +397,8 @@ export async function listSkills(store: SkillsStore): Promise<SkillsListing> {
     const row = meta ? summarize(meta) : null;
     if (row) skills.push(row);
   }
-  return { seeded, skills };
+  const skipped = skippedNames(await readSkips(store));
+  return { seeded, skills, skipped };
 }
 
 export interface ImportResult {

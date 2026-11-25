@@ -11,6 +11,7 @@ import {
   type HistoryRecord,
 } from '@agentbox/core';
 import { createHistoryService, type HistoryArchive } from '../lib/backend/history';
+import { subscriptionOf } from '../lib/backend/accounts';
 import { openSqliteHistoryRepo } from '../lib/history-sqlite';
 
 function memArchive(): HistoryArchive {
@@ -34,6 +35,14 @@ function lineModule(id: string): AgentHistoryModule {
       const partial = lines.pop() ?? '';
       const records: HistoryRecord[] = lines.map((raw) => {
         const l = JSON.parse(raw) as Record<string, string | number>;
+        if (l.limits) {
+          return {
+            kind: 'limits',
+            windows: [{ id: 'primary', pct: Number(l.limits), windowMinutes: 10080 }],
+            ...(l.ts ? { ts: String(l.ts) } : {}),
+            at: chunk.offset,
+          };
+        }
         return {
           kind: 'usage',
           messageId: String(l.id),
@@ -63,11 +72,7 @@ async function setup(accounts: Record<string, string> = {}) {
     archive: memArchive(),
     retentionDays: 90,
     accountOf: async (boxId, agent) =>
-      boxId in accounts
-        ? accounts[boxId] === ''
-          ? 'default'
-          : `${agent}/${accounts[boxId]!}`
-        : null,
+      boxId in accounts ? `${agent}/${accounts[boxId] || 'default'}` : null,
   });
   const ship = async (
     o: { boxId: string; boxName?: string; hostId?: string; repo?: string },
@@ -151,7 +156,17 @@ describe('usage (Phase 7)', () => {
     });
 
     const byAccount = await svc.usage({ by: ['account'], tzOffsetMin: 0, limit: 50 });
-    expect(byAccount.groups.map((g) => g.keys.account).sort()).toEqual(['codex/work', 'default']);
+    expect(byAccount.groups.map((g) => g.keys.account).sort()).toEqual([
+      'claude/default',
+      'codex/work',
+    ]);
+    const msgs = async (account: string) =>
+      (await svc.usage({ by: [], tzOffsetMin: 0, limit: 50, account })).totals.messages;
+    expect(await msgs('codex/work')).toBe(1);
+    expect(await msgs('claude/work')).toBe(0);
+    expect(await msgs('work')).toBe(1);
+    expect(await msgs('claude/default')).toBe(2);
+    expect(await msgs('w%')).toBe(0);
 
     expect(
       (await svc.usage({ by: [], tzOffsetMin: 0, limit: 50, project: 'o/b' })).totals.messages,
@@ -252,6 +267,23 @@ describe('usage (Phase 7)', () => {
     expect((await repo.getSession('claude:s8'))!.account).toBeNull();
   });
 
+  it('keeps the newest limits per subscription, across its sessions (3b)', async () => {
+    const { svc, ship, repo } = await setup({ b1: 'work', b2: 'work', b3: '' });
+    await ship({ boxId: 'b1' }, 'codex', 'x1', [{ limits: 20, ts: day1 }]);
+    await ship({ boxId: 'b2' }, 'codex', 'x2', [{ limits: 55, ts: day2 }]);
+    // An older record shipped later does not win.
+    await ship({ boxId: 'b1' }, 'codex', 'x3', [{ limits: 10, ts: day1late }]);
+    await ship({ boxId: 'b3' }, 'codex', 'x4', [{ limits: 90, ts: day1 }]);
+    expect(await repo.accountLimits('codex/work')).toMatchObject({
+      windows: [{ id: 'primary', pct: 55, windowMinutes: 10080 }],
+      ts: day2,
+    });
+    expect((await repo.accountLimits('codex/default'))?.windows[0]?.pct).toBe(90);
+    expect(await repo.accountLimits('codex/none')).toBeNull();
+    // Limits are not turns or usage.
+    expect((await svc.usage({ by: [], tzOffsetMin: 0, limit: 10 })).totals.messages).toBe(0);
+  });
+
   it('migrates a pre-Phase-7 store: message times filled from ts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'usage-mig-'));
     const path = join(dir, 'history.db');
@@ -267,9 +299,12 @@ describe('usage (Phase 7)', () => {
       cache_read_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL, ts TEXT,
       PRIMARY KEY (session_key, message_id));
       INSERT INTO history_sessions (key, agent, session_id, created_at, updated_at) VALUES ('claude:o', 'claude', 'o', 1, 1);
+      ALTER TABLE history_sessions ADD COLUMN account TEXT;
+      INSERT INTO history_sessions (key, agent, session_id, account, created_at, updated_at) VALUES ('codex:p', 'codex', 'p', 'work', 1, 1);
+      INSERT INTO history_sessions (key, agent, session_id, box_id, account, created_at, updated_at) VALUES ('pi:q', 'pi', 'q', 'bq', 'default', 1, 1);
       INSERT INTO history_usage VALUES ('claude:o', 'm', 1, 'x', 4, 2, 0, 0, '${day2}');`);
     old.close();
-    const repo = await openSqliteHistoryRepo(path);
+    const repo = await openSqliteHistoryRepo(path, { borrowingAgents: ['pi'] });
     const r = await repo.usage({ by: ['day'], tzOffsetMin: 0, limit: 10 });
     expect(r.groups).toMatchObject([{ keys: { day: '2026-11-21' }, totalTokens: 6 }]);
     const inWindow = await repo.usage({
@@ -280,5 +315,23 @@ describe('usage (Phase 7)', () => {
       untilMs: Date.parse(day2) + 1,
     });
     expect(inWindow.totals.messages).toBe(1);
+    // A bare account id (before hub settings 3a) becomes the agent's subscription.
+    expect((await repo.getSession('codex:p'))!.account).toBe('codex/work');
+    // A borrowing agent's bare id may be a lender's: cleared for the backfill.
+    expect((await repo.getSession('pi:q'))!.account).toBeNull();
+    const svc = createHistoryService({
+      repo,
+      archive: memArchive(),
+      retentionDays: 90,
+      accountOf: async (boxId, agent) =>
+        boxId === 'bq' ? subscriptionOf({ borrowedCredentials: ['codex'] }, agent) : null,
+    });
+    expect(await svc.backfillAccounts()).toBe(1);
+    expect((await repo.getSession('pi:q'))!.account).toBe('codex/default');
+
+    // A second open changes nothing.
+    const again = await openSqliteHistoryRepo(path, { borrowingAgents: ['pi'] });
+    expect((await again.getSession('pi:q'))!.account).toBe('codex/default');
+    expect((await again.getSession('codex:p'))!.account).toBe('codex/work');
   });
 });

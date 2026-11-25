@@ -1487,8 +1487,17 @@ export interface AccountView {
   identity?: AccountIdentity;
   /** Whether a secret is stored for it (a login whose capture failed has none). */
   hasSecret: boolean;
-  /** Names of the boxes that record this account (running it, or borrowing it). */
+  /**
+   * Names of the boxes whose usage counts under this account: running it
+   * (the default account included), or borrowing it as model auth.
+   */
   boxes: string[];
+  /**
+   * Plan limits, one window per limit the source reports (hub settings 3b).
+   * Absent = no data (an API key, a claude login with no running box yet, a
+   * codex account with no session), never 0%.
+   */
+  limits?: AccountLimits;
 }
 
 /** An agent that can hold named accounts, and which kinds. */
@@ -1502,7 +1511,12 @@ export type AccountResult<T> =
   | { ok: false; code: 'invalid_request' | 'not_found' | 'conflict'; error: string };
 
 export interface AccountBackend {
-  listAccounts(): Promise<{ accounts: AccountView[]; agents: AccountAgentView[] }>;
+  listAccounts(): Promise<{
+    accounts: AccountView[];
+    agents: AccountAgentView[];
+    /** The machine id these accounts belong to (custody keys named accounts by it). */
+    machine?: string;
+  }>;
   /** A pasteable kind (`api-key` / `setup-token`); a login is interactive only. */
   addPastedAccount(input: unknown): Promise<AccountResult<AccountView>>;
   labelAccount(agent: string, id: string, label: unknown): Promise<AccountResult<AccountView>>;
@@ -1513,6 +1527,9 @@ export interface AccountBackend {
 }
 
 export type AccountKind = 'login' | 'setup-token' | 'api-key';
+
+export type { AccountLimits, AccountLimitWindow } from '../backend/account-limits';
+import type { AccountLimits } from '../backend/account-limits';
 
 export interface AccountIdentity {
   email?: string;

@@ -86,6 +86,62 @@ describe('skills.get', () => {
   });
 });
 
+describe('skipped skills', () => {
+  it('never delivers a skipped skill, even to a box bound or flagged to include it', async () => {
+    const store = await library([
+      { name: 'one', version: sha('a'), bytes: Buffer.from('tar-one') },
+      { name: 'two', version: sha('b'), bytes: Buffer.from('tar-two!') },
+    ]);
+    await store.put(
+      'skills/.skipped.json',
+      Buffer.from(JSON.stringify({ schema: 1, skipped: { one: { at: '' } } })),
+    );
+    await store.put(
+      'skills/.bindings.json',
+      Buffer.from(
+        JSON.stringify({
+          schema: 1,
+          global: {},
+          workspace: {},
+          project: {},
+          box: { b1: { one: 'include' } },
+        }),
+      ),
+    );
+    const only = [{ name: 'two', version: sha('b'), bytes: 8 }];
+    expect((await resolveBoxSkills(store, undefined)).skills).toEqual(only);
+    expect(
+      (await resolveBoxSkills(store, { include: ['one', 'two'] }, { boxId: 'b1' })).skills,
+    ).toEqual(only);
+    // blob is box-scoped to the resolved set, so a skipped skill can't be read either.
+    const r = await runSkillsRpc(store, undefined, 'skills.blob', {
+      name: 'one',
+      version: sha('a'),
+      offset: 0,
+    });
+    expect(r.exitCode).not.toBe(0);
+  });
+
+  it('fails skills.get closed when the skips file is corrupt', async () => {
+    const store = await library([{ name: 'one', version: sha('a'), bytes: Buffer.from('x') }]);
+    await store.put('skills/.skipped.json', Buffer.from('{broken'));
+    const r = await runSkillsRpc(store, undefined, 'skills.get', {}, { boxId: 'b1' });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/skipped\.json can't be read \(not valid JSON\)/);
+    // Nothing was recorded as served either.
+    expect(await store.get(boxSkillsRecordPath('b1'))).toBeNull();
+  });
+
+  it('delivers it again once unskipped', async () => {
+    const store = await library([{ name: 'one', version: sha('a'), bytes: Buffer.from('x') }]);
+    await store.put(
+      'skills/.skipped.json',
+      Buffer.from(JSON.stringify({ schema: 1, skipped: {} })),
+    );
+    expect((await resolveBoxSkills(store, undefined)).skills.map((s) => s.name)).toEqual(['one']);
+  });
+});
+
 describe('skills.blob', () => {
   it('serves a tarball in bounded chunks that reassemble exactly', async () => {
     const big = Buffer.alloc(SKILL_BLOB_CHUNK_BYTES * 2 + 123, 7);

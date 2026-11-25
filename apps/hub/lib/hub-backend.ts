@@ -142,6 +142,7 @@ import {
   listProviderDescriptors,
   resolveProviderDescriptor,
   readAccounts,
+  readAccountSecret,
   resolveLlmProxyRecord,
   type FileManifest,
 } from '@agentbox/sandbox-core';
@@ -221,7 +222,9 @@ import {
   resolveCreateAccounts,
   setDefaultCheckpointRefusal,
 } from './backend/accounts';
+import { createLimitsSource } from './backend/account-limits';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
+import { createProjectCustodySlugs } from './backend/project-custody';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import { createProjectDir } from './boxes/create-project';
 import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
@@ -392,7 +395,10 @@ function mapStatus(b: ListedBox): BoxStatus {
 function hostLabel(b: ListedBox): string {
   const provider = b.provider ?? 'docker';
   if (provider === 'docker') return 'local · docker';
-  return b.cloud?.backend ? `${provider} · ${b.cloud.backend}` : provider;
+  // Every built-in cloud records its own name as the backend; only a backend
+  // that differs from the provider says anything.
+  const backend = b.cloud?.backend;
+  return backend && backend !== provider ? `${provider} · ${backend}` : provider;
 }
 
 /**
@@ -2223,18 +2229,31 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       skillsRepaired: (names) => skills.skillsRepaired(names),
     }),
   );
+  // One per hub: it caches each account's last usage-endpoint read.
+  const accountLimits = createLimitsSource({
+    readSecret: (agent, id) => readAccountSecret(agent, id),
+    transcriptLimits: async (subscription) =>
+      (await globalThis.__AGENTBOX_HUB_HISTORY?.repo.accountLimits(subscription)) ?? null,
+    log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+  });
   // A box records its account in state.json AND in its relay registration;
   // a Store-only box has only the latter, and must still block `accounts rm`.
   const accounts = createAccountBackend({
-    boxes: async () => [
-      ...(await readState()).boxes,
-      ...(await handle.store.listBoxes().catch(() => [])).map((r) => ({
-        name: r.name,
-        ...(r.accounts ? { accounts: r.accounts } : {}),
-      })),
-    ],
+    limits: accountLimits,
+    // A local box is in both: its state.json record (the richer one) wins.
+    boxes: async () => {
+      const local = (await readState()).boxes;
+      const seen = new Set(local.map((b) => b.id));
+      return [
+        ...local,
+        ...(await handle.store.listBoxes().catch(() => []))
+          .filter((r) => !seen.has(r.boxId))
+          .map((r) => ({ name: r.name, ...(r.accounts ? { accounts: r.accounts } : {}) })),
+      ];
+    },
   });
   const workspaces = createWorkspaceBackend(backendDeps);
+  const custodySlugs = createProjectCustodySlugs();
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
   const boxPrs = createBoxPrLookup({ sync: prSync });
@@ -2406,7 +2425,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // Each registered box needs a project to render under (the dashboard groups
       // strictly by projectId). Add a synthetic one per new project key not
       // already produced by listProjects — sharing the box row's id.
-      const projects = await listProjects(listed);
+      const projects = await Promise.all(
+        (await listProjects(listed)).map(async (p) => ({
+          ...p,
+          custodySlugs: await custodySlugs.local(p),
+        })),
+      );
       const projectIds = new Set(projects.map((p) => p.id));
       // Repo-identity cards for the regrouped local boxes, before the registered
       // ones (same shape, same dedupe by project id).
@@ -2421,6 +2445,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           provider: reg.backend ?? 'cloud',
           createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
           ...custodyIdentityFromRegistration(reg),
+          custodySlugs: custodySlugs.registered(reg),
         });
       }
       for (const reg of registered) {
@@ -2440,6 +2465,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           // box (SQLite store, no Postgres source) shows an empty panel even when
           // custody genuinely holds the seed.
           ...custodyIdentityFromRegistration(reg),
+          custodySlugs: custodySlugs.registered(reg),
         });
       }
       // Resolved before mapping because `mapBox` is sync and the git answer is a

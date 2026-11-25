@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentsForSkillDirs,
   compareSkills,
+  isOutOfSync,
   skillDirOfPath,
   type AgentSkillDirs,
 } from '../src/skills/compare.js';
@@ -75,6 +76,20 @@ describe('compareSkills', () => {
     const [r] = compareSkills([l('a', '', 0)], [h('a', 'q')]);
     expect(r!.status).toBe('differs');
     expect(r!.newer).toBeUndefined();
+  });
+  it('a skipped name is skipped whatever each side holds, and never out of sync', () => {
+    const rows = compareSkills(
+      [l('a', 'y', Date.parse('2026-02-01')), l('d', 'z')],
+      [h('a', 'q'), h('c', 'r')],
+      ['a', 'c', 'd', 'nowhere'],
+    );
+    expect(rows.map((r) => [r.name, r.status, r.newer])).toEqual([
+      ['a', 'skipped', undefined],
+      ['c', 'skipped', undefined],
+      ['d', 'skipped', undefined],
+    ]);
+    expect(rows.some((r) => isOutOfSync(r.status))).toBe(false);
+    expect(['differs', 'local-only', 'hub-only'].every(isOutOfSync)).toBe(true);
   });
 });
 

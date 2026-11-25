@@ -110,15 +110,15 @@ export const SCREENS = [
   }),
   hub({
     id: "hub/usage",
-    title: "Usage: tokens by day, agent, account, box and model",
-    what: "Seven days of token usage (demo numbers) by day, agent, account, box and model.",
+    title: "Usage: tokens by day, agent, subscription, box and model",
+    what: "Seven days of token usage (demo numbers) by day, agent, subscription, box and model, with the Subscription filter.",
     files: [{ shoot: "pnpm shoot hub/usage.png /usage --full" }],
     social: { title: "Where the tokens went, per box and per account", crop: [0, 0, 2880, 1800] },
   }),
   hub({
     id: "hub/files",
     title: "Files: what the hub holds for boxes",
-    what: "Agent logins, project seeds, bake records, the skills library and a box SSH key, metadata only.",
+    what: "Project files per project, agent logins per account, the skills library, bakes and box keys, with size and last update; metadata only.",
     files: [{ shoot: "pnpm shoot hub/files.png /settings/files --full" }],
   }),
   hub({
@@ -163,10 +163,19 @@ export const SCREENS = [
   hub({
     id: "hub/subscriptions",
     topic: "Web hub: skills and accounts",
-    title: "Subscriptions: LLM accounts",
-    what: "Several logins, setup tokens and API keys per agent, with the boxes that use each one.",
-    files: [{ shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions" }],
-    social: { title: "Several Claude and Codex accounts, one per box" },
+    title: "Subscriptions: plans and keys",
+    what: "Logins and setup tokens grouped by Anthropic and OpenAI Codex, plus API keys: each card with its tier, account, boxes, one meter per limit window the plan reports, and an amber note at the limit.",
+    files: [{ shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions --full" }],
+    social: { title: "Several Claude and Codex accounts, with their plan limits", crop: [0, 0, 2880, 1800] },
+  }),
+  hub({
+    id: "hub/quota-meter",
+    topic: "Web hub: skills and accounts",
+    title: "Quota meter in the top bar",
+    what: "The two subscriptions in use closest to a limit, one bar per window; the card lists every in-use subscription's windows and resets.",
+    via: "Hover or click the meter at the right of the top bar.",
+    files: [{ shoot: "pnpm shoot hub/quota-meter.png / --click button[aria-haspopup=dialog] --wait 300" }],
+    social: { title: "Every plan limit, one glance from any page" },
   }),
 
   /* ======== macOS tray ======== */

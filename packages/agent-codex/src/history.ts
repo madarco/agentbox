@@ -22,6 +22,7 @@ import {
   parseJsonlChunk,
   toolActivity,
   type AgentHistoryModule,
+  type HistoryLimitWindow,
   type HistoryRecord,
   type JsonObject,
   type ParseState,
@@ -112,6 +113,56 @@ function tokenCountRecords(p: JsonObject, tsPart: { ts?: string }, at: number): 
   return out;
 }
 
+/** One `rate_limits` window (`primary` / `secondary`); null or junk is no window. */
+/**
+ * One window. `resets_at` is unix seconds; older codex wrote only
+ * `resets_in_seconds`, counted from the record's own timestamp.
+ */
+function limitWindow(id: string, raw: unknown, tsMs: number | null): HistoryLimitWindow | null {
+  const w = asObject(raw);
+  if (!w || typeof w.used_percent !== 'number' || !Number.isFinite(w.used_percent)) return null;
+  const minutes = finiteNumber(w.window_minutes);
+  const inSeconds = finiteNumber(w.resets_in_seconds);
+  const resets =
+    finiteNumber(w.resets_at) ||
+    (tsMs !== null && inSeconds > 0 ? Math.round(tsMs / 1000 + inSeconds) : 0);
+  return {
+    id,
+    pct: Math.max(0, w.used_percent),
+    ...(minutes > 0 ? { windowMinutes: minutes } : {}),
+    ...(resets > 0 ? { resetsAt: new Date(resets * 1000).toISOString() } : {}),
+  };
+}
+
+/**
+ * `token_count.rate_limits`: the plan windows of the login the session runs
+ * on (hub settings Phase 3b). A plan has the windows it has (Pro: weekly only,
+ * `secondary: null`), so only the present ones are kept.
+ */
+function limitsRecords(p: JsonObject, tsPart: { ts?: string }, at: number): HistoryRecord[] {
+  const rl = asObject(p.rate_limits);
+  if (!rl) return [];
+  const tsMs = tsPart.ts ? Date.parse(tsPart.ts) : NaN;
+  const base = Number.isFinite(tsMs) ? tsMs : null;
+  const windows = [
+    limitWindow('primary', rl.primary, base),
+    limitWindow('secondary', rl.secondary, base),
+  ].filter((w): w is HistoryLimitWindow => w !== null);
+  if (windows.length === 0) return [];
+  const reached = nonEmptyString(rl.rate_limit_reached_type);
+  const plan = nonEmptyString(rl.plan_type);
+  return [
+    {
+      kind: 'limits',
+      windows,
+      ...(reached ? { reached } : {}),
+      ...(plan ? { plan } : {}),
+      ...tsPart,
+      at,
+    },
+  ];
+}
+
 /** One `session_index.jsonl` row (copied by the row cursor): the session's name. */
 function indexRecords(line: JsonObject, at: number): HistoryRecord[] {
   const row = asObject(line.row);
@@ -173,8 +224,9 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
         const line = commandActivity(p);
         return line ? [{ kind: 'activity', text: line, ...tsPart, at }] : [];
       }
-      if (p.type === 'token_count') return tokenCountRecords(p, tsPart, at);
-      // `rate_limits` (on token_count) is account data: never projected.
+      if (p.type === 'token_count') {
+        return [...tokenCountRecords(p, tsPart, at), ...limitsRecords(p, tsPart, at)];
+      }
       return [];
     }
     case 'token_usage_record': {
@@ -207,7 +259,8 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
 export const codexHistoryModule: AgentHistoryModule = {
   id: 'codex',
   // 2: working-on line, `token_count` totals and context, session names.
-  parserVersion: 2,
+  // 3: `token_count.rate_limits` as a `limits` record.
+  parserVersion: 3,
 
   identify(head, path) {
     const index = INDEX_FILE.exec(path);

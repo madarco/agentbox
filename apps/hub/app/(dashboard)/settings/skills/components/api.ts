@@ -38,6 +38,8 @@ export interface SkillRow {
 export interface SkillsListing {
   seeded: boolean;
   skills: SkillRow[];
+  /** Names marked "never sync" (`/api/v1/skill-skips`). */
+  skipped?: string[];
 }
 
 export interface Finding {
@@ -167,7 +169,7 @@ export interface SkillMachine {
   online: boolean;
 }
 
-export type CompareStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'unknown';
+export type CompareStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'skipped' | 'unknown';
 
 export interface CompareRow {
   name: string;
@@ -194,6 +196,8 @@ export interface SkillCompare {
   error?: string;
   rows: CompareRow[];
   outOfSync: number;
+  /** Every skipped name. Absent from a hub older than the skip. */
+  skipped?: string[];
 }
 
 export type PullResult =

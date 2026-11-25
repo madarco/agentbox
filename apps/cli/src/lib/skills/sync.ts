@@ -6,7 +6,11 @@
  * custody directly), so a local hub and a remote control box behave the same.
  */
 import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
-import type { HubApiClient, HubApiSkill } from '../../control-plane/hub-api-client.js';
+import {
+  HubApiError,
+  type HubApiClient,
+  type HubApiSkill,
+} from '../../control-plane/hub-api-client.js';
 import {
   compareSkills as compareShared,
   discoverLocalSkills,
@@ -33,12 +37,16 @@ export interface SkillsContext {
 
 export type SkillRow = CompareRow<LocalSkill, HubApiSkill>;
 
-/** Local and hub skills side by side, matched by name (the shared comparison). */
+/**
+ * Local and hub skills side by side, matched by name (the shared comparison).
+ * A name in `skipped` (the hub's "never sync" list) is `skipped`.
+ */
 export function compareSkills(
   local: readonly LocalSkill[],
   hub: readonly HubApiSkill[],
+  skipped: Iterable<string> = [],
 ): SkillRow[] {
-  return compareShared(local, hub);
+  return compareShared(local, hub, skipped);
 }
 
 export type UploadOutcome =
@@ -67,6 +75,13 @@ export async function uploadLocalSkill(
   return { name: skill.name, status: res.changed ? 'uploaded' : 'unchanged', version: res.version };
 }
 
+/** The hub's 409 for a skill marked "never sync" (`error.details.reason: 'skipped'`). */
+export function isSkippedRefusal(err: unknown): boolean {
+  if (!(err instanceof HubApiError) || err.status !== 409 || err.code !== 'conflict') return false;
+  const d = err.details as { reason?: unknown } | undefined;
+  return d?.reason === 'skipped';
+}
+
 export interface SeedOutcome {
   uploaded: string[];
   skipped: { name: string; reason: string }[];
@@ -77,7 +92,8 @@ export interface SeedOutcome {
 /**
  * The automatic first seed (owner direction 2): when the hub has never held a
  * skill, upload every clean local skill. Flagged or invalid skills are skipped
- * and named. Returns null when the hub is already seeded — after the first seed,
+ * and named; a skill the hub marks skipped ("never sync") is left out without a
+ * word. Returns null when the hub is already seeded — after the first seed,
  * adding a skill is always an explicit action.
  */
 export async function seedSkillsIfEmpty(
@@ -86,7 +102,10 @@ export async function seedSkillsIfEmpty(
 ): Promise<SeedOutcome | null> {
   const listing = await client.listSkills();
   if (listing.seeded) return null;
-  const local = await discoverLocalSkills({ home: ctx.home, maxBytes: ctx.maxBytes });
+  const never = new Set(listing.skipped ?? []);
+  const local = (await discoverLocalSkills({ home: ctx.home, maxBytes: ctx.maxBytes })).filter(
+    (s) => !never.has(s.name),
+  );
   const out: SeedOutcome = { uploaded: [], skipped: [], failed: [] };
   for (const skill of local) {
     try {
@@ -94,6 +113,8 @@ export async function seedSkillsIfEmpty(
       if (r.status === 'skipped') out.skipped.push({ name: r.name, reason: r.reason });
       else out.uploaded.push(r.name);
     } catch (err) {
+      // Skipped on the hub after the listing above: intended, not a failure.
+      if (isSkippedRefusal(err)) continue;
       out.failed.push({
         name: skill.name,
         reason: err instanceof Error ? err.message : String(err),

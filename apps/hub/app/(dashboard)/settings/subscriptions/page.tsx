@@ -4,33 +4,25 @@
 // tokens, API keys per agent; docs/llm-accounts-plan.md, Phase 5). PURE REST
 // CLIENT over /api/v1/accounts: list, add a pasted key or setup token, relabel,
 // remove. A login is interactive and runs on the machine, so it is a command
-// to copy, not a form. No secret ever comes back from the API.
+// to copy, not a form. No secret ever comes back from the API. Each card shows
+// one meter per plan-limit window the account reports (hub settings 3b,
+// design: control-shadcn/views-env.jsx SubscriptionsPane).
 
-import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { SubMark, SubMeters, TierBadge, subLine, subName } from '@/components/subscription-meters';
+import { refreshAccounts, resetText, useAccounts, type Account } from '@/lib/accounts-client';
+import { groupSubscriptions, subscriptionKey, type AccountKind } from '@/lib/subscriptions';
+import { cn } from '@/lib/utils';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 
-type Kind = 'login' | 'setup-token' | 'api-key';
-
-interface Account {
-  agent: string;
-  id: string;
-  label?: string;
-  kind: Kind;
-  identity?: { email?: string; org?: string; plan?: string };
-  hasSecret: boolean;
-  boxes: string[];
-}
-
-interface AgentKinds {
-  id: string;
-  kinds: Kind[];
-}
+type Kind = AccountKind;
 
 const KIND_LABEL: Record<Kind, string> = {
   login: 'login',
@@ -51,14 +43,30 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 const enc = (a: Account): string => `/${encodeURIComponent(a.agent)}/${encodeURIComponent(a.id)}`;
 
-function identityOf(a: Account): string {
-  return [a.identity?.email, a.identity?.org, a.identity?.plan].filter(Boolean).join(' · ');
+function fmtTokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`;
+  return String(n);
+}
+
+/** Tokens per subscription over the last 7 days, keyed `agent/account`; null = history off. */
+async function loadWeekTokens(): Promise<Map<string, number> | null> {
+  const r = await fetch('/api/v1/usage?by=account&since=7d&limit=1000', {
+    credentials: 'same-origin',
+  });
+  if (!r.ok) return null;
+  const body = (await r.json()) as {
+    groups: Array<{ keys: { account?: string | null }; totalTokens: number }>;
+  };
+  const m = new Map<string, number>();
+  for (const g of body.groups) if (g.keys.account) m.set(g.keys.account, g.totalTokens);
+  return m;
 }
 
 export default function SubscriptionsPage() {
-  const [accounts, setAccounts] = useState<Account[] | null>(null);
-  const [agents, setAgents] = useState<AgentKinds[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { accounts, agents, error } = useAccounts();
+  const [weekTokens, setWeekTokens] = useState<Map<string, number> | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
@@ -69,20 +77,13 @@ export default function SubscriptionsPage() {
   const [label, setLabel] = useState('');
   const [token, setToken] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      const r = await api<{ accounts: Account[]; agents: AgentKinds[] }>('');
-      setAccounts(r.accounts);
-      setAgents(r.agents);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
+  // Usage is a side fact: the cards render without it.
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadWeekTokens()
+      .catch(() => null)
+      .then(setWeekTokens);
+  }, []);
+  const load = refreshAccounts;
 
   const pastedAgents = agents.filter((a) => a.kinds.some((k) => k !== 'login'));
   const chosen = pastedAgents.find((a) => a.id === agent) ?? pastedAgents[0];
@@ -138,9 +139,9 @@ export default function SubscriptionsPage() {
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
       <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Subscriptions</h1>
       <div className="mt-1.5 text-sm text-muted-foreground">
-        The LLM accounts boxes can run on: several logins, setup tokens or API keys per agent.
-        Choose one when you create a box; <span className="font-mono">default</span> is the
-        agent&apos;s plain login.
+        The plans and keys boxes run on: several logins, setup tokens or API keys per agent. Choose
+        one when you create a box; <span className="font-mono">default</span> is the agent&apos;s
+        plain login. A box that borrows another agent&apos;s login counts under that login.
       </div>
 
       {error ? (
@@ -158,86 +159,48 @@ export default function SubscriptionsPage() {
             <div className="mt-4 font-mono text-xs text-red-400">{actionError}</div>
           ) : null}
 
-          <SectionLabel
-            right={
-              <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                {accounts.length}
-              </span>
-            }
-          >
-            On this machine
-          </SectionLabel>
           {accounts.length === 0 ? (
-            <EmptyBox>
-              <div>No accounts yet.</div>
-              <div className="mt-1.5 font-mono text-xs text-muted-foreground">
-                Sign in with `agentbox claude login`, or add a named one below.
-              </div>
-            </EmptyBox>
+            <>
+              <SectionLabel>On this machine</SectionLabel>
+              <EmptyBox>
+                <div>No accounts yet.</div>
+                <div className="mt-1.5 font-mono text-xs text-muted-foreground">
+                  Sign in with `agentbox claude login`, or add a named one below.
+                </div>
+              </EmptyBox>
+            </>
           ) : (
-            <Card className="divide-y divide-border/60 overflow-hidden">
-              {accounts.map((a) => {
-                const key = `${a.agent}/${a.id}`;
-                const named = a.id !== 'default';
-                return (
-                  <div key={key} className="flex items-center gap-4 p-4 px-5 max-sm:flex-wrap">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[13px]">{key}</span>
-                        {a.label ? (
-                          <span className="text-[13px] text-secondary-foreground">{a.label}</span>
-                        ) : null}
-                        <Badge variant="outline">{KIND_LABEL[a.kind]}</Badge>
-                        {a.hasSecret ? null : <Badge variant="outline">no secret stored</Badge>}
-                      </div>
-                      <div className="mt-1 text-[12px] text-muted-foreground">
-                        {identityOf(a) || '—'}
-                        {a.boxes.length > 0 ? ` · used by ${a.boxes.join(', ')}` : ''}
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy !== null}
-                      onClick={() => relabel(a)}
-                    >
-                      <Icons.pencil /> Label
-                    </Button>
-                    {named ? (
-                      confirmRemove === key ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            disabled={busy !== null}
-                            onClick={() => void remove(a)}
-                          >
-                            Remove {key}
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(null)}>
-                            Keep
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy !== null || a.boxes.length > 0}
-                          title={
-                            a.boxes.length > 0
-                              ? 'Destroy the boxes that use it first'
-                              : 'Remove its stored login and config volume'
-                          }
-                          onClick={() => setConfirmRemove(key)}
-                        >
-                          <Icons.trash /> Remove
-                        </Button>
-                      )
-                    ) : null}
-                  </div>
-                );
-              })}
-            </Card>
+            groupSubscriptions(accounts).map((g) => (
+              <div key={g.title}>
+                <SectionLabel
+                  right={
+                    <span className="font-mono text-[11px] normal-case tracking-normal text-[#a4a9b0]">
+                      {g.title === 'API keys'
+                        ? 'pay as you go'
+                        : `${String(g.accounts.length)} ${g.accounts.length === 1 ? 'account' : 'accounts'}`}
+                    </span>
+                  }
+                >
+                  {g.title}
+                </SectionLabel>
+                <div className="flex flex-col gap-2.5">
+                  {g.accounts.map((a) => (
+                    <SubscriptionCard
+                      key={subscriptionKey(a)}
+                      account={a}
+                      weekTokens={weekTokens?.get(subscriptionKey(a))}
+                      weekLoaded={weekTokens !== null}
+                      busy={busy !== null}
+                      confirming={confirmRemove === subscriptionKey(a)}
+                      onLabel={() => relabel(a)}
+                      onAskRemove={() => setConfirmRemove(subscriptionKey(a))}
+                      onKeep={() => setConfirmRemove(null)}
+                      onRemove={() => void remove(a)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
           )}
 
           <SectionLabel>Add a setup token or API key</SectionLabel>
@@ -319,5 +282,132 @@ export default function SubscriptionsPage() {
         </>
       )}
     </div>
+  );
+}
+
+function SubscriptionCard({
+  account: a,
+  weekTokens,
+  weekLoaded,
+  busy,
+  confirming,
+  onLabel,
+  onAskRemove,
+  onKeep,
+  onRemove,
+}: {
+  account: Account;
+  weekTokens: number | undefined;
+  weekLoaded: boolean;
+  busy: boolean;
+  confirming: boolean;
+  onLabel: () => void;
+  onAskRemove: () => void;
+  onKeep: () => void;
+  onRemove: () => void;
+}) {
+  const key = subscriptionKey(a);
+  const named = a.id !== 'default';
+  const n = a.boxes.length;
+  const atLimit = a.limits?.atLimit === true;
+  // The first window to reset that is full, for the at-limit note.
+  const reset = resetText(
+    a.limits?.windows
+      .filter((w) => w.pct >= 100 && w.resetsAt)
+      .map((w) => w.resetsAt!)
+      .sort()[0],
+  );
+  return (
+    <Card className={cn('p-4', atLimit && 'border-[var(--amber-line)]')}>
+      <div className="flex items-center gap-3 max-sm:flex-wrap">
+        <SubMark account={a} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-[13.5px] font-semibold">
+            <span className="truncate">{subName(a)}</span>
+            <TierBadge account={a} />
+            {a.hasSecret ? null : <Badge className="px-1.5 py-0 text-[10.5px]">no secret</Badge>}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground">
+            {subLine(a)}
+          </div>
+        </div>
+        <div className="flex flex-none items-center gap-2.5">
+          <span
+            className="font-mono text-[11.5px] text-muted-foreground"
+            title={a.boxes.join(', ') || undefined}
+          >
+            {n ? `${String(n)} ${n === 1 ? 'box' : 'boxes'}` : 'no boxes'}
+          </span>
+          {a.limits ? (
+            <Badge className={atLimit ? 'badge-pause' : 'badge-run'}>
+              <span className="badge-dot" style={{ animation: 'none' }} />
+              {atLimit ? 'at limit' : 'ok'}
+            </Badge>
+          ) : null}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={busy}
+            aria-label={`Label ${key}`}
+            title="Set its label"
+            onClick={onLabel}
+          >
+            <Icons.pencil />
+          </Button>
+          {named && !confirming ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              disabled={busy || n > 0}
+              aria-label={`Remove ${key}`}
+              title={
+                n > 0
+                  ? 'Destroy the boxes that use it first'
+                  : 'Remove its stored login and config volume'
+              }
+              onClick={onAskRemove}
+            >
+              <Icons.trash />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {confirming ? (
+        <div className="mt-3 flex items-center gap-2">
+          <Button size="sm" variant="destructive" disabled={busy} onClick={onRemove}>
+            Remove {key}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onKeep}>
+            Keep
+          </Button>
+        </div>
+      ) : null}
+      <div className="mt-3.5 empty:hidden">
+        <SubMeters account={a} />
+      </div>
+      {atLimit && n ? (
+        <div className="mt-3 flex items-start gap-2 border-t border-[var(--amber-line)] pt-2.5 text-xs text-[#6a4e0c]">
+          <Icons.warn className="mt-px size-3.5 flex-none" />
+          <span>
+            {a.boxes.join(', ')} {n === 1 ? 'runs' : 'run'} on this account, which is at its limit
+            {reset ? ` (${reset})` : ''}.
+          </span>
+        </div>
+      ) : null}
+      <div className="mt-3 flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+        <span>{key}</span>
+        <span className="ml-auto">
+          {weekLoaded ? (
+            <Link
+              href={`/usage?subscription=${encodeURIComponent(key)}`}
+              className="tabular-nums underline-offset-2 hover:text-foreground hover:underline"
+              title={`${(weekTokens ?? 0).toLocaleString()} tokens in the last 7 days. Open in Usage`}
+            >
+              {fmtTokens(weekTokens ?? 0)} tokens, last 7 days
+            </Link>
+          ) : null}
+        </span>
+      </div>
+    </Card>
   );
 }

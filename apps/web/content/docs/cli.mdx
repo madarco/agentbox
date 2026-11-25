@@ -256,7 +256,7 @@ agentbox usage --by box --project acme/api --since all
 agentbox usage --by model --box auth-work --since all --json
 ```
 
-`usage` sums the tokens the [recorded sessions](#session-history) spent, one count per model response: input, output, cache read and cache write, plus how many responses and sessions they came from. It covers every box, provider and PC that ships to the hub, and keeps counting sessions whose transcripts retention already deleted. `--by` groups by up to two of `day`, `agent`, `account` (the box's [named LLM account](/docs/run-an-agent#several-accounts-per-agent), `default` for the agent's default login), `box`, `project`, `host` (the PC), `model` and `session`; the last row is the total. `--since`/`--until` take an ISO-8601 time or a duration back from now (`24h`, `7d`, `2w`; `--since all` for no bound) and select on each response's own time. Cost is not computed. The hub web UI's **Usage** page shows the same numbers, and the data comes from [`GET /api/v1/usage`](/docs/api#history).
+`usage` sums the tokens the [recorded sessions](#session-history) spent, one count per model response: input, output, cache read and cache write, plus how many responses and sessions they came from. It covers every box, provider and PC that ships to the hub, and keeps counting sessions whose transcripts retention already deleted. `--by` groups by up to two of `day`, `agent`, `account` (the subscription, `<agent>/<account>`: the box's [named LLM account](/docs/run-an-agent#several-accounts-per-agent), `default` for the agent's default login; a box that borrows another agent's login with `--model-auth` counts under the lender's; `--account` takes the same form), `box`, `project`, `host` (the PC), `model` and `session`; the last row is the total. `--since`/`--until` take an ISO-8601 time or a duration back from now (`24h`, `7d`, `2w`; `--since all` for no bound) and select on each response's own time. Cost is not computed. The hub web UI's **Usage** page shows the same numbers, and the data comes from [`GET /api/v1/usage`](/docs/api#history).
 
 | Flag                                                              | Meaning                                                                                                                                                          |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -797,6 +797,7 @@ agentbox skills policy <name> auto|manual
 agentbox skills ls --box <box> [--behind]
 agentbox skills enable|disable <names...> [--project [url] | --workspace [ref]] [--clear]
 agentbox skills bindings [--json]       # per-workspace / per-project skill bindings
+agentbox skills skip|unskip <names...>  # never sync a skill (hub <-> PCs and boxes) / sync it again
 
 # Host relay process
 agentbox relay status

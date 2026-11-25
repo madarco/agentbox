@@ -8,6 +8,7 @@
  *   skills/<name>/meta.json          { current, versions: [{ sha256, tarballBytes, ... }] }
  *   skills/<name>/<treeSha>.tar.gz   one normalized tree per version
  *   skills/.seeded                   written by the first import
+ *   skills/.skipped.json             names never delivered (`readSkips`)
  *
  * The meta reader is duplicated here, not imported: the hub's slice is bundled
  * into Next routes and can't be a relay dependency, and the relay can't import
@@ -25,6 +26,7 @@ import type { BoxWorkspaceKey } from './workspaces/workspace-store.js';
 import {
   hasWorkspaceBindings,
   readBindings,
+  readSkips,
   resolveSkillNames,
   type SkillBindingContext,
 } from '@agentbox/core';
@@ -154,6 +156,9 @@ export async function resolveBoxSkills(
     const m = /^skills\/([^/]+)\/meta\.json$/.exec(e.path);
     if (m && NAME_RE.test(m[1]!)) names.add(m[1]!);
   }
+  // A skipped skill is never delivered, whatever the bindings or create flags say.
+  const skips = await readSkips(custody);
+  for (const n of Object.keys(skips.skipped)) names.delete(n);
   const bindings = await readBindings(custody);
   const ctx: SkillBindingContext = {
     ...(box.boxId ? { boxId: box.boxId } : {}),

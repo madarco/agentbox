@@ -17,6 +17,7 @@ import {
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { registerAgentHistoryModule } from '@agentbox/core';
 import { claudeHistoryModule } from './history.js';
+import { claudePlanLimits } from './limits.js';
 import { registerAgentPullModule, pullClaudeExtrasViaTransport } from '@agentbox/sandbox-core';
 import { hostClaudeAccessTokenExpired } from './cli/host-cred-guards.js';
 import { registerAgentCloudModule, type AgentCloudModule } from '@agentbox/sandbox-cloud';
@@ -179,7 +180,7 @@ export function registerClaudeAgent(): void {
   });
   registerAgentSyncModule(claudeSyncModule);
   registerAgentCloudModule(claudeCloudModule);
-  registerAgentHistoryModule(claudeHistoryModule);
+  registerAgentHistoryModule({ ...claudeHistoryModule, planLimits: claudePlanLimits });
 }
 
 export * from './docker-sync.js';
@@ -187,5 +188,11 @@ export * from './host-stage.js';
 export * from './hooks-filter.js';
 export * from './cloud-json-overlay.js';
 export { claudeHistoryModule, claudeLineRecords } from './history.js';
+export {
+  CLAUDE_USAGE_URL,
+  claudePlanLimits,
+  claudeUsageToken,
+  claudeUsageWindows,
+} from './limits.js';
 
 export { claudeStagedItems } from './staged-items.js';

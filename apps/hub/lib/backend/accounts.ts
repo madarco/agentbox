@@ -5,18 +5,21 @@
 // (Phase 5), so a named account is refused there with a message naming it.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
 import {
   accountConfigVolume,
+  modelAuthSourceId,
   agentAccountKinds,
   findAccount,
   isDefaultAccount,
   namedAccounts,
   type AgentSyncSpec,
   type BoxRecord,
+  type BoxRuntimeState,
   type LlmAccount,
 } from '@agentbox/core';
 import type { AccountBackend, AccountView } from '../boxes/backend-types';
+import type { LimitsSource } from './account-limits';
 import {
   AGENT_SYNC_SPECS,
   boxesOnAccount,
@@ -79,14 +82,51 @@ export function setDefaultCheckpointRefusal(box: {
 
 export interface AccountBackendDeps {
   /** The hub machine's box records. Default: `~/.agentbox/state.json`. */
-  boxes?: () => Promise<readonly Pick<BoxRecord, 'name' | 'accounts'>[]>;
+  boxes?: () => Promise<readonly AccountBoxFacts[]>;
+  /** Plan limits per account (hub settings Phase 3b); absent = none shown. */
+  limits?: LimitsSource;
   /**
    * Remove a docker volume. Default: `docker volume rm`. `removed: false` with
    * no `error` = there was no such volume.
    */
   removeVolume?: (name: string) => Promise<{ removed: boolean; error?: string }>;
   store?: AccountStoreOptions;
+  /** This hub's machine id, the `<machine>` its named accounts sit under in custody. */
+  machineId?: () => string | undefined;
 }
+
+/** What the account list reads of a box. */
+export type AccountBoxFacts = Pick<BoxRecord, 'name' | 'accounts'> &
+  Partial<Pick<BoxRecord, 'agents' | 'borrowedCredentials'>> & {
+    cloud?: { lastState?: BoxRuntimeState };
+  };
+
+/**
+ * The boxes whose usage counts under subscription `agent/id`: every box agent
+ * whose `subscriptionOf` is it (the default account included, and a borrower
+ * under its lender), plus any box that records the account by name. A box
+ * record without `agents` (an old one, a Store-only registration) is counted
+ * only by name. Pure apart from `specOf`.
+ */
+export function boxesOnSubscription<B extends AccountBoxFacts>(
+  all: readonly B[],
+  agent: string,
+  id: string,
+  specOf?: Parameters<typeof subscriptionOf>[2],
+): B[] {
+  const key = `${agent}/${id}`;
+  const named = new Set(boxesOnAccount(all, agent, id));
+  return all.filter(
+    (b) => named.has(b) || (b.agents ?? []).some((a) => subscriptionOf(b, a, specOf) === key),
+  );
+}
+
+/**
+ * A box counts as running unless agentbox last drove a cloud box elsewhere
+ * (absent = running). A docker record carries no state: it counts as running,
+ * which costs at most one usage call per refresh interval.
+ */
+const isRunning = (b: AccountBoxFacts): boolean => (b.cloud?.lastState ?? 'running') === 'running';
 
 const execFileAsync = promisify(execFile);
 
@@ -108,8 +148,12 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
   const removeVolume = deps.removeVolume ?? dockerVolumeRm;
   const store = deps.store;
 
-  async function view(account: LlmAccount): Promise<AccountView> {
-    const all = await boxes().catch(() => []);
+  async function view(account: LlmAccount, all?: readonly AccountBoxFacts[]): Promise<AccountView> {
+    const list = all ?? (await boxes().catch(() => []));
+    const on = boxesOnSubscription(list, account.agent, account.id);
+    const limits = await deps.limits
+      ?.limitsFor(account.agent, account.id, on.some(isRunning))
+      .catch(() => undefined);
     return {
       agent: account.agent,
       id: account.id,
@@ -117,7 +161,8 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       kind: account.kind,
       ...(account.identity ? { identity: account.identity } : {}),
       hasSecret: (await readAccountSecret(account.agent, account.id, store)) !== null,
-      boxes: boxesOnAccount(all, account.agent, account.id).map((b) => b.name),
+      boxes: on.map((b) => b.name),
+      ...(limits ? { limits } : {}),
     };
   }
 
@@ -129,26 +174,13 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     async listAccounts() {
       const { accounts } = await readAccounts(store);
       const all = await boxes().catch(() => []);
-      const views: AccountView[] = [];
-      for (const a of accounts) {
-        views.push({
-          agent: a.agent,
-          id: a.id,
-          ...(a.label ? { label: a.label } : {}),
-          kind: a.kind,
-          ...(a.identity ? { identity: a.identity } : {}),
-          hasSecret: (await readAccountSecret(a.agent, a.id, store)) !== null,
-          // The default account is every box without a record; counting them is
-          // a fleet listing, not an account fact.
-          boxes: isDefaultAccount(a.id)
-            ? []
-            : boxesOnAccount(all, a.agent, a.id).map((b) => b.name),
-        });
-      }
+      const views = await Promise.all(accounts.map((a) => view(a, all)));
       const agents = (store?.specs ?? AGENT_SYNC_SPECS)
         .filter((s) => agentAccountKinds(s).length > 0 && !s.hidden)
         .map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
-      return { accounts: views, agents };
+      // A machine with no id yet (unwritable HOME) lists its accounts without one.
+      const machine = deps.machineId ? deps.machineId() : tryGetMachineId();
+      return { accounts: views, agents, ...(machine ? { machine } : {}) };
     },
 
     async addPastedAccount(input) {
@@ -251,6 +283,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         };
       }
       await removeStoredAccount(spec.id, id, store);
+      deps.limits?.forget(spec.id, id);
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);
       return {
@@ -292,4 +325,42 @@ export function accountsInfoOf(
       ...(row ? { kind: row.kind } : {}),
     };
   });
+}
+
+/**
+ * The subscription an agent's usage in a box counts under, as `agent/account`
+ * (hub settings Phase 3a). An agent that runs on another agent's login
+ * (`--model-auth`, `BoxRecord.borrowedCredentials`) spends the lender's plan,
+ * so its sessions count under the lender's account. Only the box's sources the
+ * agent itself declares (`modelAuth.sources`) count: the borrow list is
+ * box-wide, and an agent on its own login in the same box keeps its own.
+ *
+ * No guessing: a lender is used only when it is the ONE source the agent
+ * consumes. Mixed with an `env:` key, or two lenders, a turn could be served by
+ * either, so the session stays on the agent's own key (hub settings backlog:
+ * per-turn attribution). Pure apart from the default `specOf` registry lookup.
+ */
+export function subscriptionOf(
+  box: Pick<BoxRecord, 'accounts' | 'borrowedCredentials'>,
+  agent: string,
+  specOf: (agent: string) => Pick<AgentSyncSpec, 'modelAuth'> | undefined = findAgentSpec,
+): string {
+  const declared = new Set((specOf(agent)?.modelAuth?.sources ?? []).map(modelAuthSourceId));
+  const consumed = (box.borrowedCredentials ?? []).filter((id) => id !== agent && declared.has(id));
+  const only = consumed.length === 1 ? consumed[0]! : undefined;
+  const owner = only && !only.startsWith('env:') ? only : agent;
+  return `${owner}/${box.accounts?.[owner] ?? 'default'}`;
+}
+
+/**
+ * Agents that can run on another agent's login (an `agent` model-auth source):
+ * the history store re-derives their pre-3a account stamps
+ * (`HistoryRepoOptions.borrowingAgents`).
+ */
+export function borrowingAgentIds(
+  specs: readonly Pick<AgentSyncSpec, 'id' | 'modelAuth'>[] = AGENT_SYNC_SPECS,
+): string[] {
+  return specs
+    .filter((s) => (s.modelAuth?.sources ?? []).some((src) => src.kind === 'agent'))
+    .map((s) => s.id);
 }

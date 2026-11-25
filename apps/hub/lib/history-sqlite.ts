@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { repoKey } from '@agentbox/config';
 import type {
+  HistoryAccountLimits,
   HistorySearchHit,
   HistorySessionFilter,
   HistoryTurnRow,
@@ -115,6 +116,8 @@ CREATE TABLE IF NOT EXISTS history_live (
   context_window INTEGER,
   context_ts TEXT,
   totals TEXT,
+  limits TEXT,
+  limits_ts TEXT,
   updated_at INTEGER NOT NULL
 );
 `;
@@ -132,7 +135,7 @@ type Row = Record<string, unknown>;
 const n = (v: unknown): number => Number(v ?? 0);
 const nowMs = (): number => Date.now();
 
-type LiveRecord = Extract<HistoryRecord, { kind: 'activity' | 'totals' | 'context' }>;
+type LiveRecord = Extract<HistoryRecord, { kind: 'activity' | 'totals' | 'context' | 'limits' }>;
 
 /**
  * Upserts of the live row. The newest activity and context win by the record's
@@ -157,6 +160,10 @@ function liveStatements(db: Db): { apply(key: string, r: LiveRecord, now: number
   const totals = db.prepare(
     'UPDATE history_live SET totals = ?2, updated_at = ?3 WHERE session_key = ?1',
   );
+  const limits = db.prepare(
+    `UPDATE history_live SET limits = ?2, limits_ts = ?3, updated_at = ?4
+     WHERE session_key = ?1 AND (?3 IS NULL OR limits_ts IS NULL OR limits_ts <= ?3)`,
+  );
   return {
     apply(key, r, now) {
       ensure.run(key, now);
@@ -165,6 +172,13 @@ function liveStatements(db: Db): { apply(key: string, r: LiveRecord, now: number
         else if (r.text) activity.run(key, r.text, r.ts ?? null, now);
       } else if (r.kind === 'context') {
         context.run(key, r.tokens, r.window ?? null, r.ts ?? null, now);
+      } else if (r.kind === 'limits') {
+        const stored: StoredLimits = {
+          windows: r.windows,
+          ...(r.reached ? { reached: r.reached } : {}),
+          ...(r.plan ? { plan: r.plan } : {}),
+        };
+        limits.run(key, JSON.stringify(stored), r.ts ?? null, now);
       } else {
         totals.run(
           key,
@@ -183,6 +197,8 @@ function liveStatements(db: Db): { apply(key: string, r: LiveRecord, now: number
     },
   };
 }
+type StoredLimits = Omit<HistoryAccountLimits, 'ts' | 'updatedAt'>;
+
 const s = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 
 function toFile(r: Row): HistoryFileRow {
@@ -293,9 +309,37 @@ function columns(db: Db, table: string): Set<string> {
  * Phase 7 columns on a store created before it. `ts_ms` is filled from `ts` in
  * SQL (julianday reads the parsers' ISO strings), so no re-parse is needed.
  */
-function migrateUsage(db: Db): void {
+export interface HistoryRepoOptions {
+  /**
+   * Agents that can run on another agent's login (`modelAuth` agent sources).
+   * A bare account id stamped on their sessions before hub settings 3a may
+   * belong to a lender, so the migration clears it for the account backfill
+   * to restamp through `subscriptionOf`, instead of guessing the agent's own.
+   */
+  borrowingAgents?: readonly string[];
+}
+
+function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   const sessions = columns(db, 'history_sessions');
   if (!sessions.has('account')) db.exec('ALTER TABLE history_sessions ADD COLUMN account TEXT');
+  const live = columns(db, 'history_live');
+  if (!live.has('limits')) db.exec('ALTER TABLE history_live ADD COLUMN limits TEXT');
+  if (!live.has('limits_ts')) db.exec('ALTER TABLE history_live ADD COLUMN limits_ts TEXT');
+  // Hub settings 3a: an account is stamped as its subscription, `agent/account`.
+  // A bare id from before is the session agent's own, unless the agent can
+  // borrow a login: that one is cleared for the backfill (which only fills
+  // NULLs) to restamp from the box record. Stamped rows never match again, so a
+  // second open changes nothing.
+  const borrowing = [...new Set(o.borrowingAgents ?? [])];
+  if (borrowing.length > 0) {
+    db.prepare(
+      `UPDATE history_sessions SET account = NULL WHERE account IS NOT NULL AND instr(account, '/') = 0
+         AND agent IN (${borrowing.map(() => '?').join(', ')})`,
+    ).run(...borrowing);
+  }
+  db.exec(
+    "UPDATE history_sessions SET account = agent || '/' || account WHERE account IS NOT NULL AND instr(account, '/') = 0",
+  );
   if (!sessions.has('purged_at')) {
     db.exec('ALTER TABLE history_sessions ADD COLUMN purged_at INTEGER');
   }
@@ -393,7 +437,15 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
     args.push(v);
   };
   eq('s.agent', q.agent);
-  eq('s.account', q.account);
+  if (q.account !== undefined) {
+    if (q.account.includes('/')) {
+      eq('s.account', q.account);
+    } else {
+      // A bare id, as before 3a: that account of any agent.
+      where.push("s.account LIKE ? ESCAPE '\\'");
+      args.push(`%/${q.account.replace(/[\\%_]/g, (c) => `\\${c}`)}`);
+    }
+  }
   eq('s.host_id', q.host);
   eq('u.model', q.model);
   if (q.box !== undefined) {
@@ -469,14 +521,17 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
   return { totals, groups, truncated: rows.length > q.limit };
 }
 
-export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> {
+export async function openSqliteHistoryRepo(
+  path: string,
+  options: HistoryRepoOptions = {},
+): Promise<HistoryRepo> {
   const { DatabaseSync } = await import('node:sqlite');
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path) as unknown as Db;
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
-  migrateUsage(db);
+  migrateUsage(db, options);
   // Full-text over turn text, for Phase 2's search. Optional: a node built
   // without FTS5 still ingests.
   let fts = true;
@@ -490,6 +545,14 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
 
   const live = liveStatements(db);
   const liveGet = db.prepare('SELECT * FROM history_live WHERE session_key = ?');
+  // The newest limits any session on the subscription reported, by the
+  // record's own time (ingest time breaks a tie, and stands in for a missing one).
+  const limitsGet = db.prepare(
+    `SELECT l.limits, l.limits_ts, l.updated_at FROM history_live l
+       JOIN history_sessions s ON s.key = l.session_key
+     WHERE s.account = ? AND l.limits IS NOT NULL
+     ORDER BY COALESCE(l.limits_ts, '') DESC, l.updated_at DESC LIMIT 1`,
+  );
   const liveSums = db.prepare(
     `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
        SUM(cache_write_tokens) AS cw, SUM(cost_usd) AS cost, MAX(ts) AS ts
@@ -742,7 +805,12 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
             );
             continue;
           }
-          if (r.kind === 'activity' || r.kind === 'totals' || r.kind === 'context') {
+          if (
+            r.kind === 'activity' ||
+            r.kind === 'totals' ||
+            r.kind === 'context' ||
+            r.kind === 'limits'
+          ) {
             live.apply(sessionKey, r, nowMs());
             continue;
           }
@@ -866,6 +934,16 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     },
     async clearLive(key) {
       db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
+    },
+    async accountLimits(account) {
+      const r = limitsGet.get(account) as Row | undefined;
+      if (!r) return null;
+      try {
+        const stored = JSON.parse(String(r.limits)) as StoredLimits;
+        return { ...stored, ts: s(r.limits_ts), updatedAt: n(r.updated_at) };
+      } catch {
+        return null;
+      }
     },
     async liveRow(key) {
       const r = liveGet.get(key) as Row | undefined;

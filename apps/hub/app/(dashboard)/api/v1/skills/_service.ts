@@ -52,7 +52,7 @@ export function skillsStoreOrFail(): SkillsStore | Response {
 }
 
 export function failFromSkills(err: unknown, fallback: string): Response {
-  if (err instanceof SkillsError) return fail(err.code, err.message);
+  if (err instanceof SkillsError) return fail(err.code, err.message, err.details);
   // The proposals store is built by server.ts, not this bundle, so its
   // SkillsError is another module's class: match it by name (like the custody
   // errors below), or every refusal from it answers 500.

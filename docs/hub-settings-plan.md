@@ -1,6 +1,10 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** Phases 1-2 done (2026-11-25, `feat/hub-settings-nav`, `feat/hub-settings-skills`). Phases 3-4 not started.
+**Status:** Phases 1, 2, 3a, 3b and 4 done (2026-11-25, `feat/hub-settings-nav`,
+`feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-limits`,
+`feat/hub-settings-files`), plus the per-skill skip (`feat/hub-settings-skill-skip`) and the fix for skill uploads over 10 MB
+stored truncated (`fix/skill-upload-truncated`). Phase 3c not
+started (its Phase 0 first).
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -199,6 +203,54 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   holding the skill, since a box whose install failed is not `behind`. Content over 100 MiB unpacked
   (what a box installs) is its own 413. Box sync already fails only that skill.
 
+### Phase 2b — a persistent "skip" per skill — done
+
+The design's **Sync** column (`EnvList` / `hubRow`, `S.envToggleSkip`): each row has a checkbox,
+ticked by default; unticking means "never sync this skill", and the hub remembers it.
+
+**Built:**
+
+- **Store**: `skills/.skipped.json` (`{schema: 1, skipped: {<name>: {at}}}`) next to `.bindings.json`
+  in the custody `skills` scope, so it lives on the hub that owns the library (local or a control
+  box). Keyed by name, so a skill only on a PC can be skipped. `@agentbox/core` `skill-skips.ts`
+  (parse, lenient/strict read, apply); hub slice `lib/backend/skill-skips.ts` (serialized writes,
+  `assertNotSkipped`).
+- **Fail closed**: a missing `.skipped.json` is "nothing skipped"; one that exists but can't be read,
+  isn't JSON or has no `skipped` object throws `SkillSkipsUnreadableError` everywhere. `skills.get`
+  refuses with the reason (the box keeps what it has), the hub's gates, listing and comparison answer
+  500 with it (the page shows the error, never "everything synced"), and the fan-out does nothing.
+  Pull re-checks the skip right before each import, since a device confirm can take minutes. A skip
+  refusal is a 409 `conflict` with `details: {reason: 'skipped', names}`, which the CLI's first
+  seed reads instead of the message.
+- **Not a global `exclude` binding**: a box or project `include`, or `--skills`, overrides that, and
+  bindings say nothing about PC sync. A skip wins over every binding and create flag.
+- **Every path honours it**: the relay's `skills.get` drops skipped names before the bindings
+  (so `skills.blob` refuses them too); the hub's box MCP view and the create-time preview leave them
+  out; `boxSkillsStatus` marks a box that holds one as `behind`, and skipping fans out a sync, so a
+  running box drops it now (ctl's sync already removes skills that left the set). `compareSkills`
+  (shared, `@agentbox/sandbox-core`) takes the skipped names: status `skipped`, never counted by
+  `isOutOfSync`. Pull, send and the PC upload route (`PUT /skills/{name}`, which the TUI and the
+  first seed use) answer 409 for a skipped name. `GET /skills` carries `skipped`, which the CLI's
+  first seed filters out silently.
+- **API**: `GET /api/v1/skill-skips`, `PUT|DELETE /api/v1/skill-skips/{name}` (same gate as the
+  bindings writes), in the OpenAPI spec.
+- **CLI**: the TUI shows `skipped, not synced`, never uploads or downloads it, and has a "Choose which
+  skills sync" action; `agentbox skills skip|unskip <names...>` (the `enable|disable` style).
+- **Page**: the Sync column, a struck-through muted row with a pause icon and "Skipped, not synced",
+  no Pull/Send, not in the banner or *Sync all*; the footnote says the hub remembers it.
+- Unskipping syncs every box that ever pulled from the hub (`syncSkillBoxes({recorded: true})`),
+  since an unskipped skill is in no box's record and "behind" can't find them. The tarball route
+  (`agentbox skills --download`) answers 409 too. Adding a skipped name from git or a marketplace, or
+  editing it on the hub, is not blocked: those are explicit hub-side acts, and delivery still skips it.
+
+**Live check** (in an agentbox, its own hub on 8787, the box's relay as the PC): `skip-probe` only in
+`~/.agents/skills`, skipped before the first seed: the seed imported the other 20 and not it, the
+page showed "Skipped, not synced", pull answered 409; after `hub restart` and a cleared `.seeded`
+marker a fresh seed again left it out; ticking Sync on the page turned it into "Only on <machine>".
+A hub skill (`unslop`) skipped: a nested docker claude box from `examples/express-ready` got every
+other library skill and not it; unskip reached that running box in ~9 s, a re-skip removed it in ~9 s,
+and a new box after the unskip had it.
+
 ### Phase 3 — subscriptions: page, limits, switching
 
 **3a — the page, with data we have.** `/settings/subscriptions` regrouped like the design:
@@ -215,6 +267,18 @@ claude/personal`) so each subscription card links to its usage. The breakdown is
 subscription" and shows the same labels. `GET /usage` takes the pair (`account=<agent>/<id>`),
 and a borrowed login's usage counts under the lender, as on the cards.
 
+**Built (3a):** as above, with these notes. A session is stamped with its subscription,
+`agent/account`, in the existing `history_sessions.account` column; bare ids stamped before are
+rewritten to the session agent's own once, when the store opens, except for an agent that can borrow
+a login (`borrowingAgentIds`): its bare ids are cleared so the backfill restamps them from the box
+record. A borrower counts under the lender
+only when that login is the one source of the box the agent consumes (`subscriptionOf`,
+`lib/backend/accounts.ts`), so another agent in the same box keeps its own. `GET /usage?account=`
+takes `<agent>/<account>`, and a bare id still matches that id of any agent. The cards show the last 7
+days, the Usage page's default window, so a card's figure matches the page it links to. The
+default account's card says "every box without a named account" (the API returns no boxes for it, as
+before).
+
 **3b — limits. Phase 0 first** (measure before building):
 
 1. **Codex:** confirm `rate_limits` in the last `token_count` of a live session matches codex's own
@@ -230,6 +294,65 @@ weekly; a Plus account 5-hour + weekly). Codex limits come from the history pars
 account), claude's per the PoC. "N at limit" on the Subscriptions nav item and the design's top-bar
 indicator (one ring per account in use, popover with the meters and "Manage"). Absent = no data,
 never 0%.
+
+**Design scope for 3b (owner-approved, `../agentbox-design` control-shadcn `views-env.jsx`
+`SubscriptionsPane` / `SubsIndicator`):**
+
+1. **The page:** cards grouped by provider (Anthropic, OpenAI Codex, then API keys), each with its
+   mark, label, plan badge, provider + account line, box count, an *ok* / *at limit* badge, and
+   remove. One meter per window the account reports (`Account.limits`), never a fixed 5-hour +
+   weekly pair; at the limit, an amber note naming the boxes on it. Left out: the API-key monthly
+   budget (not in this plan) and a key's spend (usage has no cost per key yet); the "When a box hits
+   its limit" card comes with 3c.
+2. **The header meter** in the top bar: the two in-use subscriptions closest to a limit, one thin
+   bar per window (at most two), the highest % or "limit" in red, "+n" for the rest. Hover, focus or
+   click opens a card: each in-use subscription's windows with % and reset, box count, an at-limit
+   line, the updated time, and *Manage* to `/settings/subscriptions`. "Quota" when no box uses a
+   subscription.
+
+**Phase 0 findings (2026-11-25, this box's own logins; tokens never printed, values redacted):**
+
+- **Claude:** `GET https://api.anthropic.com/api/oauth/usage` with the login's OAuth access token and
+  `anthropic-beta: oauth-2025-04-20` answers 200 with no turn and no quota, and does not refresh the
+  login. Besides fixed fields (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`: each
+  `{utilization, resets_at}` or null when the plan has no such window) it carries a generic
+  `limits[]`: `{kind, group, percent, severity, resets_at, scope: {model: {display_name}} | null,
+  is_active}`. A **Max 20x** login (`rateLimitTier: default_claude_max_20x`) reported
+  `five_hour: null` and two weekly windows, `weekly_all` and a `weekly_scoped` one for **Fable**: so
+  this Max account has no 5-hour window either, and the windows must come from the data. The
+  rate-limit headers of a real request (`anthropic-ratelimit-unified-7d-*`, `...-status`,
+  `...-representative-claim`) cost quota and report only the binding window, not the Fable one. A
+  **setup-token** account was not measured (minting one needs an interactive browser login): its
+  scope is `user:inference`, so the endpoint may refuse it; the hub then shows no data. An Ultra
+  account was not available.
+- **Codex:** the transcript's `token_count.rate_limits` (`primary` / `secondary`: `used_percent`,
+  `window_minutes`, `resets_at`; `plan_type`; `rate_limit_reached_type`) carries each window's length.
+  A Pro login has one window, `window_minutes: 10080`, `secondary: null`. The same values come from
+  `GET https://chatgpt.com/backend-api/wham/usage` (access token + `ChatGPT-Account-Id`) with no turn:
+  `primary_window.limit_window_seconds: 604800`, `secondary_window: null`. Not checked: codex's own
+  `/status` side by side, and two boxes on one login (no codex box was run: the only codex login here
+  is a copy whose refresh would log out its other holders).
+
+**Built (3b):**
+
+- **Codex** (`packages/agent-codex/src/history.ts`, parser v3): `token_count.rate_limits` becomes a
+  `limits` history record; the hub keeps the newest per session on its live row and answers an
+  account's limits from the newest session on that subscription (`HistoryRepo.accountLimits`). No
+  network call.
+- **Claude** (`packages/agent-claude/src/limits.ts`, the module's `planLimits` reader, which
+  `apps/hub/lib/backend/account-limits.ts` caches): the usage endpoint, called with the stored
+  login's access token while it is valid (a setup token as is), at most every 5 minutes per account
+  and only while a box on it runs (a cloud box's `lastState`; a docker record counts as running). The
+  hub never refreshes the token. An API key, an expired login or a refusal is no data.
+- `GET /accounts`: `Account.limits?: {windows: [{id, label, pct, resetsAt?, windowMinutes?}],
+  atLimit, updatedAt, source}`, and `boxes` now lists a default account's boxes too (every box whose
+  usage counts under it, borrowers included), which is what "in use" means for the header meter.
+- Ageing: a window drops out once it resets (codex's older `resets_in_seconds` counts from the record
+  time), or a full window length after its read when the source gave no reset time; values with no
+  newer read for 10 minutes are `stale` and each card shows their age. A failed claude read keeps
+  the last good values, which age the same way.
+- The page and the header meter as in the design scope above; the sidebar's Subscriptions item shows
+  "N at limit". The web polls `GET /accounts` once a minute, shared by the three.
 
 **3c — switching.**
 
@@ -261,7 +384,7 @@ mid-turn shows its windows matching `/status`; an Ultra claude account shows wee
 account; with `onLimit: switch`, a box whose account hits the limit moves to the next one on its own;
 with `ask`, the approval appears in the web and the tray.
 
-### Phase 4 — Files
+### Phase 4 — Files — done
 
 `/settings/files` replaces the Custody page and says what it is: the files the hub holds so boxes can
 start without the PC. Read-only.
@@ -276,6 +399,23 @@ start without the PC. Read-only.
 
 **Done:** on a local hub and on `hub expose` with a password profile, every custody entry shows under
 a human group and nothing exposes file contents.
+
+**Built:** `lib/files-view.ts` regroups the manifest; the page joins it client-side with the store's
+projects and boxes, `GET /accounts` and `GET /devices`, so no new route. Notes:
+
+- A project section is named after the hub projects whose custody slugs include it. The hub puts
+  `custodySlugs` on every project (`seedSlugsFor`: repo key, alias-expanded with `repoKeyAtEdge` for a
+  folder on the hub's machine, else the key a registration carries; origin; registered slug; legacy
+  `owner__repo`), so the browser never re-derives repo keys. All folders of one repo are listed; a
+  folder name is used only for a project with no git identity. Files under a scope the page does not
+  know go to an **Other** group, one row per file.
+- Named-account logins live per machine (`agents/<agent>/accounts/<machine>/<id>/`), and an account
+  label belongs to one machine's store. `GET /accounts` gained `machine` (this hub's machine id) so a
+  label is shown only on that machine's entries; another PC's account shows its id and the PC's name.
+- A box's SSH key (under its sandbox id) and its served-skills record (under its box id) merge into
+  one row. `cp/` and `cp-out/` roll up to one row each. Group counts exclude bookkeeping files
+  (`skills/.seeded`, `skills/.bindings.json`).
+- The unused scope grouping (`groupCustody`, `SCOPE_META`, `shortSha`) left `lib/custody-view.ts`.
 
 ## Parallel work
 
@@ -320,3 +460,29 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
   each. The alternative is a skill upload route outside the proxy matcher with its own auth.
 - **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin
   token there (the API key is refused).
+- **Vendor per agent** (3a): the Anthropic / OpenAI grouping is a map in `apps/hub/lib/subscriptions.ts`
+  (claude, codex); any other agent is grouped under its own id. A `vendor` field on the agent registry
+  row would cover `agentbox agent add` agents.
+- **Mixed model-auth sources** (3a): an agent consuming more than one of its box's sources (two
+  lenders, or a lender plus an `env:` key, e.g. `--model-auth codex,env:ANTHROPIC_API_KEY`) is
+  counted under its own key, not guessed. Per-turn attribution needs the provider that served each
+  turn from the transcript.
+- **Host sessions on the default card** (3a): a session from a host (not a box) has no account
+  stamped (`account` null), so it counts under no subscription, and the default card's tokens leave
+  it out.
+- **Pre-3a sessions of a destroyed borrowing box** (3a): the migration clears a borrowing agent's
+  bare account id for the backfill to restamp from the box record; a box this hub no longer records
+  leaves it null (not counted under any subscription) rather than guessed.
+- **Docker box state for the claude refresh** (3b): a docker box record carries no running state, so
+  a stopped docker box still lets the hub read its account's usage (at most every 5 minutes).
+- **Claude limits need a running box** (3b): after a hub restart, a claude account shows no meters
+  until a box on it runs. Persisting the last read would keep them.
+- **Setup-token and Ultra accounts on the usage endpoint** (3b): not measured; check with a real one.
+- **Codex limits without a session** (3b): `wham/usage` would give a codex login's limits before its
+  first session; the transcript is the only source today.
+- **Key spend** (3b): the design's "this month" for an API key needs a cost per account in usage.
+- **Store-only boxes and limits** (3b review): a box known only from its relay registration (a
+  control box's adopted boxes) carries its named accounts but no agents or state, so it never counts
+  under a `default` account and never triggers a claude limits read.
+- **One secret read per listing** (3b review): `GET /accounts` reads a claude account's secret file
+  for `hasSecret` and again for the usage token; the limits source also ignores a custom `store`.
