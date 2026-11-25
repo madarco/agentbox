@@ -414,6 +414,30 @@ export type { SecretFinding } from './skills/scan.js';
 export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
 export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.js';
 export { SKILL_PROPOSAL_LIMITS } from './skills/proposal-limits.js';
+export {
+  agentSkillDirs,
+  agentsForSkillDirs,
+  compareSkills,
+  skillDirOfPath,
+} from './skills/compare.js';
+export type {
+  AgentSkillDirs,
+  CompareHub,
+  CompareLocal,
+  CompareRow,
+  SkillRowStatus,
+} from './skills/compare.js';
+export {
+  AGENTS_SKILLS_DIR,
+  agentsSkillDir,
+  installSkillFiles,
+  linkDirsForAgents,
+  pcSkillsInventory,
+  readPcSkill,
+  toPcSkill,
+  uploadBlocker,
+} from './skills/pc.js';
+export type { InstallOutcome, PcSkill, PcSkillsInventory } from './skills/pc.js';
 export type { TarFile } from './skills/tar.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {

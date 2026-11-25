@@ -1,5 +1,8 @@
 import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
-import { tryGetMachineId } from '@agentbox/config';
+import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
+import { homedir } from 'node:os';
+import { askPrompt } from './prompts.js';
+import { executePcSkillsAction, isPcSkillsMethod } from './pc-skills.js';
 import { createLlmProxyServer, llmProxyCredentialMatches, llmProxyHosts } from './llm-proxy.js';
 import { startSkillLinkWatcher } from './skill-link-watch.js';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
@@ -234,6 +237,7 @@ export async function executeHostReachAction(
     machineId?: () => string | undefined;
   },
 ): Promise<HostActionResult | HostReachDecline> {
+  if (isPcSkillsMethod(action.method)) return executePcSkillsReach(action, deps);
   const route = action.route;
   const repoKeyOf = deps.repoKeyOf ?? defaultRepoKeyOf;
   // A PC with its OWN record of the box, pointing at a real checkout of this
@@ -371,6 +375,59 @@ export async function executeHostReachAction(
     );
   }
   return result;
+}
+
+/**
+ * A `pcskills.*` action: about this machine's skill dirs, not a box. Served
+ * only when routed (the hub names the device it means, so another PC never
+ * answers for this one). Reading a skill out and writing one in ask the owner
+ * here, mirrored to the hub's approvals like a `cp` confirm.
+ */
+async function executePcSkillsReach(
+  action: HostAction,
+  deps: Parameters<typeof executeHostReachAction>[1],
+): Promise<HostActionResult | HostReachDecline> {
+  if (!action.route) return { decline: 'a skills action must name the machine it is for' };
+  if (!isPcSkillsMethod(action.method)) return 'not-mine';
+  const maxBytes = await loadEffectiveConfig(homedir())
+    .then((c) => c.effective.skills.maxSkillBytes)
+    .catch(() => undefined);
+  const unmirror = deps.hub
+    ? mirrorHostReachPrompts({
+        prompts: deps.prompts,
+        subscribers: deps.subscribers,
+        boxId: action.boxId,
+        actionId: action.id,
+        client: deps.hub,
+        match: (ev) => ev.context?.command === action.method,
+        log: deps.log,
+      })
+    : () => {};
+  try {
+    return await executePcSkillsAction(action.method, action.params, {
+      ...(maxBytes !== undefined ? { maxBytes } : {}),
+      log: deps.log,
+      confirm: async (p) => {
+        const r = await askPrompt(
+          deps.prompts,
+          deps.subscribers,
+          action.boxId,
+          {
+            kind: 'confirm',
+            message: p.message,
+            ...(p.detail ? { detail: p.detail } : {}),
+            defaultAnswer: 'n',
+            context: { command: p.command },
+          },
+          // Skills reach every box: never answered by a box's auto-approve.
+          { noAutoApprove: true },
+        );
+        return r.answer === 'y' && r.cancelled !== true;
+      },
+    });
+  } finally {
+    unmirror();
+  }
 }
 
 /**

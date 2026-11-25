@@ -358,13 +358,16 @@ function send(
   }
 }
 
-async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
+async function readJsonBody<T>(
+  req: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let total = 0;
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => {
       total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
+      if (total > maxBytes) {
         reject(new Error('request body too large'));
         req.destroy();
         return;
@@ -1056,7 +1059,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       if (route === 'POST /admin/hostreach/result') {
-        const body = await readJsonBody<BridgeActionResultBody>(req);
+        // A PC's `pcskills.export` answers with a skill's tarball (base64), so the
+        // result of an authenticated machine may be as large as a custody blob.
+        const body = await readJsonBody<BridgeActionResultBody>(
+          req,
+          Math.max(MAX_BODY_BYTES, Math.ceil((custodyMaxBlobBytes * 4) / 3) + 64 * 1024),
+        );
         if (
           !body ||
           typeof body.id !== 'string' ||
