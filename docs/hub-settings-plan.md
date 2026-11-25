@@ -1,6 +1,6 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** Phase 1 done (2026-11-25, `feat/hub-settings-nav`). Phases 2-4 not started.
+**Status:** Phases 1-2 done (2026-11-25, `feat/hub-settings-nav`, `feat/hub-settings-skills`). Phases 3-4 not started.
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -129,7 +129,7 @@ the path from `verificationPath`. `/accounts` and `/custody` have no redirect.
 **Done:** every old page is reachable under Settings from the main sidebar with no second nav;
 `/devices?code=X` lands on the approve form pre-filled; hub tests; a standalone-build click-through.
 
-### Phase 2 — skills: the design's table, hub ↔ PC
+### Phase 2 — skills: the design's table, hub ↔ PC — done
 
 - **Table** like the design's `EnvList`: name + description, **Agents**, **Status**, **Action**, with
   search and an **Agent** filter. Delivery is unchanged (all skills to all boxes), so Agents is
@@ -153,6 +153,33 @@ the path from `verificationPath`. `/accounts` and `/custody` have no redirect.
 **Done:** with the PC online, a skill only in `~/.agents/skills` shows "Only on MacBook" and *Pull to
 Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same against a remote hub
 (`hub expose --tunnel cloudflare` or the test VM) with the Mac as the device.
+
+**Built:**
+
+- **Shared code** in `@agentbox/sandbox-core`: `skills/compare.ts` (`compareSkills`, agents by
+  `skills.dirs`, `skillDirOfPath`) and `skills/pc.ts` (the PC inventory, `installSkillFiles` with a
+  link for every agent that doesn't read `~/.agents/skills`, `uploadBlocker`). The CLI's
+  `lib/skills/sync.ts` delegates to it, so `agentbox skills` and the page agree.
+- **Relay host actions** `pcskills.inventory | export | install` (`packages/relay/src/pc-skills.ts`).
+  The hub's own machine runs them in-process with no confirm (the click is the owner's act on that
+  machine). An enrolled device gets them through the host-reach queue, routed to that device only
+  (`boxId` `pc:<deviceId>`); export and install raise a confirm on the PC (`noAutoApprove`), mirrored
+  to the hub's approvals like a `cp` confirm. An unrouted `pcskills.*` action is declined. The
+  host-reach result route accepts a body up to the custody blob cap, since an export carries the
+  tarball (base64).
+- **Hub slice** `lib/backend/skills-pc.ts` (+ `skills-pc-wiring.ts` for the relay seams) and routes
+  `GET /api/v1/skill-machines`, `GET …/{id}/compare`, `POST …/{id}/pull`, `POST …/{id}/send`. Pull
+  re-derives the tree hash hub-side before importing. Pull and send take the elevated skill-content
+  auth (owner session, admin token, or loopback on a local hub). A deployed server (deploy record
+  provider other than `local`) is not offered as a machine.
+- **Page**: one table over the library plus the machine's own skills, toolbar with Machine, Agent and
+  search, the out-of-sync banner with *Sync all* (moves each differing skill from the side that
+  changed last; skips skills with problems or secret-scan findings), offline note. Add / edit /
+  review update / refresh / policy / discard kept per row.
+- **Live check** (in an agentbox, its own hub on 8787, scratch `HOME`): the three states, Pull to Hub,
+  Send (landed on disk), and a nested docker claude box from `examples/express-ready` received every
+  library skill in `/etc/claude-code/.claude/skills`. The remote-hub half of "Done" was not run (see
+  Backlog).
 
 ### Phase 3 — subscriptions: page, limits, switching
 
@@ -253,3 +280,16 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - The design's box-page Environment section beyond what Phase 3c adds (files-in-this-box view).
 - The tray's skills and subscriptions redesign (next, against the API above).
 - Shared folders; upload into custody from the web.
+
+## Backlog
+
+- **Phase 2 against a remote hub.** The device path (host-reach routing, PC-side confirm mirrored to
+  the hub) is unit-tested but not run live. Sign-off per the remote-hub rule: `hub expose --tunnel
+  cloudflare` (or the test VM) with the Mac enrolled as the device.
+- **Big skills over host-reach.** An export rides the host-action result as base64 and an install the
+  action params; both are capped near the custody blob cap. A skill near `skills.maxSkillBytes`
+  (50 MiB) on a remote device should stream through custody instead.
+- **Pull of a differing skill overwrites the hub's current version** without showing the diff first
+  (the TUI does the same). A "compare" view of PC vs hub content would help before *Sync all*.
+- **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin
+  token there (the API key is refused).
