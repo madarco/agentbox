@@ -1,6 +1,6 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** plan (2026-11-25, revised the same day after owner review). Nothing implemented.
+**Status:** Phase 1 done (2026-11-25, `feat/hub-settings-nav`). Phases 2-4 not started.
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -102,7 +102,7 @@ Usage stays top-level: it is a report, not configuration.
 Each phase is one PR into `nightly`, built in an agentbox. Phase 1 goes first because it moves every
 page; Phases 2, 3 and 4 then run **in parallel** (disjoint route folders and backend slices).
 
-### Phase 1 — navigation and moves (hub web only)
+### Phase 1 — navigation and moves (hub web only) — done
 
 - `SideItem` gains `children`: a nested, indented list under its parent. The parent is active on any
   child route; a child on its own subtree. `aria-current` and keyboard behave like the existing
@@ -117,6 +117,14 @@ page; Phases 2, 3 and 4 then run **in parallel** (disjoint route folders and bac
 - Tray: `reviewSkillsInHub` opens `/settings/skills` (one line, tray `nightly`, coordinator).
 - Public docs (`apps/web/content/docs/hub.mdx` and friends): the new paths; recapture the hub
   screenshots per `apps/web/images.md` and the catalog's hub shots (`catalog/`).
+
+**Built:** as above, with two notes. The breadcrumb root stays `hub` (`hub / settings / <sub>`),
+matching every other page. The CLI's control-box hint keeps printing `<hub>/devices`: it redirects on
+a new hub and is still served by an older one, while `hub login` takes the path from
+`verificationPath`. `/accounts`, `/custody` and `/system` have no redirect, so an older PC hub's
+"Bake details on the control box" link (`<control box>/system`) 404s against a new control box.
+`hub-dashboard.png` in the public docs still needs real boxes to recapture (marked stale in
+`apps/web/images.md`); the catalog's hub shots are retaken.
 
 **Done:** every old page is reachable under Settings from the main sidebar with no second nav;
 `/devices?code=X` lands on the approve form pre-filled; hub tests; a standalone-build click-through.
