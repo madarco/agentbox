@@ -9,6 +9,7 @@ export {
   recordBox,
   clearBoxPortlessWebAlias,
   recordBoxSsh,
+  recordAccountSwitch,
   recordAgentAdded,
   recordLastAgent,
   removeBoxRecord,

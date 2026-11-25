@@ -2,7 +2,9 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { ACCOUNT_SWITCH_HISTORY, isDefaultAccount } from '@agentbox/core';
 import type {
+  AccountSwitchRecord,
   AgentId,
   BoxRecord,
   DockerBoxFields,
@@ -176,6 +178,41 @@ export async function recordLastAgent(
  * only to a box whose registration names it. Returns the updated record, or
  * undefined when the box is not in state.
  */
+/**
+ * Record that `agent` in a box now runs on `account` (hub settings 3c): moves
+ * `accounts` (a `default` account leaves no entry) and appends `entry` to the
+ * box's switch history, newest last, capped. Returns the updated record.
+ */
+export async function recordAccountSwitch(
+  boxId: string,
+  entry: AccountSwitchRecord,
+  path: string = STATE_FILE,
+): Promise<BoxRecord | undefined> {
+  let updated: BoxRecord | undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        const accounts = { ...(b.accounts ?? {}) };
+        if (isDefaultAccount(entry.to)) delete accounts[entry.agent];
+        else accounts[entry.agent] = entry.to;
+        const history = [...(b.accountSwitches ?? []), entry].slice(-ACCOUNT_SWITCH_HISTORY);
+        const rest = { ...b };
+        delete rest.accounts;
+        updated = {
+          ...rest,
+          ...(Object.keys(accounts).length ? { accounts } : {}),
+          accountSwitches: history,
+        };
+        return updated;
+      }),
+    }),
+    path,
+  );
+  return updated;
+}
+
 export async function recordAgentAdded(
   boxId: string,
   agent: string,

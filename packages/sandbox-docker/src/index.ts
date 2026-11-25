@@ -438,6 +438,7 @@ export {
   withSessionLlmProxy,
 } from './sync/account-session-env.js';
 export {
+  mountedConfigVolume,
   recreateBoxOnAccount,
   recreateRefusal,
   respecFromInspect,

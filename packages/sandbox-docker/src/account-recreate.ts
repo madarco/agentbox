@@ -198,6 +198,13 @@ async function withVolumes(
   return { code: r.exitCode ?? 1, out: `${r.stdout}${r.stderr}`.trim() };
 }
 
+/** The named volume a container mounts at `dest`, or undefined. Pure. */
+export function mountedConfigVolume(ins: Inspected, dest: string | undefined): string | undefined {
+  if (!dest) return undefined;
+  const m = (ins.Mounts ?? []).find((x) => x.Type === 'volume' && x.Destination === dest);
+  return m?.Name;
+}
+
 /** The relative paths of a session's files, from the spec's patterns. Pure. */
 export function sessionGlobs(patterns: readonly string[], sessionId: string): string[] {
   return patterns.map((p) => p.replaceAll('{id}', sessionId));
@@ -206,13 +213,15 @@ export function sessionGlobs(patterns: readonly string[], sessionId: string): st
 /**
  * Switch `agent` in a docker box onto the login `account` by rebuilding the
  * container on that account's config volume. Returns the updated record (its
- * `accounts` already moved). Throws with a person-readable reason, leaving the
- * box as it was.
+ * `accounts` already moved), or `recreated: false` with the record untouched
+ * when the box already mounts that volume (the caller restarts the agent with
+ * the account's env instead). Throws with a person-readable reason, leaving
+ * the box as it was.
  */
 export async function recreateBoxOnAccount(
   idOrName: string,
   o: RecreateOnAccountOptions,
-): Promise<BoxRecord> {
+): Promise<{ record: BoxRecord; recreated: boolean }> {
   const log = o.onLog ?? (() => {});
   const found = findBox(idOrName, await readState());
   if (found.kind !== 'ok') throw new Error(`no box '${idOrName}'`);
@@ -225,14 +234,17 @@ export async function recreateBoxOnAccount(
   if (o.sessionId && !SESSION_ID.test(o.sessionId)) throw new Error('invalid session id');
 
   const spec = resolveAgentSpec(o.agent);
-  const fromAccount = box.accounts?.[o.agent] ?? 'default';
-  const fromVolume = accountConfigVolume(spec.dockerVolume, fromAccount);
   const toVolume = accountConfigVolume(spec.dockerVolume, o.account);
-  if (fromVolume === toVolume) throw new Error(`${o.agent} already runs on ${o.account}`);
 
   const ins = (await inspectContainer(container)) as Inspected[] | Inspected | null;
   const live = Array.isArray(ins) ? ins[0] : ins;
   if (!live) throw new Error('the box container is missing');
+  // The volume actually mounted, not the one `accounts` implies: after a
+  // switch to a token the record names the token's account while the box
+  // still mounts the volume it was created with (or a per-box isolated one).
+  const fromVolume = mountedConfigVolume(live, spec.staticPaths?.[0]?.boxDir);
+  if (!fromVolume) throw new Error(`the box mounts no ${o.agent} config volume`);
+  if (fromVolume === toVolume) return { record: box, recreated: false };
 
   // The target must hold a login, as a file (a fresh volume seeded from the
   // image has only a dangling symlink there).
@@ -339,5 +351,5 @@ export async function recreateBoxOnAccount(
   await removeSwitchImages(box.id, image);
   log(`${o.agent} now runs on ${o.account}`);
   const after = findBox(box.id, await readState());
-  return after.kind === 'ok' ? after.box : box;
+  return { record: after.kind === 'ok' ? after.box : box, recreated: true };
 }

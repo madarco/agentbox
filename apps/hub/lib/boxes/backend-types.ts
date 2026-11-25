@@ -1,5 +1,6 @@
 import type { HostSessionsBackend } from '../backend/history-host';
 import type { AddBoxAgentResult } from '../backend/box-agents';
+import type { SwitchRequest, SwitchResult } from '../backend/account-switch';
 import type { SkillsBackend } from '../backend/skills-backend';
 import type { PcSkillsBackend } from '../backend/skills-pc';
 import type {
@@ -759,6 +760,9 @@ export interface HubBackend
   // box with its own token, so `agents.list` hands the box that agent's units
   // (`agentbox openclaw <box>`; the box's ctl then runs `reload --agents`).
   addBoxAgent(id: string, agent: string): Promise<AddBoxAgentResult>;
+  // Switch the box's agent to another LLM account (hub settings 3c): a token
+  // restarts the agent with it, a login rebuilds a docker box on its volume.
+  switchBoxAccount(id: string, req: SwitchRequest): Promise<SwitchResult>;
 
   // ── box service logs ──
   // Non-follow tail of a service log (or the ctl-daemon log with `daemon`).
