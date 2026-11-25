@@ -70,7 +70,7 @@ const GROUP_META: Record<FilesGroupId, { label: string; blurb: string }> = {
   projects: {
     label: 'Project files',
     blurb:
-      'Seeds and secrets pushed for a project (`agentbox hub project push`) and files copied with `agentbox cp`, carried into that project’s boxes.',
+      'Seeds and secrets pushed for a project (agentbox hub project push) and files copied with agentbox cp, carried into that project’s boxes.',
   },
   agents: {
     label: 'Agent logins',
