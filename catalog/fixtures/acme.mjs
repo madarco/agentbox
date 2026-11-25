@@ -247,6 +247,7 @@ export const accounts = {
     { id: "codex", label: "Codex", kinds: ["login", "api-key"] },
     { id: "opencode", label: "OpenCode", kinds: ["api-key"] },
   ],
+  machine: "5c1e0f7a9b3d",
 };
 
 /* ---- Skills (GET /api/v1/skills, /api/v1/skill-status) ---- */
