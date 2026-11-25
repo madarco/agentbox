@@ -279,6 +279,24 @@ export async function recreateBoxOnAccount(
 
   if (wasRunning) {
     log('stopping the box');
+    // The in-box dockerd is not a child of the box's init, so `docker stop`
+    // kills it and its containerd task dirs under /var/run stay behind; the
+    // commit would carry them and the box's inner containers could not start
+    // again ("failed to create task ... file exists"). Stop it cleanly first.
+    await execa(
+      'docker',
+      [
+        'exec',
+        '--user',
+        '0',
+        container,
+        'bash',
+        '-c',
+        'p=$(cat /var/run/docker.pid 2>/dev/null) || exit 0; kill -TERM "$p" 2>/dev/null || exit 0; ' +
+          'for _ in $(seq 1 60); do kill -0 "$p" 2>/dev/null || exit 0; sleep 0.5; done',
+      ],
+      { reject: false },
+    );
     await stopContainer(container);
   }
   log('committing the box');
