@@ -375,7 +375,7 @@ describe('compareSkills', () => {
 });
 
 /** A fake hub client over an in-memory library. */
-function fakeClient(seeded = false) {
+function fakeClient(seeded = false, skipped: string[] = []) {
   const store = new Map<string, { version: string; data: Buffer; meta: { description: string } }>();
   let isSeeded = seeded;
   const client = {
@@ -383,6 +383,7 @@ function fakeClient(seeded = false) {
       Promise.resolve({
         seeded: isSeeded,
         skills: [...store.entries()].map(([name, v]) => hubSkill(name, v.version)),
+        skipped,
       }),
     uploadSkill: (name: string, data: Buffer, meta: { sha256: string; description: string }) => {
       const prev = store.get(name);
@@ -419,6 +420,34 @@ describe('seed + download', () => {
     expect([...store.keys()]).toEqual(['clean']);
     // Seeded now: a second run does nothing.
     expect(await seedSkillsIfEmpty(client, { home, maxBytes: 1 << 20 })).toBeNull();
+  });
+
+  it('leaves a skipped skill out of the first seed, without naming it', async () => {
+    const home = tmp('skseed3-');
+    writeSkill(join(home, '.agents/skills'), 'clean');
+    writeSkill(join(home, '.agents/skills'), 'private');
+    const { client, store } = fakeClient(false, ['private']);
+    const out = await seedSkillsIfEmpty(client, { home, maxBytes: 1 << 20 });
+    expect(out).toEqual({ uploaded: ['clean'], skipped: [], failed: [] });
+    expect([...store.keys()]).toEqual(['clean']);
+  });
+
+  it('a skip that lands mid-seed (409) is left out quietly, not a failure', async () => {
+    const home = tmp('skseed5-');
+    writeSkill(join(home, '.agents/skills'), 'late');
+    const { client } = fakeClient();
+    (client as unknown as { uploadSkill: () => Promise<never> }).uploadSkill = () =>
+      Promise.reject(new Error("skill 'late' is skipped (never synced); tick its Sync box"));
+    const out = await seedSkillsIfEmpty(client, { home, maxBytes: 1 << 20 });
+    expect(out).toEqual({ uploaded: [], skipped: [], failed: [] });
+  });
+
+  it('compares a skipped skill as skipped', async () => {
+    const home = tmp('skseed4-');
+    writeSkill(join(home, '.agents/skills'), 'private');
+    const local = await discoverLocalSkills({ home });
+    expect(compareSkills(local, [], ['private']).map((r) => r.status)).toEqual(['skipped']);
+    expect(compareSkills(local, []).map((r) => r.status)).toEqual(['local-only']);
   });
 
   it('does nothing on an already-seeded (even empty) library', async () => {

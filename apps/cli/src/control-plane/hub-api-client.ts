@@ -853,6 +853,14 @@ export interface HubApiSkillsListing {
   /** True once any skill was ever imported, even if all were since discarded. */
   seeded: boolean;
   skills: HubApiSkill[];
+  /** Names marked "never sync". Absent from a hub older than the skip. */
+  skipped?: string[];
+}
+
+/** `GET|PUT|DELETE /api/v1/skill-skips[/{name}]`. */
+export interface HubApiSkillSkips {
+  changed?: boolean;
+  skipped: { name: string; at: string }[];
 }
 
 export type HubApiSkillBindingScope = 'global' | 'workspace' | 'project' | 'box';
@@ -1664,6 +1672,16 @@ export class HubApiClient {
       {
         timeoutMs: 180_000,
       },
+    );
+  }
+
+  // ── skipped skills ("never sync") ──
+
+  /** Skip (`true`) or sync again (`false`) one skill by name. */
+  setSkillSkipped(name: string, skip: boolean): Promise<HubApiSkillSkips> {
+    return this.request<HubApiSkillSkips>(
+      skip ? 'PUT' : 'DELETE',
+      `/skill-skips/${encodeURIComponent(name)}`,
     );
   }
 

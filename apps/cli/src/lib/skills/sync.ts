@@ -33,12 +33,16 @@ export interface SkillsContext {
 
 export type SkillRow = CompareRow<LocalSkill, HubApiSkill>;
 
-/** Local and hub skills side by side, matched by name (the shared comparison). */
+/**
+ * Local and hub skills side by side, matched by name (the shared comparison).
+ * A name in `skipped` (the hub's "never sync" list) is `skipped`.
+ */
 export function compareSkills(
   local: readonly LocalSkill[],
   hub: readonly HubApiSkill[],
+  skipped: Iterable<string> = [],
 ): SkillRow[] {
-  return compareShared(local, hub);
+  return compareShared(local, hub, skipped);
 }
 
 export type UploadOutcome =
@@ -77,7 +81,8 @@ export interface SeedOutcome {
 /**
  * The automatic first seed (owner direction 2): when the hub has never held a
  * skill, upload every clean local skill. Flagged or invalid skills are skipped
- * and named. Returns null when the hub is already seeded — after the first seed,
+ * and named; a skill the hub marks skipped ("never sync") is left out without a
+ * word. Returns null when the hub is already seeded — after the first seed,
  * adding a skill is always an explicit action.
  */
 export async function seedSkillsIfEmpty(
@@ -86,7 +91,10 @@ export async function seedSkillsIfEmpty(
 ): Promise<SeedOutcome | null> {
   const listing = await client.listSkills();
   if (listing.seeded) return null;
-  const local = await discoverLocalSkills({ home: ctx.home, maxBytes: ctx.maxBytes });
+  const never = new Set(listing.skipped ?? []);
+  const local = (await discoverLocalSkills({ home: ctx.home, maxBytes: ctx.maxBytes })).filter(
+    (s) => !never.has(s.name),
+  );
   const out: SeedOutcome = { uploaded: [], skipped: [], failed: [] };
   for (const skill of local) {
     try {
@@ -94,10 +102,10 @@ export async function seedSkillsIfEmpty(
       if (r.status === 'skipped') out.skipped.push({ name: r.name, reason: r.reason });
       else out.uploaded.push(r.name);
     } catch (err) {
-      out.failed.push({
-        name: skill.name,
-        reason: err instanceof Error ? err.message : String(err),
-      });
+      const reason = err instanceof Error ? err.message : String(err);
+      // Skipped on the hub after the listing above: intended, not a failure.
+      if (/is skipped \(never synced\)/.test(reason)) continue;
+      out.failed.push({ name: skill.name, reason });
     }
   }
   return out;

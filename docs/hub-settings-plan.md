@@ -1,6 +1,6 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** Phases 1-2 done (2026-11-25, `feat/hub-settings-nav`, `feat/hub-settings-skills`). Phases 3-4 not started.
+**Status:** Phases 1-2 done (2026-11-25, `feat/hub-settings-nav`, `feat/hub-settings-skills`), plus the per-skill skip (`feat/hub-settings-skill-skip`). Phases 3-4 not started.
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -187,6 +187,39 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   Send (landed on disk), and a nested docker claude box from `examples/express-ready` received every
   library skill in `/etc/claude-code/.claude/skills`. The remote-hub half of "Done" was not run (see
   Backlog).
+
+### Phase 2b — a persistent "skip" per skill — done
+
+The design's **Sync** column (`EnvList` / `hubRow`, `S.envToggleSkip`): each row has a checkbox,
+ticked by default; unticking means "never sync this skill", and the hub remembers it.
+
+**Built:**
+
+- **Store**: `skills/.skipped.json` (`{schema: 1, skipped: {<name>: {at}}}`) next to `.bindings.json`
+  in the custody `skills` scope, so it lives on the hub that owns the library (local or a control
+  box). Keyed by name, so a skill only on a PC can be skipped. `@agentbox/core` `skill-skips.ts`
+  (parse, lenient/strict read, apply); hub slice `lib/backend/skill-skips.ts` (serialized writes,
+  `assertNotSkipped`).
+- **Not a global `exclude` binding**: a box or project `include`, or `--skills`, overrides that, and
+  bindings say nothing about PC sync. A skip wins over every binding and create flag.
+- **Every path honours it**: the relay's `skills.get` drops skipped names before the bindings
+  (so `skills.blob` refuses them too); the hub's box MCP view and the create-time preview leave them
+  out; `boxSkillsStatus` marks a box that holds one as `behind`, and skipping fans out a sync, so a
+  running box drops it now (ctl's sync already removes skills that left the set). `compareSkills`
+  (shared, `@agentbox/sandbox-core`) takes the skipped names: status `skipped`, never counted by
+  `isOutOfSync`. Pull, send and the PC upload route (`PUT /skills/{name}`, which the TUI and the
+  first seed use) answer 409 for a skipped name. `GET /skills` carries `skipped`, which the CLI's
+  first seed filters out silently.
+- **API**: `GET /api/v1/skill-skips`, `PUT|DELETE /api/v1/skill-skips/{name}` (same gate as the
+  bindings writes), in the OpenAPI spec.
+- **CLI**: the TUI shows `skipped, not synced`, never uploads or downloads it, and has a "Choose which
+  skills sync" action; `agentbox skills skip|unskip <names...>` (the `enable|disable` style).
+- **Page**: the Sync column, a struck-through muted row with a pause icon and "Skipped, not synced",
+  no Pull/Send, not in the banner or *Sync all*; the footnote says the hub remembers it.
+- Unskipping syncs every box that ever pulled from the hub (`syncSkillBoxes({recorded: true})`),
+  since an unskipped skill is in no box's record and "behind" can't find them. The tarball route
+  (`agentbox skills --download`) answers 409 too. Adding a skipped name from git or a marketplace, or
+  editing it on the hub, is not blocked: those are explicit hub-side acts, and delivery still skips it.
 
 ### Phase 3 — subscriptions: page, limits, switching
 

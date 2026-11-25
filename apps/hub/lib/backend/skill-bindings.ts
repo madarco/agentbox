@@ -138,8 +138,9 @@ export async function previewSkillSet(
   const projectKey = input.projectKey ?? (input.repo ? repoKey(input.repo) : undefined);
   if (!listing.seeded) return { library: false, ...(projectKey ? { projectKey } : {}), skills: [] };
   const doc = await readBindings(store);
+  const skipped = new Set(listing.skipped);
   const decided = resolveBindings(
-    listing.skills.map((s) => s.name),
+    listing.skills.map((s) => s.name).filter((n) => !skipped.has(n)),
     doc,
     {
       ...(input.boxId ? { boxId: input.boxId } : {}),

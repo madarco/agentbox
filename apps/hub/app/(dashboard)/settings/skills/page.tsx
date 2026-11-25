@@ -188,6 +188,15 @@ export default function SkillsPage() {
       return null;
     });
 
+  /** Untick = skip for good (stored on the Hub); tick = sync it again. */
+  const toggleSkip = (name: string, skip: boolean) =>
+    run(`skip:${name}`, async () => {
+      await api(`/skill-skips/${encodeURIComponent(name)}`, { method: skip ? 'PUT' : 'DELETE' });
+      return skip
+        ? `${name} is skipped: never pulled, sent or put in boxes.`
+        : `${name} syncs again.`;
+    });
+
   const discard = (s: SkillRow) => {
     if (
       !window.confirm(
@@ -337,6 +346,11 @@ export default function SkillsPage() {
     for (const r of current?.rows ?? []) {
       if (!listing?.skills.some((s) => s.name === r.name)) out.push({ name: r.name, cmp: r });
     }
+    // A skipped name neither side shows right now (the machine is offline, or the
+    // skill was removed) keeps a row, so its skip can still be cleared here.
+    for (const name of listing?.skipped ?? []) {
+      if (!out.some((r) => r.name === name)) out.push({ name });
+    }
     return out.sort((a, b) => a.name.localeCompare(b.name));
   }, [listing, current, byName]);
   const agents = useMemo(
@@ -352,6 +366,7 @@ export default function SkillsPage() {
         (r.skill?.description ?? r.cmp?.description ?? '').toLowerCase().includes(q)),
   );
   const outOfSync = current && !current.error ? current.outOfSync : 0;
+  const skipped = new Set(listing?.skipped ?? current?.skipped ?? []);
 
   const total = listing?.skills.reduce((n, s) => n + s.tarballBytes, 0) ?? 0;
   const pendingCount = listing?.skills.filter((s) => s.pending).length ?? 0;
@@ -557,11 +572,14 @@ export default function SkillsPage() {
             </div>
           ) : (
             <Card className="mt-4 overflow-hidden">
-              <div className="grid grid-cols-[minmax(0,1fr)_150px_170px_360px] gap-3 border-b border-border/60 px-5 py-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-[#a4a9b0] max-lg:hidden">
+              <div className="grid grid-cols-[minmax(0,1fr)_150px_170px_360px_44px] gap-3 border-b border-border/60 px-5 py-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-[#a4a9b0] max-lg:hidden">
                 <span>Skill</span>
                 <span>Agents</span>
                 <span>Status</span>
                 <span className="text-right">Action</span>
+                <span className="text-center" title="Untick to never sync it">
+                  Sync
+                </span>
               </div>
               <div className="divide-y divide-border/60">
                 {visible.length === 0 ? (
@@ -576,6 +594,8 @@ export default function SkillsPage() {
                       {...(r.skill ? { s: r.skill } : {})}
                       {...(r.cmp ? { cmp: r.cmp } : {})}
                       machine={machineLabel}
+                      skipped={skipped.has(r.name)}
+                      onSkip={(skip) => void toggleSkip(r.name, skip)}
                       online={pcOnline}
                       comparing={!current}
                       busy={busy}
@@ -592,6 +612,13 @@ export default function SkillsPage() {
               </div>
             </Card>
           )}
+          {rows.length > 0 ? (
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+              Unticked ones are skipped for good: the Hub remembers it, so later syncs, the first
+              seed from a PC, restarts and new boxes never pull, send or install them. Skipping
+              deletes nothing.
+            </p>
+          ) : null}
         </>
       )}
 
@@ -624,6 +651,7 @@ export default function SkillsPage() {
 }
 
 function statusTone(status: CompareRow['status'] | undefined): string {
+  if (status === 'skipped') return 'text-muted-foreground';
   if (status === 'same') return 'text-[var(--green-ink)]';
   if (status === 'differs' || status === 'local-only' || status === 'hub-only')
     return 'text-[var(--amber)]';
@@ -635,6 +663,8 @@ function SkillTableRow({
   s,
   cmp,
   machine,
+  skipped,
+  onSkip,
   online,
   comparing,
   busy,
@@ -650,6 +680,8 @@ function SkillTableRow({
   s?: SkillRow;
   cmp?: CompareRow;
   machine: string;
+  skipped: boolean;
+  onSkip: (skip: boolean) => void;
   online: boolean;
   comparing: boolean;
   busy: string | null;
@@ -662,23 +694,31 @@ function SkillTableRow({
   onDiscard: () => void;
 }) {
   const kind = s?.origin?.kind ?? 'upload';
-  const moves = cmp && online ? rowMoves(cmp) : [];
+  const moves = cmp && online && !skipped ? rowMoves(cmp) : [];
   const blocked = cmp ? pullBlocker(cmp) : null;
   const description = s?.description ?? cmp?.description ?? '';
-  const status = comparing
-    ? 'Checking…'
-    : cmp
-      ? statusLabel(cmp, machine, online)
-      : online
-        ? 'Only on Hub'
-        : `${machine} offline`;
+  const status = skipped
+    ? 'Skipped, not synced'
+    : comparing
+      ? 'Checking…'
+      : cmp
+        ? statusLabel(cmp, machine, online)
+        : online
+          ? 'Only on Hub'
+          : `${machine} offline`;
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_150px_170px_360px] items-start gap-3 px-5 py-3.5 max-lg:grid-cols-1">
+    <div
+      className={`grid grid-cols-[minmax(0,1fr)_150px_170px_360px_44px] items-start gap-3 px-5 py-3.5 max-lg:grid-cols-1${skipped ? ' bg-background/60' : ''}`}
+    >
       <div className="flex min-w-0 items-start gap-3">
         <Icons.book className="mt-0.5 size-4 flex-none text-muted-foreground" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate font-mono text-[13.5px] font-medium">{name}</span>
+            <span
+              className={`truncate font-mono text-[13.5px] font-medium${skipped ? ' text-muted-foreground line-through decoration-border' : ''}`}
+            >
+              {name}
+            </span>
             {s ? (
               <Badge className="px-1.5 py-0 text-[10px] normal-case">
                 {kind === 'folder' ? 'linked' : kind}
@@ -739,7 +779,12 @@ function SkillTableRow({
           ))
         )}
       </div>
-      <div className={`pt-0.5 text-[12.5px] ${statusTone(cmp?.status)}`}>{status}</div>
+      <div
+        className={`flex items-center gap-1.5 pt-0.5 text-[12.5px] ${statusTone(skipped ? 'skipped' : cmp?.status)}`}
+      >
+        {skipped ? <Icons.pause className="size-3.5 flex-none" /> : null}
+        {status}
+      </div>
       <div className="flex flex-wrap items-center justify-end gap-1.5 max-lg:justify-start">
         {moves.includes('pull') ? (
           <Button
@@ -814,6 +859,21 @@ function SkillTableRow({
             </Button>
           </>
         ) : null}
+      </div>
+      <div className="flex justify-center pt-1.5 max-lg:justify-start">
+        <input
+          type="checkbox"
+          className="size-4 cursor-pointer accent-primary disabled:cursor-default"
+          checked={!skipped}
+          disabled={busy !== null}
+          onChange={(e) => onSkip(!e.target.checked)}
+          aria-label={(skipped ? 'Sync ' : 'Skip ') + name}
+          title={
+            skipped
+              ? 'Skipped: never pulled, sent or put in boxes'
+              : 'Untick to skip this one for good'
+          }
+        />
       </div>
     </div>
   );

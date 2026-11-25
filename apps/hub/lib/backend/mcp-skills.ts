@@ -6,7 +6,9 @@
 import {
   hasWorkspaceBindings,
   readBindings,
+  readSkips,
   resolveBindings,
+  skippedNames,
   resolveSkillDecisions,
   type SkillBindingContext,
 } from '@agentbox/core';
@@ -58,9 +60,12 @@ async function libraryNames(store: SkillsStore): Promise<{ seeded: boolean; name
 
 /** What `scope` may see of the library, resolved the way `skills.get` resolves a box. */
 export async function skillsView(store: SkillsStore, scope: McpScope): Promise<View> {
-  const { seeded, names } = await libraryNames(store);
+  const { seeded, names: all } = await libraryNames(store);
   if (!seeded) return { library: false, visible: [] };
-  if (scope.kind === 'hub') return { library: true, visible: names };
+  if (scope.kind === 'hub') return { library: true, visible: all };
+  // A skipped skill is never delivered to a box, so a box neither sees nor installs it.
+  const skipped = new Set(skippedNames(await readSkips(store)));
+  const names = all.filter((n) => !skipped.has(n));
   const box = scope.skills;
   // A relay that sent no skill context: the box can't be placed, so it sees nothing.
   if (!box) return { library: true, visible: [], installed: new Set() };
