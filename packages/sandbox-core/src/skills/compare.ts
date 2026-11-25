@@ -6,7 +6,11 @@
  */
 import { allAgentSpecs } from '@agentbox/agent-registry';
 
-export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only';
+/**
+ * `skipped`: the owner marked the name "never sync" (`skills/.skipped.json` on
+ * the hub); it is never out of sync, whatever each side holds.
+ */
+export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'skipped';
 
 /** What the comparison reads of a PC skill. */
 export interface CompareLocal {
@@ -31,10 +35,14 @@ export interface CompareRow<L extends CompareLocal, H extends CompareHub> {
   newer?: 'local' | 'hub';
 }
 
-/** PC and hub skills side by side, matched by name, sorted by name. */
+/**
+ * PC and hub skills side by side, matched by name, sorted by name. A name in
+ * `skipped` is `skipped` (no `newer`), never `local-only`/`hub-only`/`differs`.
+ */
 export function compareSkills<L extends CompareLocal, H extends CompareHub>(
   local: readonly L[],
   hub: readonly H[],
+  skipped: Iterable<string> = [],
 ): CompareRow<L, H>[] {
   const rows = new Map<string, CompareRow<L, H>>();
   for (const l of local) rows.set(l.name, { name: l.name, local: l, status: 'local-only' });
@@ -56,7 +64,18 @@ export function compareSkills<L extends CompareLocal, H extends CompareHub>(
       }
     }
   }
+  for (const name of skipped) {
+    const row = rows.get(name);
+    if (!row) continue;
+    row.status = 'skipped';
+    delete row.newer;
+  }
   return [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Rows that need a move between PC and hub (not `same`, not `skipped`). */
+export function isOutOfSync(status: string): boolean {
+  return status === 'differs' || status === 'local-only' || status === 'hub-only';
 }
 
 /** An agent and the home-relative skill dirs it reads on a PC (`skills.dirs`). */

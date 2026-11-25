@@ -51,7 +51,7 @@ describe('parseImportMeta', () => {
 
 describe('skills library over custody', () => {
   it('starts empty and unseeded', async () => {
-    expect(await listSkills(memStore())).toEqual({ seeded: false, skills: [] });
+    expect(await listSkills(memStore())).toEqual({ seeded: false, skills: [], skipped: [] });
   });
 
   it('imports, lists, and marks the library seeded once', async () => {
@@ -122,7 +122,7 @@ describe('skills library over custody', () => {
     const listing = await listSkills(store);
     expect(listing.skills.map((s) => s.name)).toEqual(['foobar']);
     await discardSkill(store, 'foobar');
-    expect(await listSkills(store)).toEqual({ seeded: true, skills: [] });
+    expect(await listSkills(store)).toEqual({ seeded: true, skills: [], skipped: [] });
     await expect(discardSkill(store, 'foo')).rejects.toMatchObject({ code: 'not_found' });
   });
 

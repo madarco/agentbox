@@ -12,6 +12,7 @@ import {
   agentSkillDirs,
   agentsForSkillDirs,
   compareSkills,
+  isOutOfSync,
   readTar,
   skillDirOfPath,
   EXPOSED_HUB_ENV,
@@ -30,6 +31,7 @@ import {
   type SkillsStore,
   type SkillSummary,
 } from './skills';
+import { assertNotSkipped } from './skill-skips';
 
 /** One machine a skills comparison can run against. */
 export interface SkillMachine {
@@ -68,12 +70,15 @@ export interface PcSkillsBackendDeps {
   deviceActionTimeoutMs?: number;
 }
 
-export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'unknown';
+export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'skipped' | 'unknown';
 
 export interface SkillCompareRow {
   name: string;
   description: string;
-  /** `unknown`: the PC could not be asked (offline or failed); only hub rows are listed. */
+  /**
+   * `unknown`: the PC could not be asked (offline or failed); only hub rows are
+   * listed. `skipped`: the owner marked it "never sync"; never out of sync.
+   */
   status: SkillRowStatus;
   newer?: 'local' | 'hub';
   /** The agents whose PC skill dirs it came from. Information only. */
@@ -98,8 +103,10 @@ export interface SkillCompare {
   /** Why the PC side is missing, when it is. */
   error?: string;
   rows: SkillCompareRow[];
-  /** Rows not in sync (`differs`, `local-only`, `hub-only`). */
+  /** Rows not in sync (`differs`, `local-only`, `hub-only`); never a skipped one. */
   outOfSync: number;
+  /** Every skipped name, including ones neither side holds. */
+  skipped: string[];
 }
 
 export type PullResult =
@@ -302,6 +309,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
         error = reachError(r, machine.label);
       }
 
+      const skipped = new Set(listing.skipped);
       if (!pcSkills) {
         return {
           machine: { ...machine, online: machine.online && r.kind === 'result' },
@@ -309,22 +317,23 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
           rows: listing.skills.map((s) => ({
             name: s.name,
             description: s.description,
-            status: 'unknown' as const,
+            status: skipped.has(s.name) ? ('skipped' as const) : ('unknown' as const),
             agents: hubSkillAgents(s, agents),
             hub: hubRow(s),
           })),
           outOfSync: 0,
+          skipped: listing.skipped,
         };
       }
 
-      const rows = compareSkills(pcSkills, listing.skills).map((c): SkillCompareRow => {
+      const rows = compareSkills(pcSkills, listing.skills, skipped).map((c): SkillCompareRow => {
         const pc = c.local;
         const hub = c.hub;
         return {
           name: c.name,
           description: hub?.description || pc?.description || '',
           // No tree hash: the PC couldn't read its copy (too big, unreadable).
-          status: pc && pc.treeSha === '' ? 'unknown' : c.status,
+          status: c.status !== 'skipped' && pc && pc.treeSha === '' ? 'unknown' : c.status,
           ...(c.newer ? { newer: c.newer } : {}),
           agents: pc ? pc.agents : hub ? hubSkillAgents(hub, agents) : [],
           ...(hub ? { hub: hubRow(hub) } : {}),
@@ -347,13 +356,16 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       return {
         machine,
         rows,
-        outOfSync: rows.filter((x) => x.status !== 'same' && x.status !== 'unknown').length,
+        outOfSync: rows.filter((x) => isOutOfSync(x.status)).length,
+        skipped: listing.skipped,
       };
     },
 
     async pullSkills(machineId, names, opts = {}) {
       const machine = machineOrThrow(machineId);
       const store = storeOrThrow(deps);
+      // Refused up front (409), never silently dropped from the batch.
+      await assertNotSkipped(store, names);
       const max = deps.maxTarballBytes?.();
       const out: PullResult[] = [];
       const changed: string[] = [];
@@ -387,6 +399,8 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
               `files hash to ${sha.slice(0, 12)}, ${machine.label} said ${got.version.slice(0, 12)}`,
             );
           }
+          // A confirm on a device can take minutes: a skip set meanwhile still wins.
+          await assertNotSkipped(store, [name]);
           const res = await importSkill(store, {
             name,
             meta: {
@@ -420,6 +434,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
     async sendSkills(machineId, names, opts = {}) {
       const machine = machineOrThrow(machineId);
       const store = storeOrThrow(deps);
+      await assertNotSkipped(store, names);
       const out: SendResult[] = [];
       let stalled = false;
       for (const name of names) {

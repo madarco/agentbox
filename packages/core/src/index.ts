@@ -151,6 +151,17 @@ export * from './history/index.js';
 export * from './mcp/index.js';
 
 export {
+  SKILL_SKIPS_PATH,
+  SkillSkipsUnreadableError,
+  applySkip,
+  emptySkips,
+  isSkippableName,
+  parseSkips,
+  readSkips,
+  skippedNames,
+} from './skill-skips.js';
+export type { SkillSkip, SkillSkipsDoc } from './skill-skips.js';
+export {
   SKILL_BINDINGS_PATH,
   SKILL_BINDING_SCOPES,
   applyBindingChanges,

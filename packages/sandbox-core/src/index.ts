@@ -424,6 +424,7 @@ export {
   agentSkillDirs,
   agentsForSkillDirs,
   compareSkills,
+  isOutOfSync,
   skillDirOfPath,
 } from './skills/compare.js';
 export type {

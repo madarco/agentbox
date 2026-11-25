@@ -56,7 +56,11 @@ export interface SkillsBackend {
     opts?: { version?: string },
   ): Promise<{ applied: { name: string; from: string; to: string; skill: SkillSummary }[] }>;
   skillDiff(name: string, opts?: { from?: string; to?: string }): Promise<SkillDiff>;
-  syncSkillBoxes(opts?: { boxIds?: string[]; names?: string[] }): Promise<SkillSyncOutcome[]>;
+  syncSkillBoxes(opts?: {
+    boxIds?: string[];
+    names?: string[];
+    recorded?: boolean;
+  }): Promise<SkillSyncOutcome[]>;
   /** Pending updates and the live boxes behind, for a badge. */
   skillsStatus(): Promise<SkillsStatusOverview>;
   /** A version's SKILL.md (default: current), for the web editor. */
@@ -68,6 +72,11 @@ export interface SkillsBackend {
    * Fire-and-forget; the route has already answered.
    */
   skillsChanged(names: string[]): void;
+  /**
+   * A skill was unskipped: sync every box that ever pulled from this hub, so a
+   * running box gets it back now. Fire-and-forget.
+   */
+  skillUnskipped(name: string): void;
 }
 
 export interface SkillsBackendDeps extends Omit<SkillBoxesDeps, 'store'> {
@@ -211,5 +220,22 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
     },
 
     skillsChanged: fanOut,
+
+    skillUnskipped(name) {
+      void syncSkillBoxes(boxDeps(), { recorded: true })
+        .then((r) => {
+          if (r.length > 0) {
+            const synced = r.filter((o) => o.status === 'synced').length;
+            deps.log(
+              `skills: ${name} unskipped; synced ${String(synced)}/${String(r.length)} box(es)`,
+            );
+          }
+        })
+        .catch((err: unknown) =>
+          deps.log(
+            `skills: unskip sync failed: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        );
+    },
   };
 }
