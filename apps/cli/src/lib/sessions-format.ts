@@ -11,7 +11,6 @@ export function shortId(id: string): string {
  * comes from agent transcripts, and an ESC sequence in it must not reach a tty.
  */
 export function clip(text: string | null | undefined, max: number): string {
-  // eslint-disable-next-line no-control-regex
   const one = (text ?? '')
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
     .replace(/\s+/g, ' ')

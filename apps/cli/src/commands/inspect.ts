@@ -114,58 +114,61 @@ function renderOtherAgents(i: InspectedBox): string[] {
 /**
  * The box's row on the hub, for what only the hub knows: the session title,
  * working-on line and tokens (docs/agent-live-status-plan.md). Matched by id
- * only: names repeat across projects. Null when the hub has no such row or
- * cannot be reached, which `inspect` must survive; `stale` when the listing is
- * the cached copy of an unreachable hub.
+ * only: names repeat across projects.
+ *
+ * Read-only and quiet: a stopped local hub is never started (that would print
+ * its spinner into `--json` and spawn a daemon from a status read), and a
+ * cached listing is not live status. Either way: no row, no block.
  */
-async function hubRowFor(
-  box: Pick<BoxRecord, 'id'>,
-): Promise<{ row: HubApiBox | null; stale: boolean }> {
+export async function hubRowFor(box: Pick<BoxRecord, 'id'>): Promise<HubApiBox | null> {
   try {
-    const { boxes, stale } = await fetchBoxListing();
-    return { row: boxes.find((b) => b.id === box.id) ?? null, stale };
+    const { boxes, stale } = await fetchBoxListing({ quiet: true });
+    if (stale) return null;
+    return boxes.find((b) => b.id === box.id) ?? null;
   } catch {
-    return { row: null, stale: false };
+    return null;
   }
 }
 
 async function hubLiveLines(box: Pick<BoxRecord, 'id'>): Promise<string[]> {
-  const { row, stale } = await hubRowFor(box);
-  return renderAgentLiveLines(row, stale);
+  return renderAgentLiveLines(await hubRowFor(box));
 }
 
-/** `--json`'s view of the same: the hub's `agentStatus`, flagged when cached. */
+/** `--json`'s view of the same: the hub's `agentStatus`, or null without a hub. */
 async function hubLiveJson(
   box: Pick<BoxRecord, 'id'>,
-): Promise<{ agentLive: HubApiBox['agentStatus'] | null; agentLiveStale?: true }> {
-  const { row, stale } = await hubRowFor(box);
-  return {
-    agentLive: row?.agentStatus ?? null,
-    ...(stale ? { agentLiveStale: true as const } : {}),
-  };
+): Promise<{ agentLive: HubApiBox['agentStatus'] | null }> {
+  return { agentLive: (await hubRowFor(box))?.agentStatus ?? null };
 }
 
-/** One block per agent the hub has live status for; nothing when none. */
-export function renderAgentLiveLines(b: HubApiBox | null, stale = false): string[] {
+const LIVE_LABEL_WIDTH = 16;
+
+/**
+ * One block per agent the hub has live status for; nothing when none. The
+ * agent's state and working-on line only while the box runs: a paused or
+ * stopped box keeps its last snapshot, which can still say `working`.
+ */
+export function renderAgentLiveLines(b: HubApiBox | null): string[] {
   const out: string[] = [];
   const running = b !== null && hubBoxState(b) === 'running';
   for (const [agent, e] of Object.entries(b?.agentStatus ?? {})) {
     const activity = running ? liveActivity(e) : undefined;
     const usage = usageSummary(e.usage);
     if (!e.sessionTitle && !activity && !usage) continue;
-    out.push(`${agent} (hub)`.padEnd(13) + ` ${clip(e.state ?? 'unknown', 40)}`);
-    if (e.sessionTitle) out.push(`  title       ${clip(e.sessionTitle, 200)}`);
-    if (activity) out.push(`  working on  ${clip(activity, 200)}`);
+    const label = `${clip(agent, LIVE_LABEL_WIDTH - 7)} (hub)`;
+    const state = running && e.state ? clip(e.state, 40) : '';
+    out.push(`${label.padEnd(LIVE_LABEL_WIDTH)}${state}`.trimEnd());
+    if (e.sessionTitle) out.push(`  title         ${clip(e.sessionTitle, 200)}`);
+    if (activity) out.push(`  working on    ${clip(activity, 200)}`);
     if (usage) {
-      out.push(`  tokens      ${usage}`);
+      out.push(`  tokens        ${usage}`);
       const detail = usageBreakdown(e.usage)
         .filter(([k]) => k !== 'cost')
         .map(([k, v]) => `${k} ${v}`)
         .join(', ');
-      out.push(`              ${detail}`);
+      out.push(`                ${detail}`);
     }
   }
-  if (stale && out.length > 0) out.unshift('(hub unreachable: last known agent status)');
   return out;
 }
 

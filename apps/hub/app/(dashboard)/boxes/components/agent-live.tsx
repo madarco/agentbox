@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { AgentLiveUsage, AgentStatusWire, Box } from '@/lib/boxes/types';
 import {
+  boxRunning,
   contextFillPct,
   formatCostUsd,
   formatTokenCount,
@@ -26,7 +27,7 @@ export function AgentLiveLine({ box }: { box: Box }) {
   const title = distinctTitle(live.entry.sessionTitle, box.task);
   // A paused or stopped box keeps its last snapshot, whose state can still say
   // `working`; it is doing nothing now.
-  const activity = box.status === 'running' ? liveActivity(live.entry) : undefined;
+  const activity = boxRunning(box) ? liveActivity(live.entry) : undefined;
   if (!title && !activity) return null;
   return (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
@@ -51,8 +52,10 @@ function WorkingOn({ text, className }: { text: string; className?: string }) {
 /** The compact token figure with context fill; the full breakdown on hover. */
 export function UsageFigure({ usage, className }: { usage?: AgentLiveUsage; className?: string }) {
   const total = usageTotal(usage);
-  if (!usage || total === undefined) return null;
   const fill = contextFillPct(usage);
+  // Either figure alone is worth showing: a fresh session can know its context
+  // fill before any token is counted.
+  if (!usage || (total === undefined && fill === undefined)) return null;
   const cost = formatCostUsd(usage);
   return (
     <Tooltip>
@@ -63,7 +66,7 @@ export function UsageFigure({ usage, className }: { usage?: AgentLiveUsage; clas
             className,
           )}
         >
-          <span>{formatTokenCount(total)} tok</span>
+          {total !== undefined ? <span>{formatTokenCount(total)} tok</span> : null}
           {fill !== undefined ? <ContextBar pct={fill} /> : null}
           {cost ? <span>{cost}</span> : null}
         </span>
@@ -126,7 +129,7 @@ export function agentLiveRows(
   if (title) rows.push({ k: 'Session', v: title });
   const activity = running ? liveActivity(entry) : undefined;
   if (activity) rows.push({ k: 'Working on', v: <WorkingOn text={activity} /> });
-  if (usageTotal(entry.usage) !== undefined) {
+  if (usageTotal(entry.usage) !== undefined || contextFillPct(entry.usage) !== undefined) {
     rows.push({
       k: 'Tokens',
       v: <UsageFigure usage={entry.usage} className="text-[12px] text-secondary-foreground" />,

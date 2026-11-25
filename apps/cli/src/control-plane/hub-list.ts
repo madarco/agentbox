@@ -111,9 +111,14 @@ let apiMemo: { at: number; listing: BoxListing } | null = null;
  * Fetch the hub's boxes over `/api/v1/boxes`, falling back to the on-disk cache
  * when the hub can't be reached. Never throws — an unreachable hub yields the
  * cached listing (or an empty one) marked `stale`, so `ls` always prints.
+ *
+ * `quiet`: never start a stopped local hub (and so never print its spinner).
+ * For read-only callers whose stdout must stay machine-readable, such as
+ * `status --inspect --json`. Its listing is not memoized, so a later non-quiet
+ * call in the same process still gets the autostarted, fresh one.
  */
 export async function fetchBoxListing(
-  opts: { url?: string; live?: boolean } = {},
+  opts: { url?: string; live?: boolean; quiet?: boolean } = {},
 ): Promise<BoxListing> {
   if (!opts.live) {
     const ttl = apiMemo?.listing.stale === true ? HUB_LIST_FAIL_MEMO_MS : HUB_LIST_MEMO_MS;
@@ -125,14 +130,14 @@ export async function fetchBoxListing(
   const { resolveHubTarget } = await import('../commands/hub.js');
   const probe = await resolveHubTarget(opts.url).catch(() => null);
   if (probe && probe.mode === 'remote' && !probe.token) {
-    return remember({ boxes: [], stale: true, reason: 'no-token' }, opts.live);
+    return remember({ boxes: [], stale: true, reason: 'no-token' }, opts.live || opts.quiet);
   }
 
   // Resolve the API target (autostarts a local hub that isn't running, so `ls`
   // reflects current docker state). Null on a remote missing its key, or a local
   // hub that failed to start — both fall through to the cache below.
   const { resolveHubApiTarget } = await import('../commands/control-plane.js');
-  const target = await resolveHubApiTarget(opts.url).catch(() => null);
+  const target = await resolveHubApiTarget(opts.url, { quiet: opts.quiet }).catch(() => null);
   if (target) {
     const ceiling = opts.live ? HUB_LIST_LIVE_TIMEOUT_MS : HUB_LIST_TIMEOUT_MS;
     const deadline = Date.now() + ceiling;
@@ -163,7 +168,7 @@ export async function fetchBoxListing(
               mode: probe?.mode ?? (isLoopbackUrl(target.url) ? 'local' : 'remote'),
             },
           },
-          opts.live,
+          opts.live || opts.quiet,
         );
       }
     } catch (err) {
@@ -173,7 +178,7 @@ export async function fetchBoxListing(
       if (err instanceof HubApiError && err.status === 401 && probe?.mode === 'remote') {
         return remember(
           { boxes: [], stale: true, reason: 'unauthorized', hubUrl: target.url },
-          opts.live,
+          opts.live || opts.quiet,
         );
       }
       // anything else: fall through to the cache
@@ -182,13 +187,16 @@ export async function fetchBoxListing(
   const cached = await readBoxCache();
   // No cache either: we know nothing about the hub's boxes right now. Say that,
   // rather than presenting an empty list as a fresh answer.
-  if (!cached) return remember({ boxes: [], stale: true }, opts.live);
-  return remember({ boxes: cached.boxes, stale: true, fetchedAt: cached.fetchedAt }, opts.live);
+  if (!cached) return remember({ boxes: [], stale: true }, opts.live || opts.quiet);
+  return remember(
+    { boxes: cached.boxes, stale: true, fetchedAt: cached.fetchedAt },
+    opts.live || opts.quiet,
+  );
 }
 
 /** Memoize a non-live listing for the rest of this process's memo window. */
-function remember(listing: BoxListing, live?: boolean): BoxListing {
-  if (!live) apiMemo = { at: Date.now(), listing };
+function remember(listing: BoxListing, skipMemo?: boolean): BoxListing {
+  if (!skipMemo) apiMemo = { at: Date.now(), listing };
   return listing;
 }
 

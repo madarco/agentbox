@@ -72,6 +72,18 @@ describe('usage', () => {
     expect(contextFillPct({ ...U, contextTokens: undefined })).toBeUndefined();
     expect(usageBreakdown(undefined)).toEqual([]);
   });
+  it('context fill shows before any token is counted', () => {
+    const fresh = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      contextTokens: 9_000,
+      contextWindow: 200_000,
+    };
+    expect(usageTotal(fresh)).toBeUndefined();
+    expect(usageSummary(fresh)).toBe('5% ctx');
+  });
   it('cost only when positive', () => {
     expect(formatCostUsd(U)).toBeUndefined();
     expect(formatCostUsd({ ...U, costUsd: 0 })).toBeUndefined();

@@ -19,6 +19,14 @@ const usages: hub.AgentLiveUsageView[] = [
     costUsd: 0.42,
   },
   { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 },
+  {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    contextTokens: 9_000,
+    contextWindow: 200_000,
+  },
 ];
 const states = ['working', 'waiting', 'question', 'idle', 'error', 'unknown', undefined];
 
@@ -50,7 +58,10 @@ describe('primaryLive', () => {
   it("prefers the box's own agent", () => {
     const r = hub.primaryLive({
       agent: 'codex',
-      agentStatus: { claude: { state: 'idle', sessionTitle: 'a' }, codex: { state: 'working' } },
+      agentStatus: {
+        claude: { state: 'idle', sessionTitle: 'a' },
+        codex: { state: 'working', activity: 'x' },
+      },
     });
     expect(r?.agent).toBe('codex');
   });
@@ -65,5 +76,22 @@ describe('primaryLive', () => {
     expect(
       hub.primaryLive({ agent: 'claude', agentStatus: { pi: { state: 'unknown' } } }),
     ).toBeUndefined();
+  });
+  it("falls through when the box's own agent has no data", () => {
+    expect(
+      hub.primaryLive({
+        agent: 'claude',
+        agentStatus: { claude: { state: 'unknown' }, codex: { state: 'working', activity: 'x' } },
+      })?.agent,
+    ).toBe('codex');
+  });
+});
+
+describe('boxRunning', () => {
+  it('reads the raw state: an agent error does not stop the box', () => {
+    expect(hub.boxRunning({ state: 'running', status: 'error' })).toBe(true);
+    expect(hub.boxRunning({ state: 'paused', status: 'paused' })).toBe(false);
+    expect(hub.boxRunning({ status: 'running' })).toBe(true);
+    expect(hub.boxRunning({ status: 'error' })).toBe(false);
   });
 });

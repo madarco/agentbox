@@ -269,7 +269,7 @@ and cost appears only when positive. The box detail has an **Agent session** car
 `agentLive`) reads the hub row.
 
 - **Hub web:** the box row and box detail show the title, the working-on line and a token figure
-  (context fill on hover).
+  with an inline context-fill bar; hover gives the per-kind breakdown.
 - **Tray:** the box row shows the working-on line under the title, and tokens in the box submenu.
   Update `../agentbox-tray/CLAUDE.md`, since this changes the `/api/v1` Box payload.
 - **CLI:** `agentbox ls` adds the working-on line, and `agentbox inspect` adds everything.

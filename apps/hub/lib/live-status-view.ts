@@ -108,9 +108,15 @@ export function usageBreakdown(u: AgentLiveUsageView | undefined): Array<[string
   return rows;
 }
 
+/** An entry the hub has anything to show for. */
+function hasLiveData(e: AgentStatusWire): boolean {
+  return Boolean(e.sessionTitle || e.activity || e.usage);
+}
+
 /**
- * The agent whose live status a box row shows: the box's own agent when it
- * reports, else the first reporting agent with a title, activity or usage.
+ * The agent whose live status a box row shows: the box's own agent when it has
+ * data, else the first reporting agent that does (a box made for one agent can
+ * run another, as the tray shows it).
  */
 export function primaryLive(
   box: Pick<Box, 'agent' | 'agentStatus'>,
@@ -118,7 +124,15 @@ export function primaryLive(
   const map = box.agentStatus;
   if (!map) return undefined;
   const own = map[box.agent];
-  if (own) return { agent: box.agent, entry: own };
-  const found = Object.entries(map).find(([, e]) => e.sessionTitle || e.activity || e.usage);
+  if (own && hasLiveData(own)) return { agent: box.agent, entry: own };
+  const found = Object.entries(map).find(([, e]) => hasLiveData(e));
   return found ? { agent: found[0], entry: found[1] } : undefined;
+}
+
+/**
+ * Is the box's runtime up? The raw provider `state` when the source sends it:
+ * `status` turns `error` whenever any agent errored, on a box that still runs.
+ */
+export function boxRunning(box: Pick<Box, 'state' | 'status'>): boolean {
+  return (box.state ?? box.status) === 'running';
 }

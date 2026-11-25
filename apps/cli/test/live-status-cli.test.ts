@@ -61,7 +61,6 @@ describe('control characters never reach the terminal', () => {
       },
     });
     for (const line of [...workingOnLines(b, 120), ...renderAgentLiveLines(b)]) {
-      // eslint-disable-next-line no-control-regex
       expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
     }
   });
@@ -81,9 +80,9 @@ describe('inspect agent block', () => {
         },
       }),
     );
-    expect(lines.join('\n')).toContain('title       Fix login');
-    expect(lines.join('\n')).toContain('working on  bash: npm test');
-    expect(lines.join('\n')).toContain('tokens      1M tok · 45% ctx');
+    expect(lines.join('\n')).toContain('title         Fix login');
+    expect(lines.join('\n')).toContain('working on    bash: npm test');
+    expect(lines.join('\n')).toContain('tokens        1M tok · 45% ctx');
     expect(lines.join('\n')).toContain('context 90k / 200k (45%)');
   });
   it('an idle agent shows no working-on line; no data shows nothing', () => {
@@ -96,9 +95,31 @@ describe('inspect agent block', () => {
     expect(renderAgentLiveLines(box({ agentStatus: { claude: { state: 'idle' } } }))).toEqual([]);
     expect(renderAgentLiveLines(null)).toEqual([]);
   });
-  it('a cached listing from an unreachable hub is flagged', () => {
-    const b = box({ agentStatus: { claude: { state: 'idle', sessionTitle: 'T' } } });
-    expect(renderAgentLiveLines(b, true)[0]).toBe('(hub unreachable: last known agent status)');
-    expect(renderAgentLiveLines(b, false)[0]).not.toContain('unreachable');
+  it('a paused box shows neither the agent state nor a working-on line', () => {
+    const lines = renderAgentLiveLines(
+      box({
+        state: 'paused',
+        status: 'paused',
+        agentStatus: { claude: { state: 'working', sessionTitle: 'T', activity: 'bash: x' } },
+      }),
+    );
+    expect(lines[0]).toBe('claude (hub)');
+    expect(lines.join('\n')).not.toMatch(/working/);
+  });
+  it('a missing state renders nothing, labels align, the agent key is clipped', () => {
+    const lines = renderAgentLiveLines(
+      box({
+        agentStatus: {
+          claude: { sessionTitle: 'A' },
+          opencode: { state: 'idle', sessionTitle: 'B' },
+          'a-very-long-agent-id': { state: 'idle', sessionTitle: 'C' },
+        },
+      }),
+    );
+    const heads = lines.filter((l) => !l.startsWith(' '));
+    expect(heads[0]).toBe('claude (hub)');
+    expect(heads[1]).toBe('opencode (hub)  idle');
+    expect(heads[2]?.indexOf('idle')).toBe(16);
+    expect(heads[2]?.length).toBeLessThanOrEqual(20);
   });
 });

@@ -9,6 +9,7 @@ import { Alert } from '@/components/ui/alert';
 import { Card } from '@/components/ui/card';
 import { useStore } from '@/lib/boxes/store';
 import type { Box } from '@/lib/boxes/types';
+import { boxRunning } from '@/lib/live-status-view';
 import { BoxApprovals } from '../../approvals/components/box-approvals';
 import { Access } from '../components/access';
 import { agentLiveRows } from '../components/agent-live';
@@ -138,11 +139,12 @@ export default function BoxDetailPage() {
  * no agent has any of them (an older hub, or a box whose agent has not run).
  */
 function AgentSessions({ box }: { box: Box }) {
+  const running = boxRunning(box);
   const agents = Object.entries(box.agentStatus ?? {})
     .map(([agent, entry]) => ({
       agent,
       entry,
-      rows: agentLiveRows(entry, box.status === 'running', box.task),
+      rows: agentLiveRows(entry, running, box.task),
     }))
     .filter((a) => a.rows.length > 0)
     .sort((a, b) => Number(b.agent === box.agent) - Number(a.agent === box.agent));
@@ -154,7 +156,17 @@ function AgentSessions({ box }: { box: Box }) {
       <Card className="divide-y divide-border/60 overflow-hidden">
         {agents.flatMap(({ agent, entry, rows }) =>
           [
-            ...(many ? [{ k: 'Agent', v: `${agent} · ${entry.state}`, mono: true }] : []),
+            // The agent's state only while the box runs: a paused or stopped
+            // box keeps its last snapshot, which can still say `working`.
+            ...(many
+              ? [
+                  {
+                    k: 'Agent',
+                    v: running && entry.state ? `${agent} · ${entry.state}` : agent,
+                    mono: true,
+                  },
+                ]
+              : []),
             ...rows,
           ].map((r) => <DRow key={`${agent}-${r.k}`} k={r.k} v={r.v} mono={r.mono} />),
         )}
