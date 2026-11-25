@@ -382,7 +382,7 @@ function SubscriptionCard({
           </Button>
         </div>
       ) : null}
-      <div className="mt-3.5">
+      <div className="mt-3.5 empty:hidden">
         <SubMeters account={a} />
       </div>
       {atLimit && n ? (

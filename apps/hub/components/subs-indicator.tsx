@@ -77,7 +77,9 @@ export function SubsIndicator() {
           'inline-flex h-9 cursor-pointer items-center gap-3.5 rounded-lg border border-transparent bg-transparent px-2.5 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           open && 'bg-secondary',
         )}
-        onClick={() => setOpen(!open)}
+        // Opens only: hover has usually opened it already, and a toggle would
+        // shut it under the click. Escape, a click outside or leaving closes it.
+        onClick={show}
         onFocus={show}
       >
         {shown.map((a) => {

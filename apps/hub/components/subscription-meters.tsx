@@ -64,13 +64,17 @@ export function SubMeters({ account: a, compact }: { account: Account; compact?:
   }
   const windows = a.limits?.windows ?? [];
   if (windows.length === 0) {
-    return (
-      <div className="font-mono text-[11px] text-muted-foreground">
-        {a.agent === 'claude'
-          ? 'limits appear while a box runs on it'
-          : 'limits appear after its first session'}
-      </div>
-    );
+    // Only the agents that report limits get a hint; for the others there is
+    // nothing to wait for.
+    const hint =
+      a.agent === 'claude'
+        ? 'limits appear while a box runs on it'
+        : a.agent === 'codex'
+          ? 'limits appear after its first session'
+          : null;
+    return hint ? (
+      <div className="font-mono text-[11px] text-muted-foreground">{hint}</div>
+    ) : null;
   }
   return (
     <div
