@@ -137,6 +137,20 @@ Before AgentBox creates any billable resource (firewall, SSH key, server), it va
   out-of-capacity error (`resource_unavailable`) suggests trying another `--location`.
 </Callout>
 
+## Memory and swap
+
+Every Hetzner box gets a `/swapfile` when it boots: min(RAM, 8 GiB), at least 2 GiB, never more than a quarter of the free disk, with `vm.swappiness=10` so it only catches overflow. Without it, an agent running subagents on the default `cx23` (4 GB) can be killed by the kernel's out-of-memory killer while `agentbox list` still says `working`. The swap survives stop/start and reboots, and control boxes made with `agentbox hub deploy hetzner` get it too.
+
+Set the size, or turn it off, with `box.swap`:
+
+```sh
+agentbox config set box.swap 4G    # a fixed size (or e.g. 2048M)
+agentbox config set box.swap off   # no swap
+agentbox config unset box.swap     # back to auto
+```
+
+It applies to boxes created after the change. If an agent still runs out of memory, use a bigger `--size`.
+
 ## Firewall
 
 Each box gets its own Hetzner Cloud Firewall: inbound TCP port 22 only from the machines you use the box from. All box traffic flows over SSH, so port 22 from your own machines is genuinely all that's exposed.

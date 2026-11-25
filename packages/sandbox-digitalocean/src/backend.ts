@@ -29,6 +29,7 @@ import type {
   CloudSandboxSummary,
   CloudState,
 } from '@agentbox/core';
+import { parseSwapSpec } from '@agentbox/sandbox-cloud';
 import { generateBoxCloudInit } from './cloud-init.js';
 import {
   DigitalOceanApiError,
@@ -494,6 +495,8 @@ export const digitaloceanBackend: CloudBackend = {
     // creating any billable resources (firewall, SSH key, droplet). A bad
     // `--size s-99vcpu` / `--location atlantis` fails fast here with a clear
     // message instead of a late, opaque API error after cleanup churn.
+    // Validate `box.swap` before any billable resource exists.
+    const swap = parseSwapSpec(req.swap);
     const size = (req.size && req.size.trim()) || DIGITALOCEAN_DEFAULT_SIZE;
     const region =
       (req.location && req.location.trim()) ||
@@ -586,6 +589,7 @@ export const digitaloceanBackend: CloudBackend = {
         sshPubkey: key.publicKey,
         boxName: req.name,
         boxEnv: Object.keys(boxEnv).length > 0 ? boxEnv : undefined,
+        swap,
       });
 
       // 6. Create the droplet (tagged so the firewall applies). Map late DO

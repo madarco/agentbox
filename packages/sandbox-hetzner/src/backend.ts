@@ -35,6 +35,7 @@ import type {
   CloudSandboxSummary,
   CloudState,
 } from '@agentbox/core';
+import { parseSwapSpec } from '@agentbox/sandbox-cloud';
 import { generateBoxCloudInit } from './cloud-init.js';
 import {
   HetznerApiError,
@@ -482,6 +483,8 @@ export const hetznerBackend: CloudBackend = {
     // BEFORE creating any billable resources (firewall, SSH key, server). A bad
     // `--size cax31` / `--size cx99` / `--location atlantis` fails fast here with
     // a clear message instead of a late, opaque API error after cleanup churn.
+    // Validate `box.swap` before any billable resource exists.
+    const swap = parseSwapSpec(req.swap);
     const serverType = (req.size && req.size.trim()) || HETZNER_DEFAULT_SERVER_TYPE;
     const location = (req.location && req.location.trim()) || HETZNER_DEFAULT_LOCATION;
     const choice = { serverType, location };
@@ -566,6 +569,7 @@ export const hetznerBackend: CloudBackend = {
         sshPubkey: key.publicKey,
         boxName: req.name,
         boxEnv: Object.keys(boxEnv).length > 0 ? boxEnv : undefined,
+        swap,
       });
 
       // 6. Create the server. Map late Hetzner provision errors (account limit,
