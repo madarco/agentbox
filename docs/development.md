@@ -101,7 +101,7 @@ go through `pullOrBuild()`.
 
 ### Diagnosing this from the hub
 
-The hub's **System** page (`https://agentbox.localhost/system`) surfaces the facts
+The hub's **Settings → System** page (`https://agentbox.localhost/settings/system`) surfaces the facts
 this section describes, so the usual investigation needs no terminal:
 
 - **Box image** — the registry, the *exact* `sha-<16>` tag this host will pull, and

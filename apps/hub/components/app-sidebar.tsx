@@ -101,10 +101,15 @@ function SideGroup({
 }) {
   const pathname = usePathname();
   const within = onRoute(pathname, to);
-  // A manual toggle holds until the user navigates into or out of the group;
-  // keying it on `within` makes that crossing drop it without an effect.
-  const [toggled, setToggled] = useState<{ within: boolean; open: boolean } | null>(null);
-  const open = toggled && toggled.within === within ? toggled.open : within;
+  // A manual toggle holds until the user navigates into or out of the group,
+  // where it is dropped (state adjusted during render, React's pattern for
+  // resetting state on a prop change).
+  const [open, setOpen] = useState(within);
+  const [wasWithin, setWasWithin] = useState(within);
+  if (wasWithin !== within) {
+    setWasWithin(within);
+    setOpen(within);
+  }
   const listId = useId();
   const highlight = within && !open;
 
@@ -136,7 +141,7 @@ function SideGroup({
           aria-expanded={open}
           aria-controls={listId}
           aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
-          onClick={() => setToggled({ within, open: !open })}
+          onClick={() => setOpen(!open)}
           className="mr-1 grid size-6 flex-none cursor-pointer place-items-center rounded-md border-0 bg-transparent text-[#a4a9b0] hover:text-foreground"
         >
           <Icons.chevR className={cn('size-3.5 transition-transform', open && 'rotate-90')} />

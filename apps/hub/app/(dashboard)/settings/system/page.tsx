@@ -181,7 +181,7 @@ export default function SystemPage() {
                   </span>
                 )}
                 {/* This page diagnoses; Settings is where the bake button lives. */}
-                <Button href="/settings" variant="outline" size="sm">
+                <Button href="/settings#providers" variant="outline" size="sm">
                   <Icons.settings />
                   Settings
                 </Button>
@@ -264,7 +264,7 @@ function ProviderBakeRow({
       {p.baseStatus === 'stale' ? <StaleDiff p={p} /> : null}
       {p.origin === 'hub' && p.hubUrl ? (
         <a
-          href={`${p.hubUrl}/system`}
+          href={`${p.hubUrl}/settings/system`}
           target="_blank"
           rel="noreferrer"
           className="text-[12.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
