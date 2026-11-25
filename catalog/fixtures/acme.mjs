@@ -238,10 +238,13 @@ export const hubState = {
 /* ---- LLM accounts (GET /api/v1/accounts) ---- */
 export const accounts = {
   accounts: [
-    { agent: "claude", id: "work", label: "Acme work", kind: "login", identity: { email: "dev@acme.example", org: "Acme", plan: "Max" }, hasSecret: true, boxes: ["checkout-copy"], createdAt: iso(60 * 24 * 9), updatedAt: iso(60 * 3) },
+    /* limits: one window per limit the plan reports (hub settings 3b); a Max login here has two weekly windows. */
+    { agent: "claude", id: "work", label: "Acme work", kind: "login", identity: { email: "dev@acme.example", org: "Acme", plan: "Max" }, hasSecret: true, boxes: ["checkout-copy", "queue-retries"], createdAt: iso(60 * 24 * 9), updatedAt: iso(60 * 3),
+      limits: { windows: [{ id: "weekly_all", label: "Weekly, all models", pct: 64, resetsAt: iso(-60 * 24 * 3.6), windowMinutes: 10080 }, { id: "weekly_scoped:Fable", label: "Weekly, Fable", pct: 31, resetsAt: iso(-60 * 24 * 3.6), windowMinutes: 10080 }], atLimit: false, updatedAt: iso(2), source: "usage-api" } },
     { agent: "claude", id: "ci", kind: "setup-token", hasSecret: true, boxes: [], createdAt: iso(60 * 24 * 4), updatedAt: iso(60 * 24 * 4) },
     { agent: "codex", id: "personal", label: "Personal", kind: "api-key", hasSecret: true, boxes: ["fix-webhooks"], createdAt: iso(60 * 24 * 6), updatedAt: iso(60 * 24 * 6) },
-    { agent: "codex", id: "team", label: "Acme team", kind: "login", identity: { email: "eng@acme.example", plan: "Team" }, hasSecret: true, boxes: [], createdAt: iso(60 * 24 * 2), updatedAt: iso(60 * 30) },
+    { agent: "codex", id: "team", label: "Acme team", kind: "login", identity: { email: "eng@acme.example", plan: "Team" }, hasSecret: true, boxes: ["payment-retries"], createdAt: iso(60 * 24 * 2), updatedAt: iso(60 * 30),
+      limits: { windows: [{ id: "primary", label: "5-hour", pct: 100, resetsAt: iso(-95), windowMinutes: 300 }, { id: "secondary", label: "Weekly", pct: 47, resetsAt: iso(-60 * 24 * 2.2), windowMinutes: 10080 }], atLimit: true, updatedAt: iso(6), source: "transcript" } },
   ],
   agents: [
     { id: "claude", label: "Claude Code", kinds: ["login", "setup-token", "api-key"] },

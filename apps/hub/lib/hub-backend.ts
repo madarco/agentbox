@@ -142,6 +142,7 @@ import {
   listProviderDescriptors,
   resolveProviderDescriptor,
   readAccounts,
+  readAccountSecret,
   resolveLlmProxyRecord,
   type FileManifest,
 } from '@agentbox/sandbox-core';
@@ -221,6 +222,7 @@ import {
   resolveCreateAccounts,
   setDefaultCheckpointRefusal,
 } from './backend/accounts';
+import { createLimitsSource } from './backend/account-limits';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { createProjectCustodySlugs } from './backend/project-custody';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
@@ -2223,16 +2225,28 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       skillsChanged: (names) => skills.skillsChanged(names),
     }),
   );
+  // One per hub: it caches each account's last usage-endpoint read.
+  const accountLimits = createLimitsSource({
+    readSecret: (agent, id) => readAccountSecret(agent, id),
+    transcriptLimits: async (subscription) =>
+      (await globalThis.__AGENTBOX_HUB_HISTORY?.repo.accountLimits(subscription)) ?? null,
+    log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+  });
   // A box records its account in state.json AND in its relay registration;
   // a Store-only box has only the latter, and must still block `accounts rm`.
   const accounts = createAccountBackend({
-    boxes: async () => [
-      ...(await readState()).boxes,
-      ...(await handle.store.listBoxes().catch(() => [])).map((r) => ({
-        name: r.name,
-        ...(r.accounts ? { accounts: r.accounts } : {}),
-      })),
-    ],
+    limits: accountLimits,
+    // A local box is in both: its state.json record (the richer one) wins.
+    boxes: async () => {
+      const local = (await readState()).boxes;
+      const seen = new Set(local.map((b) => b.id));
+      return [
+        ...local,
+        ...(await handle.store.listBoxes().catch(() => []))
+          .filter((r) => !seen.has(r.boxId))
+          .map((r) => ({ name: r.name, ...(r.accounts ? { accounts: r.accounts } : {}) })),
+      ];
+    },
   });
   const workspaces = createWorkspaceBackend(backendDeps);
   const custodySlugs = createProjectCustodySlugs();

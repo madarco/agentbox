@@ -1125,7 +1125,47 @@ export function buildOpenApi(): Record<string, unknown> {
                               type: 'array',
                               items: { type: 'string' },
                               description:
-                                'Names of the boxes that record this account (running it, or borrowing it).',
+                                "Names of the boxes whose usage counts under this account: running it (the default account included), or borrowing it as another agent's model auth.",
+                            },
+                            limits: {
+                              type: 'object',
+                              description:
+                                'Plan limits: one window per limit the source reports, never a fixed set (a plan may have a 5-hour and a weekly window, weekly only, or a separate per-model weekly one). Claude: the OAuth usage endpoint, read with the stored login at most every 5 minutes and only while a box on the account runs; codex: the newest `rate_limits` a session transcript on the account carried. Absent = no data, never 0%.',
+                              properties: {
+                                windows: {
+                                  type: 'array',
+                                  items: {
+                                    type: 'object',
+                                    properties: {
+                                      id: { type: 'string' },
+                                      label: {
+                                        type: 'string',
+                                        description: '`5-hour`, `Weekly`, `Weekly, Fable`, …',
+                                      },
+                                      pct: {
+                                        type: 'number',
+                                        description: 'Percent used; 100 or more is at the limit.',
+                                      },
+                                      resetsAt: { type: 'string', format: 'date-time' },
+                                      windowMinutes: { type: 'integer' },
+                                    },
+                                    required: ['id', 'label', 'pct'],
+                                  },
+                                },
+                                atLimit: { type: 'boolean' },
+                                updatedAt: {
+                                  type: 'string',
+                                  format: 'date-time',
+                                  description: 'When the source reported these values.',
+                                },
+                                stale: {
+                                  type: 'boolean',
+                                  description:
+                                    'No newer read for 10 minutes (the usage endpoint failing, or no codex session since): the last known values. A window is dropped once it has reset, or a full window length after its read when the source gave no reset time.',
+                                },
+                                source: { type: 'string', enum: ['usage-api', 'transcript'] },
+                              },
+                              required: ['windows', 'atLimit', 'updatedAt', 'source'],
                             },
                           },
                           required: ['agent', 'id', 'kind', 'hasSecret', 'boxes'],

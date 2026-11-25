@@ -4,40 +4,25 @@
 // tokens, API keys per agent; docs/llm-accounts-plan.md, Phase 5). PURE REST
 // CLIENT over /api/v1/accounts: list, add a pasted key or setup token, relabel,
 // remove. A login is interactive and runs on the machine, so it is a command
-// to copy, not a form. No secret ever comes back from the API.
+// to copy, not a form. No secret ever comes back from the API. Each card shows
+// one meter per plan-limit window the account reports (hub settings 3b,
+// design: control-shadcn/views-env.jsx SubscriptionsPane).
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { SubMark, SubMeters, TierBadge, subLine, subName } from '@/components/subscription-meters';
+import { refreshAccounts, resetText, useAccounts, type Account } from '@/lib/accounts-client';
+import { groupSubscriptions, subscriptionKey, type AccountKind } from '@/lib/subscriptions';
+import { cn } from '@/lib/utils';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
-import {
-  groupSubscriptions,
-  subscriptionKey,
-  vendorOf,
-  type AccountKind,
-} from '@/lib/subscriptions';
 
 type Kind = AccountKind;
-
-interface Account {
-  agent: string;
-  id: string;
-  label?: string;
-  kind: Kind;
-  identity?: { email?: string; org?: string; plan?: string };
-  hasSecret: boolean;
-  boxes: string[];
-}
-
-interface AgentKinds {
-  id: string;
-  kinds: Kind[];
-}
 
 const KIND_LABEL: Record<Kind, string> = {
   login: 'login',
@@ -80,10 +65,8 @@ async function loadWeekTokens(): Promise<Map<string, number> | null> {
 }
 
 export default function SubscriptionsPage() {
-  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const { accounts, agents, error } = useAccounts();
   const [weekTokens, setWeekTokens] = useState<Map<string, number> | null>(null);
-  const [agents, setAgents] = useState<AgentKinds[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
@@ -94,25 +77,13 @@ export default function SubscriptionsPage() {
   const [label, setLabel] = useState('');
   const [token, setToken] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      // Usage is a side fact: the cards render without it.
-      const [r, week] = await Promise.all([
-        api<{ accounts: Account[]; agents: AgentKinds[] }>(''),
-        loadWeekTokens().catch(() => null),
-      ]);
-      setAccounts(r.accounts);
-      setAgents(r.agents);
-      setWeekTokens(week);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
+  // Usage is a side fact: the cards render without it.
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadWeekTokens()
+      .catch(() => null)
+      .then(setWeekTokens);
+  }, []);
+  const load = refreshAccounts;
 
   const pastedAgents = agents.filter((a) => a.kinds.some((k) => k !== 'login'));
   const chosen = pastedAgents.find((a) => a.id === agent) ?? pastedAgents[0];
@@ -203,14 +174,16 @@ export default function SubscriptionsPage() {
               <div key={g.title}>
                 <SectionLabel
                   right={
-                    <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                      {g.accounts.length}
+                    <span className="font-mono text-[11px] normal-case tracking-normal text-[#a4a9b0]">
+                      {g.title === 'API keys'
+                        ? 'pay as you go'
+                        : `${String(g.accounts.length)} ${g.accounts.length === 1 ? 'account' : 'accounts'}`}
                     </span>
                   }
                 >
                   {g.title}
                 </SectionLabel>
-                <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+                <div className="flex flex-col gap-2.5">
                   {g.accounts.map((a) => (
                     <SubscriptionCard
                       key={subscriptionKey(a)}
@@ -335,76 +308,105 @@ function SubscriptionCard({
 }) {
   const key = subscriptionKey(a);
   const named = a.id !== 'default';
+  const n = a.boxes.length;
+  const atLimit = a.limits?.atLimit === true;
+  // The first window to reset that is full, for the at-limit note.
+  const reset = resetText(
+    a.limits?.windows
+      .filter((w) => w.pct >= 100 && w.resetsAt)
+      .map((w) => w.resetsAt!)
+      .sort()[0],
+  );
   return (
-    <Card className="flex flex-col gap-3 p-4 px-5">
-      <div className="flex items-start gap-2">
+    <Card className={cn('p-4', atLimit && 'border-[var(--amber-line)]')}>
+      <div className="flex items-center gap-3 max-sm:flex-wrap">
+        <SubMark account={a} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[14px] font-medium">{a.label ?? a.id}</div>
-          <div className="mt-0.5 font-mono text-[11.5px] text-muted-foreground">{key}</div>
+          <div className="flex items-center gap-2 text-[13.5px] font-semibold">
+            <span className="truncate">{subName(a)}</span>
+            <TierBadge account={a} />
+            {a.hasSecret ? null : <Badge className="px-1.5 py-0 text-[10.5px]">no secret</Badge>}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground">
+            {subLine(a)}
+          </div>
         </div>
-        {a.identity?.plan ? <Badge>{a.identity.plan}</Badge> : null}
-        <Badge variant="outline">{KIND_LABEL[a.kind]}</Badge>
-      </div>
-      <dl className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-1 text-[12.5px]">
-        <dt className="text-muted-foreground">Account</dt>
-        <dd className="min-w-0 truncate">
-          {[a.identity?.email, a.identity?.org].filter(Boolean).join(' · ') ||
-            (a.kind === 'api-key' ? `${vendorOf(a.agent)} API key` : '—')}
-          {a.hasSecret ? null : <span className="text-muted-foreground"> · no secret stored</span>}
-        </dd>
-        <dt className="text-muted-foreground">Boxes</dt>
-        <dd className="min-w-0 truncate" title={a.boxes.join(', ')}>
-          {named
-            ? a.boxes.length > 0
-              ? a.boxes.join(', ')
-              : 'none'
-            : 'every box without a named account'}
-        </dd>
-        <dt className="text-muted-foreground">Last 7 days</dt>
-        <dd>
-          {weekLoaded ? (
-            <Link
-              href={`/usage?subscription=${encodeURIComponent(key)}`}
-              className="tabular-nums underline-offset-2 hover:underline"
-              title={`${(weekTokens ?? 0).toLocaleString()} tokens — open in Usage`}
-            >
-              {fmtTokens(weekTokens ?? 0)} tokens
-            </Link>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          )}
-        </dd>
-      </dl>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button size="sm" variant="ghost" disabled={busy} onClick={onLabel}>
-          <Icons.pencil /> Label
-        </Button>
-        {named ? (
-          confirming ? (
-            <>
-              <Button size="sm" variant="destructive" disabled={busy} onClick={onRemove}>
-                Remove {key}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={onKeep}>
-                Keep
-              </Button>
-            </>
-          ) : (
+        <div className="flex flex-none items-center gap-2.5">
+          <span
+            className="font-mono text-[11.5px] text-muted-foreground"
+            title={a.boxes.join(', ') || undefined}
+          >
+            {n ? `${String(n)} ${n === 1 ? 'box' : 'boxes'}` : 'no boxes'}
+          </span>
+          {a.limits ? (
+            <Badge className={atLimit ? 'badge-pause' : 'badge-run'}>
+              <span className="badge-dot" style={{ animation: 'none' }} />
+              {atLimit ? 'at limit' : 'ok'}
+            </Badge>
+          ) : null}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            disabled={busy}
+            aria-label={`Label ${key}`}
+            title="Set its label"
+            onClick={onLabel}
+          >
+            <Icons.pencil />
+          </Button>
+          {named && !confirming ? (
             <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || a.boxes.length > 0}
+              size="icon-sm"
+              variant="ghost"
+              disabled={busy || n > 0}
+              aria-label={`Remove ${key}`}
               title={
-                a.boxes.length > 0
+                n > 0
                   ? 'Destroy the boxes that use it first'
                   : 'Remove its stored login and config volume'
               }
               onClick={onAskRemove}
             >
-              <Icons.trash /> Remove
+              <Icons.trash />
             </Button>
-          )
-        ) : null}
+          ) : null}
+        </div>
+      </div>
+      {confirming ? (
+        <div className="mt-3 flex items-center gap-2">
+          <Button size="sm" variant="destructive" disabled={busy} onClick={onRemove}>
+            Remove {key}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onKeep}>
+            Keep
+          </Button>
+        </div>
+      ) : null}
+      <div className="mt-3.5 empty:hidden">
+        <SubMeters account={a} />
+      </div>
+      {atLimit && n ? (
+        <div className="mt-3 flex items-start gap-2 border-t border-[var(--amber-line)] pt-2.5 text-xs text-[#6a4e0c]">
+          <Icons.warn className="mt-px size-3.5 flex-none" />
+          <span>
+            {a.boxes.join(', ')} {n === 1 ? 'runs' : 'run'} on this account, which is at its limit
+            {reset ? ` (${reset})` : ''}.
+          </span>
+        </div>
+      ) : null}
+      <div className="mt-3 flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+        <span>{key}</span>
+        <span className="ml-auto">
+          {weekLoaded ? (
+            <Link
+              href={`/usage?subscription=${encodeURIComponent(key)}`}
+              className="tabular-nums underline-offset-2 hover:text-foreground hover:underline"
+              title={`${(weekTokens ?? 0).toLocaleString()} tokens in the last 7 days. Open in Usage`}
+            >
+              {fmtTokens(weekTokens ?? 0)} tokens, last 7 days
+            </Link>
+          ) : null}
+        </span>
       </div>
     </Card>
   );

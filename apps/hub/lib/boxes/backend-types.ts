@@ -1487,8 +1487,17 @@ export interface AccountView {
   identity?: AccountIdentity;
   /** Whether a secret is stored for it (a login whose capture failed has none). */
   hasSecret: boolean;
-  /** Names of the boxes that record this account (running it, or borrowing it). */
+  /**
+   * Names of the boxes whose usage counts under this account: running it
+   * (the default account included), or borrowing it as model auth.
+   */
   boxes: string[];
+  /**
+   * Plan limits, one window per limit the source reports (hub settings 3b).
+   * Absent = no data (an API key, a claude login with no running box yet, a
+   * codex account with no session), never 0%.
+   */
+  limits?: AccountLimits;
 }
 
 /** An agent that can hold named accounts, and which kinds. */
@@ -1518,6 +1527,9 @@ export interface AccountBackend {
 }
 
 export type AccountKind = 'login' | 'setup-token' | 'api-key';
+
+export type { AccountLimits, AccountLimitWindow } from '../backend/account-limits';
+import type { AccountLimits } from '../backend/account-limits';
 
 export interface AccountIdentity {
   email?: string;

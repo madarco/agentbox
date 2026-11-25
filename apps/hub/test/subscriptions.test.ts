@@ -24,7 +24,7 @@ describe('subscriptions', () => {
     ]);
     expect(groups.map((g) => [g.title, g.accounts.map((a) => `${a.agent}/${a.id}`)])).toEqual([
       ['Anthropic', ['claude/ci', 'claude/default']],
-      ['OpenAI', ['codex/default']],
+      ['OpenAI Codex', ['codex/default']],
       ['opencode', ['opencode/x']],
       ['API keys', ['pi/k']],
     ]);

@@ -15,9 +15,11 @@ import {
   namedAccounts,
   type AgentSyncSpec,
   type BoxRecord,
+  type BoxRuntimeState,
   type LlmAccount,
 } from '@agentbox/core';
 import type { AccountBackend, AccountView } from '../boxes/backend-types';
+import type { LimitsSource } from './account-limits';
 import {
   AGENT_SYNC_SPECS,
   boxesOnAccount,
@@ -80,7 +82,9 @@ export function setDefaultCheckpointRefusal(box: {
 
 export interface AccountBackendDeps {
   /** The hub machine's box records. Default: `~/.agentbox/state.json`. */
-  boxes?: () => Promise<readonly Pick<BoxRecord, 'name' | 'accounts'>[]>;
+  boxes?: () => Promise<readonly AccountBoxFacts[]>;
+  /** Plan limits per account (hub settings Phase 3b); absent = none shown. */
+  limits?: LimitsSource;
   /**
    * Remove a docker volume. Default: `docker volume rm`. `removed: false` with
    * no `error` = there was no such volume.
@@ -90,6 +94,39 @@ export interface AccountBackendDeps {
   /** This hub's machine id, the `<machine>` its named accounts sit under in custody. */
   machineId?: () => string | undefined;
 }
+
+/** What the account list reads of a box. */
+export type AccountBoxFacts = Pick<BoxRecord, 'name' | 'accounts'> &
+  Partial<Pick<BoxRecord, 'agents' | 'borrowedCredentials'>> & {
+    cloud?: { lastState?: BoxRuntimeState };
+  };
+
+/**
+ * The boxes whose usage counts under subscription `agent/id`: every box agent
+ * whose `subscriptionOf` is it (the default account included, and a borrower
+ * under its lender), plus any box that records the account by name. A box
+ * record without `agents` (an old one, a Store-only registration) is counted
+ * only by name. Pure apart from `specOf`.
+ */
+export function boxesOnSubscription<B extends AccountBoxFacts>(
+  all: readonly B[],
+  agent: string,
+  id: string,
+  specOf?: Parameters<typeof subscriptionOf>[2],
+): B[] {
+  const key = `${agent}/${id}`;
+  const named = new Set(boxesOnAccount(all, agent, id));
+  return all.filter(
+    (b) => named.has(b) || (b.agents ?? []).some((a) => subscriptionOf(b, a, specOf) === key),
+  );
+}
+
+/**
+ * A box counts as running unless agentbox last drove a cloud box elsewhere
+ * (absent = running). A docker record carries no state: it counts as running,
+ * which costs at most one usage call per refresh interval.
+ */
+const isRunning = (b: AccountBoxFacts): boolean => (b.cloud?.lastState ?? 'running') === 'running';
 
 const execFileAsync = promisify(execFile);
 
@@ -111,8 +148,12 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
   const removeVolume = deps.removeVolume ?? dockerVolumeRm;
   const store = deps.store;
 
-  async function view(account: LlmAccount): Promise<AccountView> {
-    const all = await boxes().catch(() => []);
+  async function view(account: LlmAccount, all?: readonly AccountBoxFacts[]): Promise<AccountView> {
+    const list = all ?? (await boxes().catch(() => []));
+    const on = boxesOnSubscription(list, account.agent, account.id);
+    const limits = await deps.limits
+      ?.limitsFor(account.agent, account.id, on.some(isRunning))
+      .catch(() => undefined);
     return {
       agent: account.agent,
       id: account.id,
@@ -120,7 +161,8 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       kind: account.kind,
       ...(account.identity ? { identity: account.identity } : {}),
       hasSecret: (await readAccountSecret(account.agent, account.id, store)) !== null,
-      boxes: boxesOnAccount(all, account.agent, account.id).map((b) => b.name),
+      boxes: on.map((b) => b.name),
+      ...(limits ? { limits } : {}),
     };
   }
 
@@ -132,22 +174,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     async listAccounts() {
       const { accounts } = await readAccounts(store);
       const all = await boxes().catch(() => []);
-      const views: AccountView[] = [];
-      for (const a of accounts) {
-        views.push({
-          agent: a.agent,
-          id: a.id,
-          ...(a.label ? { label: a.label } : {}),
-          kind: a.kind,
-          ...(a.identity ? { identity: a.identity } : {}),
-          hasSecret: (await readAccountSecret(a.agent, a.id, store)) !== null,
-          // The default account is every box without a record; counting them is
-          // a fleet listing, not an account fact.
-          boxes: isDefaultAccount(a.id)
-            ? []
-            : boxesOnAccount(all, a.agent, a.id).map((b) => b.name),
-        });
-      }
+      const views = await Promise.all(accounts.map((a) => view(a, all)));
       const agents = (store?.specs ?? AGENT_SYNC_SPECS)
         .filter((s) => agentAccountKinds(s).length > 0 && !s.hidden)
         .map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
@@ -256,6 +283,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         };
       }
       await removeStoredAccount(spec.id, id, store);
+      deps.limits?.forget(spec.id, id);
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);
       return {

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { Icons, type Icon } from '@/components/icons';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { useAccounts } from '@/lib/accounts-client';
 import { useStore } from '@/lib/boxes/store';
 
 function SideItem({
@@ -16,6 +17,7 @@ function SideItem({
   icon: IconComp,
   label,
   count,
+  note,
   ext,
   child,
 }: {
@@ -25,6 +27,8 @@ function SideItem({
   icon?: Icon;
   label: ReactNode;
   count?: number;
+  /** A short warning in place of a count (`1 at limit`). */
+  note?: string;
   ext?: boolean;
   /** Nested under a parent item: smaller, no icon. */
   child?: boolean;
@@ -45,6 +49,7 @@ function SideItem({
       ) : null}
       {label}
       {count !== undefined ? <Count active={active}>{count}</Count> : null}
+      {note ? <span className="ml-auto font-mono text-[10.5px] text-[#6a4e0c]">{note}</span> : null}
       {ext ? <Icons.ext className="ml-auto size-[13px] text-[#a4a9b0]" /> : null}
     </>
   );
@@ -76,7 +81,7 @@ function Count({ active, children }: { active?: boolean; children: ReactNode }) 
   );
 }
 
-type SubItem = { to: string; label: string; count?: number; exact?: boolean };
+type SubItem = { to: string; label: string; count?: number; note?: string; exact?: boolean };
 
 function onRoute(pathname: string, to: string, exact?: boolean): boolean {
   return pathname === to || (!exact && pathname.startsWith(to + '/'));
@@ -160,6 +165,7 @@ function SideGroup({
               to={it.to}
               label={it.label}
               count={it.count}
+              note={it.note}
             />
           ))}
         </div>
@@ -187,6 +193,13 @@ const SETTINGS: SubItem[] = [
 
 export function AppSidebar() {
   const { state, boxesFor } = useStore();
+  const { accounts } = useAccounts();
+  const atLimit = (accounts ?? []).filter((x) => x.limits?.atLimit).length;
+  const settingsItems = SETTINGS.map((it) =>
+    it.to === '/settings/subscriptions' && atLimit > 0
+      ? { ...it, note: `${String(atLimit)} at limit` }
+      : it,
+  );
   const pathname = usePathname();
   const dashActive = pathname === '/' || pathname.startsWith('/boxes');
 
@@ -220,7 +233,7 @@ export function AppSidebar() {
           icon={Icons.activity}
           label="Usage"
         />
-        <SideGroup to="/settings" icon={Icons.settings} label="Settings" items={SETTINGS} />
+        <SideGroup to="/settings" icon={Icons.settings} label="Settings" items={settingsItems} />
         <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Docs" ext />
         <SideItem href="/api/v1/docs" icon={Icons.terminal} label="API" ext />
       </nav>
