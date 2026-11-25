@@ -3,15 +3,23 @@
 // Usage page — tokens spent by every recorded agent session (agent-history
 // Phase 7). PURE REST CLIENT over GET /api/v1/usage: one request per view
 // (per-day by agent, and one per breakdown), all with the same window and
-// filters. A breakdown row click adds its key as a filter. No cost: prices
-// are not modelled yet.
+// filters. A breakdown row click adds its key as a filter. The subscription
+// filter (`agent/account`) lives in the URL (`?subscription=claude/personal`)
+// so a Subscriptions card links here. No cost: prices are not modelled yet.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
+import {
+  subscriptionKey,
+  subscriptionLabel,
+  usageKeyLabel,
+  type SubscriptionAccount,
+} from '@/lib/subscriptions';
 
 type Dim = 'day' | 'agent' | 'account' | 'box' | 'project' | 'host' | 'model' | 'session';
 type FilterDim = Exclude<Dim, 'day' | 'session'>;
@@ -47,7 +55,7 @@ type RangeId = (typeof RANGES)[number]['id'];
 const BREAKDOWNS: Array<{ dim: Dim; title: string; filter?: FilterDim }> = [
   { dim: 'agent', title: 'By agent', filter: 'agent' },
   { dim: 'model', title: 'By model', filter: 'model' },
-  { dim: 'account', title: 'By account', filter: 'account' },
+  { dim: 'account', title: 'By subscription', filter: 'account' },
   { dim: 'project', title: 'By project', filter: 'project' },
   { dim: 'box', title: 'By box', filter: 'box' },
   { dim: 'host', title: 'By PC', filter: 'host' },
@@ -75,10 +83,11 @@ function shortRepo(url: string): string {
   return m ? m[1]! : url;
 }
 
-function keyLabel(dim: Dim, g: Group): string {
+function keyLabel(dim: Dim, g: Group, accounts: readonly SubscriptionAccount[]): string {
   const k = g.keys[dim];
   if (k === null || k === undefined) return dim === 'box' ? 'no box (host session)' : 'unknown';
   if (dim === 'box') return g.labels.box ?? k;
+  if (dim === 'account') return usageKeyLabel(k, accounts);
   if (dim === 'project') return shortRepo(k);
   if (dim === 'host') return k.slice(0, 12);
   if (dim === 'session') {
@@ -103,12 +112,55 @@ async function fetchUsage(params: Record<string, string>): Promise<Report> {
   return body;
 }
 
+/** Every subscription key with recorded usage, whatever the page's filters. */
+async function fetchUsedSubscriptions(): Promise<string[]> {
+  const r = await fetchUsage({ by: 'account', limit: '1000' });
+  return r.groups.flatMap((g) => (g.keys.account ? [g.keys.account] : []));
+}
+
+async function fetchAccounts(): Promise<SubscriptionAccount[]> {
+  const r = await fetch('/api/v1/accounts', { credentials: 'same-origin' });
+  if (!r.ok) return [];
+  return ((await r.json()) as { accounts?: SubscriptionAccount[] }).accounts ?? [];
+}
+
+// useSearchParams needs a Suspense boundary for the static build.
 export default function UsagePage() {
+  return (
+    <Suspense fallback={null}>
+      <UsageView />
+    </Suspense>
+  );
+}
+
+function UsageView() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  // The subscription filter is the URL's (`?subscription=`), so the sidebar's
+  // plain Usage link clears it; the other filters are page state.
+  const subscription = params.get('subscription')?.trim() || undefined;
   const [range, setRange] = useState<RangeId>('7d');
-  const [filters, setFilters] = useState<Partial<Record<FilterDim, string>>>({});
+  const [others, setOthers] = useState<Partial<Record<FilterDim, string>>>({});
+  const filters = useMemo<Partial<Record<FilterDim, string>>>(
+    () => ({ ...others, ...(subscription ? { account: subscription } : {}) }),
+    [others, subscription],
+  );
+  // Null until loaded: an unknown subscription is only known once both are in.
+  const [accounts, setAccounts] = useState<SubscriptionAccount[] | null>(null);
+  const [usedKeys, setUsedKeys] = useState<string[] | null>(null);
   const [daily, setDaily] = useState<Report | null>(null);
   const [tables, setTables] = useState<Partial<Record<Dim, Report>>>({});
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchAccounts()
+      .catch(() => [])
+      .then(setAccounts);
+    void fetchUsedSubscriptions()
+      .catch(() => [])
+      .then(setUsedKeys);
+  }, []);
 
   const load = useCallback(async () => {
     const base: Record<string, string> = {
@@ -137,6 +189,40 @@ export default function UsagePage() {
     return () => clearInterval(t);
   }, [load]);
 
+  const setFilter = (dim: FilterDim, value: string | undefined): void => {
+    if (dim === 'account') {
+      const q = new URLSearchParams(params.toString());
+      if (value) q.set('subscription', value);
+      else q.delete('subscription');
+      const qs = q.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      return;
+    }
+    setOthers((f) => {
+      const next = { ...f };
+      if (value) next[dim] = value;
+      else delete next[dim];
+      return next;
+    });
+  };
+  const known = useMemo(() => accounts ?? [], [accounts]);
+  const unknownSubscription =
+    subscription !== undefined &&
+    accounts !== null &&
+    usedKeys !== null &&
+    !accounts.some((a) => subscriptionKey(a) === subscription) &&
+    !usedKeys.includes(subscription);
+  // Every stored account, plus keys that only have usage (a default never
+  // captured here, a removed account) and the one in the URL.
+  const subscriptionOptions = useMemo(() => {
+    const opts = new Map<string, string>(
+      known.map((a) => [subscriptionKey(a), subscriptionLabel(a)]),
+    );
+    for (const k of usedKeys ?? []) if (!opts.has(k)) opts.set(k, k);
+    if (subscription && !opts.has(subscription)) opts.set(subscription, subscription);
+    return [...opts.entries()].sort(([, x], [, y]) => x.localeCompare(y));
+  }, [known, usedKeys, subscription]);
+
   const totals = daily?.totals;
   const days = RANGES.find((r) => r.id === range)!.days;
 
@@ -159,24 +245,33 @@ export default function UsagePage() {
             {r.label}
           </Button>
         ))}
-        {Object.entries(filters).map(([k, v]) => (
-          <Button
-            key={k}
-            size="sm"
-            variant="ghost"
-            className="font-mono text-[12px]"
-            onClick={() =>
-              setFilters((f) => {
-                const next = { ...f };
-                delete next[k as FilterDim];
-                return next;
-              })
-            }
-            title="Remove this filter"
-          >
-            {k}: {k === 'project' ? shortRepo(v) : v} <Icons.x />
-          </Button>
-        ))}
+        <select
+          aria-label="Subscription"
+          className="h-8 rounded-md border bg-background px-2 text-[13px]"
+          value={subscription ?? ''}
+          onChange={(ev) => setFilter('account', ev.target.value || undefined)}
+        >
+          <option value="">All subscriptions</option>
+          {subscriptionOptions.map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {Object.entries(others)
+          .filter(([k]) => k !== 'account')
+          .map(([k, v]) => (
+            <Button
+              key={k}
+              size="sm"
+              variant="ghost"
+              className="font-mono text-[12px]"
+              onClick={() => setFilter(k as FilterDim, undefined)}
+              title="Remove this filter"
+            >
+              {k}: {k === 'project' ? shortRepo(v) : v} <Icons.x />
+            </Button>
+          ))}
       </div>
 
       {error ? (
@@ -184,6 +279,15 @@ export default function UsagePage() {
           <EmptyBox>
             <div>Couldn’t load usage.</div>
             <div className="mt-1.5 font-mono text-xs text-red-400">{error}</div>
+          </EmptyBox>
+        </div>
+      ) : unknownSubscription ? (
+        <div className="mt-6">
+          <EmptyBox>
+            <div>Unknown subscription.</div>
+            <div className="mt-1.5 font-mono text-xs text-muted-foreground">
+              {subscription} is not an account on this hub and has no recorded usage.
+            </div>
           </EmptyBox>
         </div>
       ) : !daily || !totals ? (
@@ -236,10 +340,9 @@ export default function UsagePage() {
                 <Breakdown
                   dim={b.dim}
                   report={r}
+                  accounts={known}
                   total={totals.totalTokens}
-                  onPick={
-                    b.filter ? (key) => setFilters((f) => ({ ...f, [b.filter!]: key })) : undefined
-                  }
+                  onPick={b.filter ? (key) => setFilter(b.filter!, key) : undefined}
                 />
               </div>
             );
@@ -469,11 +572,13 @@ function DailyChart({ groups, days }: { groups: Group[]; days: number }) {
 function Breakdown({
   dim,
   report,
+  accounts,
   total,
   onPick,
 }: {
   dim: Dim;
   report: Report;
+  accounts: readonly SubscriptionAccount[];
   total: number;
   onPick?: (key: string) => void;
 }) {
@@ -482,7 +587,9 @@ function Breakdown({
       <table className="w-full text-[12.5px] tabular-nums">
         <thead className="text-left font-mono text-[11px] uppercase text-[#a4a9b0]">
           <tr>
-            <th className="px-5 py-2 font-normal">{dim === 'host' ? 'PC' : dim}</th>
+            <th className="px-5 py-2 font-normal">
+              {dim === 'host' ? 'PC' : dim === 'account' ? 'subscription' : dim}
+            </th>
             <th className="w-[22%] px-2 py-2 font-normal">Share</th>
             <th className="px-2 py-2 text-right font-normal">Total</th>
             <th className="px-2 py-2 text-right font-normal">Input</th>
@@ -502,9 +609,15 @@ function Breakdown({
                 key={key ?? `unknown-${String(i)}`}
                 className={`border-t border-border/60 ${pick ? 'cursor-pointer hover:bg-muted/50' : ''}`}
                 onClick={pick}
-                title={pick ? `Filter by this ${dim}` : (key ?? undefined)}
+                title={
+                  pick
+                    ? `Filter by this ${dim === 'account' ? 'subscription' : dim}`
+                    : (key ?? undefined)
+                }
               >
-                <td className="max-w-[320px] truncate px-5 py-2 font-medium">{keyLabel(dim, g)}</td>
+                <td className="max-w-[320px] truncate px-5 py-2 font-medium">
+                  {keyLabel(dim, g, accounts)}
+                </td>
                 <td className="px-2 py-2">
                   <div className="flex items-center gap-2">
                     <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">

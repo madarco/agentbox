@@ -46,8 +46,10 @@ export interface HistorySessionRow {
   hostId: string | null;
   projectRepoUrl: string | null;
   /**
-   * The box's named LLM account for this agent when the session was first
-   * seen (`default` when the box names none); null when the box was unknown.
+   * The subscription the session ran on when it was first seen, as
+   * `agent/account` (a borrowed login names its lender; `<agent>/default` when
+   * the box names none); null when the box was unknown. A bare id stored before
+   * hub settings Phase 3a is migrated to the session agent's own at open.
    */
   account: string | null;
   parentSessionId: string | null;
@@ -141,6 +143,7 @@ export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
 
 export interface UsageFilter {
   agent?: string;
+  /** A subscription `agent/account`, or a bare account id (that id of any agent). */
   account?: string;
   /** A box id or a box name, exact. */
   box?: string;
@@ -336,8 +339,9 @@ export interface HistoryServiceDeps {
   archive: HistoryArchive;
   retentionDays: number;
   /**
-   * The named LLM account `agent` runs on in box `boxId` (`default` when the
-   * box names none), or null when the box is unknown here.
+   * The subscription `agent`'s sessions in box `boxId` count under, as
+   * `agent/account` (the lender's for a borrowed login), or null when the box
+   * is unknown here.
    */
   accountOf?: (boxId: string, agent: string) => Promise<string | null>;
   now?: () => number;

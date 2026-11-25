@@ -554,7 +554,8 @@ export const usageRows = SESSIONS.flatMap((s, si) => {
       session: sessionKey,
       title: s.title,
       agent: s.agent,
-      account: s.account,
+      /* The subscription, as `GET /usage` keys it: `agent/account`. */
+      account: `${s.agent}/${s.account}`,
       box: s.box ? boxIdByName[s.box] : null,
       boxName: s.box,
       project: `github.com/${s.project}`,

@@ -5,7 +5,8 @@
 //   since/until: ISO-8601, or a duration back from now (`30m`, `24h`, `7d`);
 //              the window is [since, until) on each response's own time
 //   tzOffset:  minutes east of UTC that `day` buckets in (default 0)
-//   filters:   agent, account, box (id or name), project (a repo URL or key
+//   filters:   agent, account (`<agent>/<account>`, the lender's for a borrowed
+//              login; a bare id matches any agent's), box (id or name), project (a repo URL or key
 //              matches exactly, other text is a substring),
 //              host (machine id), model
 //   limit:     groups returned (default 200, max 1000)
