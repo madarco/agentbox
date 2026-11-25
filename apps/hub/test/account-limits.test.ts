@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   FIRST_READ_WAIT_MS,
   LIMITS_REFRESH_MS,
+  STALE_AFTER_MS,
   transcriptLimitsView,
   createLimitsSource,
   freshLimits,
@@ -123,6 +124,34 @@ describe('createLimitsSource', () => {
     }
   });
 
+  it('a failed read keeps the last values, which turn stale', async () => {
+    const { src, fetch, advance } = setup();
+    expect(await src.limitsFor('claude', 'x', true)).toBeDefined();
+    fetch.mockResolvedValue(new Response('{}', { status: 401 }));
+    advance(LIMITS_REFRESH_MS);
+    expect((await src.limitsFor('claude', 'x', true))?.stale).toBeUndefined();
+    advance(LIMITS_REFRESH_MS + 1000);
+    expect((await src.limitsFor('claude', 'x', true))?.stale).toBe(true);
+  });
+
+  it('a read in flight when the account is forgotten is dropped on arrival', async () => {
+    vi.useFakeTimers();
+    try {
+      const { src, fetch } = setup();
+      let answer!: (r: Response) => void;
+      fetch.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+      const first = src.limitsFor('claude', 'gone', true);
+      await vi.advanceTimersByTimeAsync(FIRST_READ_WAIT_MS);
+      await first;
+      src.forget('claude', 'gone');
+      answer(new Response('{}', { status: 200 }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await src.limitsFor('claude', 'gone', false)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('forget drops a removed account, so a new one under the id starts empty', async () => {
     const { src } = setup();
     expect(await src.limitsFor('claude', 'work', true)).toBeDefined();
@@ -173,7 +202,34 @@ describe('freshLimits', () => {
     expect(mixed?.windows.map((w) => w.id)).toEqual(['1']);
     expect(mixed?.atLimit).toBe(true);
     const current = l(['2026-11-28T09:00:00Z']);
-    expect(freshLimits(current, now)).toBe(current);
+    expect(freshLimits(current, now)).toMatchObject({ windows: current.windows, atLimit: true });
     expect(freshLimits(undefined, now)).toBeUndefined();
+  });
+
+  it('ages out windows with no reset time by their length, or a day with no length', () => {
+    const at = (windows: AccountLimits['windows'], updatedAt: string): AccountLimits => ({
+      windows,
+      atLimit: false,
+      updatedAt,
+      source: 'usage-api',
+    });
+    const fiveHour = { id: 'a', label: '5-hour', pct: 40, windowMinutes: 300 };
+    const untimed = { id: 'b', label: 'b', pct: 40 };
+    expect(freshLimits(at([fiveHour], '2026-11-25T06:00:00Z'), now)?.windows).toHaveLength(1);
+    expect(freshLimits(at([fiveHour], '2026-11-25T04:00:00Z'), now)).toBeUndefined();
+    expect(freshLimits(at([untimed], '2026-11-24T11:00:00Z'), now)?.windows).toHaveLength(1);
+    expect(freshLimits(at([untimed], '2026-11-24T09:00:00Z'), now)).toBeUndefined();
+  });
+
+  it('marks values stale after two missed refreshes, not before', () => {
+    const w = [{ id: 'a', label: 'Weekly', pct: 40, windowMinutes: 10080 }];
+    const read = (ago: number): AccountLimits => ({
+      windows: w,
+      atLimit: false,
+      updatedAt: new Date(now - ago).toISOString(),
+      source: 'usage-api',
+    });
+    expect(freshLimits(read(STALE_AFTER_MS - 1000), now)?.stale).toBeUndefined();
+    expect(freshLimits(read(STALE_AFTER_MS + 1000), now)?.stale).toBe(true);
   });
 });

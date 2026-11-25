@@ -2,7 +2,8 @@
 
 **Status:** Phases 1, 2, 3a, 3b and 4 done (2026-11-25, `feat/hub-settings-nav`,
 `feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-limits`,
-`feat/hub-settings-files`). Phase 3c not started (its Phase 0 first).
+`feat/hub-settings-files`), plus the per-skill skip (`feat/hub-settings-skill-skip`). Phase 3c not
+started (its Phase 0 first).
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -190,6 +191,54 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   library skill in `/etc/claude-code/.claude/skills`. The remote-hub half of "Done" was not run (see
   Backlog).
 
+### Phase 2b — a persistent "skip" per skill — done
+
+The design's **Sync** column (`EnvList` / `hubRow`, `S.envToggleSkip`): each row has a checkbox,
+ticked by default; unticking means "never sync this skill", and the hub remembers it.
+
+**Built:**
+
+- **Store**: `skills/.skipped.json` (`{schema: 1, skipped: {<name>: {at}}}`) next to `.bindings.json`
+  in the custody `skills` scope, so it lives on the hub that owns the library (local or a control
+  box). Keyed by name, so a skill only on a PC can be skipped. `@agentbox/core` `skill-skips.ts`
+  (parse, lenient/strict read, apply); hub slice `lib/backend/skill-skips.ts` (serialized writes,
+  `assertNotSkipped`).
+- **Fail closed**: a missing `.skipped.json` is "nothing skipped"; one that exists but can't be read,
+  isn't JSON or has no `skipped` object throws `SkillSkipsUnreadableError` everywhere. `skills.get`
+  refuses with the reason (the box keeps what it has), the hub's gates, listing and comparison answer
+  500 with it (the page shows the error, never "everything synced"), and the fan-out does nothing.
+  Pull re-checks the skip right before each import, since a device confirm can take minutes. A skip
+  refusal is a 409 `conflict` with `details: {reason: 'skipped', names}`, which the CLI's first
+  seed reads instead of the message.
+- **Not a global `exclude` binding**: a box or project `include`, or `--skills`, overrides that, and
+  bindings say nothing about PC sync. A skip wins over every binding and create flag.
+- **Every path honours it**: the relay's `skills.get` drops skipped names before the bindings
+  (so `skills.blob` refuses them too); the hub's box MCP view and the create-time preview leave them
+  out; `boxSkillsStatus` marks a box that holds one as `behind`, and skipping fans out a sync, so a
+  running box drops it now (ctl's sync already removes skills that left the set). `compareSkills`
+  (shared, `@agentbox/sandbox-core`) takes the skipped names: status `skipped`, never counted by
+  `isOutOfSync`. Pull, send and the PC upload route (`PUT /skills/{name}`, which the TUI and the
+  first seed use) answer 409 for a skipped name. `GET /skills` carries `skipped`, which the CLI's
+  first seed filters out silently.
+- **API**: `GET /api/v1/skill-skips`, `PUT|DELETE /api/v1/skill-skips/{name}` (same gate as the
+  bindings writes), in the OpenAPI spec.
+- **CLI**: the TUI shows `skipped, not synced`, never uploads or downloads it, and has a "Choose which
+  skills sync" action; `agentbox skills skip|unskip <names...>` (the `enable|disable` style).
+- **Page**: the Sync column, a struck-through muted row with a pause icon and "Skipped, not synced",
+  no Pull/Send, not in the banner or *Sync all*; the footnote says the hub remembers it.
+- Unskipping syncs every box that ever pulled from the hub (`syncSkillBoxes({recorded: true})`),
+  since an unskipped skill is in no box's record and "behind" can't find them. The tarball route
+  (`agentbox skills --download`) answers 409 too. Adding a skipped name from git or a marketplace, or
+  editing it on the hub, is not blocked: those are explicit hub-side acts, and delivery still skips it.
+
+**Live check** (in an agentbox, its own hub on 8787, the box's relay as the PC): `skip-probe` only in
+`~/.agents/skills`, skipped before the first seed: the seed imported the other 20 and not it, the
+page showed "Skipped, not synced", pull answered 409; after `hub restart` and a cleared `.seeded`
+marker a fresh seed again left it out; ticking Sync on the page turned it into "Only on <machine>".
+A hub skill (`unslop`) skipped: a nested docker claude box from `examples/express-ready` got every
+other library skill and not it; unskip reached that running box in ~9 s, a re-skip removed it in ~9 s,
+and a new box after the unskip had it.
+
 ### Phase 3 — subscriptions: page, limits, switching
 
 **3a — the page, with data we have.** `/settings/subscriptions` regrouped like the design:
@@ -286,6 +335,10 @@ never 0%.
 - `GET /accounts`: `Account.limits?: {windows: [{id, label, pct, resetsAt?, windowMinutes?}],
   atLimit, updatedAt, source}`, and `boxes` now lists a default account's boxes too (every box whose
   usage counts under it, borrowers included), which is what "in use" means for the header meter.
+- Ageing: a window drops out once it resets (codex's older `resets_in_seconds` counts from the record
+  time), or a full window length after its read when the source gave no reset time; values with no
+  newer read for 10 minutes are `stale` and each card shows their age. A failed claude read keeps
+  the last good values, which age the same way.
 - The page and the header meter as in the design scope above; the sidebar's Subscriptions item shows
   "N at limit". The web polls `GET /accounts` once a minute, shared by the three.
 
@@ -389,6 +442,11 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
   with only a "different copies" note. A per-dir view of the PC side would make this visible.
 - **Pull of a differing skill overwrites the hub's current version** without showing the diff first
   (the TUI does the same). A "compare" view of PC vs hub content would help before *Sync all*.
+- **Skill uploads over ~10 MB are stored truncated** (found in the skip live check, not caused by it):
+  the first seed stored `ux-writing` (17.8 MB tree) as a 10,483,944-byte tarball that fails `gzip -t`,
+  with that truncated size in its meta, so every box sync fails on it (`not a gzip tarball: unexpected
+  end of file`). The likely cause is a ~10 MB request-body cap in front of the upload route; the import
+  should fail loudly instead of storing a cut blob. Not reproduced in isolation yet.
 - **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin
   token there (the API key is refused).
 - **Vendor per agent** (3a): the Anthropic / OpenAI grouping is a map in `apps/hub/lib/subscriptions.ts`

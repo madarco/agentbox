@@ -12,6 +12,7 @@
 // docker, the provider's SDK or SSH for every cloud provider and remote-docker.
 // The box then pulls over its own relay channel. A box that isn't running is
 // never woken; ctl runs the same pull at its next boot.
+import { readSkips, skippedNames as skippedNamesOf } from '@agentbox/core';
 import { listSkillMetas, readSkillMeta, type SkillsStore } from './skills';
 
 export const SKILLS_SYNC_TIMEOUT_MS = 120_000;
@@ -60,9 +61,16 @@ async function readRecord(
   }
 }
 
-export async function boxSkillsStatus(store: SkillsStore, boxId: string): Promise<BoxSkillsStatus> {
+export async function boxSkillsStatus(
+  store: SkillsStore,
+  boxId: string,
+  /** The skipped names, when the caller already read them (a loop over boxes). */
+  skippedNames?: ReadonlySet<string>,
+): Promise<BoxSkillsStatus> {
   const rec = await readRecord(store, boxId);
   if (!rec) return { boxId, skills: [] };
+  // A box holding a skipped skill is behind: its next sync removes it.
+  const skipped = skippedNames ?? new Set(skippedNamesOf(await readSkips(store)));
   const skills: BoxSkillState[] = [];
   for (const name of Object.keys(rec.skills).sort()) {
     const version = rec.skills[name]!;
@@ -73,7 +81,7 @@ export async function boxSkillsStatus(store: SkillsStore, boxId: string): Promis
       ...(meta ? { current: meta.current } : {}),
       ...(meta?.pending ? { pending: meta.pending } : {}),
       // A discarded skill is removed by the next sync, so it counts as behind.
-      behind: !meta || meta.current !== version,
+      behind: !meta || meta.current !== version || skipped.has(name),
     });
   }
   return { boxId, ...(rec.at ? { recordedAt: rec.at } : {}), skills };
@@ -106,7 +114,11 @@ export interface SkillSyncOutcome {
  */
 export async function syncSkillBoxes(
   deps: SkillBoxesDeps,
-  opts: { boxIds?: string[]; names?: string[] } = {},
+  /**
+   * `recorded`: every box that ever pulled from this hub, behind or not (an
+   * unskipped skill is in no box's record, so "behind" can't find them).
+   */
+  opts: { boxIds?: string[]; names?: string[]; recorded?: boolean } = {},
 ): Promise<SkillSyncOutcome[]> {
   let targets: string[];
   const explicit = opts.boxIds !== undefined;
@@ -115,10 +127,24 @@ export async function syncSkillBoxes(
   } else {
     const ids = await deps.boxIds().catch(() => [] as string[]);
     const want = opts.names ? new Set(opts.names) : null;
+    let skipped: Set<string>;
+    try {
+      skipped = new Set(skippedNamesOf(await readSkips(deps.store)));
+    } catch (err) {
+      // Unreadable skips: no box can be told what to drop, and its own
+      // skills.get fails closed on the same file, so there is nothing to sync.
+      deps.log(`skills: fan-out skipped: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
     targets = [];
     for (const id of ids) {
-      const st = await boxSkillsStatus(deps.store, id).catch(() => null);
-      if (st?.skills.some((s) => s.behind && (!want || want.has(s.name)))) targets.push(id);
+      const st = await boxSkillsStatus(deps.store, id, skipped).catch(() => null);
+      if (
+        opts.recorded
+          ? st?.recordedAt !== undefined
+          : st?.skills.some((s) => s.behind && (!want || want.has(s.name)))
+      )
+        targets.push(id);
     }
   }
   const out: SkillSyncOutcome[] = [];
@@ -179,8 +205,9 @@ export async function skillsStatusOverview(
   }
   const boxes: SkillsStatusOverview['boxes'] = [];
   const ids = await deps.boxIds().catch(() => [] as string[]);
+  const skipped = new Set(skippedNamesOf(await readSkips(deps.store)));
   for (const id of [...ids].sort()) {
-    const st = await boxSkillsStatus(deps.store, id).catch(() => null);
+    const st = await boxSkillsStatus(deps.store, id, skipped).catch(() => null);
     const behind = st?.skills.filter((s) => s.behind).map((s) => s.name) ?? [];
     if (behind.length > 0) boxes.push({ boxId: id, behind });
   }

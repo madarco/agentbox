@@ -194,7 +194,9 @@ and a weekly window, weekly only, or a separate weekly window for one model,
 depending on the plan. A Claude login's limits are read from Anthropic's usage
 endpoint with the stored login, at most every 5 minutes and only while a box on
 it runs, so they appear once a box is running; a Codex login's come from the last
-session transcript on it. An API key has no plan limits. At the limit, the card
+session transcript on it. Each card says how old its figures are, and marks
+them **stale** when no newer read has come in for 10 minutes. An API key has no
+plan limits. At the limit, the card
 turns amber and names its boxes.
 
 The top bar's quota meter shows the two subscriptions in use that are closest to

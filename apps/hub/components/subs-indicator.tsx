@@ -18,7 +18,7 @@ import {
   subName,
   toneOf,
 } from '@/components/subscription-meters';
-import { agoText, rankInUse, topPct, useAccounts, type Account } from '@/lib/accounts-client';
+import { rankInUse, topPct, useAccounts, type Account } from '@/lib/accounts-client';
 import { subscriptionKey } from '@/lib/subscriptions';
 import { cn } from '@/lib/utils';
 
@@ -60,11 +60,8 @@ export function SubsIndicator() {
   if (!accounts) return null;
   const ranked = rankInUse(accounts);
   const shown = ranked.slice(0, 2);
-  const newest = ranked
-    .flatMap((a) => (a.limits ? [a.limits.updatedAt] : []))
-    .sort()
-    .at(-1);
-  const idle = accounts.length - ranked.length;
+  // Subscriptions that could show limits but no box uses (API keys have none).
+  const idle = accounts.filter((a) => a.kind !== 'api-key' && a.boxes.length === 0).length;
 
   return (
     <div className="relative max-sm:hidden" ref={ref} onMouseEnter={show} onMouseLeave={hide}>
@@ -86,7 +83,8 @@ export function SubsIndicator() {
           const Icon = subGlyph(a);
           const full = a.limits?.atLimit === true;
           const pct = Math.min(100, topPct(a));
-          const windows = (a.limits?.windows ?? []).slice(0, 2);
+          // The highest windows, so the one the percent is read from is drawn.
+          const windows = [...(a.limits?.windows ?? [])].sort((x, y) => y.pct - x.pct).slice(0, 2);
           return (
             <span key={subscriptionKey(a)} className="flex items-center gap-2">
               <Icon className="size-[13px] flex-none text-secondary-foreground" />
@@ -182,10 +180,11 @@ export function SubsIndicator() {
               No box is using a subscription right now.
             </div>
           ) : null}
-          <div className="flex items-center border-t border-border/60 px-3.5 py-2 font-mono text-[11px] text-muted-foreground">
-            <span>{newest ? agoText(newest) : 'no limit data yet'}</span>
-            {idle > 0 ? <span className="ml-auto">{idle} more with no boxes</span> : null}
-          </div>
+          {idle > 0 ? (
+            <div className="border-t border-border/60 px-3.5 py-2 font-mono text-[11px] text-muted-foreground">
+              {idle} more {idle === 1 ? 'subscription' : 'subscriptions'} with no boxes
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

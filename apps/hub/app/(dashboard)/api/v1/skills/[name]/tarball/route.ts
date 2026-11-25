@@ -3,8 +3,10 @@
 // hash; the CLI re-derives it from the extracted files before installing.
 //
 // Gated like custody's byte read (see `skillBytesReadAllowed`), not by the plain
-// API key alone.
+// API key alone. A skipped skill (`/skill-skips`) answers 409: this is how a PC
+// downloads one, and a skipped skill is never sent to a PC.
 import { Readable } from 'node:stream';
+import { assertNotSkipped } from '@/lib/backend/skill-skips';
 import { openSkillTarball } from '@/lib/backend/skills';
 import { fail } from '../../../lib/envelope';
 import { failFromSkills, skillBytesReadAllowed, skillsStoreOrFail } from '../../_service';
@@ -30,6 +32,7 @@ export async function GET(
     return fail('invalid_request', 'version must be a hex sha256 tree hash');
   }
   try {
+    await assertNotSkipped(store, [name]);
     const t = await openSkillTarball(store, name, version);
     return new Response(Readable.toWeb(Readable.from(t.data)) as ReadableStream, {
       headers: {

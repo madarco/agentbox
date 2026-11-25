@@ -1158,6 +1158,11 @@ export function buildOpenApi(): Record<string, unknown> {
                                   format: 'date-time',
                                   description: 'When the source reported these values.',
                                 },
+                                stale: {
+                                  type: 'boolean',
+                                  description:
+                                    'No newer read for 10 minutes (the usage endpoint failing, or no codex session since): the last known values. A window is dropped once it has reset, or a full window length after its read when the source gave no reset time.',
+                                },
                                 source: { type: 'string', enum: ['usage-api', 'transcript'] },
                               },
                               required: ['windows', 'atLimit', 'updatedAt', 'source'],
@@ -5250,7 +5255,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Store a version of a skill',
           description:
-            "Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). Under the skill's `auto` policy the version becomes current and running boxes behind on it sync; under `manual` it waits as `pending`. `linked: true` in the metadata marks a PC's linked-folder upload. The newest 5 versions are kept, never dropping current or pending. Streamed into custody and capped by the hub custody blob cap. The first import ever marks the library seeded. Backs `agentbox skills --upload` and the automatic first seed.",
+            "Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). Under the skill's `auto` policy the version becomes current and running boxes behind on it sync; under `manual` it waits as `pending`. `linked: true` in the metadata marks a PC's linked-folder upload. The newest 5 versions are kept, never dropping current or pending. Streamed into custody and capped by the hub custody blob cap. The first import ever marks the library seeded. A skipped name (`/skill-skips`) is refused with 409. Backs `agentbox skills --upload` and the automatic first seed.",
           parameters: [
             {
               name: 'X-AgentBox-Skill-Meta',
@@ -5272,6 +5277,7 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '400': errorResponse,
+            '409': errorResponse,
             '401': errorResponse,
             '503': errorResponse,
           },
@@ -5517,7 +5523,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Compare the skills library with a machine',
           description:
-            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`. When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the owner: a session or the admin token (an enrolled device's token is refused).",
+            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`, or `skipped` for a name marked never-sync (`/skill-skips`; never counted in `outOfSync`). When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the owner: a session or the admin token (an enrolled device's token is refused).",
           responses: {
             '200': {
               description: 'The comparison',
@@ -5546,7 +5552,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Pull skills from a machine into the library',
           description:
-            'Reads each named skill off that machine (an enrolled device confirms on its side first, mirrored to `/approvals`) and imports it, as `agentbox skills` uploads. A skill with secret-scan findings is refused unless `allowFindings`. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch.',
+            'Reads each named skill off that machine (an enrolled device confirms on its side first, mirrored to `/approvals`) and imports it, as `agentbox skills` uploads. A skill with secret-scan findings is refused unless `allowFindings`. A skipped name (`/skill-skips`) refuses the whole request with 409. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch.',
           requestBody: {
             required: true,
             content: {
@@ -5568,6 +5574,7 @@ export function buildOpenApi(): Record<string, unknown> {
                 'One result per name: `{name, status: imported|unchanged|held, version}` or `{name, status: failed, reason}`',
               content: { 'application/json': { schema: { type: 'object' } } },
             },
+            '409': errorResponse,
             '403': {
               description: 'Not the owner session or admin token (a device token is refused)',
             },
@@ -5588,7 +5595,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Send library skills to a machine',
           description:
-            "Installs each named skill's current version at `~/.agents/skills/<name>` on that machine (plus a link for an agent that does not read that dir), after a confirm on an enrolled device. The machine re-derives the tree hash before writing. A different local copy is replaced only with `overwrite`. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch. A local copy that cannot be read is never replaced.",
+            "Installs each named skill's current version at `~/.agents/skills/<name>` on that machine (plus a link for an agent that does not read that dir), after a confirm on an enrolled device. The machine re-derives the tree hash before writing. A different local copy is replaced only with `overwrite`. A skipped name (`/skill-skips`) refuses the whole request with 409. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch. A local copy that cannot be read is never replaced.",
           requestBody: {
             required: true,
             content: {
@@ -5610,6 +5617,7 @@ export function buildOpenApi(): Record<string, unknown> {
                 'One result per name: `{name, status: installed|replaced|unchanged, dir, links?, kept?}`, `{name, status: skipped, reason}` or `{name, status: failed, reason}`',
               content: { 'application/json': { schema: { type: 'object' } } },
             },
+            '409': errorResponse,
             '403': {
               description: 'Not the owner session or admin token (a device token is refused)',
             },
@@ -5637,7 +5645,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Download a version of a skill',
           description:
-            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. ELEVATED like custody byte reads: the admin token or an enrolled device token in `X-Agentbox-Admin-Token` (a local hub: loopback), or a signed-in owner session (skill content only; custody itself keeps the stricter rule); the API key alone gets `401`. Backs `agentbox skills --download`.',
+            'Streams the gzip tarball. `X-AgentBox-Skill-Version` carries the tree hash; the CLI re-derives it from the extracted files before installing. ELEVATED like custody byte reads: the admin token or an enrolled device token in `X-Agentbox-Admin-Token` (a local hub: loopback), or a signed-in owner session (skill content only; custody itself keeps the stricter rule); the API key alone gets `401`. Backs `agentbox skills --download`. A skipped skill (`/skill-skips`) answers 409.',
           responses: {
             '200': {
               description: 'The tarball',
@@ -5646,6 +5654,7 @@ export function buildOpenApi(): Record<string, unknown> {
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
+            '409': errorResponse,
           },
         },
       },
@@ -5693,6 +5702,69 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/skill-skips': {
+        get: {
+          tags: ['Skills'],
+          summary: 'List skipped skills',
+          description:
+            'Skills marked "never sync" on the skills page (the Sync column) or with `agentbox skills skip`: `{skipped: [{name, at}]}`. Keyed by name, so a skill only on a PC can be listed. A skipped skill is not delivered to boxes (whatever the bindings or create flags say), not imported from a PC (first seed, upload, pull) and not sent to one. Stored on this hub next to the library.',
+          responses: {
+            '200': {
+              description: 'The skipped names',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillSkips' } },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/skill-skips/{name}': {
+        parameters: [
+          {
+            name: 'name',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Skill name (need not be in the library)',
+          },
+        ],
+        put: {
+          tags: ['Skills'],
+          summary: 'Skip a skill (never sync it)',
+          description:
+            'Marks the name never-sync. Running boxes that hold it sync now and drop it. Deletes nothing from the library or any PC. Answers `{changed, skipped}`. Backs `agentbox skills skip`.',
+          responses: {
+            '200': {
+              description: 'The list after the write',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillSkips' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Skills'],
+          summary: 'Sync a skipped skill again',
+          description:
+            'Clears the skip. New boxes get the skill again, and every box that pulled from this hub syncs now. Answers `{changed, skipped}`. Backs `agentbox skills unskip`.',
+          responses: {
+            '200': {
+              description: 'The list after the write',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillSkips' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
             '503': errorResponse,
           },
         },
@@ -5962,7 +6034,12 @@ export function buildOpenApi(): Record<string, unknown> {
           properties: {
             machine: { $ref: '#/components/schemas/SkillMachine' },
             error: { type: 'string', description: 'Why the machine side is missing' },
-            outOfSync: { type: 'integer' },
+            outOfSync: { type: 'integer', description: 'Rows not in sync; never a skipped one' },
+            skipped: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Every skipped name (`/skill-skips`)',
+            },
             rows: {
               type: 'array',
               items: {
@@ -5972,7 +6049,7 @@ export function buildOpenApi(): Record<string, unknown> {
                   description: { type: 'string' },
                   status: {
                     type: 'string',
-                    enum: ['same', 'differs', 'local-only', 'hub-only', 'unknown'],
+                    enum: ['same', 'differs', 'local-only', 'hub-only', 'skipped', 'unknown'],
                   },
                   newer: { type: 'string', enum: ['local', 'hub'] },
                   agents: { type: 'array', items: { type: 'string' } },
@@ -6008,13 +6085,34 @@ export function buildOpenApi(): Record<string, unknown> {
           },
           required: ['machine', 'rows', 'outOfSync'],
         },
+        SkillSkips: {
+          type: 'object',
+          properties: {
+            changed: { type: 'boolean', description: 'On a write: whether it changed anything' },
+            skipped: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: { name: { type: 'string' }, at: { type: 'string' } },
+                required: ['name', 'at'],
+              },
+            },
+          },
+          required: ['skipped'],
+        },
         SkillsListing: {
           type: 'object',
           properties: {
             seeded: { type: 'boolean' },
             skills: { type: 'array', items: { $ref: '#/components/schemas/SkillSummary' } },
+            skipped: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Names marked "never sync" (`/skill-skips`), including ones the library does not hold. The automatic first seed leaves them out.',
+            },
           },
-          required: ['seeded', 'skills'],
+          required: ['seeded', 'skills', 'skipped'],
         },
         SkillImport: {
           type: 'object',

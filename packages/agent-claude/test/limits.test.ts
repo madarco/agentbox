@@ -35,6 +35,16 @@ const MAX_20X = {
 };
 
 describe('claudeUsageWindows', () => {
+  it('two rows of one kind and scope still get distinct ids', () => {
+    const w = claudeUsageWindows({
+      limits: [
+        { kind: 'weekly_all', group: 'weekly', percent: 10 },
+        { kind: 'weekly_all', group: 'weekly', percent: 20 },
+      ],
+    });
+    expect(w?.map((x) => x.id)).toEqual(['weekly_all', 'weekly_all#2']);
+  });
+
   it('reads limits[]: one window each, a scoped one named by its model', () => {
     expect(claudeUsageWindows(MAX_20X)).toEqual([
       {

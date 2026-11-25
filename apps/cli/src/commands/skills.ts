@@ -20,9 +20,10 @@ import {
   skillsEnableCommand,
 } from './skills-bindings.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
+import { SKILL_NAME_RE } from '../lib/skills/selection.js';
 import type { HubApiClient } from '../control-plane/hub-api-client.js';
 import { skillsSubcommands } from './skills-updates.js';
-import { discoverLocalSkills, type LocalSkill } from '@agentbox/sandbox-core';
+import { discoverLocalSkills, isOutOfSync, type LocalSkill } from '@agentbox/sandbox-core';
 import {
   compareSkills,
   downloadHubSkill,
@@ -65,6 +66,8 @@ function baseStatus(r: SkillRow): string {
       return 'local only';
     case 'hub-only':
       return 'hub only';
+    case 'skipped':
+      return 'skipped, not synced';
   }
 }
 
@@ -104,8 +107,21 @@ async function loadRows(client: HubApiClient, ctx: SkillsContext): Promise<Skill
     discoverLocalSkills({ home: ctx.home, maxBytes: ctx.maxBytes }),
     client.listSkills(),
   ]);
-  return compareSkills(local, hub.skills);
+  const rows = compareSkills(local, hub.skills, hub.skipped ?? []);
+  // A skipped name on neither side keeps a row, so its skip can still be cleared.
+  for (const name of hub.skipped ?? []) {
+    if (!rows.some((r) => r.name === name)) rows.push({ name, status: 'skipped' });
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
 }
+
+/** Rows an upload or download may move: not in sync (never a skipped one). */
+function movable(r: SkillRow): boolean {
+  return isOutOfSync(r.status);
+}
+
+/** The hint for a skip refusal, where a row says why it didn't move. */
+const SKIPPED_HINT = 'skipped (never synced); `agentbox skills unskip` it first';
 
 function interactive(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -124,6 +140,11 @@ async function doUpload(
   let allOk = true;
   for (const r of rows) {
     const skill = r.local;
+    if (r.status === 'skipped') {
+      log.warn(`${r.name}: ${SKIPPED_HINT}`);
+      allOk = false;
+      continue;
+    }
     if (!skill) {
       log.warn(`${r.name}: not on this PC`);
       allOk = false;
@@ -162,6 +183,11 @@ async function doDownload(
 ): Promise<boolean> {
   let allOk = true;
   for (const r of rows) {
+    if (r.status === 'skipped') {
+      log.warn(`${r.name}: ${SKIPPED_HINT}`);
+      allOk = false;
+      continue;
+    }
     if (!r.hub) {
       log.warn(`${r.name}: not on the hub`);
       allOk = false;
@@ -220,6 +246,17 @@ async function doDiscard(client: HubApiClient, names: readonly string[]): Promis
   return allOk;
 }
 
+async function setSkipped(client: HubApiClient, name: string, skip: boolean): Promise<boolean> {
+  try {
+    await client.setSkillSkipped(name, skip);
+    log.success(skip ? `${name}: skipped, never synced` : `${name}: syncs again`);
+    return true;
+  } catch (err) {
+    log.error(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
 function pick(rows: readonly SkillRow[], names: readonly string[]): SkillRow[] {
   return names.map((n) => rows.find((r) => r.name === n) ?? { name: n, status: 'local-only' });
 }
@@ -234,7 +271,7 @@ async function runFlags(
   let ok = true;
   if (opts.upload || opts.uploadAll) {
     const chosen = opts.uploadAll
-      ? rows.filter((r) => r.local && r.status !== 'same')
+      ? rows.filter((r) => r.local && movable(r))
       : pick(rows, opts.upload ?? []);
     ok =
       (await doUpload(client, chosen, { allowFindings: opts.allowFindings === true, ask })) && ok;
@@ -242,7 +279,7 @@ async function runFlags(
   }
   if (opts.download || opts.downloadAll) {
     const chosen = opts.downloadAll
-      ? rows.filter((r) => r.hub && r.status !== 'same')
+      ? rows.filter((r) => r.hub && movable(r))
       : pick(rows, opts.download ?? []);
     ok = (await doDownload(client, chosen, ctx, { yes: opts.yes === true, ask })) && ok;
   }
@@ -289,6 +326,11 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
           hint: 'local skills the hub lacks or has differently',
         },
         { value: 'download', label: 'Download to this PC', hint: 'into ~/.agents/skills' },
+        {
+          value: 'skip',
+          label: 'Choose which skills sync',
+          hint: 'unticked ones are skipped for good; the hub remembers it',
+        },
         { value: 'discard', label: 'Discard from hub' },
         { value: 'done', label: 'Done' },
       ],
@@ -296,9 +338,7 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
     if (isCancel(action) || action === 'done') return;
 
     if (action === 'upload') {
-      const eligible = rows.filter(
-        (r) => r.local && r.status !== 'same' && r.local.problems.length === 0,
-      );
+      const eligible = rows.filter((r) => r.local && movable(r) && r.local.problems.length === 0);
       if (eligible.length === 0) {
         log.info('Nothing to upload: every valid local skill is already on the hub.');
         continue;
@@ -315,7 +355,7 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
       if (isCancel(chosen) || chosen.length === 0) continue;
       await doUpload(client, pick(rows, chosen), { allowFindings: false, ask: true });
     } else if (action === 'download') {
-      const eligible = rows.filter((r) => r.hub && r.status !== 'same');
+      const eligible = rows.filter((r) => r.hub && movable(r));
       if (eligible.length === 0) {
         log.info('Nothing to download: this PC already has every hub skill.');
         continue;
@@ -331,6 +371,29 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
       });
       if (isCancel(chosen) || chosen.length === 0) continue;
       await doDownload(client, pick(rows, chosen), ctx, { yes: false, ask: true });
+    } else if (action === 'skip') {
+      // A local folder whose name is no valid skill name can't be uploaded
+      // anyway, and the hub refuses to skip it (400): name it, don't offer it.
+      const skippable = rows.filter((r) => SKILL_NAME_RE.test(r.name));
+      const odd = rows.filter((r) => !SKILL_NAME_RE.test(r.name)).map((r) => r.name);
+      if (odd.length > 0) log.info(`Not skippable (not a valid skill name): ${odd.join(', ')}`);
+      if (skippable.length === 0) {
+        log.info('No skills here or on the hub.');
+        continue;
+      }
+      const synced = await multiselect({
+        message: 'Which skills sync? (untick to skip)',
+        required: false,
+        initialValues: skippable.filter((r) => r.status !== 'skipped').map((r) => r.name),
+        options: skippable.map((r) => ({ value: r.name, label: r.name, hint: statusCell(r) })),
+      });
+      if (isCancel(synced)) continue;
+      const keep = new Set(synced);
+      for (const r of skippable) {
+        const skip = !keep.has(r.name);
+        if (skip === (r.status === 'skipped')) continue;
+        await setSkipped(client, r.name, skip);
+      }
     } else {
       const onHub = rows.filter((r) => r.hub);
       if (onHub.length === 0) {
@@ -355,6 +418,34 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
       await doDiscard(client, chosen);
     }
   }
+}
+
+/**
+ * `agentbox skills skip|unskip <names...>`: mark skills "never sync" on the hub
+ * (or sync them again). A skipped skill is never uploaded, downloaded, seeded
+ * or delivered to a box; nothing is deleted. Works for a skill only on this PC.
+ */
+function skipCommand(verb: 'skip' | 'unskip'): Command {
+  return new Command(verb)
+    .description(
+      verb === 'skip'
+        ? 'Never sync these skills (hub <-> PCs and boxes); nothing is deleted'
+        : 'Sync these skipped skills again',
+    )
+    .argument('<names...>', 'skill names')
+    .action(async (names: string[]) => {
+      const bad = names.filter((n) => !SKILL_NAME_RE.test(n));
+      if (bad.length > 0) {
+        process.stderr.write(`invalid skill name(s): ${bad.join(', ')}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      await withHubClient(workspaceHub(), async (client) => {
+        let ok = true;
+        for (const n of names) ok = (await setSkipped(client, n, verb === 'skip')) && ok;
+        if (!ok) process.exitCode = 1;
+      });
+    });
 }
 
 function collect(value: string, prev: string[] | undefined): string[] {
@@ -386,6 +477,8 @@ export const skillsCommand = new Command('skills')
   .addCommand(skillsEnableCommand)
   .addCommand(skillsDisableCommand)
   .addCommand(skillsBindingsCommand)
+  .addCommand(skipCommand('skip'))
+  .addCommand(skipCommand('unskip'))
   .action(async (opts: SkillsOpts) => {
     const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
     // Downloads read skill BYTES, which the hub gates like a custody read: the

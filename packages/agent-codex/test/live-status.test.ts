@@ -129,6 +129,21 @@ describe('codex live status', () => {
     ]);
   });
 
+  it('rate_limits: an older resets_in_seconds counts from the record time', () => {
+    const records = parse(ROLLOUT, [
+      line('event_msg', {
+        type: 'token_count',
+        info: null,
+        rate_limits: {
+          primary: { used_percent: 30, window_minutes: 300, resets_in_seconds: 3600 },
+        },
+      }),
+    ]);
+    expect(records).toMatchObject([
+      { kind: 'limits', windows: [{ id: 'primary', resetsAt: '2026-11-24T11:00:01.000Z' }] },
+    ]);
+  });
+
   it('rate_limits: a reached limit is kept; no windows is no record', () => {
     const [r] = parse(ROLLOUT, [
       line('event_msg', {

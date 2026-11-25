@@ -20,12 +20,17 @@ export function statusLabel(row: CompareRow, machine: string, online: boolean): 
       return `Only on ${machine}`;
     case 'hub-only':
       return 'Only on Hub';
+    case 'skipped':
+      return 'Skipped, not synced';
     default:
       return online ? 'Unknown' : `${machine} offline`;
   }
 }
 
-/** The moves a row offers: both ways for `differs`, the one that fixes it otherwise. */
+/**
+ * The moves a row offers: both ways for `differs`, the one that fixes it
+ * otherwise, none for a skipped one (the hub refuses those).
+ */
 export function rowMoves(row: CompareRow): PcMove[] {
   if (row.status === 'local-only') return ['pull'];
   if (row.status === 'hub-only') return ['send'];

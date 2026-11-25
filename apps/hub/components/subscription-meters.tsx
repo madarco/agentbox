@@ -6,7 +6,7 @@
 
 import { Icons, type Icon } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
-import { resetText, type Account } from '@/lib/accounts-client';
+import { agoText, resetText, type Account } from '@/lib/accounts-client';
 import { vendorOf } from '@/lib/subscriptions';
 import { cn } from '@/lib/utils';
 
@@ -56,11 +56,7 @@ const pctText = (pct: number): string =>
 /** The account's limit meters, or why there are none. */
 export function SubMeters({ account: a, compact }: { account: Account; compact?: boolean }) {
   if (a.kind === 'api-key') {
-    return (
-      <div className="font-mono text-[11px] text-muted-foreground">
-        no plan limits
-      </div>
-    );
+    return <div className="font-mono text-[11px] text-muted-foreground">no plan limits</div>;
   }
   const windows = a.limits?.windows ?? [];
   if (windows.length === 0) {
@@ -72,26 +68,51 @@ export function SubMeters({ account: a, compact }: { account: Account; compact?:
         : a.agent === 'codex'
           ? 'limits appear after its first session'
           : null;
-    return hint ? (
-      <div className="font-mono text-[11px] text-muted-foreground">{hint}</div>
-    ) : null;
+    return hint ? <div className="font-mono text-[11px] text-muted-foreground">{hint}</div> : null;
   }
+  return (
+    <div>
+      <div
+        className={cn(
+          'grid gap-4',
+          compact || windows.length === 1
+            ? 'grid-cols-1 gap-2.5'
+            : 'grid-cols-2 max-sm:grid-cols-1',
+        )}
+      >
+        {windows.map((w) => (
+          <Meter
+            key={w.id}
+            label={w.label}
+            value={pctText(w.pct)}
+            pct={w.pct}
+            sub={resetText(w.resetsAt)}
+          />
+        ))}
+      </div>
+      {a.limits ? <LimitsAge limits={a.limits} /> : null}
+    </div>
+  );
+}
+
+/** How old the values are; "stale" when the source has gone quiet. */
+export function LimitsAge({ limits }: { limits: NonNullable<Account['limits']> }) {
   return (
     <div
       className={cn(
-        'grid gap-4',
-        compact || windows.length === 1 ? 'grid-cols-1 gap-2.5' : 'grid-cols-2 max-sm:grid-cols-1',
+        'mt-2 font-mono text-[11px]',
+        limits.stale ? 'text-[#6a4e0c]' : 'text-muted-foreground',
       )}
+      title={
+        limits.stale
+          ? limits.source === 'transcript'
+            ? 'No session on this account has reported newer values.'
+            : 'The last reads of the usage endpoint failed; these are the last values it returned.'
+          : undefined
+      }
     >
-      {windows.map((w) => (
-        <Meter
-          key={w.id}
-          label={w.label}
-          value={pctText(w.pct)}
-          pct={w.pct}
-          sub={resetText(w.resetsAt)}
-        />
-      ))}
+      {limits.stale ? 'stale · ' : ''}
+      {agoText(limits.updatedAt)}
     </div>
   );
 }

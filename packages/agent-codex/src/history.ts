@@ -114,11 +114,18 @@ function tokenCountRecords(p: JsonObject, tsPart: { ts?: string }, at: number): 
 }
 
 /** One `rate_limits` window (`primary` / `secondary`); null or junk is no window. */
-function limitWindow(id: string, raw: unknown): HistoryLimitWindow | null {
+/**
+ * One window. `resets_at` is unix seconds; older codex wrote only
+ * `resets_in_seconds`, counted from the record's own timestamp.
+ */
+function limitWindow(id: string, raw: unknown, tsMs: number | null): HistoryLimitWindow | null {
   const w = asObject(raw);
   if (!w || typeof w.used_percent !== 'number' || !Number.isFinite(w.used_percent)) return null;
   const minutes = finiteNumber(w.window_minutes);
-  const resets = finiteNumber(w.resets_at);
+  const inSeconds = finiteNumber(w.resets_in_seconds);
+  const resets =
+    finiteNumber(w.resets_at) ||
+    (tsMs !== null && inSeconds > 0 ? Math.round(tsMs / 1000 + inSeconds) : 0);
   return {
     id,
     pct: Math.max(0, w.used_percent),
@@ -135,9 +142,11 @@ function limitWindow(id: string, raw: unknown): HistoryLimitWindow | null {
 function limitsRecords(p: JsonObject, tsPart: { ts?: string }, at: number): HistoryRecord[] {
   const rl = asObject(p.rate_limits);
   if (!rl) return [];
+  const tsMs = tsPart.ts ? Date.parse(tsPart.ts) : NaN;
+  const base = Number.isFinite(tsMs) ? tsMs : null;
   const windows = [
-    limitWindow('primary', rl.primary),
-    limitWindow('secondary', rl.secondary),
+    limitWindow('primary', rl.primary, base),
+    limitWindow('secondary', rl.secondary, base),
   ].filter((w): w is HistoryLimitWindow => w !== null);
   if (windows.length === 0) return [];
   const reached = nonEmptyString(rl.rate_limit_reached_type);

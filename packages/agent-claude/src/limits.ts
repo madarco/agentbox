@@ -40,13 +40,18 @@ export function claudeUsageWindows(body: unknown): PlanLimitWindow[] | null {
       const scope = str(obj(obj(l.scope)?.model)?.display_name);
       return [{ l, pct, group, scope }];
     });
+    const seen = new Map<string, number>();
     return rows.map(({ l, pct, group, scope }) => {
       const g = groupOf(group);
       const scopedSibling = rows.some((r) => r.group === group && r.scope);
       const suffix = scope ? `, ${scope}` : scopedSibling ? ', all models' : '';
       const resetsAt = str(l.resets_at);
+      // Two rows of one kind and scope still need distinct ids (React keys).
+      const base = `${str(l.kind) ?? group}${scope ? `:${scope}` : ''}`;
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
       return {
-        id: `${str(l.kind) ?? group}${scope ? `:${scope}` : ''}`,
+        id: n === 1 ? base : `${base}#${String(n)}`,
         label: g.label + suffix,
         pct,
         ...(resetsAt ? { resetsAt } : {}),

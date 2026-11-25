@@ -2236,13 +2236,17 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // a Store-only box has only the latter, and must still block `accounts rm`.
   const accounts = createAccountBackend({
     limits: accountLimits,
-    boxes: async () => [
-      ...(await readState()).boxes,
-      ...(await handle.store.listBoxes().catch(() => [])).map((r) => ({
-        name: r.name,
-        ...(r.accounts ? { accounts: r.accounts } : {}),
-      })),
-    ],
+    // A local box is in both: its state.json record (the richer one) wins.
+    boxes: async () => {
+      const local = (await readState()).boxes;
+      const seen = new Set(local.map((b) => b.id));
+      return [
+        ...local,
+        ...(await handle.store.listBoxes().catch(() => []))
+          .filter((r) => !seen.has(r.boxId))
+          .map((r) => ({ name: r.name, ...(r.accounts ? { accounts: r.accounts } : {}) })),
+      ];
+    },
   });
   const workspaces = createWorkspaceBackend(backendDeps);
   const custodySlugs = createProjectCustodySlugs();
