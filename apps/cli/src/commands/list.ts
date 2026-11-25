@@ -220,6 +220,28 @@ function agentSummary(b: HubApiBox): string {
 }
 
 /**
+ * The working-on line under a box row: one per agent that is `working` and has
+ * a hub-derived activity, cut to the terminal width. Only `working`, narrower
+ * than the hub web's rule on purpose: `ls` is a glance at what is running, and a
+ * box waiting on you already says so in the AGENT column.
+ */
+export function workingOnLines(b: HubApiBox, width: number): string[] {
+  if (effectiveState(b) !== 'running' || !b.agentStatus) return [];
+  const out: string[] = [];
+  for (const [agent] of sortedAgentStatus(b)) {
+    const raw = b.agentStatus[agent];
+    if (raw?.state !== 'working' || !raw.activity) continue;
+    out.push(clipLine(`   > ${agent}: ${raw.activity.replace(/\s+/g, ' ')}`, width));
+  }
+  return out;
+}
+
+function clipLine(s: string, width: number): string {
+  const max = Math.max(8, width - 1);
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+/**
  * A box's agents in a stable display order: the built-ins first, in their
  * historical claude > codex > opencode precedence, then anything else
  * alphabetically. Order matters because it decides which agent `primaryAgent`
@@ -498,12 +520,15 @@ function renderTable(
   };
 
   const table = all
-    .map((row) =>
-      row
+    .flatMap((row, idx) => {
+      const line = row
         .map((cell, i) => padCell(cell ?? plain(''), i))
         .join('  ')
-        .trimEnd(),
-    )
+        .trimEnd();
+      const box = idx > 0 ? boxes[idx - 1] : undefined;
+      const sub = box ? workingOnLines(box, term) : [];
+      return [line, ...sub.map((l) => (color ? colorize(l, 'dim') : l))];
+    })
     .join('\n');
   // Only when it applies: a legend on every listing is noise for the common
   // all-expendable fleet.

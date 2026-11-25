@@ -12,7 +12,7 @@
  */
 import { parseAgentStatusEntry } from '@agentbox/core';
 import { openOnHost } from '@agentbox/sandbox-core';
-import type { AgentId, AgentMode, AgentStatusMap } from '@agentbox/core';
+import type { AgentId, AgentLiveUsageView, AgentMode, AgentStatusMap } from '@agentbox/core';
 import type { CreateJobRequestOpts } from '@agentbox/relay';
 
 /**
@@ -59,7 +59,18 @@ export interface HubApiBox {
    * Read it through `hubBoxAgentStatus`, never directly — that helper falls back
    * to the named fields so an older hub still renders.
    */
-  agentStatus?: Record<string, { state?: string; sessionTitle?: string; sessionId?: string }>;
+  agentStatus?: Record<
+    string,
+    {
+      state?: string;
+      updatedAt?: string;
+      sessionTitle?: string;
+      sessionId?: string;
+      /** Hub-derived working-on line (Phase 3); see `liveActivity` for when it applies. */
+      activity?: string;
+      usage?: AgentLiveUsageView;
+    }
+  >;
   claudeActivity?: string;
   codexActivity?: string;
   opencodeActivity?: string;
