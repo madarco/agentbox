@@ -23,9 +23,9 @@ import {
   type CustodyEntry,
 } from '@/lib/custody-view';
 import { bakeVerdict, type HubBuild, type ProviderBake } from '@/lib/system-info';
-import { EmptyBox } from '../boxes/components/empty-box';
-import { SectionLabel } from '../boxes/components/section-label';
-import { Stat, StatGrid } from '../boxes/components/stat-grid';
+import { EmptyBox } from '../../boxes/components/empty-box';
+import { SectionLabel } from '../../boxes/components/section-label';
+import { Stat, StatGrid } from '../../boxes/components/stat-grid';
 
 interface SystemResponse {
   hub: { version: string | null; commit: string | null; profile: string; apiVersion: string };
@@ -181,7 +181,7 @@ export default function SystemPage() {
                   </span>
                 )}
                 {/* This page diagnoses; Settings is where the bake button lives. */}
-                <Button href="/settings#providers" variant="outline" size="sm">
+                <Button href="/settings" variant="outline" size="sm">
                   <Icons.settings />
                   Settings
                 </Button>
@@ -405,10 +405,10 @@ function CarriedSection({
       <SectionLabel
         right={
           <Link
-            href="/custody"
+            href="/settings/files"
             className="flex items-center gap-1 font-mono text-[11px] normal-case tracking-normal text-[#a4a9b0] hover:text-foreground"
           >
-            Custody
+            Files
             <Icons.ext className="size-3" />
           </Link>
         }
@@ -417,11 +417,11 @@ function CarriedSection({
       </SectionLabel>
       <div className="mb-3 text-[12.5px] text-muted-foreground">
         What a box created on this control box receives: agent logins held in{' '}
-        <Link href="/custody" className="underline underline-offset-2 hover:text-foreground">
+        <Link href="/settings/files" className="underline underline-offset-2 hover:text-foreground">
           custody
         </Link>
         , plus the{' '}
-        <Link href="/skills" className="underline underline-offset-2 hover:text-foreground">
+        <Link href="/settings/skills" className="underline underline-offset-2 hover:text-foreground">
           skills library
         </Link>
         .
@@ -465,7 +465,7 @@ function CarriedSection({
               : 'seeded by the first PC that creates a box here'}
         </span>
         <Link
-          href="/skills"
+          href="/settings/skills"
           className="ml-auto flex items-center gap-1 font-mono text-[11px] text-[#a4a9b0] hover:text-foreground"
         >
           Skills

@@ -20,6 +20,16 @@ const config = {
       allowedOrigins: ['agentbox.localhost'],
     },
   },
+  // The configuration pages live under /settings. Two old paths have callers that
+  // already shipped outside the hub (the tray's "Review skills in Hub", the device
+  // enrollment link an older hub printed), so they redirect instead of 404ing. The
+  // query string rides along by default, so `/devices?code=X` still pre-fills.
+  async redirects() {
+    return [
+      { source: '/skills', destination: '/settings/skills', permanent: true },
+      { source: '/devices', destination: '/settings/devices', permanent: true },
+    ];
+  },
   ...(standalone
     ? {
         output: 'standalone',

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { Icons, type Icon } from '@/components/icons';
 import { Avatar } from '@/components/ui/avatar';
@@ -17,37 +17,34 @@ function SideItem({
   label,
   count,
   ext,
+  child,
 }: {
   active?: boolean;
   to?: string;
   href?: string;
-  icon: Icon;
+  icon?: Icon;
   label: ReactNode;
   count?: number;
   ext?: boolean;
+  /** Nested under a parent item: smaller, no icon. */
+  child?: boolean;
 }) {
   const className = cn(
-    'flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-0 bg-transparent px-2 py-[7px] text-left text-[13.5px] transition-colors',
+    'flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-0 bg-transparent px-2 text-left transition-colors',
+    child ? 'py-[5px] text-[13px]' : 'py-[7px] text-[13.5px]',
     active
       ? 'bg-accent font-medium text-accent-foreground'
       : 'text-secondary-foreground hover:bg-secondary hover:text-foreground',
   );
   const inner = (
     <>
-      <IconComp
-        className={cn('size-4 flex-none', active ? 'text-primary' : 'text-muted-foreground')}
-      />
-      {label}
-      {count !== undefined ? (
-        <Badge
-          className={cn(
-            'ml-auto border-transparent px-2 py-0 text-[11px]',
-            active ? 'bg-card text-primary' : 'bg-secondary text-[#a4a9b0]',
-          )}
-        >
-          {count}
-        </Badge>
+      {IconComp ? (
+        <IconComp
+          className={cn('size-4 flex-none', active ? 'text-primary' : 'text-muted-foreground')}
+        />
       ) : null}
+      {label}
+      {count !== undefined ? <Count active={active}>{count}</Count> : null}
       {ext ? <Icons.ext className="ml-auto size-[13px] text-[#a4a9b0]" /> : null}
     </>
   );
@@ -60,9 +57,109 @@ function SideItem({
     );
   }
   return (
-    <Link className={className} href={to ?? '#'}>
+    <Link className={className} href={to ?? '#'} aria-current={active ? 'page' : undefined}>
       {inner}
     </Link>
+  );
+}
+
+function Count({ active, children }: { active?: boolean; children: ReactNode }) {
+  return (
+    <Badge
+      className={cn(
+        'ml-auto border-transparent px-2 py-0 text-[11px]',
+        active ? 'bg-card text-primary' : 'bg-secondary text-[#a4a9b0]',
+      )}
+    >
+      {children}
+    </Badge>
+  );
+}
+
+type SubItem = { to: string; label: string; count?: number; exact?: boolean };
+
+function onRoute(pathname: string, to: string, exact?: boolean): boolean {
+  return pathname === to || (!exact && pathname.startsWith(to + '/'));
+}
+
+/**
+ * A top-level item with nested links. It opens while the user is on one of its
+ * routes and closes when they leave; the chevron toggles it in between. The
+ * parent link is a route of its own (its first child), so it carries
+ * `aria-current` only when the children are hidden and it stands in for them.
+ */
+function SideGroup({
+  to,
+  icon: IconComp,
+  label,
+  items,
+}: {
+  to: string;
+  icon: Icon;
+  label: string;
+  items: SubItem[];
+}) {
+  const pathname = usePathname();
+  const within = onRoute(pathname, to);
+  // A manual toggle holds until the user navigates into or out of the group;
+  // keying it on `within` makes that crossing drop it without an effect.
+  const [toggled, setToggled] = useState<{ within: boolean; open: boolean } | null>(null);
+  const open = toggled && toggled.within === within ? toggled.open : within;
+  const listId = useId();
+  const highlight = within && !open;
+
+  return (
+    <div>
+      <div
+        className={cn(
+          'flex items-center rounded-lg transition-colors',
+          highlight
+            ? 'bg-accent text-accent-foreground'
+            : 'text-secondary-foreground hover:bg-secondary hover:text-foreground',
+        )}
+      >
+        <Link
+          href={to}
+          aria-current={highlight ? 'page' : undefined}
+          className={cn(
+            'flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-lg px-2 py-[7px] text-left text-[13.5px]',
+            within && 'font-medium text-foreground',
+          )}
+        >
+          <IconComp
+            className={cn('size-4 flex-none', within ? 'text-primary' : 'text-muted-foreground')}
+          />
+          {label}
+        </Link>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+          onClick={() => setToggled({ within, open: !open })}
+          className="mr-1 grid size-6 flex-none cursor-pointer place-items-center rounded-md border-0 bg-transparent text-[#a4a9b0] hover:text-foreground"
+        >
+          <Icons.chevR className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
+        </button>
+      </div>
+      {open ? (
+        <div
+          id={listId}
+          className="mb-1 ml-[15px] mt-px flex flex-col gap-px border-l border-border pl-2"
+        >
+          {items.map((it) => (
+            <SideItem
+              key={it.to}
+              child
+              active={onRoute(pathname, it.to, it.exact)}
+              to={it.to}
+              label={it.label}
+              count={it.count}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -73,6 +170,15 @@ function SideLabel({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+const SETTINGS: SubItem[] = [
+  { to: '/settings', label: 'General', exact: true },
+  { to: '/settings/subscriptions', label: 'Subscriptions' },
+  { to: '/settings/skills', label: 'Skills' },
+  { to: '/settings/files', label: 'Files' },
+  { to: '/settings/devices', label: 'Devices' },
+  { to: '/settings/system', label: 'System' },
+];
 
 export function AppSidebar() {
   const { state, boxesFor } = useStore();
@@ -97,54 +203,19 @@ export function AppSidebar() {
           count={state.boxes.length}
         />
         <SideItem
-          active={pathname.startsWith('/approvals')}
+          active={onRoute(pathname, '/approvals')}
           to="/approvals"
           icon={Icons.shield}
           label="Approvals"
           count={state.approvals.length}
         />
         <SideItem
-          active={pathname.startsWith('/custody')}
-          to="/custody"
-          icon={Icons.key}
-          label="Custody"
-        />
-        <SideItem
-          active={pathname.startsWith('/skills')}
-          to="/skills"
-          icon={Icons.book}
-          label="Skills"
-        />
-        <SideItem
-          active={pathname.startsWith('/accounts')}
-          to="/accounts"
-          icon={Icons.lock}
-          label="Accounts"
-        />
-        <SideItem
-          active={pathname.startsWith('/usage')}
+          active={onRoute(pathname, '/usage')}
           to="/usage"
           icon={Icons.activity}
           label="Usage"
         />
-        <SideItem
-          active={pathname.startsWith('/devices')}
-          to="/devices"
-          icon={Icons.host}
-          label="Devices"
-        />
-        <SideItem
-          active={pathname.startsWith('/settings')}
-          to="/settings"
-          icon={Icons.settings}
-          label="Settings"
-        />
-        <SideItem
-          active={pathname.startsWith('/system')}
-          to="/system"
-          icon={Icons.server}
-          label="System"
-        />
+        <SideGroup to="/settings" icon={Icons.settings} label="Settings" items={SETTINGS} />
         <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Docs" ext />
         <SideItem href="/api/v1/docs" icon={Icons.terminal} label="API" ext />
       </nav>

@@ -21,9 +21,9 @@ import {
   type CustodyEntry,
   type CustodyScope,
 } from '@/lib/custody-view';
-import { EmptyBox } from '../boxes/components/empty-box';
-import { SectionLabel } from '../boxes/components/section-label';
-import { Stat, StatGrid } from '../boxes/components/stat-grid';
+import { EmptyBox } from '../../boxes/components/empty-box';
+import { SectionLabel } from '../../boxes/components/section-label';
+import { Stat, StatGrid } from '../../boxes/components/stat-grid';
 
 interface CustodyResponse {
   enabled: boolean;
@@ -59,7 +59,7 @@ export default function CustodyPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Custody</h1>
+      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Files</h1>
       <div className="mt-1.5 text-sm text-muted-foreground">
         What the control box holds so a box created from either side is usable from both. Paths, hashes and sizes only —{' '}
         <span className="text-secondary-foreground">values never leave the box</span>.
@@ -79,7 +79,7 @@ export default function CustodyPage() {
             <div className="mt-1.5 font-mono text-xs text-muted-foreground">
               Custody runs on a deployed control box (a hub with an admin token). A localhost hub keeps credentials on
               your machine directly — see{' '}
-              <Link href="/system" className="underline underline-offset-2 hover:text-foreground">
+              <Link href="/settings/system" className="underline underline-offset-2 hover:text-foreground">
                 Carried from this machine
               </Link>
               .

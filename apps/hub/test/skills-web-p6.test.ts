@@ -5,7 +5,7 @@ import { approveSkillUpdate, importSkill, readSkillMeta } from '../lib/backend/s
 import { readSkillMd, saveSkillMd } from '../lib/backend/skill-editor';
 import { diffSkillVersions } from '../lib/backend/skill-diff';
 import { boxSkillsRecordPath, skillsStatusOverview } from '../lib/backend/skill-boxes';
-import { hunks, lineDiff } from '../app/(dashboard)/skills/components/line-diff';
+import { hunks, lineDiff } from '../app/(dashboard)/settings/skills/components/line-diff';
 import { memStore } from './_skills-mem-store';
 
 const md = (name: string, body = 'Do the thing.') =>

@@ -21,7 +21,7 @@ import {
   type BoxSkills,
   type SkillsListing,
   type SyncOutcome,
-} from '../../skills/components/api';
+} from '../../settings/skills/components/api';
 import { SectionLabel } from './section-label';
 
 type Choice = 'inherit' | BindingMode;
@@ -142,7 +142,7 @@ function BoxSkills({ id, running }: { id: string; running: boolean }) {
             {data.box.recordedAt
               ? 'Library skills this box was served. On/off here overrides the project, workspace and global choices.'
               : 'This box has not pulled skills from this hub yet.'}{' '}
-            <Link href="/skills" className="text-primary hover:underline">
+            <Link href="/settings/skills" className="text-primary hover:underline">
               Library
             </Link>
           </span>

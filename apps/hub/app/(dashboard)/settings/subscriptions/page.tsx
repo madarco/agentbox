@@ -12,8 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { EmptyBox } from '../boxes/components/empty-box';
-import { SectionLabel } from '../boxes/components/section-label';
+import { EmptyBox } from '../../boxes/components/empty-box';
+import { SectionLabel } from '../../boxes/components/section-label';
 
 type Kind = 'login' | 'setup-token' | 'api-key';
 
@@ -136,7 +136,7 @@ export default function AccountsPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Accounts</h1>
+      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Subscriptions</h1>
       <div className="mt-1.5 text-sm text-muted-foreground">
         The LLM accounts boxes can run on: several logins, setup tokens or API keys per agent.
         Choose one when you create a box; <span className="font-mono">default</span> is the

@@ -52,7 +52,7 @@ tray runs as a second app with its own bundle id.
 2. Take the picture:
 
    ```bash
-   pnpm shoot hub/skills.png /skills
+   pnpm shoot hub/skills.png /settings/skills
    pnpm shoot hub/boxes.png / --full
    pnpm shoot hub/create-box.png /projects/fx-payments-worker --click "text=Create box"
    pnpm shoot:tray tray/skill-updates.png --press agentbox.footer.skillUpdates

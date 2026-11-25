@@ -2803,7 +2803,7 @@ async function finalizeControlBoxState(url: string | undefined): Promise<void> {
     (await loadEffectiveConfig(process.cwd()).catch(() => null))?.effective.relay.controlPlaneUrl;
   if (hubUrl) {
     log.info(
-      `To use this hub from another computer, run \`agentbox hub login ${hubUrl}\` there and approve it on ${hubUrl.replace(/\/+$/, '')}/devices — don't copy ~/.agentbox/control-plane.`,
+      `To use this hub from another computer, run \`agentbox hub login ${hubUrl}\` there and approve it on ${hubUrl.replace(/\/+$/, '')}/settings/devices — don't copy ~/.agentbox/control-plane.`,
     );
   }
   await syncAgentCredentials(url, { announce: true });
