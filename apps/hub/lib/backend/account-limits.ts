@@ -3,27 +3,22 @@
 // verified Ultra or this Max 20x has no 5-hour window, codex Pro has weekly
 // only) and change over time.
 //
-// Sources, both free of quota:
-// - codex: the `rate_limits` the session transcript carries on every
-//   `token_count`, kept by the history parser per account (no network call).
-// - claude: the OAuth usage endpoint Claude Code's `/usage` reads, called here
-//   with the account's stored access token. Never refreshed here: a refresh
-//   rotates the refresh token and would log out every other holder (llm-accounts
-//   plan). An expired token, an API key or a refusal means no data, never 0%.
-import type { HistoryLimitWindow } from '@agentbox/core';
+// Two kinds of source, both free of quota, chosen by the agent's module:
+// - a reader (`AgentHistoryModule.planLimits`, claude's usage endpoint) called
+//   with the account's stored secret, cached here, at most every 5 minutes and
+//   only while a box on the account runs;
+// - otherwise the newest `limits` history record a session on the account
+//   shipped (codex's `token_count.rate_limits`; no network call).
+// No reader answer, no record: no data, never 0%.
+import {
+  agentHistoryModule,
+  type AgentPlanLimits,
+  type HistoryLimitWindow,
+  type PlanLimitWindow,
+} from '@agentbox/core';
 import type { HistoryAccountLimits } from './history';
 
-export interface AccountLimitWindow {
-  /** Stable within the source. */
-  id: string;
-  /** `5-hour`, `Weekly`, `Weekly, Fable`. */
-  label: string;
-  /** Percent used, 0-100 (100 or more is at the limit). */
-  pct: number;
-  /** ISO time the window resets. */
-  resetsAt?: string;
-  windowMinutes?: number;
-}
+export type AccountLimitWindow = PlanLimitWindow;
 
 export interface AccountLimits {
   windows: AccountLimitWindow[];
@@ -33,7 +28,6 @@ export interface AccountLimits {
   source: 'usage-api' | 'transcript';
 }
 
-export const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 /** At most one usage call per account in this long (plan Phase 3b, step 3). */
 /** How long a listing waits on a usage call before answering without it. */
 export const FIRST_READ_WAIT_MS = 1_500;
@@ -70,8 +64,8 @@ export function freshLimits(
   return { ...l, windows, atLimit: atLimitOf(windows) };
 }
 
-/** A codex account's limits from the newest transcript record. Pure. */
-export function codexLimits(h: HistoryAccountLimits): AccountLimits {
+/** An account's limits from the newest transcript record. Pure. */
+export function transcriptLimitsView(h: HistoryAccountLimits): AccountLimits {
   const windows = h.windows.map(
     (w: HistoryLimitWindow): AccountLimitWindow => ({
       id: w.id,
@@ -89,95 +83,11 @@ export function codexLimits(h: HistoryAccountLimits): AccountLimits {
   };
 }
 
-type Json = Record<string, unknown>;
-const obj = (v: unknown): Json | null =>
-  v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : null;
-const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-const str = (v: unknown): string | undefined =>
-  typeof v === 'string' && v.trim() ? v.trim() : undefined;
-
-function groupOf(group: string): { label: string; minutes?: number } {
-  if (/five|5h|session/i.test(group)) return { label: '5-hour', minutes: 300 };
-  if (/week|seven|7d/i.test(group)) return { label: 'Weekly', minutes: 10_080 };
-  if (/day|daily/i.test(group)) return { label: 'Daily', minutes: 1_440 };
-  return { label: group.charAt(0).toUpperCase() + group.slice(1).replace(/_/g, ' ') };
-}
-
-/**
- * The windows of a claude OAuth usage response. `limits[]` is the generic list
- * (`{kind, group, percent, resets_at, scope.model.display_name}`); the older
- * fixed fields (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`)
- * are read when it is absent. A null field is a window the plan does not have.
- * Null when the body has neither shape. Pure.
- */
-export function claudeUsageWindows(body: unknown): AccountLimitWindow[] | null {
-  const b = obj(body);
-  if (!b) return null;
-  if (Array.isArray(b.limits)) {
-    const rows = b.limits.flatMap((raw) => {
-      const l = obj(raw);
-      const pct = num(l?.percent);
-      if (!l || pct === null) return [];
-      const group = str(l.group) ?? str(l.kind) ?? 'limit';
-      const scope = str(obj(obj(l.scope)?.model)?.display_name);
-      return [{ l, pct, group, scope }];
-    });
-    return rows.map(({ l, pct, group, scope }) => {
-      const g = groupOf(group);
-      const scopedSibling = rows.some((r) => r.group === group && r.scope);
-      const suffix = scope ? `, ${scope}` : scopedSibling ? ', all models' : '';
-      const resetsAt = str(l.resets_at);
-      return {
-        id: `${str(l.kind) ?? group}${scope ? `:${scope}` : ''}`,
-        label: g.label + suffix,
-        pct,
-        ...(resetsAt ? { resetsAt } : {}),
-        ...(g.minutes ? { windowMinutes: g.minutes } : {}),
-      };
-    });
-  }
-  const fixed: Array<[string, string, number]> = [
-    ['five_hour', '5-hour', 300],
-    ['seven_day', 'Weekly', 10_080],
-    ['seven_day_opus', 'Weekly, Opus', 10_080],
-    ['seven_day_sonnet', 'Weekly, Sonnet', 10_080],
-  ];
-  if (!fixed.some(([k]) => k in b)) return null;
-  return fixed.flatMap(([key, label, minutes]) => {
-    const w = obj(b[key]);
-    const pct = num(w?.utilization);
-    if (!w || pct === null) return [];
-    const resetsAt = str(w.resets_at);
-    return [{ id: key, label, pct, windowMinutes: minutes, ...(resetsAt ? { resetsAt } : {}) }];
-  });
-}
-
-/**
- * The bearer token for the usage endpoint from a claude account's stored
- * secret: a login's access token while it is valid, a setup token as is. An
- * API key, an expired login or anything else: null. Pure.
- */
-export function claudeUsageToken(secret: string | null, nowMs: number): string | null {
-  if (!secret) return null;
-  let parsed: Json | null = null;
-  try {
-    parsed = obj(JSON.parse(secret));
-  } catch {
-    return null;
-  }
-  if (!parsed) return null;
-  if (parsed.kind === 'setup-token') return str(parsed.token) ?? null;
-  const oauth = obj(parsed.claudeAiOauth);
-  const token = str(oauth?.accessToken);
-  const expires = num(oauth?.expiresAt);
-  // A minute of slack: a token about to expire is the refresh's to renew.
-  if (!token || (expires !== null && expires < nowMs + 60_000)) return null;
-  return token;
-}
-
 export interface LimitsSourceDeps {
   /** An account's stored secret (`readAccountSecret`). */
   readSecret: (agent: string, id: string) => Promise<string | null>;
+  /** The agent's limits reader; default: its registered history module's. */
+  readerOf?: (agent: string) => AgentPlanLimits | undefined;
   /** The newest transcript limits of a subscription (`agent/account`). */
   transcriptLimits: (subscription: string) => Promise<HistoryAccountLimits | null>;
   fetch?: typeof fetch;
@@ -204,26 +114,24 @@ export function createLimitsSource(deps: LimitsSourceDeps): LimitsSource {
   const cache = new Map<string, { at: number; limits?: AccountLimits }>();
   const inflight = new Map<string, Promise<void>>();
 
-  async function fetchClaude(key: string, agent: string, id: string): Promise<void> {
-    const token = claudeUsageToken(await deps.readSecret(agent, id), now());
+  const readerOf = deps.readerOf ?? ((agent: string) => agentHistoryModule(agent)?.planLimits);
+
+  async function read(
+    key: string,
+    reader: AgentPlanLimits,
+    agent: string,
+    id: string,
+  ): Promise<void> {
+    const secret = await deps.readSecret(agent, id).catch(() => null);
     const entry = cache.get(key);
     cache.set(key, { at: now(), ...(entry?.limits ? { limits: entry.limits } : {}) });
-    if (!token) return;
     try {
-      const res = await doFetch(CLAUDE_USAGE_URL, {
-        headers: {
-          authorization: `Bearer ${token}`,
-          'anthropic-beta': 'oauth-2025-04-20',
-          'content-type': 'application/json',
-        },
+      const windows = await reader.read(secret, {
+        fetch: doFetch,
+        now: now(),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        log: (line) => deps.log?.(`limits: ${key} ${line}`),
       });
-      if (!res.ok) {
-        // The status only: a body could echo the request.
-        deps.log?.(`limits: ${key} usage endpoint answered ${String(res.status)}`);
-        return;
-      }
-      const windows = claudeUsageWindows(await res.json());
       if (!windows) return;
       cache.set(key, {
         at: now(),
@@ -235,18 +143,19 @@ export function createLimitsSource(deps: LimitsSourceDeps): LimitsSource {
         },
       });
     } catch (err) {
-      deps.log?.(`limits: ${key} usage endpoint failed: ${(err as Error).name}`);
+      deps.log?.(`limits: ${key} read failed: ${(err as Error).name}`);
     }
   }
 
   return {
     async limitsFor(agent, id, running) {
       const key = `${agent}/${id}`;
-      if (agent === 'claude') {
+      const reader = readerOf(agent);
+      if (reader) {
         const entry = cache.get(key);
         let p = inflight.get(key);
         if (!p && running && (!entry || now() - entry.at >= LIMITS_REFRESH_MS)) {
-          p = fetchClaude(key, agent, id).finally(() => inflight.delete(key));
+          p = read(key, reader, agent, id).finally(() => inflight.delete(key));
           inflight.set(key, p);
         }
         if (p) {
@@ -262,7 +171,7 @@ export function createLimitsSource(deps: LimitsSourceDeps): LimitsSource {
         return freshLimits(cache.get(key)?.limits, now());
       }
       const h = await deps.transcriptLimits(key).catch(() => null);
-      return h && h.windows.length > 0 ? freshLimits(codexLimits(h), now()) : undefined;
+      return h && h.windows.length > 0 ? freshLimits(transcriptLimitsView(h), now()) : undefined;
     },
     forget(agent, id) {
       cache.delete(`${agent}/${id}`);

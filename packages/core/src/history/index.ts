@@ -14,6 +14,8 @@ export type {
   HistoryMemorySink,
   HistoryOrigin,
   HistoryLimitWindow,
+  AgentPlanLimits,
+  PlanLimitWindow,
   HistoryRecord,
   MemoryFileWire,
   MemoryOrigin,

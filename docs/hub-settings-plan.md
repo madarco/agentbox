@@ -278,7 +278,8 @@ never 0%.
   `limits` history record; the hub keeps the newest per session on its live row and answers an
   account's limits from the newest session on that subscription (`HistoryRepo.accountLimits`). No
   network call.
-- **Claude** (`apps/hub/lib/backend/account-limits.ts`): the usage endpoint, called with the stored
+- **Claude** (`packages/agent-claude/src/limits.ts`, the module's `planLimits` reader, which
+  `apps/hub/lib/backend/account-limits.ts` caches): the usage endpoint, called with the stored
   login's access token while it is valid (a setup token as is), at most every 5 minutes per account
   and only while a box on it runs (a cloud box's `lastState`; a docker record counts as running). The
   hub never refreshes the token. An API key, an expired login or a refusal is no data.
