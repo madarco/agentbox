@@ -209,6 +209,12 @@ export interface RelayServerOptions {
    */
   custodyMaxBlobBytes?: number;
   /**
+   * `skills.maxSkillBytes` of this hub: sizes the one host-reach result that
+   * carries files, a `pcskills.export` (a skill's tarball, base64). Every other
+   * result keeps the default body cap.
+   */
+  pcSkillsMaxBytes?: number;
+  /**
    * Admin bearer that gates `/admin/custody/*` (the ONLY proof accepted — the
    * loopback bypass that covers the other `/admin/*` routes does not apply to
    * custody, since a control box behind Caddy makes every request look
@@ -329,6 +335,9 @@ const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB hard cap; relay is for control-plan
  * with `relay.custodyMaxBodyBytes`.
  */
 const DEFAULT_CUSTODY_MAX_BODY_BYTES = 32 * 1024 * 1024; // 32 MiB
+/** `skills.maxSkillBytes`'s default. */
+const DEFAULT_PC_SKILLS_MAX_BYTES = 50 * 1024 * 1024;
+
 /** Matches `box.cpMaxBytes` — see the `custodyMaxBlobBytes` option doc. */
 const DEFAULT_CUSTODY_MAX_BLOB_BYTES = 100 * 1024 * 1024; // 100 MiB
 const GIT_RPC_TIMEOUT_MS = 120_000; // git push/pull can be slow on big repos.
@@ -358,13 +367,16 @@ function send(
   }
 }
 
-async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
+async function readJsonBody<T>(
+  req: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let total = 0;
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => {
       total += chunk.length;
-      if (total > MAX_BODY_BYTES) {
+      if (total > maxBytes) {
         reject(new Error('request body too large'));
         req.destroy();
         return;
@@ -650,6 +662,18 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
     typeof opts.custodyMaxBlobBytes === 'number' && opts.custodyMaxBlobBytes > 0
       ? opts.custodyMaxBlobBytes
       : DEFAULT_CUSTODY_MAX_BLOB_BYTES;
+  // base64 of a gzipped tarball of at most `skills.maxSkillBytes`: 4/3 of it,
+  // plus room for tar headers, gzip's worst case and the JSON envelope.
+  const pcSkillsResultCap =
+    Math.ceil(
+      ((typeof opts.pcSkillsMaxBytes === 'number' && opts.pcSkillsMaxBytes > 0
+        ? opts.pcSkillsMaxBytes
+        : DEFAULT_PC_SKILLS_MAX_BYTES) *
+        1.01 *
+        4) /
+        3,
+    ) +
+    256 * 1024;
   const uiHandler = opts.uiHandler;
 
   // Host-mode pollers for cloud-tagged boxes; started on /admin/register-box,
@@ -1056,14 +1080,56 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         return;
       }
       if (route === 'POST /admin/hostreach/result') {
-        const body = await readJsonBody<BridgeActionResultBody>(req);
+        // The poller names the action and itself in the query, so the hub
+        // checks both BEFORE buffering a body, and sizes the cap by what the
+        // action is: only a `pcskills.export` carries files. Without the query
+        // (an older poller) the default cap applies.
+        const qid = url.searchParams.get('id');
+        const qpoller = url.searchParams.get('poller');
+        let maxBytes = MAX_BODY_BYTES;
+        if (qid) {
+          const owner = hostReach.ownerOf(qid);
+          if (!owner || (qpoller !== null && owner.pollerId !== qpoller)) {
+            send(res, 404, { error: 'no parked action with that id for this machine' });
+            return;
+          }
+          if (!callerOwnsPoller(qpoller ?? undefined)) {
+            send(res, 403, { error: 'this poller id belongs to another machine' });
+            return;
+          }
+          if (hostReach.peek(qid)?.method === 'pcskills.export') maxBytes = pcSkillsResultCap;
+        }
+        let body: BridgeActionResultBody;
+        try {
+          body = await readJsonBody<BridgeActionResultBody>(req, maxBytes);
+        } catch (err) {
+          if (err instanceof Error && err.message === 'request body too large' && qid) {
+            // Settle it as failed: dropping it would leave the hub's request
+            // (and that PC's queue behind it) waiting for an answer that came.
+            hostReach.resolve(
+              qid,
+              {
+                exitCode: 1,
+                stdout: '',
+                stderr: `the result was larger than this hub accepts (${String(maxBytes)} bytes)\n`,
+              },
+              qpoller ?? undefined,
+            );
+            send(res, 413, { error: 'result too large; the action was marked failed' });
+            return;
+          }
+          throw err;
+        }
         if (
           !body ||
           typeof body.id !== 'string' ||
           body.id.length === 0 ||
-          typeof body.exitCode !== 'number'
+          typeof body.exitCode !== 'number' ||
+          (qid !== null && body.id !== qid)
         ) {
-          send(res, 400, { error: 'expected {id, exitCode, stdout, stderr}' });
+          send(res, 400, {
+            error: 'expected {id, exitCode, stdout, stderr} for the id in the query',
+          });
           return;
         }
         if (!callerOwnsPoller(body.poller)) {

@@ -190,11 +190,11 @@ async function doDownload(
         log.warn(`${out.name}: skipped — ${out.reason}`);
         allOk = false;
       } else {
-        const link = out.claudeLink ? ` (linked from ${out.claudeLink})` : '';
+        const link = out.links?.length ? ` (linked from ${out.links.join(', ')})` : '';
         log.success(`${out.name}: ${out.status} at ${out.dir}${link}`);
-        if (out.claudeKept) {
+        for (const kept of out.kept ?? []) {
           log.warn(
-            `${out.name}: Claude Code still reads its own different copy at ${out.claudeKept}; remove it to use the downloaded one`,
+            `${out.name}: an agent still reads its own different copy at ${kept}; remove it to use the downloaded one`,
           );
         }
       }

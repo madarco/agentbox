@@ -128,6 +128,33 @@ describe('host-reach routing on the control box', () => {
     expect((await rpc).body).toMatchObject({ exitCode: 0, stdout: 'from desk' });
   });
 
+  it('checks the id in the query before the body, and fails an oversize result instead of dropping it', async () => {
+    await poll(handle, 'pa', PC_A, 50);
+    const rpc = req(handle, 'POST', '/rpc', {
+      token: 't1',
+      body: { method: 'cp.fromHost', params: { sources: ['data.csv'], dest: '/workspace' } },
+    });
+    const a = await poll(handle, 'pa', PC_A);
+    const id = a.body.actions![0]!.id;
+    const unknown = await req(handle, 'POST', '/admin/hostreach/result?id=nope&poller=pa', {
+      token: ADMIN,
+      device: PC_A,
+      body: { id: 'nope', poller: 'pa', exitCode: 0, stdout: '', stderr: '' },
+    });
+    expect(unknown.status).toBe(404);
+    // A `cp` result keeps the default cap: 2 MiB is refused, and the box hears
+    // that it failed rather than waiting on an answer that was sent.
+    await req(handle, 'POST', `/admin/hostreach/result?id=${id}&poller=pa`, {
+      token: ADMIN,
+      device: PC_A,
+      body: { id, poller: 'pa', exitCode: 0, stdout: 'x'.repeat(2 * 1024 * 1024), stderr: '' },
+    }).catch(() => undefined);
+    expect((await rpc).body).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringMatching(/larger than this hub accepts/) as unknown,
+    });
+  });
+
   it('tells the box which machines it tried and why', async () => {
     await poll(handle, 'pa', PC_A, 50);
     const rpc = req(handle, 'POST', '/rpc', {

@@ -660,3 +660,44 @@ export const skillDiffs = {
   },
 };
 export const skillMd = { "review-pr": REVIEW_PR_BEFORE };
+
+/* The skills page's machine column (GET /api/v1/skill-machines[/{id}/compare]):
+   studio-mac is the hub's own machine; dev-laptop is enrolled and offline. */
+export const skillMachines = {
+  machines: [
+    { id: MACHINES.studio, label: HOST, self: true, online: true },
+    { id: MACHINES.laptop, label: "dev-laptop", self: false, online: false },
+  ],
+  defaultId: MACHINES.studio,
+};
+
+const pcSkill = (name, dir, extra = {}) => ({
+  treeSha: sha(name), dirs: [dir], path: `${HOME}/${dir}/${name}`, size: 6_000, files: 2, problems: [], findings: [], ...extra,
+});
+const hubOf = (name) => {
+  const s = skills.skills.find((x) => x.name === name);
+  return { current: s.current, updatedAt: s.updatedAt, pending: Boolean(s.pending) };
+};
+const EVERY = ["codex", "opencode", "pi", "openclaw"];
+
+export const skillCompare = {
+  [MACHINES.studio]: {
+    machine: skillMachines.machines[0],
+    outOfSync: 4,
+    rows: [
+      { name: "db-migrations", description: skills.skills[2].description, status: "same", agents: ["claude", "opencode"], hub: hubOf("db-migrations"), pc: pcSkill("db-migrations", ".claude/skills") },
+      { name: "e2e-playwright", description: skills.skills[4].description, status: "hub-only", agents: [], hub: hubOf("e2e-playwright") },
+      { name: "flaky-test-triage", description: "Bisect a flaky test across the last green runs and name the commit.", status: "local-only", agents: EVERY, pc: pcSkill("flaky-test-triage", ".agents/skills") },
+      { name: "release-notes", description: skills.skills[1].description, status: "same", agents: EVERY, hub: hubOf("release-notes"), pc: pcSkill("release-notes", ".agents/skills") },
+      { name: "review-pr", description: skills.skills[0].description, status: "same", agents: ["claude", "opencode"], hub: hubOf("review-pr"), pc: pcSkill("review-pr", ".claude/skills") },
+      { name: "stripe-webhooks", description: skills.skills[3].description, status: "differs", newer: "local", agents: EVERY, hub: hubOf("stripe-webhooks"), pc: pcSkill("stripe-webhooks", ".agents/skills") },
+      { name: "sql-style", description: "Acme's SQL style: CTEs over subqueries, explicit column lists.", status: "local-only", agents: ["claude", "opencode"], pc: pcSkill("sql-style", ".claude/skills") },
+    ],
+  },
+  [MACHINES.laptop]: {
+    machine: skillMachines.machines[1],
+    error: "dev-laptop is offline",
+    outOfSync: 0,
+    rows: skills.skills.map((s) => ({ name: s.name, description: s.description, status: "unknown", agents: [], hub: hubOf(s.name) })),
+  },
+};
