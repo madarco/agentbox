@@ -48,6 +48,7 @@ const GET = [
   [/^\/api\/v1\/approvals$/, () => ({ approvals })],
   [/^\/api\/v1\/providers$/, () => ({ providers })],
   [/^\/api\/v1\/accounts$/, () => accounts],
+  [/^\/api\/v1\/accounts\/policy$/, () => ({ onLimit: "ask" })],
   [/^\/api\/v1\/agents$/, () => ({
     agents: [
       { id: "claude", label: "Claude", installed: true },

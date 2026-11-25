@@ -87,7 +87,7 @@ export function LimitPolicyCard() {
             disabled={value === null || saving}
             onClick={() => void choose(c.value)}
             className={cn(
-              'cursor-pointer rounded-lg border p-3.5 text-left transition-colors disabled:cursor-default',
+              'flex cursor-pointer flex-col items-start justify-start rounded-lg border p-3.5 text-left transition-colors disabled:cursor-default',
               value === c.value
                 ? 'border-primary bg-primary/5'
                 : 'border-border hover:bg-secondary/60',

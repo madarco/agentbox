@@ -148,6 +148,7 @@ import {
   readAccountSecret,
   resolveLlmProxyRecord,
   accountEnvPolicy,
+  findBox as findBoxRecord,
   recordAccountSwitch,
   resolveAgentSpec,
   type FileManifest,
@@ -3589,7 +3590,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     async switchBoxAccount(id, req) {
       const res = await switchBoxAccount(
         {
-          findBox: (ref) => findOrHydrateBox(ref, hydrate).catch(() => null),
+          // By id, name or unique prefix, as the CLI passes what the user typed.
+          findBox: async (ref) => {
+            const found = findBoxRecord(ref, await readState());
+            if (found.kind === 'ok') return found.box;
+            return findOrHydrateBox(ref, hydrate).catch(() => null);
+          },
           agentSpec: (agent) => findAgentSpec(agent),
           accountKind: async (agent, account) =>
             findAccount(await readAccounts(), agent, account)?.kind ?? null,
