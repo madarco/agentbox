@@ -38,9 +38,14 @@ export async function POST(
       return fail('conflict', res.error);
     case 'error':
       return fail('internal', res.error);
-    default: {
-      const { kind: _k, ...view } = res;
-      return ok(view);
-    }
+    default:
+      return ok({
+        boxId: res.boxId,
+        agent: res.agent,
+        from: res.from,
+        to: res.to,
+        how: res.how,
+        restarted: res.restarted,
+      });
   }
 }
