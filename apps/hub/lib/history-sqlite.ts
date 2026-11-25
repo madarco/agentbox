@@ -293,9 +293,34 @@ function columns(db: Db, table: string): Set<string> {
  * Phase 7 columns on a store created before it. `ts_ms` is filled from `ts` in
  * SQL (julianday reads the parsers' ISO strings), so no re-parse is needed.
  */
-function migrateUsage(db: Db): void {
+export interface HistoryRepoOptions {
+  /**
+   * Agents that can run on another agent's login (`modelAuth` agent sources).
+   * A bare account id stamped on their sessions before hub settings 3a may
+   * belong to a lender, so the migration clears it for the account backfill
+   * to restamp through `subscriptionOf`, instead of guessing the agent's own.
+   */
+  borrowingAgents?: readonly string[];
+}
+
+function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   const sessions = columns(db, 'history_sessions');
   if (!sessions.has('account')) db.exec('ALTER TABLE history_sessions ADD COLUMN account TEXT');
+  // Hub settings 3a: an account is stamped as its subscription, `agent/account`.
+  // A bare id from before is the session agent's own, unless the agent can
+  // borrow a login: that one is cleared for the backfill (which only fills
+  // NULLs) to restamp from the box record. Stamped rows never match again, so a
+  // second open changes nothing.
+  const borrowing = [...new Set(o.borrowingAgents ?? [])];
+  if (borrowing.length > 0) {
+    db.prepare(
+      `UPDATE history_sessions SET account = NULL WHERE account IS NOT NULL AND instr(account, '/') = 0
+         AND agent IN (${borrowing.map(() => '?').join(', ')})`,
+    ).run(...borrowing);
+  }
+  db.exec(
+    "UPDATE history_sessions SET account = agent || '/' || account WHERE account IS NOT NULL AND instr(account, '/') = 0",
+  );
   if (!sessions.has('purged_at')) {
     db.exec('ALTER TABLE history_sessions ADD COLUMN purged_at INTEGER');
   }
@@ -393,7 +418,15 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
     args.push(v);
   };
   eq('s.agent', q.agent);
-  eq('s.account', q.account);
+  if (q.account !== undefined) {
+    if (q.account.includes('/')) {
+      eq('s.account', q.account);
+    } else {
+      // A bare id, as before 3a: that account of any agent.
+      where.push("s.account LIKE ? ESCAPE '\\'");
+      args.push(`%/${q.account.replace(/[\\%_]/g, (c) => `\\${c}`)}`);
+    }
+  }
   eq('s.host_id', q.host);
   eq('u.model', q.model);
   if (q.box !== undefined) {
@@ -469,14 +502,17 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
   return { totals, groups, truncated: rows.length > q.limit };
 }
 
-export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> {
+export async function openSqliteHistoryRepo(
+  path: string,
+  options: HistoryRepoOptions = {},
+): Promise<HistoryRepo> {
   const { DatabaseSync } = await import('node:sqlite');
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path) as unknown as Db;
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
-  migrateUsage(db);
+  migrateUsage(db, options);
   // Full-text over turn text, for Phase 2's search. Optional: a node built
   // without FTS5 still ingests.
   let fts = true;

@@ -5,9 +5,10 @@
 // (Phase 5), so a named account is refused there with a message naming it.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
 import {
   accountConfigVolume,
+  modelAuthSourceId,
   agentAccountKinds,
   findAccount,
   isDefaultAccount,
@@ -86,6 +87,8 @@ export interface AccountBackendDeps {
    */
   removeVolume?: (name: string) => Promise<{ removed: boolean; error?: string }>;
   store?: AccountStoreOptions;
+  /** This hub's machine id, the `<machine>` its named accounts sit under in custody. */
+  machineId?: () => string | undefined;
 }
 
 const execFileAsync = promisify(execFile);
@@ -148,7 +151,9 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       const agents = (store?.specs ?? AGENT_SYNC_SPECS)
         .filter((s) => agentAccountKinds(s).length > 0 && !s.hidden)
         .map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
-      return { accounts: views, agents };
+      // A machine with no id yet (unwritable HOME) lists its accounts without one.
+      const machine = deps.machineId ? deps.machineId() : tryGetMachineId();
+      return { accounts: views, agents, ...(machine ? { machine } : {}) };
     },
 
     async addPastedAccount(input) {
@@ -292,4 +297,42 @@ export function accountsInfoOf(
       ...(row ? { kind: row.kind } : {}),
     };
   });
+}
+
+/**
+ * The subscription an agent's usage in a box counts under, as `agent/account`
+ * (hub settings Phase 3a). An agent that runs on another agent's login
+ * (`--model-auth`, `BoxRecord.borrowedCredentials`) spends the lender's plan,
+ * so its sessions count under the lender's account. Only the box's sources the
+ * agent itself declares (`modelAuth.sources`) count: the borrow list is
+ * box-wide, and an agent on its own login in the same box keeps its own.
+ *
+ * No guessing: a lender is used only when it is the ONE source the agent
+ * consumes. Mixed with an `env:` key, or two lenders, a turn could be served by
+ * either, so the session stays on the agent's own key (hub settings backlog:
+ * per-turn attribution). Pure apart from the default `specOf` registry lookup.
+ */
+export function subscriptionOf(
+  box: Pick<BoxRecord, 'accounts' | 'borrowedCredentials'>,
+  agent: string,
+  specOf: (agent: string) => Pick<AgentSyncSpec, 'modelAuth'> | undefined = findAgentSpec,
+): string {
+  const declared = new Set((specOf(agent)?.modelAuth?.sources ?? []).map(modelAuthSourceId));
+  const consumed = (box.borrowedCredentials ?? []).filter((id) => id !== agent && declared.has(id));
+  const only = consumed.length === 1 ? consumed[0]! : undefined;
+  const owner = only && !only.startsWith('env:') ? only : agent;
+  return `${owner}/${box.accounts?.[owner] ?? 'default'}`;
+}
+
+/**
+ * Agents that can run on another agent's login (an `agent` model-auth source):
+ * the history store re-derives their pre-3a account stamps
+ * (`HistoryRepoOptions.borrowingAgents`).
+ */
+export function borrowingAgentIds(
+  specs: readonly Pick<AgentSyncSpec, 'id' | 'modelAuth'>[] = AGENT_SYNC_SPECS,
+): string[] {
+  return specs
+    .filter((s) => (s.modelAuth?.sources ?? []).some((src) => src.kind === 'agent'))
+    .map((s) => s.id);
 }

@@ -1,6 +1,8 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** Phases 1-2 done (2026-11-25, `feat/hub-settings-nav`, `feat/hub-settings-skills`), plus the per-skill skip (`feat/hub-settings-skill-skip`). Phases 3-4 not started.
+**Status:** Phases 1, 2, 3a and 4 done (2026-11-25, `feat/hub-settings-nav`,
+`feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-files`), plus the per-skill
+skip (`feat/hub-settings-skill-skip`). Phases 3b-3c not started.
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -252,6 +254,18 @@ claude/personal`) so each subscription card links to its usage. The breakdown is
 subscription" and shows the same labels. `GET /usage` takes the pair (`account=<agent>/<id>`),
 and a borrowed login's usage counts under the lender, as on the cards.
 
+**Built (3a):** as above, with these notes. A session is stamped with its subscription,
+`agent/account`, in the existing `history_sessions.account` column; bare ids stamped before are
+rewritten to the session agent's own once, when the store opens, except for an agent that can borrow
+a login (`borrowingAgentIds`): its bare ids are cleared so the backfill restamps them from the box
+record. A borrower counts under the lender
+only when that login is the one source of the box the agent consumes (`subscriptionOf`,
+`lib/backend/accounts.ts`), so another agent in the same box keeps its own. `GET /usage?account=`
+takes `<agent>/<account>`, and a bare id still matches that id of any agent. The cards show the last 7
+days, the Usage page's default window, so a card's figure matches the page it links to. The
+default account's card says "every box without a named account" (the API returns no boxes for it, as
+before).
+
 **3b — limits. Phase 0 first** (measure before building):
 
 1. **Codex:** confirm `rate_limits` in the last `token_count` of a live session matches codex's own
@@ -298,7 +312,7 @@ mid-turn shows its windows matching `/status`; an Ultra claude account shows wee
 account; with `onLimit: switch`, a box whose account hits the limit moves to the next one on its own;
 with `ask`, the approval appears in the web and the tray.
 
-### Phase 4 — Files
+### Phase 4 — Files — done
 
 `/settings/files` replaces the Custody page and says what it is: the files the hub holds so boxes can
 start without the PC. Read-only.
@@ -313,6 +327,23 @@ start without the PC. Read-only.
 
 **Done:** on a local hub and on `hub expose` with a password profile, every custody entry shows under
 a human group and nothing exposes file contents.
+
+**Built:** `lib/files-view.ts` regroups the manifest; the page joins it client-side with the store's
+projects and boxes, `GET /accounts` and `GET /devices`, so no new route. Notes:
+
+- A project section is named after the hub projects whose custody slugs include it. The hub puts
+  `custodySlugs` on every project (`seedSlugsFor`: repo key, alias-expanded with `repoKeyAtEdge` for a
+  folder on the hub's machine, else the key a registration carries; origin; registered slug; legacy
+  `owner__repo`), so the browser never re-derives repo keys. All folders of one repo are listed; a
+  folder name is used only for a project with no git identity. Files under a scope the page does not
+  know go to an **Other** group, one row per file.
+- Named-account logins live per machine (`agents/<agent>/accounts/<machine>/<id>/`), and an account
+  label belongs to one machine's store. `GET /accounts` gained `machine` (this hub's machine id) so a
+  label is shown only on that machine's entries; another PC's account shows its id and the PC's name.
+- A box's SSH key (under its sandbox id) and its served-skills record (under its box id) merge into
+  one row. `cp/` and `cp-out/` roll up to one row each. Group counts exclude bookkeeping files
+  (`skills/.seeded`, `skills/.bindings.json`).
+- The unused scope grouping (`groupCustody`, `SCOPE_META`, `shortSha`) left `lib/custody-view.ts`.
 
 ## Parallel work
 
@@ -358,3 +389,18 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
   should fail loudly instead of storing a cut blob. Not reproduced in isolation yet.
 - **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin
   token there (the API key is refused).
+- **Vendor per agent** (3a): the Anthropic / OpenAI grouping is a map in `apps/hub/lib/subscriptions.ts`
+  (claude, codex); any other agent is grouped under its own id. A `vendor` field on the agent registry
+  row would cover `agentbox agent add` agents.
+- **Mixed model-auth sources** (3a): an agent consuming more than one of its box's sources (two
+  lenders, or a lender plus an `env:` key, e.g. `--model-auth codex,env:ANTHROPIC_API_KEY`) is
+  counted under its own key, not guessed. Per-turn attribution needs the provider that served each
+  turn from the transcript.
+- **Host sessions on the default card** (3a): a session from a host (not a box) has no account
+  stamped (`account` null), so it counts under no subscription, and the default card's tokens leave
+  it out.
+- **Pre-3a sessions of a destroyed borrowing box** (3a): the migration clears a borrowing agent's
+  bare account id for the backfill to restamp from the box record; a box this hub no longer records
+  leaves it null (not counted under any subscription) rather than guessed.
+- **Default account's boxes** (3a): `GET /accounts` lists no boxes for a `default` account (it would be
+  every box without a named one); the card says so instead of listing them.

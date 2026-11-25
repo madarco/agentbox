@@ -183,7 +183,11 @@ to its sub-pages: **General** (providers, remote docker hosts, GitHub),
 **Subscriptions**, **Skills**, **Files**, **Devices** and **System**.
 
 The **Settings → Subscriptions** page (`/settings/subscriptions`) lists the machine's named LLM accounts (logins, setup
-tokens, API keys per agent), with the boxes using each one. Add a setup token or
+tokens, API keys per agent) as cards grouped by **Anthropic**, **OpenAI** and
+**API keys**. Each card shows the plan tier, the account's email, the boxes on it
+and its tokens over the last 7 days, which link to the Usage page filtered to
+that subscription. A box that borrows another agent's login (`--model-auth`)
+counts under the lender's card. Add a setup token or
 an API key there, relabel or remove an account; a login runs on the machine
 with `agentbox <agent> login --account <name>`. The create dialog offers an
 **Account** picker for an agent that has named accounts, and the box table and
@@ -192,8 +196,9 @@ detail page show the account a box runs on. See
 
 The **Usage** page shows the tokens your boxes' agents spent: totals for a
 window (24 hours to all time), tokens per day stacked by agent, and breakdowns
-by agent, model, account, project, box, PC and session. Clicking a row filters
-the page to it. It reads the same numbers as
+by agent, model, subscription, project, box, PC and session. Clicking a row
+filters the page to it. The **Subscription** selector narrows the page to one
+subscription and keeps it in the URL (`/usage?subscription=claude/personal`). It reads the same numbers as
 [`agentbox usage`](/docs/cli#usage).
 
 A password-profile hub also has a **Settings → Devices** page (`/settings/devices`): the computers enrolled with
