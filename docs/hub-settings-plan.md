@@ -1,9 +1,10 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** Phases 1, 2, 3a, 3b and 4 done (2026-11-25, `feat/hub-settings-nav`,
+**Status:** Phases 1, 2, 3a, 3b, 3c and 4 done (2026-11-25, `feat/hub-settings-nav`,
 `feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-limits`,
-`feat/hub-settings-files`), plus the per-skill skip (`feat/hub-settings-skill-skip`). Phase 3c not
-started (its Phase 0 first).
+`feat/hub-settings-switch`, `feat/hub-settings-files`), plus the per-skill skip
+(`feat/hub-settings-skill-skip`). 3c ships token switches on every provider and login switches on
+docker for claude; cloud and codex login switches are in the backlog.
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -422,6 +423,51 @@ subscription runs it.
   provider (the plan's "then one cloud").
 
 
+**Built (3c, `feat/hub-settings-switch`):**
+
+- `POST /api/v1/boxes/{id}/account {account, agent?}` (slice `apps/hub/lib/backend/account-switch.ts`),
+  `agentbox accounts switch <box> <agent>/<account>`, and the box page's account selector with the
+  last switches under it. `BoxRecord.accounts` moves and `BoxRecord.accountSwitches` keeps the last
+  10 `{at, agent, from, to, how, reason}`; the relay registration is refreshed from the record.
+- **Token (setup token, API key), every provider.** The record moves, then the hub restarts the
+  agent's tmux session and it resumes (`apps/hub/lib/backend/agent-restart.ts`, the hub twin of the
+  CLI's `restoreAgentSessions`, through `loadAgentCliModule` in `@agentbox/agent-modules`). Docker's
+  session exec blanks a suppressed key the account does not inject (`-e KEY=`, `accountEnvClears`),
+  since an exec only adds to a container's env. A cloud box's `/run/agentbox/agent.env` now ends with
+  the record's account keys written unconditionally (`export` / `unset`), so they beat the sandbox
+  env the box was created with; create, wake and the switch (`rewriteCloudAgentEnv`) all write it.
+  The stored token's shape is checked first (`accountTokenPattern` on the agent spec).
+- **Login, docker, claude.** `recreateBoxOnAccount` (sandbox-docker): checks the target volume holds
+  a login file, stops the in-box dockerd cleanly (a killed one leaves containerd task dirs that the
+  commit would carry, and the inner containers then cannot start), stops the box, commits it
+  (labelled `agentbox.switch.box`), copies the session's files (`sessionFiles` on the agent spec:
+  claude's `projects/*/{id}.jsonl` and `projects/*/{id}`) from the mounted volume into the target,
+  renames the old container aside, creates the new one from `docker inspect` (same name, mounts,
+  ports, env, limits, init) with only the config volume swapped and the account env keys replaced,
+  and starts it through `startBox` (worktree binds, dockerd, ctl, VNC, sshd, portless, relay). Any
+  failure puts the old container back. The previous switch image is removed on the next switch and
+  on destroy. When the box already mounts the target's volume (back to the login it was created on
+  after a token switch), it is a token-style restart, no recreate.
+- Refused with a message: a cloud box to a login ("switching a cloud box to another login is not
+  supported yet; use a setup token or API key"), a paused docker box to a login, an agent with no
+  `sessionFiles` (codex) to a login, a malformed token.
+- **At the limit.** `accounts.onLimit: ask | switch` (default `ask`; `GET/PUT /api/v1/accounts/policy`,
+  Settings → General, `agentbox config set accounts.onLimit`). The hub checks once a minute
+  (`account-limit-watch.ts`): a running box whose agent's account has `atLimit` (not stale) gets a
+  confirm approval "box X is at the limit on A: switch to B?" (`ask`, never auto-approved) or is
+  moved (`switch`) to the first other account of that agent not at its limit and usable by the box
+  (a login only on docker, a token only with its secret). Once per box, account and reset time.
+- **Live check (nested docker box from `examples/express-ready`, made-up tokens only):** a malformed
+  setup token was refused (400). The switch to a made-up setup token restarted claude with
+  `--resume` in 0.7 s: the conversation was there, the token was in the agent's env with
+  `ANTHROPIC_API_KEY` blank, and the next turn got "401 OAuth access token is invalid" (no setup
+  token was available here, so the 401 is the proof, not a real turn). Two login switches to
+  stand-in volumes holding a fake credentials file took 9 s and 16 s: the conversation was found,
+  claude used the stand-in login, both workspace edits were kept, the mounts were identical except
+  the config volume, the inner postgres and the web service came back ready, the portless URL
+  answered 200 and the box kept pushing status with its relay token. The `onLimit` loop is
+  unit-tested only (no account here is at a real limit).
+
 **Done (3a):** the page shows each real account with its boxes and tokens; a card's usage link opens
 Usage filtered to that subscription, and the totals match the card. **Done (3b):** a codex box
 mid-turn shows its windows matching `/status`; an Ultra claude account shows weekly meters only.
@@ -485,6 +531,29 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - Shared folders; upload into custody from the web.
 
 ## Backlog
+
+- **Login switch on cloud providers** (3c): refused today. A cloud Phase 0 must measure, per provider
+  (Daytona first, it has the per-account credentials subpath; then a VPS one): where the session
+  files live (the box's `~/.claude` on the sandbox disk, or the credentials volume), whether swapping
+  the credentials mount means a new sandbox (Daytona volumes are fixed at create) or can be a file
+  swap on a VPS without making a second refresh-token holder, and whether a snapshot + recreate keeps
+  the preview URLs, the bridge relay registration and the workspace.
+- **Codex login switch** (3c): codex has no `sessionFiles`, so a switch to a codex login is refused.
+  The copy is the rollout file (`~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`) plus a re-index
+  of `state_*.sqlite`; needs a codex box run to measure. A token switch (API key) works today.
+- **The agent's own limit error as a trigger** (3c): `onLimit` reacts to `atLimit` from the limits
+  only. Reading the agent's limit message from its session needs an account at its limit to see it.
+- **`ask` does not pause the agent** (3c): the plan says ask pauses the agent's work; the approval is
+  raised while the agent is (usually) already stopped by the limit. With no other account available,
+  the hub logs it and raises nothing; the plan's "the approval says when the first window resets"
+  is not built.
+- **Hub-side session start and `AGENTBOX_HUB_BIN`** (3c): the hub restarts a docker agent with
+  `runtime.startSession`, which forwards the HUB's env (`ANTHROPIC_API_KEY` etc.) for a default
+  account, where the CLI forwards the user's shell env. Same for every hub-driven start today.
+- **A new named login volume made by hand** (3c live check): the stand-in volume held only the
+  credentials, so the box's in-box hooks and settings were missing after the switch. A real one made
+  by `agentbox claude login --account` is seeded from the host config, so this only bites a volume
+  made outside agentbox.
 
 - **Phase 2 against a remote hub.** The device path (host-reach routing, PC-side confirm mirrored to
   the hub) is unit-tested but not run live. Sign-off per the remote-hub rule: `hub expose --tunnel
