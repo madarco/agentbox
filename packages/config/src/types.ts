@@ -218,6 +218,7 @@ export interface UserConfig {
     cpMaxBytes?: number;
     credentialSync?: boolean;
     inbound?: string;
+    swap?: string;
   };
   checkpoint?: {
     maxLayers?: number;
@@ -464,6 +465,7 @@ export interface EffectiveConfig {
     cpMaxBytes: number;
     credentialSync: boolean;
     inbound: string;
+    swap: string;
   };
   checkpoint: {
     maxLayers: number;
@@ -680,6 +682,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     cpMaxBytes: 100 * 1024 * 1024,
     credentialSync: true,
     inbound: 'locked',
+    swap: 'auto',
   },
   checkpoint: {
     maxLayers: 3,
@@ -1200,6 +1203,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'string',
     description:
       "Inbound-access policy for VPS boxes (hetzner, digitalocean per-box firewall). `locked` (default) = SSH reachable only from your host's egress IP; `open` = SSH reachable from anywhere (0.0.0.0/0, key-only — to drive a box from a phone with the laptop off); a CIDR list (e.g. `203.0.113.5/32`) = host egress plus those. Override per box with `--inbound` or after create with `agentbox inbound <box>`. Ignored by non-VPS providers.",
+  },
+  {
+    key: 'box.swap',
+    type: 'string',
+    description:
+      'Swap for VPS boxes (hetzner, digitalocean) and the control boxes `hub deploy` makes there. `auto` (default) = a `/swapfile` of min(RAM, 8 GiB), at least 2 GiB, at most a quarter of the free disk, made at boot by cloud-init; `off` = none (removes one a checkpoint carried); or a size like `4G` / `2048M`. Applies to boxes created after the change. Ignored by other providers (managed microVMs, your own remote-docker machine, Docker Desktop).',
   },
   {
     key: 'box.vercelNetworkPolicy',

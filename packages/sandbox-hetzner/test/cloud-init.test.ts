@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { generateBoxCloudInit, generatePrepareCloudInit } from '../src/cloud-init.js';
+import {
+  generateBoxCloudInit,
+  generatePrepareCloudInit,
+  controlPlaneCloudInit,
+} from '../src/cloud-init.js';
 import { cloudInitBoxEnv } from '../src/backend.js';
 
 const FAKE_PUBKEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILongTextForKey agentbox/test';
@@ -95,5 +99,31 @@ describe('cloudInitBoxEnv', () => {
   it('drops non-AGENTBOX keys and undefined values', () => {
     expect(cloudInitBoxEnv({ PATH: '/usr/bin', AGENTBOX_X: undefined })).toEqual({});
     expect(cloudInitBoxEnv()).toEqual({});
+  });
+});
+
+describe('swap', () => {
+  const SWAP_RUN = (arg: string): string =>
+    `  - [ sh, -c, "/usr/local/sbin/agentbox-swap ${arg} || true" ]`;
+
+  it('a box installs and runs the swap script, auto by default', () => {
+    const yaml = generateBoxCloudInit({ sshPubkey: FAKE_PUBKEY, boxName: 'b' });
+    expect(yaml).toContain('  - path: /usr/local/sbin/agentbox-swap');
+    expect(yaml).toContain(`runcmd:\n${SWAP_RUN('auto')}`);
+  });
+
+  it('a box carries an explicit size, and off still runs (it removes a checkpointed swapfile)', () => {
+    expect(
+      generateBoxCloudInit({ sshPubkey: FAKE_PUBKEY, boxName: 'b', swap: { mib: 4096 } }),
+    ).toContain(SWAP_RUN('4096'));
+    expect(generateBoxCloudInit({ sshPubkey: FAKE_PUBKEY, boxName: 'b', swap: 'off' })).toContain(
+      SWAP_RUN('off'),
+    );
+  });
+
+  it('the control box makes swap before anything else in runcmd', () => {
+    const yaml = controlPlaneCloudInit({ sshPubkey: FAKE_PUBKEY });
+    expect(yaml).toContain('  - path: /usr/local/sbin/agentbox-swap');
+    expect(yaml).toContain(`runcmd:\n${SWAP_RUN('auto')}\n`);
   });
 });

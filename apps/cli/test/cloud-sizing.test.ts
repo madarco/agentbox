@@ -196,3 +196,24 @@ describe('digitalocean project', () => {
     }
   });
 });
+
+describe('box.swap', () => {
+  it('passes a non-default value to hetzner and digitalocean', () => {
+    for (const p of ['hetzner', 'digitalocean']) {
+      expect(cloudSizingProviderOptions(p, makeCfg({ swap: 'off' })).swap).toBe('off');
+      expect(cloudSizingProviderOptions(p, makeCfg({ swap: '4G' })).swap).toBe('4G');
+    }
+  });
+
+  // auto is the backend default, so it rides as nothing.
+  it('emits nothing for auto or unset', () => {
+    expect(cloudSizingProviderOptions('hetzner', makeCfg({ swap: 'auto' })).swap).toBeUndefined();
+    expect(cloudSizingProviderOptions('hetzner', makeCfg({ swap: '' })).swap).toBeUndefined();
+  });
+
+  it('is ignored by every non-VPS provider', () => {
+    for (const p of ['daytona', 'vercel', 'e2b', 'docker', 'remote-docker']) {
+      expect(cloudSizingProviderOptions(p, makeCfg({ swap: 'off' })).swap).toBeUndefined();
+    }
+  });
+});

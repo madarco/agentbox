@@ -16,6 +16,8 @@
  * surface minimal).
  */
 
+import { swapCloudInit, type SwapSpec } from '@agentbox/sandbox-cloud';
+
 export interface PrepareCloudInitOptions {
   /** ed25519/rsa public key string (one line, OpenSSH format). */
   sshPubkey: string;
@@ -111,6 +113,8 @@ export interface ControlPlaneCloudInitOptions {
    * stack — nothing on the VPS needs the repo.
    */
   repo?: { url: string; ref: string };
+  /** Swap for the VPS (default `auto`): a from-source build OOMs a 4 GB server without it. */
+  swap?: SwapSpec;
 }
 
 /**
@@ -128,6 +132,7 @@ export interface ControlPlaneCloudInitOptions {
 export function controlPlaneCloudInit(opts: ControlPlaneCloudInitOptions): string {
   const pubkey = opts.sshPubkey.trim();
   const repo = opts.repo;
+  const swap = swapCloudInit(opts.swap ?? 'auto');
   return [
     '#cloud-config',
     '# AgentBox control-plane VPS - provisioned by `agentbox hub setup --deploy digitalocean`.',
@@ -137,7 +142,11 @@ export function controlPlaneCloudInit(opts: ControlPlaneCloudInitOptions): strin
     `  - ${yamlScalar(pubkey)}`,
     'chpasswd:',
     '  expire: false',
+    'write_files:',
+    ...swap.writeFile,
     'runcmd:',
+    // First, so the swap exists before docker/the hub build need the memory.
+    ...swap.runcmd,
     '  - [ passwd, -d, root ]',
     '  - [ bash, -lc, "chage -d $(date +%Y-%m-%d) -E -1 -I -1 -M 99999 -m 0 root" ]',
     '  - [ bash, -lc, "curl -fsSL https://get.docker.com | sh" ]',
@@ -176,6 +185,8 @@ export interface BoxCloudInitOptions {
    * the file is sourced via `set -a; . /etc/agentbox/box.env; set +a`.
    */
   boxEnv?: Record<string, string>;
+  /** Swap for the box (`box.swap`; default `auto`). See `swapCloudInit`. */
+  swap?: SwapSpec;
 }
 
 /**
@@ -224,6 +235,13 @@ export function generateBoxCloudInit(opts: BoxCloudInitOptions): string {
     lines.push('    permissions: "0644"');
     lines.push(`    content: "${envContent}"`);
   }
+
+  // Always present, `off` included: a box restored from a checkpoint taken with
+  // swap on carries /swapfile and its fstab line, which `off` removes.
+  const swap = swapCloudInit(opts.swap ?? 'auto');
+  lines.push(...swap.writeFile);
+  lines.push('runcmd:');
+  lines.push(...swap.runcmd);
 
   lines.push('');
   return lines.join('\n');

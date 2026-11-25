@@ -837,6 +837,10 @@ export function createCloudProvider(
       const projectOpt = req.providerOptions?.['project'];
       const project =
         typeof projectOpt === 'string' && projectOpt.trim() !== '' ? projectOpt.trim() : undefined;
+      // Swap for VPS boxes (`box.swap`); the backend parses and validates it.
+      const swapOpt = req.providerOptions?.['swap'];
+      const swap =
+        typeof swapOpt === 'string' && swapOpt.trim() !== '' ? swapOpt.trim() : undefined;
       // SSH destination whose docker engine runs the box (remote-docker's
       // `docker:<host>` / `--remote-host` / `box.remoteDockerHost`).
       const hostOpt = req.providerOptions?.['remoteHost'];
@@ -952,6 +956,7 @@ export function createCloudProvider(
           size,
           location,
           project,
+          swap,
           host,
           inbound,
           ...(extraInboundCidrs && extraInboundCidrs.length > 0 ? { extraInboundCidrs } : {}),

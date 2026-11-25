@@ -91,6 +91,11 @@ export interface CloudProvisionRequest {
    */
   project?: string;
   /**
+   * Raw `box.swap` value (`auto` | `off` | a size like `4G`). Only the VPS
+   * backends (hetzner, digitalocean) read it; absent means `auto`.
+   */
+  swap?: string;
+  /**
    * SSH destination whose Docker engine runs the box. Only `remote-docker` reads
    * it — its "cloud" is a machine the user supplies, so unlike every other
    * backend it has no infrastructure of its own to place the box on and this is

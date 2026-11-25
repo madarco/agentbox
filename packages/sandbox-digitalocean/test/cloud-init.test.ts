@@ -167,3 +167,29 @@ describe('generateDerivedPrepareCloudInit', () => {
     expect(yaml).toContain(`      - "${FAKE_PUBKEY}"`);
   });
 });
+
+describe('swap', () => {
+  const SWAP_RUN = (arg: string): string =>
+    `  - [ sh, -c, "/usr/local/sbin/agentbox-swap ${arg} || true" ]`;
+
+  it('a box installs and runs the swap script, auto by default', () => {
+    const yaml = generateBoxCloudInit({ sshPubkey: FAKE_PUBKEY, boxName: 'b' });
+    expect(yaml).toContain('  - path: /usr/local/sbin/agentbox-swap');
+    expect(yaml).toContain(`runcmd:\n${SWAP_RUN('auto')}`);
+  });
+
+  it('a box carries an explicit size, and off still runs (it removes a checkpointed swapfile)', () => {
+    expect(
+      generateBoxCloudInit({ sshPubkey: FAKE_PUBKEY, boxName: 'b', swap: { mib: 4096 } }),
+    ).toContain(SWAP_RUN('4096'));
+    expect(generateBoxCloudInit({ sshPubkey: FAKE_PUBKEY, boxName: 'b', swap: 'off' })).toContain(
+      SWAP_RUN('off'),
+    );
+  });
+
+  it('the control box makes swap before anything else in runcmd', () => {
+    const yaml = controlPlaneCloudInit({ sshPubkey: FAKE_PUBKEY });
+    expect(yaml).toContain('  - path: /usr/local/sbin/agentbox-swap');
+    expect(yaml).toContain(`runcmd:\n${SWAP_RUN('auto')}\n`);
+  });
+});

@@ -120,6 +120,14 @@ export {
   type SeedGitIdentityOptions,
 } from './sync/git-identity.js';
 export { bashScript, quoteShellArg, quoteShellArgv } from './shell.js';
+export {
+  SWAP_SCRIPT_PATH,
+  parseSwapSpec,
+  swapCloudInit,
+  swapScript,
+  swapSpecArg,
+  type SwapSpec,
+} from './swap.js';
 export { openWebAppOnVncScreen, type CloudVncBrowserResult } from './vnc-browser.js';
 export {
   makeMockCloudBackend,
