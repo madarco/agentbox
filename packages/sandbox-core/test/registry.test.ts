@@ -116,6 +116,7 @@ describe('agent sync registry', () => {
       '.personality_migration',
       'shell_snapshots',
       'session_index.jsonl',
+      'agentbox-history',
       'models_cache.json',
       'installation_id',
       'version.json',

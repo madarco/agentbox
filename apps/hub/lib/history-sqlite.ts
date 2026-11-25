@@ -10,6 +10,7 @@ import type {
   HistoryTurnRow,
   HistoryChunkRow,
   HistoryFileRow,
+  HistoryLiveRow,
   HistoryRepo,
   HistorySessionRow,
   NewChunk,
@@ -19,6 +20,7 @@ import type {
   UsageTotals,
 } from './backend/history';
 import type { MemoryRepo, MemoryVersionRow } from './backend/history-memory';
+import type { HistoryRecord } from '@agentbox/core';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS history_sessions (
@@ -104,6 +106,17 @@ CREATE TABLE IF NOT EXISTS history_usage (
   ts TEXT,
   PRIMARY KEY (session_key, message_id)
 );
+CREATE TABLE IF NOT EXISTS history_live (
+  session_key TEXT PRIMARY KEY,
+  activity TEXT,
+  activity_ts TEXT,
+  plan TEXT,
+  context_tokens INTEGER,
+  context_window INTEGER,
+  context_ts TEXT,
+  totals TEXT,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 interface Db {
@@ -117,6 +130,59 @@ interface Db {
 
 type Row = Record<string, unknown>;
 const n = (v: unknown): number => Number(v ?? 0);
+const nowMs = (): number => Date.now();
+
+type LiveRecord = Extract<HistoryRecord, { kind: 'activity' | 'totals' | 'context' }>;
+
+/**
+ * Upserts of the live row. The newest activity and context win by the record's
+ * own time (a subagent's file can land after the main one); a record without
+ * one wins outright. A plan line is set or cleared independently of the rest.
+ */
+function liveStatements(db: Db): { apply(key: string, r: LiveRecord, now: number): void } {
+  const ensure = db.prepare(
+    'INSERT OR IGNORE INTO history_live (session_key, updated_at) VALUES (?, ?)',
+  );
+  const activity = db.prepare(
+    `UPDATE history_live SET activity = ?2, activity_ts = ?3, updated_at = ?4
+     WHERE session_key = ?1 AND (?3 IS NULL OR activity_ts IS NULL OR activity_ts <= ?3)`,
+  );
+  const plan = db.prepare(
+    'UPDATE history_live SET plan = ?2, updated_at = ?3 WHERE session_key = ?1',
+  );
+  const context = db.prepare(
+    `UPDATE history_live SET context_tokens = ?2, context_window = ?3, context_ts = ?4, updated_at = ?5
+     WHERE session_key = ?1 AND (?4 IS NULL OR context_ts IS NULL OR context_ts <= ?4)`,
+  );
+  const totals = db.prepare(
+    'UPDATE history_live SET totals = ?2, updated_at = ?3 WHERE session_key = ?1',
+  );
+  return {
+    apply(key, r, now) {
+      ensure.run(key, now);
+      if (r.kind === 'activity') {
+        if (r.plan) plan.run(key, r.text || null, now);
+        else if (r.text) activity.run(key, r.text, r.ts ?? null, now);
+      } else if (r.kind === 'context') {
+        context.run(key, r.tokens, r.window ?? null, r.ts ?? null, now);
+      } else {
+        totals.run(
+          key,
+          JSON.stringify({
+            input: r.inputTokens,
+            output: r.outputTokens,
+            cacheRead: r.cacheReadTokens,
+            cacheWrite: r.cacheWriteTokens,
+            ...(r.reasoningTokens ? { reasoning: r.reasoningTokens } : {}),
+            ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}),
+            ...(r.ts ? { ts: r.ts } : {}),
+          }),
+          now,
+        );
+      }
+    },
+  };
+}
 const s = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 
 function toFile(r: Row): HistoryFileRow {
@@ -158,6 +224,39 @@ function toSession(r: Row): HistorySessionRow {
     parserVersion: n(r.parser_version),
     createdAt: n(r.created_at),
     updatedAt: n(r.updated_at),
+  };
+}
+
+function toLive(r: Row | undefined, u: Row): HistoryLiveRow {
+  let totals: HistoryLiveRow['totals'] = null;
+  if (r?.totals) {
+    try {
+      totals = JSON.parse(String(r.totals)) as HistoryLiveRow['totals'];
+    } catch {
+      totals = null;
+    }
+  }
+  return {
+    activity: s(r?.activity),
+    activityTs: s(r?.activity_ts),
+    plan: s(r?.plan),
+    contextTokens:
+      r?.context_tokens === null || r?.context_tokens === undefined ? null : n(r.context_tokens),
+    contextWindow:
+      r?.context_window === null || r?.context_window === undefined ? null : n(r.context_window),
+    totals,
+    sums:
+      n(u.c) > 0
+        ? {
+            input: n(u.i),
+            output: n(u.o),
+            cacheRead: n(u.cr),
+            cacheWrite: n(u.cw),
+            costUsd: u.cost === null || u.cost === undefined ? null : Number(u.cost),
+            ts: s(u.ts),
+          }
+        : null,
+    updatedAt: r ? n(r.updated_at) : 0,
   };
 }
 
@@ -223,6 +322,11 @@ function migrateUsage(db: Db): void {
     );
   }
   db.exec('CREATE INDEX IF NOT EXISTS history_usage_ts ON history_usage(ts_ms)');
+  // Live status (docs/agent-live-status-plan.md, Phase 3): a cost where the
+  // agent records one. Old rows stay NULL until the re-parse job redoes them.
+  if (!columns(db, 'history_usage').has('cost_usd')) {
+    db.exec('ALTER TABLE history_usage ADD COLUMN cost_usd REAL');
+  }
 }
 
 /**
@@ -383,6 +487,20 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
   } catch {
     fts = false;
   }
+
+  const live = liveStatements(db);
+  const liveGet = db.prepare('SELECT * FROM history_live WHERE session_key = ?');
+  const liveSums = db.prepare(
+    `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
+       SUM(cache_write_tokens) AS cw, SUM(cost_usd) AS cost, MAX(ts) AS ts
+     FROM history_usage WHERE session_key = ?`,
+  );
+  // A session that is not a child of another (a subagent's or fork's) first:
+  // the fallback for a box whose ctl reports no session id.
+  const latestOfBox = db.prepare(
+    `SELECT key FROM history_sessions WHERE box_id = ? AND agent = ? AND purged_at IS NULL
+     ORDER BY parent_session_id IS NOT NULL, COALESCE(last_ts, '') DESC, updated_at DESC LIMIT 1`,
+  );
 
   const tx = <T>(fn: () => T): T => {
     db.exec('BEGIN IMMEDIATE');
@@ -603,7 +721,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
           : null;
         const usage = db.prepare(
           `INSERT OR IGNORE INTO history_usage (session_key, message_id, file_id, model, input_tokens, output_tokens,
-             cache_read_tokens, cache_write_tokens, ts, ts_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             cache_read_tokens, cache_write_tokens, ts, ts_ms, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const meta = db.prepare('UPDATE history_sessions SET title = ? WHERE key = ?');
         const seqAt = new Map<number, number>();
@@ -620,7 +738,12 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
               r.cacheWriteTokens,
               r.ts ?? null,
               epochMs(r.ts),
+              r.costUsd ?? null,
             );
+            continue;
+          }
+          if (r.kind === 'activity' || r.kind === 'totals' || r.kind === 'context') {
+            live.apply(sessionKey, r, nowMs());
             continue;
           }
           if (r.kind === 'meta') {
@@ -682,6 +805,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       return tx(() => {
         const keys = dropFilesOf(key);
         db.prepare('DELETE FROM history_turns WHERE session_key = ?').run(key);
+        db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
         db.prepare('UPDATE history_sessions SET purged_at = ? WHERE key = ?').run(nowMs, key);
         return keys;
       });
@@ -723,6 +847,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
         const keys = dropFilesOf(key);
         db.prepare('DELETE FROM history_turns WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_usage WHERE session_key = ?').run(key);
+        db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_sessions WHERE key = ?').run(key);
         return keys;
       });
@@ -738,6 +863,19 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
     },
     async clearSessionTitle(key) {
       db.prepare('UPDATE history_sessions SET title = NULL WHERE key = ?').run(key);
+    },
+    async clearLive(key) {
+      db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
+    },
+    async liveRow(key) {
+      const r = liveGet.get(key) as Row | undefined;
+      const u = liveSums.get(key) as Row;
+      if (!r && n(u.c) === 0) return null;
+      return toLive(r, u);
+    },
+    async latestBoxSession(boxId, agent) {
+      const r = latestOfBox.get(boxId, agent) as Row | undefined;
+      return r ? String(r.key) : null;
     },
     async setSessionParserVersion(key, version) {
       db.prepare('UPDATE history_sessions SET parser_version = ? WHERE key = ?').run(version, key);

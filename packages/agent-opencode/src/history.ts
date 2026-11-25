@@ -11,6 +11,7 @@
  * were already projected.
  */
 import {
+  activityLine,
   asObject,
   clipText,
   finiteNumber,
@@ -18,6 +19,7 @@ import {
   isoTime,
   nonEmptyString,
   parseJsonlChunk,
+  toolActivity,
   type AgentHistoryModule,
   type HistoryRecord,
   type JsonObject,
@@ -63,8 +65,28 @@ export function opencodeLineRecords(
       state.cwd = cwd;
       out.push({ kind: 'meta', cwd, ...(ts ? { ts } : {}), at });
     }
+    // opencode keeps the session's cumulative tokens and cost on its row
+    // (columns since 1.x). A subagent session is its own session: its row
+    // counts only itself, so the parent's total never includes it.
+    // A NULL (or absent) column is "not counted here", not zero: the live
+    // summary then falls back to the sum of the message usage.
+    if (typeof row.tokens_input === 'number') {
+      const cost = finiteNumber(row.cost);
+      out.push({
+        kind: 'totals',
+        inputTokens: finiteNumber(row.tokens_input),
+        outputTokens: finiteNumber(row.tokens_output) + finiteNumber(row.tokens_reasoning),
+        cacheReadTokens: finiteNumber(row.tokens_cache_read),
+        cacheWriteTokens: finiteNumber(row.tokens_cache_write),
+        reasoningTokens: finiteNumber(row.tokens_reasoning),
+        ...(cost > 0 ? { costUsd: cost } : {}),
+        ...(ts ? { ts } : {}),
+        at,
+      });
+    }
     return out;
   }
+  if (line.t === 'todo') return todoRecords(row, at, state);
   const data = dataOf(row);
   if (!data) return [];
   if (line.t === 'message') {
@@ -80,7 +102,12 @@ export function opencodeLineRecords(
     const cache = asObject(tokens.cache);
     const model = nonEmptyString(data.modelID);
     const ts = isoTime(time.completed);
+    const cost = finiteNumber(data.cost);
+    const context = finiteNumber(tokens.total);
     return [
+      ...(context > 0
+        ? [{ kind: 'context' as const, tokens: context, ...(ts ? { ts } : {}), at }]
+        : []),
       {
         kind: 'usage',
         messageId: id,
@@ -90,6 +117,7 @@ export function opencodeLineRecords(
         outputTokens: finiteNumber(tokens.output) + finiteNumber(tokens.reasoning),
         cacheReadTokens: finiteNumber(cache?.read),
         cacheWriteTokens: finiteNumber(cache?.write),
+        ...(cost > 0 ? { costUsd: cost } : {}),
         ...(ts ? { ts } : {}),
         at,
       },
@@ -104,19 +132,62 @@ export function opencodeLineRecords(
     const name = nonEmptyString(data.tool);
     if (!name) return [];
     seen[id] = '1';
-    return [{ kind: 'tool', name, ...tsPart, at }];
+    const line = toolActivity(name, asObject(data.state)?.input);
+    return [
+      { kind: 'tool', name, ...tsPart, at },
+      ...(line ? [{ kind: 'activity' as const, text: line, ...tsPart, at }] : []),
+    ];
   }
   if (data.type !== 'text' || data.synthetic === true || data.ignored === true) return [];
   const role = bag(state, 'roles')[String(row.message_id)];
   const text = typeof data.text === 'string' ? data.text.trim() : '';
   if ((role !== 'user' && role !== 'assistant') || !text) return [];
   seen[id] = '1';
-  return [{ kind: 'turn', role, text: clipText(text), ...tsPart, at }];
+  const turn: HistoryRecord = { kind: 'turn', role, text: clipText(text), ...tsPart, at };
+  // A todo list emptied by deleting its rows leaves no row to copy, so a new
+  // prompt ends the old plan line; a new in-progress todo sets it again.
+  if (role === 'user' && state.plan) {
+    state.plan = '';
+    return [turn, { kind: 'activity', text: '', plan: true, ...tsPart, at }];
+  }
+  return [turn];
+}
+
+const TODO_WRITE_SPREAD_MS = 250;
+
+/**
+ * One `todo` row. A todo write replaces the whole list, so the current list is
+ * the rows of the newest write (within 250ms of the highest `time_created`);
+ * its in-progress item is the plan line, and a list with none clears it. A row
+ * of an older, longer list is never re-copied once deleted, hence the
+ * write-time filter.
+ */
+function todoRecords(row: JsonObject, at: number, state: ParseState): HistoryRecord[] {
+  const todos = bag(state, 'todos');
+  const pos = String(row.position);
+  const created = finiteNumber(row.time_created);
+  todos[pos] = JSON.stringify({
+    c: created,
+    s: nonEmptyString(row.status) ?? '',
+    t: nonEmptyString(row.content) ?? '',
+  });
+  const rows = Object.values(todos).map(
+    (v) => JSON.parse(v) as { c: number; s: string; t: string },
+  );
+  // One write's rows can be stamped a few ms apart.
+  const newest = Math.max(...rows.map((r) => r.c));
+  const doing = rows.find((r) => r.c >= newest - TODO_WRITE_SPREAD_MS && r.s === 'in_progress');
+  const text = doing ? activityLine(doing.t) : '';
+  if (text === (state.plan ?? '')) return [];
+  state.plan = text;
+  const ts = isoTime(row.time_updated);
+  return [{ kind: 'activity', text, plan: true, ...(ts ? { ts } : {}), at }];
 }
 
 export const opencodeHistoryModule: AgentHistoryModule = {
   id: 'opencode',
-  parserVersion: 1,
+  // 2: todos and tool parts as the working-on line, session totals, context.
+  parserVersion: 2,
 
   identify(head, path) {
     const base = path.slice(path.lastIndexOf('/') + 1);

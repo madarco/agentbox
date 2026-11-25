@@ -5,15 +5,19 @@
  * (`id`, `cwd`, `parentSession` = the parent's FILE path for `/fork` and
  * `/clone`), then tree entries linked by `id`/`parentId`. `/tree` branches stay
  * in the same file, so every entry is projected in file order. Usage is on
- * assistant messages (`message.usage`), keyed by the entry id.
+ * any entry that carries one (assistant and tool-result messages, compaction
+ * and branch summaries: `message.usage` or `usage`), keyed by the entry id;
+ * the sum matches pi's own footer.
  */
 import {
+  activityLine,
   asObject,
   clipText,
   finiteNumber,
   headJsonLines,
   nonEmptyString,
   parseJsonlChunk,
+  toolActivity,
   type AgentHistoryModule,
   type HistoryRecord,
   type JsonObject,
@@ -45,6 +49,39 @@ function text(content: unknown): string {
 export function piLineRecords(line: JsonObject, at: number, state: ParseState): HistoryRecord[] {
   const ts = nonEmptyString(line.timestamp);
   const tsPart = ts ? { ts } : {};
+  const usage = usageRecord(line, at, tsPart);
+  return usage
+    ? [...entryRecords(line, at, state, tsPart), usage]
+    : entryRecords(line, at, state, tsPart);
+}
+
+function usageRecord(line: JsonObject, at: number, tsPart: { ts?: string }): HistoryRecord | null {
+  const m = asObject(line.message);
+  const usage = asObject(m?.usage) ?? asObject(line.usage);
+  const messageId = nonEmptyString(line.id);
+  if (!usage || !messageId) return null;
+  const model = nonEmptyString(m?.responseModel) ?? nonEmptyString(m?.model);
+  const cost = finiteNumber(asObject(usage.cost)?.total);
+  return {
+    kind: 'usage',
+    messageId,
+    ...(model ? { model } : {}),
+    inputTokens: finiteNumber(usage.input),
+    outputTokens: finiteNumber(usage.output),
+    cacheReadTokens: finiteNumber(usage.cacheRead),
+    cacheWriteTokens: finiteNumber(usage.cacheWrite),
+    ...(cost > 0 ? { costUsd: cost } : {}),
+    ...tsPart,
+    at,
+  };
+}
+
+function entryRecords(
+  line: JsonObject,
+  at: number,
+  state: ParseState,
+  tsPart: { ts?: string },
+): HistoryRecord[] {
   if (line.type === 'session') {
     const cwd = nonEmptyString(line.cwd);
     return cwd ? [{ kind: 'meta', cwd, ...tsPart, at }] : [];
@@ -70,35 +107,25 @@ export function piLineRecords(line: JsonObject, at: number, state: ParseState): 
   const out: HistoryRecord[] = [];
   const t = text(m.content).trim();
   if (t) out.push({ kind: 'turn', role: 'assistant', text: clipText(t), ...tsPart, at });
+  let activity = t ? activityLine(t) : '';
   if (Array.isArray(m.content)) {
     for (const b of m.content) {
       const o = asObject(b);
       const name = o?.type === 'toolCall' ? nonEmptyString(o.name) : undefined;
-      if (name) out.push({ kind: 'tool', name, ...tsPart, at });
+      if (!name) continue;
+      out.push({ kind: 'tool', name, ...tsPart, at });
+      activity = toolActivity(name, o?.arguments);
     }
   }
-  const usage = asObject(m.usage);
-  const messageId = nonEmptyString(line.id);
-  if (usage && messageId) {
-    const model = nonEmptyString(m.responseModel) ?? nonEmptyString(m.model);
-    out.push({
-      kind: 'usage',
-      messageId,
-      ...(model ? { model } : {}),
-      inputTokens: finiteNumber(usage.input),
-      outputTokens: finiteNumber(usage.output),
-      cacheReadTokens: finiteNumber(usage.cacheRead),
-      cacheWriteTokens: finiteNumber(usage.cacheWrite),
-      ...tsPart,
-      at,
-    });
-  }
+  if (activity) out.push({ kind: 'activity', text: activity, ...tsPart, at });
   return out;
 }
 
 export const piHistoryModule: AgentHistoryModule = {
   id: 'pi',
-  parserVersion: 1,
+  // 2: usage on every entry kind (was assistant messages only), cost, the
+  // working-on line.
+  parserVersion: 2,
 
   identify(head, path) {
     const header = headJsonLines(head, 1)[0];

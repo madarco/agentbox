@@ -51,6 +51,43 @@ export interface BoxPr {
   state: 'open' | 'ready' | 'merged' | 'closed';
 }
 
+/**
+ * Token usage of an agent's current session (docs/agent-live-status-plan.md,
+ * Phase 3), derived hub-side from the shipped transcript. Absent means "no
+ * data", never zero.
+ */
+export interface AgentLiveUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning?: number;
+  /** Size of the last request's context (not for pi). */
+  contextTokens?: number;
+  contextWindow?: number;
+  /** Only when the agent records a cost (opencode, pi). */
+  costUsd?: number;
+  /** ISO time of the newest counted value. */
+  updatedAt: string;
+}
+
+/** One agent's entry in `Box.agentStatus`. */
+export interface AgentStatusWire {
+  state: string;
+  /** ISO time of the agent's last state report (every hook report, same state or not). */
+  updatedAt?: string;
+  /**
+   * The current session's title: the transcript's (AI title, rename, session
+   * name) once the hub has it, else the agent's cleaned pane title.
+   */
+  sessionTitle?: string;
+  /** Opaque id of the session the agent is in now (box-side). */
+  sessionId?: string;
+  /** What the agent is doing: one line, at most 120 chars, redacted. */
+  activity?: string;
+  usage?: AgentLiveUsage;
+}
+
 export interface Box {
   id: string;
   projectId: string;
@@ -130,9 +167,7 @@ export interface Box {
   // the macOS tray decodes the three title keys BY NAME and a client older than
   // this build reads nothing else. An agent outside the built-in three appears
   // only here.
-  // `sessionId` is the agent's current session, an opaque id (the hub joins it to
-  // that session's history); clients other than the hub need not read it.
-  agentStatus?: Record<string, { state: string; sessionTitle?: string; sessionId?: string }>;
+  agentStatus?: Record<string, AgentStatusWire>;
   claudeSessionTitle?: string;
   codexSessionTitle?: string;
   opencodeSessionTitle?: string;

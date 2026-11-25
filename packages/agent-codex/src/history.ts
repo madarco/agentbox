@@ -13,17 +13,22 @@
  * from `token_usage_record`, one per Responses API response.
  */
 import {
+  activityLine,
   asObject,
   clipText,
   finiteNumber,
   headJsonLines,
   nonEmptyString,
   parseJsonlChunk,
+  toolActivity,
   type AgentHistoryModule,
   type HistoryRecord,
   type JsonObject,
   type ParseState,
 } from '@agentbox/core';
+
+/** `agentbox-history/<uuid>.index.jsonl`: this session's `session_index.jsonl` rows. */
+const INDEX_FILE = /(?:^|\/)([^/]+)\.index\.jsonl$/;
 
 const ROLLOUT_ID =
   /-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$/;
@@ -55,6 +60,68 @@ function parentOf(meta: JsonObject): string | undefined {
   );
 }
 
+/**
+ * A command's working-on line: codex's own parse of it (a read names its file),
+ * else the argv. Either way only the program and a plain first argument of a
+ * command are shown (`commandSummary`), never a script, heredoc or env value.
+ */
+function commandActivity(p: JsonObject): string {
+  if (Array.isArray(p.parsed_cmd)) {
+    for (const c of p.parsed_cmd) {
+      const o = asObject(c);
+      const type = nonEmptyString(o?.type) ?? 'exec';
+      const name = nonEmptyString(o?.name);
+      if (type === 'read' && name) return toolActivity(type, { path: name });
+      const cmd = nonEmptyString(o?.cmd);
+      if (cmd) return toolActivity(type, { command: cmd });
+    }
+  }
+  const argv = Array.isArray(p.command) ? p.command : undefined;
+  return argv ? toolActivity('exec', { command: argv }) : '';
+}
+
+/**
+ * `token_count`: `total_token_usage` is the session's cumulative count;
+ * `last_token_usage.input_tokens` against `model_context_window` is the
+ * context fill.
+ */
+function tokenCountRecords(p: JsonObject, tsPart: { ts?: string }, at: number): HistoryRecord[] {
+  const info = asObject(p.info);
+  if (!info) return [];
+  const out: HistoryRecord[] = [];
+  const total = asObject(info.total_token_usage);
+  if (total) {
+    const cached = finiteNumber(total.cached_input_tokens);
+    out.push({
+      kind: 'totals',
+      inputTokens: Math.max(0, finiteNumber(total.input_tokens) - cached),
+      outputTokens: finiteNumber(total.output_tokens),
+      cacheReadTokens: cached,
+      cacheWriteTokens: 0,
+      reasoningTokens: finiteNumber(total.reasoning_output_tokens),
+      ...tsPart,
+      at,
+    });
+  }
+  const last = asObject(info.last_token_usage);
+  const tokens = finiteNumber(last?.input_tokens);
+  const window = finiteNumber(info.model_context_window);
+  if (tokens > 0) {
+    out.push({ kind: 'context', tokens, ...(window > 0 ? { window } : {}), ...tsPart, at });
+  }
+  return out;
+}
+
+/** One `session_index.jsonl` row (copied by the row cursor): the session's name. */
+function indexRecords(line: JsonObject, at: number): HistoryRecord[] {
+  const row = asObject(line.row);
+  const title =
+    nonEmptyString(row?.thread_name) ?? nonEmptyString(row?.name) ?? nonEmptyString(row?.title);
+  if (!title) return [];
+  const ts = nonEmptyString(row?.updated_at);
+  return [{ kind: 'meta', title, ...(ts ? { ts } : {}), at }];
+}
+
 /** Records for one rollout line at byte offset `at`. `state.model` tracks the turn's model. */
 export function codexLineRecords(line: JsonObject, at: number, state: ParseState): HistoryRecord[] {
   const ts = nonEmptyString(line.timestamp);
@@ -81,9 +148,17 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
         }
         if (p.role === 'assistant') {
           const text = contentText(p.content, 'output_text').trim();
-          return text
-            ? [{ kind: 'turn', role: 'assistant', text: clipText(text), ...tsPart, at }]
-            : [];
+          if (!text) return [];
+          const out: HistoryRecord[] = [
+            { kind: 'turn', role: 'assistant', text: clipText(text), ...tsPart, at },
+          ];
+          // The progress notes codex writes between tool calls; the final
+          // answer is not a working-on line.
+          if (p.phase === 'commentary') {
+            const line = activityLine(text);
+            if (line) out.push({ kind: 'activity', text: line, ...tsPart, at });
+          }
+          return out;
         }
         return [];
       }
@@ -91,6 +166,15 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
         const name = nonEmptyString(p.name) ?? p.type.slice(0, -'_call'.length);
         return [{ kind: 'tool', name, ...tsPart, at }];
       }
+      return [];
+    }
+    case 'event_msg': {
+      if (p.type === 'exec_command_begin') {
+        const line = commandActivity(p);
+        return line ? [{ kind: 'activity', text: line, ...tsPart, at }] : [];
+      }
+      if (p.type === 'token_count') return tokenCountRecords(p, tsPart, at);
+      // `rate_limits` (on token_count) is account data: never projected.
       return [];
     }
     case 'token_usage_record': {
@@ -122,9 +206,12 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
 
 export const codexHistoryModule: AgentHistoryModule = {
   id: 'codex',
-  parserVersion: 1,
+  // 2: working-on line, `token_count` totals and context, session names.
+  parserVersion: 2,
 
   identify(head, path) {
+    const index = INDEX_FILE.exec(path);
+    if (index) return { sessionId: index[1]!, child: true };
     const m = ROLLOUT_ID.exec(path);
     let sessionId = m?.[1];
     let parent: string | undefined;
@@ -140,5 +227,8 @@ export const codexHistoryModule: AgentHistoryModule = {
     return parent && parent !== sessionId ? { sessionId, parentSessionId: parent } : { sessionId };
   },
 
-  parse: (chunk, state) => parseJsonlChunk(chunk, state, codexLineRecords),
+  parse: (chunk, state) =>
+    INDEX_FILE.test(chunk.path)
+      ? parseJsonlChunk(chunk, state, indexRecords)
+      : parseJsonlChunk(chunk, state, codexLineRecords),
 };

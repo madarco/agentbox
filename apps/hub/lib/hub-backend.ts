@@ -46,6 +46,7 @@ import {
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
 import { createBoxFactSeams } from './backend/box-facts';
 import { createBoxPrLookup } from './backend/box-prs';
+import { createLiveStatus } from './backend/live-status';
 import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
@@ -234,6 +235,7 @@ function normalizeAgents(agents: readonly string[] | undefined): string {
     .join(',');
 }
 import type {
+  AgentStatusWire,
   BakeDiff,
   Approval,
   Box,
@@ -356,15 +358,16 @@ function firstSessionTitle(b: ListedBox): string | undefined {
     .find(([, e]) => e.sessionTitle)?.[1].sessionTitle;
 }
 
-function wireAgentStatus(
-  agents: ListedBox['agentStatus'],
-): Record<string, { state: string; sessionTitle?: string; sessionId?: string }> {
-  const out: Record<string, { state: string; sessionTitle?: string; sessionId?: string }> = {};
+function wireAgentStatus(agents: ListedBox['agentStatus']): Record<string, AgentStatusWire> {
+  const out: Record<string, AgentStatusWire> = {};
   for (const [id, entry] of Object.entries(agents)) {
+    // Read loosely: a ctl that predates `sessionId` sends none.
+    const sessionId = (entry as { sessionId?: unknown }).sessionId;
     out[id] = {
       state: entry.state,
+      ...(entry.updatedAt ? { updatedAt: entry.updatedAt } : {}),
       ...(entry.sessionTitle ? { sessionTitle: entry.sessionTitle } : {}),
-      ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+      ...(typeof sessionId === 'string' && sessionId ? { sessionId } : {}),
     };
   }
   return out;
@@ -2146,6 +2149,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
 
   // Domain slices (see lib/backend/). Each gets only the seams it needs, so it
   // is testable without a relay handle and reviewable without this file.
+  // Title, working-on line and tokens per agent, from the shipped history.
+  const liveStatus = createLiveStatus({
+    history: () => globalThis.__AGENTBOX_HUB_HISTORY,
+    notify: () => handle.hubNotifier.notify(),
+  });
+  liveStatus.start();
+
   const backendDeps: BackendDeps = {
     notify: () => handle.hubNotifier.notify(),
     async liveBoxIds() {
@@ -2466,7 +2476,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           return wsId ? { ...p, workspaceId: wsId } : p;
         }),
         workspaces: workspaceViews,
-        boxes: [...jobBoxes, ...listedBoxes, ...registeredBoxes.map(withTasks)],
+        boxes: [
+          ...jobBoxes,
+          ...(await Promise.all(
+            [...listedBoxes, ...registeredBoxes.map(withTasks)].map((b) => liveStatus.apply(b)),
+          )),
+        ],
         // Block-mode approvals live in-process on the relay handle, not the Store.
         approvals: handle.prompts.all().map(mapApproval),
         providers: await withRemoteProviders(listProviders(jobs)),

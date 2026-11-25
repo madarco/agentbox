@@ -7,7 +7,13 @@
  * - `/branch` writes a new file whose lines carry `forkedFrom.sessionId`.
  * - `<id>/subagents/agent-*.jsonl` are children of session `<id>`.
  */
-import type { AgentHistoryModule, HistoryRecord, ParseState } from '@agentbox/core';
+import {
+  activityLine,
+  toolActivity,
+  type AgentHistoryModule,
+  type HistoryRecord,
+  type ParseState,
+} from '@agentbox/core';
 
 const SUBAGENT_PATH = /(?:^|\/)([^/]+)\/subagents\/[^/]+\.jsonl$/;
 const TEXT_MAX = 8_000;
@@ -59,13 +65,31 @@ function fileSessionId(path: string): string {
  * copy carries `forkedFrom`, a desktop continuation the parent's id) is
  * dropped: the parent session already counted it.
  */
-export function claudeLineRecords(line: Json, at: number, sessionId?: string): HistoryRecord[] {
+export function claudeLineRecords(
+  line: Json,
+  at: number,
+  sessionId?: string,
+  state: ParseState = {},
+  subagent = false,
+): HistoryRecord[] {
   const ts = str(line.timestamp);
   const out: HistoryRecord[] = [];
   const type = line.type;
   if (type === 'custom-title') {
     const title = str(line.customTitle) ?? str(line.title);
-    if (title) out.push({ kind: 'meta', title, ...(ts ? { ts } : {}), at });
+    if (title) {
+      // A `/rename` wins over the AI title for the rest of the file, the way
+      // Claude shows it: an `ai-title` written after it does not replace it.
+      state.customTitle = true;
+      out.push({ kind: 'meta', title, ...(ts ? { ts } : {}), at });
+    }
+    return out;
+  }
+  if (type === 'ai-title') {
+    const title = str(line.aiTitle);
+    if (title && state.customTitle !== true && !subagent) {
+      out.push({ kind: 'meta', title, ...(ts ? { ts } : {}), at });
+    }
     return out;
   }
   const message = asObj(line.message);
@@ -81,13 +105,17 @@ export function claudeLineRecords(line: Json, at: number, sessionId?: string): H
     if (text) {
       out.push({ kind: 'turn', role: 'assistant', text: clip(text), ...(ts ? { ts } : {}), at });
     }
+    let activity = text ? activityLine(text) : '';
     if (Array.isArray(message.content)) {
       for (const b of message.content) {
         const o = asObj(b);
         const name = o?.type === 'tool_use' ? str(o.name) : undefined;
-        if (name) out.push({ kind: 'tool', name, ...(ts ? { ts } : {}), at });
+        if (!name) continue;
+        out.push({ kind: 'tool', name, ...(ts ? { ts } : {}), at });
+        activity = toolActivity(name, o?.input);
       }
     }
+    if (activity) out.push({ kind: 'activity', text: activity, ...(ts ? { ts } : {}), at });
     const usage = asObj(message.usage);
     const messageId = str(message.id);
     const lineSession = str(line.sessionId);
@@ -111,6 +139,14 @@ export function claudeLineRecords(line: Json, at: number, sessionId?: string): H
         ...(ts ? { ts } : {}),
         at,
       });
+      // The main thread's context fill; a subagent's context is its own.
+      if (!subagent) {
+        const tokens =
+          num(usage.input_tokens) +
+          num(usage.cache_read_input_tokens) +
+          num(usage.cache_creation_input_tokens);
+        if (tokens > 0) out.push({ kind: 'context', tokens, ...(ts ? { ts } : {}), at });
+      }
     }
   }
   return out;
@@ -119,7 +155,8 @@ export function claudeLineRecords(line: Json, at: number, sessionId?: string): H
 export const claudeHistoryModule: AgentHistoryModule = {
   id: 'claude',
   // 2: usage on lines copied from another session is no longer counted.
-  parserVersion: 2,
+  // 3: `ai-title`, the working-on line and context fill (live status).
+  parserVersion: 3,
 
   identify(head, path) {
     const sub = SUBAGENT_PATH.exec(path);
@@ -150,6 +187,8 @@ export const claudeHistoryModule: AgentHistoryModule = {
     const base = chunk.offset - (carry?.length ?? 0);
     const records: HistoryRecord[] = [];
     const sessionId = fileSessionId(chunk.path);
+    const subagent = SUBAGENT_PATH.test(chunk.path);
+    const next: ParseState = state.customTitle === true ? { customTitle: true } : {};
     let start = 0;
     for (;;) {
       const nl = buf.indexOf(0x0a, start);
@@ -158,14 +197,15 @@ export const claudeHistoryModule: AgentHistoryModule = {
       if (raw.trim()) {
         try {
           const line = asObj(JSON.parse(raw));
-          if (line) records.push(...claudeLineRecords(line, base + start, sessionId));
+          if (line) {
+            records.push(...claudeLineRecords(line, base + start, sessionId, next, subagent));
+          }
         } catch {
           /* a non-JSON line is kept in raw, skipped here */
         }
       }
       start = nl + 1;
     }
-    const next: ParseState = {};
     if (start < buf.length) next.partial = buf.subarray(start).toString('base64');
     return { records, state: next };
   },

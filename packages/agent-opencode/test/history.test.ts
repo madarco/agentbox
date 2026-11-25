@@ -83,7 +83,16 @@ describe('opencode history module', () => {
       records.map((r) =>
         r.kind === 'turn' ? `${r.role}:${r.text}` : r.kind === 'tool' ? `tool:${r.name}` : r.kind,
       ),
-    ).toEqual(['meta', 'meta', 'user:say hi', 'tool:bash', 'assistant:hi', 'usage', 'meta']);
+    ).toEqual([
+      'meta',
+      'meta',
+      'user:say hi',
+      'tool:bash',
+      'activity',
+      'assistant:hi',
+      'usage',
+      'meta',
+    ]);
     expect(records.find((r) => r.kind === 'usage')).toMatchObject({
       messageId: 'msg_a',
       inputTokens: 50,
