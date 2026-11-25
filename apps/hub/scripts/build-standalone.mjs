@@ -93,10 +93,14 @@ const EXTERNAL = [
   'better-auth',
   'better-auth/*',
   'kysely',
+  // The native pty of the dashboard/login TUIs. The hub reaches it through an
+  // agent's CLI module (agent-restart.ts -> loadAgentCliModule) but never calls
+  // it; esbuild has no loader for its .node prebuild, so it must stay external.
+  '@homebridge/node-pty-prebuilt-multiarch',
 ];
 
 /** Externals that are deliberately not CLI dependencies (optional native peers). */
-const EXTERNAL_NOT_A_DEP = new Set(['pg-native']);
+const EXTERNAL_NOT_A_DEP = new Set(['pg-native', '@homebridge/node-pty-prebuilt-multiarch']);
 
 // An external naming no real dependency silently does the OPPOSITE of what it says:
 // esbuild matches nothing and inlines the package. That is invisible here and only
