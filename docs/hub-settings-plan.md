@@ -1,6 +1,7 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** Phases 1-2 done (2026-11-25, `feat/hub-settings-nav`, `feat/hub-settings-skills`). Phases 3-4 not started.
+**Status:** Phases 1, 2 and 4 done (2026-11-25, `feat/hub-settings-nav`,
+`feat/hub-settings-skills`, `feat/hub-settings-files`). Phase 3 not started.
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -250,7 +251,7 @@ mid-turn shows its windows matching `/status`; an Ultra claude account shows wee
 account; with `onLimit: switch`, a box whose account hits the limit moves to the next one on its own;
 with `ask`, the approval appears in the web and the tray.
 
-### Phase 4 — Files
+### Phase 4 — Files — done
 
 `/settings/files` replaces the Custody page and says what it is: the files the hub holds so boxes can
 start without the PC. Read-only.
@@ -265,6 +266,23 @@ start without the PC. Read-only.
 
 **Done:** on a local hub and on `hub expose` with a password profile, every custody entry shows under
 a human group and nothing exposes file contents.
+
+**Built:** `lib/files-view.ts` regroups the manifest; the page joins it client-side with the store's
+projects and boxes, `GET /accounts` and `GET /devices`, so no new route. Notes:
+
+- A project section is named after the hub projects whose custody slugs include it. The hub puts
+  `custodySlugs` on every project (`seedSlugsFor`: repo key, alias-expanded with `repoKeyAtEdge` for a
+  folder on the hub's machine, else the key a registration carries; origin; registered slug; legacy
+  `owner__repo`), so the browser never re-derives repo keys. All folders of one repo are listed; a
+  folder name is used only for a project with no git identity. Files under a scope the page does not
+  know go to an **Other** group, one row per file.
+- Named-account logins live per machine (`agents/<agent>/accounts/<machine>/<id>/`), and an account
+  label belongs to one machine's store. `GET /accounts` gained `machine` (this hub's machine id) so a
+  label is shown only on that machine's entries; another PC's account shows its id and the PC's name.
+- A box's SSH key (under its sandbox id) and its served-skills record (under its box id) merge into
+  one row. `cp/` and `cp-out/` roll up to one row each. Group counts exclude bookkeeping files
+  (`skills/.seeded`, `skills/.bindings.json`).
+- The unused scope grouping (`groupCustody`, `SCOPE_META`, `shortSha`) left `lib/custody-view.ts`.
 
 ## Parallel work
 

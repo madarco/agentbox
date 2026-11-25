@@ -1144,6 +1144,11 @@ export function buildOpenApi(): Record<string, unknown> {
                           },
                         },
                       },
+                      machine: {
+                        type: 'string',
+                        description:
+                          "This hub machine's id. Custody holds a named account's login under `agents/<agent>/accounts/<machine>/<id>/`, so a client joins those entries to these accounts only when the machine matches.",
+                      },
                     },
                     required: ['accounts', 'agents'],
                   },
@@ -6824,6 +6829,12 @@ export function buildOpenApi(): Record<string, unknown> {
               type: 'string',
               nullable: true,
               description: 'Custody projects/<slug> key (hosted source only)',
+            },
+            custodySlugs: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                "Every custody `projects/<slug>` key this project's files may sit under, best first: the repo key's slug (ssh aliases expanded where the folder is), the origin's, the registered one, the legacy `owner__repo`. Join custody entries to projects on these.",
             },
             lastProvider: {
               type: 'string',
