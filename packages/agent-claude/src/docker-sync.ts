@@ -16,6 +16,7 @@ import {
   agentTuiEnv,
   ensureAgentInstalled,
   AgentInstallError,
+  accountEnvClears,
   applyAccountEnv,
   decodePastedSecret,
   NO_ACCOUNT_ENV,
@@ -1016,6 +1017,9 @@ export function claudeSessionEnvFlags(
   for (const [k, v] of Object.entries(applyAccountEnv(forwarded, accountPolicy))) {
     flags.push('-e', `${k}=${v}`);
   }
+  // Leaving a suppressed key out does not remove it from a container created
+  // on another account (hub settings 3c switches in place): blank it.
+  for (const k of accountEnvClears(accountPolicy)) flags.push('-e', `${k}=`);
   // `docker exec` inherits the container environment, so setting only the
   // variable the current mode wants is not enough: a container that already
   // carries the other one would run with two contradictory overrides, and

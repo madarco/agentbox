@@ -23,7 +23,9 @@
  * after a host re-auth.
  */
 
+import type { AccountEnvAuthority } from '../agent-env-file.js';
 import {
+  accountEnvClears,
   accountEnvPolicy,
   AGENT_SYNC_SPECS,
   applyAccountEnv,
@@ -290,6 +292,26 @@ export function buildCloudBoxRunEnv(agents: readonly CloudAgentKind[]): Record<s
  * VPS only gets it through the 0600 agent env file. Absent `agents` = every
  * agent, as for a pre-selection box.
  */
+/**
+ * The account keys a cloud box's env file sets or unsets over the sandbox env:
+ * each agent on a named account gets its token (a pasted account) and loses
+ * the other `accountEnv` keys. Default accounts add nothing.
+ */
+export async function cloudAccountAuthority(
+  agents: readonly string[] | undefined,
+  accounts: Readonly<Record<string, string>> = {},
+): Promise<AccountEnvAuthority> {
+  const out: AccountEnvAuthority = { set: {}, unset: [] };
+  for (const [agent, account] of Object.entries(accounts)) {
+    if (agents && !agents.includes(agent)) continue;
+    if (!account || isDefaultAccount(account)) continue;
+    const policy = await accountEnvPolicy(resolveAgentSpec(agent), account);
+    Object.assign(out.set, policy.inject);
+    for (const k of accountEnvClears(policy)) if (!out.unset.includes(k)) out.unset.push(k);
+  }
+  return out;
+}
+
 export async function buildCloudAgentEnv(
   agents: readonly string[] | undefined,
   accounts: Readonly<Record<string, string>> = {},

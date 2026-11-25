@@ -511,6 +511,9 @@ importers:
       '@agentbox/agent-registry':
         specifier: workspace:*
         version: link:../agent-registry
+      '@agentbox/cli-kit':
+        specifier: workspace:*
+        version: link:../cli-kit
       '@agentbox/sandbox-docker':
         specifier: workspace:*
         version: link:../sandbox-docker

@@ -18,6 +18,7 @@
  * package to adapt.
  */
 
+import type { AgentModule } from '@agentbox/cli-kit';
 import { registerClaudeAgent } from '@agentbox/agent-claude';
 import { registerCodexAgent } from '@agentbox/agent-codex';
 import { registerExampleAgent } from '@agentbox/agent-example';
@@ -43,3 +44,22 @@ export function registerAllAgentModules(): void {
 }
 
 export { registerInstalledAgentModules, type InstalledAgentLoadResult } from './plugins.js';
+
+/**
+ * An agent's CLI module (runtime: session start, resume args, session name),
+ * for a host process that is not the CLI. The hub uses it to restart a box's
+ * agent session on another account (hub settings Phase 3c). Null for an agent
+ * this build ships no CLI module for. Lazy: each module is imported on first use.
+ */
+const CLI_MODULES: Record<string, () => Promise<{ agentModule: AgentModule }>> = {
+  claude: () => import('@agentbox/agent-claude/cli'),
+  codex: () => import('@agentbox/agent-codex/cli'),
+  opencode: () => import('@agentbox/agent-opencode/cli'),
+  pi: () => import('@agentbox/agent-pi/cli'),
+  example: () => import('@agentbox/agent-example/cli'),
+};
+
+export async function loadAgentCliModule(id: string): Promise<AgentModule | null> {
+  const importer = CLI_MODULES[id];
+  return importer ? (await importer()).agentModule : null;
+}

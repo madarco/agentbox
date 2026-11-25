@@ -88,6 +88,7 @@ import {
   ensureAgentVolumesForCloud,
   reconcileAgentCredentials,
   buildCloudAgentEnv,
+  cloudAccountAuthority,
 } from './sync/agent-credentials.js';
 import { seedAgentStaticForCreate } from './sync/agent-static.js';
 import {
@@ -645,6 +646,7 @@ export function createCloudProvider(
         backend,
         h,
         await buildCloudAgentEnv(box.agents, box.accounts ?? {}),
+        await cloudAccountAuthority(box.agents, box.accounts ?? {}),
       );
     } catch (err) {
       // The message names the step and the exec's exit, never the values.
@@ -1230,7 +1232,12 @@ export function createCloudProvider(
         // carry it, and the SDK providers get the same values either way, so a
         // failure is logged rather than failing a create that is otherwise up.
         try {
-          await writeCloudAgentEnvFile(backend, handle, agentVolumes.env);
+          await writeCloudAgentEnvFile(
+            backend,
+            handle,
+            agentVolumes.env,
+            await cloudAccountAuthority(undefined, req.accounts ?? {}),
+          );
         } catch (err) {
           log(
             `WARN: agent env not written (${err instanceof Error ? err.message : String(err)}); ` +

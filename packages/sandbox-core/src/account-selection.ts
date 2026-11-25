@@ -177,6 +177,16 @@ export async function accountEnvPolicy(
   return { inject: { [key]: pasted.token }, suppress };
 }
 
+/**
+ * The suppressed keys a policy does not inject: the ones a launch that adds to
+ * an existing env (a docker exec into a container created on another account,
+ * a cloud sandbox whose create-time env still holds the old token) must clear
+ * explicitly, since leaving a key out of the added env does not remove it.
+ */
+export function accountEnvClears(policy: AccountEnvPolicy): string[] {
+  return policy.suppress.filter((k) => !(k in policy.inject));
+}
+
 /** Apply a policy to an env map. Pure. */
 export function applyAccountEnv(
   env: Readonly<Record<string, string>>,

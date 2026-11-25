@@ -24,14 +24,33 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * single-quoted, so nothing in them expands; a key that is not a shell
  * identifier is dropped rather than allowed to inject a line.
  */
-export function renderAgentEnvFile(env: Readonly<Record<string, string>>): string {
+export function renderAgentEnvFile(
+  env: Readonly<Record<string, string>>,
+  account: AccountEnvAuthority = NO_ACCOUNT_AUTHORITY,
+): string {
+  const quote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
   const lines: string[] = [];
   for (const [k, v] of Object.entries(env)) {
-    if (!ENV_KEY.test(k)) continue;
-    lines.push(`[ -n "\${${k}+x}" ] || export ${k}='${v.replace(/'/g, `'\\''`)}'`);
+    if (!ENV_KEY.test(k) || k in account.set || account.unset.includes(k)) continue;
+    lines.push(`[ -n "\${${k}+x}" ] || export ${k}=${quote(v)}`);
   }
+  // A named account's keys are the box record's, not the sandbox's: written
+  // unconditionally, so a box switched to another account (hub settings 3c)
+  // stops using the token its sandbox env was created with.
+  for (const [k, v] of Object.entries(account.set)) {
+    if (ENV_KEY.test(k)) lines.push(`export ${k}=${quote(v)}`);
+  }
+  for (const k of account.unset) if (ENV_KEY.test(k)) lines.push(`unset ${k}`);
   return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
+
+/** Account env keys that override the sandbox env: set these, unset those. */
+export interface AccountEnvAuthority {
+  set: Record<string, string>;
+  unset: string[];
+}
+
+export const NO_ACCOUNT_AUTHORITY: AccountEnvAuthority = { set: {}, unset: [] };
 
 /**
  * Defines `asroot`, which runs its arguments under `sudo -n` when sudo exists.
@@ -79,6 +98,7 @@ export async function writeCloudAgentEnvFile(
   backend: CloudBackend,
   handle: CloudHandle,
   env: Readonly<Record<string, string>>,
+  account: AccountEnvAuthority = NO_ACCOUNT_AUTHORITY,
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), 'agentbox-agent-env-'));
   const local = join(dir, 'agent.env');
@@ -86,7 +106,7 @@ export async function writeCloudAgentEnvFile(
   const staged = STAGING_DIRS.map((d) => `${d}/${name}`);
   let cleaned = false;
   try {
-    await writeFile(local, renderAgentEnvFile(env), { mode: 0o600 });
+    await writeFile(local, renderAgentEnvFile(env, account), { mode: 0o600 });
     await chmod(local, 0o600);
     let remote = staged[0]!;
     try {
