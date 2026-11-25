@@ -195,3 +195,31 @@ export function clearAgentSessionPointer(agent: string): void {
     // exited agent — annoying, not harmful.
   }
 }
+
+/**
+ * The id a `session-id` pointer holds, or null (no pointer, presence-only, or
+ * unreadable). How the reporter recovers claude's current session after a
+ * daemon restart, before the next hook fires.
+ */
+export function readAgentSessionId(agent: string): string | null {
+  const pointer = AGENT_SESSION_POINTERS[agent];
+  if (!pointer || pointer.kind !== 'session-id') return null;
+  try {
+    const id = readFileSync(pointer.path, 'utf8').trim();
+    return id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * SessionEnd's clear, made conditional: drop the pointer only while it still
+ * holds the session that ended. On `/new` claude fires SessionEnd (old id) then
+ * SessionStart (new id), and the backgrounded SessionEnd can land second; an
+ * unconditional clear then wiped the pointer the new session had just written.
+ */
+export function clearAgentSessionPointerIf(agent: string, id: string): void {
+  const current = readAgentSessionId(agent);
+  if (current === null || current !== id) return;
+  clearAgentSessionPointer(agent);
+}

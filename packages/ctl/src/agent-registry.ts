@@ -2,6 +2,7 @@ import { parseAgentMcpSpec, type AgentMcpSpec } from '@agentbox/core';
 import { postRpcAwait } from './relay-rpc.js';
 import { agentUnitsFromWire, type AgentUnits } from './agent-units.js';
 import { WATCHED_CREDENTIALS, type WatchedCredential } from './credentials-watcher.js';
+import { parsePaneTitleRules } from './pane-title.js';
 import { BAKED_AGENT_SESSIONS, type WatchedAgentSession } from './status-reporter.js';
 
 /**
@@ -51,6 +52,7 @@ interface WireAgent {
   id?: unknown;
   watch?: unknown;
   sessionName?: unknown;
+  paneTitle?: unknown;
   activitySource?: unknown;
   surface?: unknown;
   service?: unknown;
@@ -184,7 +186,10 @@ export function parseAgentDescriptors(
       (Array.isArray(raw.activitySource) && raw.activitySource.length > 0);
     if (reports) {
       const sessionName = typeof raw.sessionName === 'string' ? raw.sessionName : '';
-      if (sessionName.length > 0) sessions.push({ agent: id, sessionName });
+      if (sessionName.length > 0) {
+        const paneTitle = parsePaneTitleRules(raw.paneTitle);
+        sessions.push({ agent: id, sessionName, ...(paneTitle ? { paneTitle } : {}) });
+      }
     }
 
     const watches = Array.isArray(raw.watch) ? (raw.watch as WireWatch[]) : [];

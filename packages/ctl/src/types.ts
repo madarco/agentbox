@@ -48,6 +48,8 @@ export interface StatusReply {
   services: ServiceStatus[];
   tasks: TaskStatus[];
   ports: BoxStatusPort[];
+  /** Each agent's last reported state (absent from an older daemon). */
+  agents?: Record<string, { state: AgentActivityState; updatedAt: string | null }>;
 }
 
 export interface WaitReadyArgs {
@@ -248,6 +250,10 @@ export type CtlRequest =
        * `clearPending` marks the legitimate post-tool transition out.
        */
       clearPending?: boolean;
+      /** The agent's current session id, from a `--capture-session` hook payload. */
+      sessionId?: string;
+      /** A session that ended (SessionEnd); forgotten only if it is still the current one. */
+      endSessionId?: string;
     };
 
 export type CtlResponse = { ok: true; data: unknown } | { ok: false; error: string };

@@ -1184,8 +1184,8 @@ Fixed:
 
 - **`caps.activitySource`** is now a LIST (`hooks` / `plugin` / `scraper`) and
   wired — see section 7. Its old single value under-described reality: claude is
-  hooks-primary with a scraper backstop, codex is scraper-primary, opencode is
-  plugin-only.
+  hooks-primary with a scraper backstop, codex is hooks-primary with a
+  pane-title scraper backstop, opencode is plugin-only.
 - **`watch` / `roots`** reach the box (see item 2) but nothing consumes the
   `backup` route yet. Wiring it means routing through `cp.toHost` behind a
   `box.agentFileSync` config, with the trust rule `download.claude` already uses:

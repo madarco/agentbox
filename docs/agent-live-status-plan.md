@@ -1,7 +1,6 @@
 # Agent live status: title, working-on line and tokens per box
 
-**Status:** Phase 0 (live PoC) and Phase 3 (hub-side title, working-on line, tokens) are done;
-Phases 1, 2 and 4 are open. Deferred items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
+**Status:** Phases 0-3 done; Phase 4 (surfaces) is open. Open items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
 
 Every box should tell the hub, the web UI and the tray four things about the agent in it:
 
@@ -139,7 +138,9 @@ lookup goes by this box's session id.
 Each phase is one session, merged to nightly on its own. Keep `docs/agent-live-status-backlog.md`
 live from Phase 1.
 
-### Phase 1: fix status (box-side)
+### Phase 1: fix status (box-side) — done
+
+**Done (2026-11-24).** Bugs 1-5 and 7 are fixed in the hook, plugin and extension files and in ctl, as listed below, with these specifics: claude's SubagentStart/SubagentStop and SessionEnd buffer their stdin and pass it to `--skip-unnamed-subagent` / a conditional `--clear-session`; codex's request_user_input reports the sticky `question` state (input-needed like `waiting`), so the catch-all `working` for the same call is swallowed, and its PostToolUse leaves it with `--clear-pending` (codex matchers are Rust regexes, with no lookahead to exclude the tool from the catch-all); the opencode plugin and the pi extension send their reports one at a time, so two cannot reach ctl out of order; opencode ignores the `MessageAbortedError` of an Esc interrupt and drops unanswered permissions when the root session goes idle or errors; pi decides `error` at the settle (Pi retries failed requests itself) and keeps `agent_end` as the end of turn until it has seen an `agent_settled`; the opencode plugin and the pi extension carry their mapping as a pure tracker with unit tests (`packages/sandbox-docker/test/agent-state-plugins.test.ts`); the `-i` stay-up probe (`verifyAgentSessionStaysUp`, every provider) reads `agentbox-ctl status --json`, which now lists each agent's last state, and fails on an `error` reported during the launch. The pane-title rules ride `AgentSyncSpec.paneTitle` and `agents.list`.
 
 Fix bugs 1-5 and 7, all in the hook, plugin and extension files and in ctl:
 
@@ -172,7 +173,9 @@ the seeder refreshes an existing volume's copy.
 working during a tool call, and codex reads waiting on a question. Verify live in a box per agent,
 the way Phase 0 did.
 
-### Phase 2: the current session id (box-side)
+### Phase 2: the current session id (box-side) — done
+
+**Done (2026-11-24).** Every `--capture-session` report hands its `session_id` to the reporter, which publishes `agents[<id>].sessionId` (after a daemon restart, claude's resume pointer until the next hook). The hub passes it through on `Box.agentStatus[agent].sessionId`. The opencode pane-title match reads this box's bound root sessions from `opencode.db` (`packages/ctl/src/session-by-title.ts`).
 
 Put `sessionId` on each agent's status entry:
 
@@ -189,7 +192,7 @@ Put `sessionId` on each agent's status entry:
 **Done when:** `GET /api/v1/boxes` shows the right `sessionId` for every agent after a `/new` (and
 a prompt, for codex) and after a `/resume`.
 
-### Phase 3: title, working-on line and tokens (hub-side)
+### Phase 3: title, working-on line and tokens (hub-side) — done
 
 **Done.** What landed:
 

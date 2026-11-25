@@ -21,6 +21,12 @@ export const codexSpec: AgentSyncSpec = {
   id: 'codex',
   aliases: [],
   sessionName: 'codex',
+  // Measured on 0.172.0: a spinner glyph or `[ ! ] Action Required |` prefix,
+  // and a ` | <cwd>` suffix. A session with no name yet shows only the cwd.
+  paneTitle: {
+    strip: ['^\\[ ! \\] Action Required \\|\\s*', '^[^\\p{L}\\p{N}\\[]+\\s+', '\\s+\\|\\s+[^|]*$'],
+    placeholders: ['workspace', 'codex'],
+  },
   binary: 'codex',
   // `bubblewrap` is Codex's command-sandbox backend; without it on PATH Codex
   // falls back to a bundled copy and warns on every run.

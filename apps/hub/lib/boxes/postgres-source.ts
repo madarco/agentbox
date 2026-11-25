@@ -112,7 +112,11 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
     agentStatus: Object.fromEntries(
       ordered.map(([id, a]) => [
         id,
-        { state: a.state, ...(a.sessionTitle ? { sessionTitle: a.sessionTitle } : {}) },
+        {
+          state: a.state,
+          ...(a.sessionTitle ? { sessionTitle: a.sessionTitle } : {}),
+          ...(a.sessionId ? { sessionId: a.sessionId } : {}),
+        },
       ]),
     ),
     claudeActivity: map.claude?.state,

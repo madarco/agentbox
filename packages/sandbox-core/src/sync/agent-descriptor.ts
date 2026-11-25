@@ -26,6 +26,7 @@
 import type {
   AgentConfigRenderSpec,
   AgentMcpSpec,
+  AgentPaneTitleSpec,
   AgentServiceSpec,
   AgentSkillsSpec,
 } from '@agentbox/core';
@@ -78,6 +79,12 @@ export interface AgentDescriptor {
    * would never be probed and could never report activity at all.
    */
   sessionName: string;
+  /**
+   * Cleanup rules for that pane title (`AgentSyncSpec.paneTitle`). Shipped, not
+   * baked, so a new agent version's title format needs no re-bake. An older ctl
+   * ignores it and reports the raw title.
+   */
+  paneTitle?: AgentPaneTitleSpec;
   /**
    * How this agent reports activity — see `AgentCapabilities.activitySource`.
    * An empty list means it reports none, and ctl skips probing it entirely
@@ -207,6 +214,7 @@ export function buildAgentDescriptors(
     agents: AGENT_SYNC_SPECS.map((spec) => ({
       id: spec.id,
       sessionName: spec.sessionName,
+      ...(spec.paneTitle ? { paneTitle: spec.paneTitle } : {}),
       activitySource: spec.caps.activitySource,
       surface: spec.caps.surface ?? ('tui' as const),
       ...(spec.service && runsHere(spec.id)

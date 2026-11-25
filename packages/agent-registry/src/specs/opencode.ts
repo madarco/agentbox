@@ -23,6 +23,12 @@ export const opencodeSpec: AgentSyncSpec = {
   id: 'opencode',
   aliases: [],
   sessionName: 'opencode',
+  // Measured on 1.19.6: `OC | <title, cut at about 40 chars>…`, and `OpenCode`
+  // before a session has a title.
+  paneTitle: {
+    strip: ['^OC \\|\\s*'],
+    placeholders: ['OpenCode', 'OC'],
+  },
   binary: 'opencode',
   seedPromptFlag: '--prompt',
   install: {

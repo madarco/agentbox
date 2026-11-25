@@ -1,5 +1,5 @@
 {
-  "$comment": "AgentBox enterprise-managed Claude Code settings, baked into the box image at /etc/claude-code/managed-settings.json. Highest precedence and NOT synced from the host ~/.claude, so claude-hooks-filter.ts never touches it; per Claude Code, hook arrays MERGE across settings sources, so the user's own hooks still run. These hooks report Claude's activity to the box supervisor (agentbox-ctl claude-state -> ctl socket -> relay -> ~/.agentbox/boxes/<id>/status.json) so `agentbox status/list/inspect` can show it even when the box is paused. Each command is exit-0 fast and shell-backgrounded so a hook can never block or fail a Claude turn. The ExitPlanMode / AskUserQuestion entries run SYNCHRONOUSLY (no &) because they consume the hook's stdin payload; the catchall PreToolUse 'working' hook races with them, but the supervisor's sticky-state semantics swallow that race (a 'working' set while in end-plan/question is ignored unless --clear-pending is set, which only the matching PostToolUse hook passes). The SessionStart / Stop entries also run SYNCHRONOUSLY (no &) with --capture-session: they read the hook's stdin session_id and record it to the box's per-box session pointer (~/.local/state/agentbox/claude-session) so a box restart can resume the exact conversation (claude --resume <id>); they fire often enough to track /new and /branch, which mint fresh session ids. (A backgrounded `&` hook would detach stdin, so capture hooks must be synchronous.) skipDangerousModePermissionPrompt pre-accepts the bypass-permissions disclaimer at policy precedence — AgentBox boxes are isolated, and `agentbox claude` defaults to --dangerously-skip-permissions, so the one-time accept gate would just trap every fresh box. autoMemoryDirectory moves Claude's auto-memory off the (on docker, shared) config volume to a per-box dir on the box's own disk, which agentbox-ctl seeds from the hub and ships back as memory versions (docs/agent-history-plan.md, Phase 4).",
+  "$comment": "AgentBox enterprise-managed Claude Code settings, baked into the box image at /etc/claude-code/managed-settings.json. Highest precedence and NOT synced from the host ~/.claude, so claude-hooks-filter.ts never touches it; per Claude Code, hook arrays MERGE across settings sources, so the user's own hooks still run. These hooks report Claude's activity to the box supervisor (agentbox-ctl claude-state -> ctl socket -> relay -> ~/.agentbox/boxes/<id>/status.json) so `agentbox status/list/inspect` can show it even when the box is paused. Each command is exit-0 fast and shell-backgrounded so a hook can never block or fail a Claude turn. The ExitPlanMode / AskUserQuestion entries run SYNCHRONOUSLY (no &) because they consume the hook's stdin payload; the catchall PreToolUse 'working' hook races with them, but the supervisor's sticky-state semantics swallow that race (a 'working' set while in end-plan/question is ignored unless --clear-pending is set, which only the matching PostToolUse hook passes). The SessionStart / Stop entries also run SYNCHRONOUSLY (no &) with --capture-session: they read the hook's stdin session_id and record it to the box's per-box session pointer (~/.local/state/agentbox/claude-session) so a box restart can resume the exact conversation (claude --resume <id>); they fire often enough to track /new and /branch, which mint fresh session ids. (A backgrounded `&` hook would detach stdin, so capture hooks must be synchronous.) SessionEnd and SubagentStart/SubagentStop need the payload too but must not block: they buffer stdin in the shell first (`p=$(timeout 1 cat)`, at most 1 s) and hand it to a backgrounded ctl. SessionEnd's `--clear-session` clears the pointer only while it still holds the ending session_id, so a SessionEnd that lands after the next session's SessionStart (on /new) cannot wipe the new pointer. `--skip-unnamed-subagent` drops the SubagentStart/SubagentStop of claude's hidden prompt-suggestion fork (an empty `agent_type`, about 0.5 s after every Stop), which otherwise held the box `working` for a minute after each turn. skipDangerousModePermissionPrompt pre-accepts the bypass-permissions disclaimer at policy precedence — AgentBox boxes are isolated, and `agentbox claude` defaults to --dangerously-skip-permissions, so the one-time accept gate would just trap every fresh box. autoMemoryDirectory moves Claude's auto-memory off the (on docker, shared) config volume to a per-box dir on the box's own disk, which agentbox-ctl seeds from the hub and ships back as memory versions (docs/agent-history-plan.md, Phase 4).",
   "skipDangerousModePermissionPrompt": true,
   "autoMemoryDirectory": "/home/vscode/.local/share/agentbox/memory/claude",
   "hooks": {
@@ -74,14 +74,14 @@
     "SubagentStart": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl claude-state working >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "p=$(timeout 1 cat); printf '%s' \"$p\" | agentbox-ctl claude-state working --skip-unnamed-subagent >/dev/null 2>&1 &", "timeout": 3 }
         ]
       }
     ],
     "SubagentStop": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl claude-state working >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "p=$(timeout 1 cat); printf '%s' \"$p\" | agentbox-ctl claude-state working --skip-unnamed-subagent >/dev/null 2>&1 &", "timeout": 3 }
         ]
       }
     ],
@@ -109,7 +109,7 @@
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "agentbox-ctl claude-state idle --clear-session >/dev/null 2>&1 &", "timeout": 3 }
+          { "type": "command", "command": "p=$(timeout 1 cat); printf '%s' \"$p\" | agentbox-ctl claude-state idle --clear-session >/dev/null 2>&1 &", "timeout": 3 }
         ]
       }
     ]

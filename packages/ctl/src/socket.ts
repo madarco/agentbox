@@ -91,6 +91,9 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
         services: opts.supervisor.list(),
         tasks: opts.supervisor.listTasks(),
         ports: await collectPorts(opts.supervisor),
+        // What each agent last reported, so a launch check in the box (the
+        // `-i` stay-up probe) can see an agent that failed its first turn.
+        agents: opts.reporter?.agentStates() ?? {},
       };
       writeLine(sock, { ok: true, data });
       sock.end();
@@ -207,6 +210,8 @@ async function handleConnection(sock: Socket, opts: ServerOptions): Promise<void
           plan: req.plan,
           question: req.question,
           clearPending: req.clearPending,
+          sessionId: typeof req.sessionId === 'string' ? req.sessionId : undefined,
+          endSessionId: typeof req.endSessionId === 'string' ? req.endSessionId : undefined,
         });
         writeLine(sock, { ok: true, data: 'ok' });
       }

@@ -3,6 +3,7 @@ import { agentState } from '../client.js';
 import {
   appendHistoryBinding,
   clearAgentSessionPointer,
+  clearAgentSessionPointerIf,
   recordAgentSessionId,
 } from '../session-pointer.js';
 import {
@@ -14,12 +15,13 @@ import {
 } from '../types.js';
 import type { AgentId } from '@agentbox/core';
 
-interface AgentStateOptions {
+export interface AgentStateOptions {
   socket: string;
   payloadStdin?: boolean;
   clearPending?: boolean;
   captureSession?: boolean;
   clearSession?: boolean;
+  skipUnnamedSubagent?: boolean;
 }
 
 /**
@@ -92,7 +94,14 @@ export function buildAgentStateCommand(
     .option('--payload-stdin', "parse the agent's hook JSON from stdin (pre-tool plan/question)")
     .option('--clear-pending', 'force-clear a sticky end-plan/question state (post-tool cleanup)')
     .option('--capture-session', "record the hook's session_id to the box's session pointer")
-    .option('--clear-session', "drop the box's session pointer (SessionEnd)")
+    .option(
+      '--clear-session',
+      "drop the box's session pointer (SessionEnd); only if it still holds the stdin payload's session_id when one is piped",
+    )
+    .option(
+      '--skip-unnamed-subagent',
+      "report nothing when the stdin payload's agent_type is empty (claude's hidden prompt-suggestion fork)",
+    )
     .action(async (...argv: unknown[]) => {
       // commander passes (…args, options, command); the arg count differs
       // between the two forms, so read positionally from the front.
@@ -114,43 +123,79 @@ export async function reportAgentState(
   try {
     if (agent.length === 0) return;
     if (!AGENT_ACTIVITY_STATES.includes(state as AgentActivityState)) return;
-    if (opts.clearSession) clearAgentSessionPointer(agent);
-    const typedState = state as AgentActivityState;
-    // Read stdin at most once, shared by both consumers.
-    const raw = opts.payloadStdin || opts.captureSession ? await readStdinJson() : null;
-    if (opts.captureSession && typeof raw?.session_id === 'string') {
-      recordAgentSessionId(agent, raw.session_id);
-      // The history binding is appended, never cleared (`--clear-session` only
-      // drops the resume pointer above).
-      appendHistoryBinding(
-        agent,
-        raw.session_id,
-        typeof raw.transcript_path === 'string' ? raw.transcript_path : undefined,
-      );
-    }
-    const extracted = opts.payloadStdin ? extractPayload(typedState, raw) : undefined;
-    const payload: {
-      plan?: AgentPlanPayload;
-      question?: AgentQuestionPayload;
-      clearPending?: boolean;
-    } = { ...(extracted ?? {}) };
-    if (opts.clearPending) payload.clearPending = true;
-    const hasField =
-      payload.plan !== undefined ||
-      payload.question !== undefined ||
-      payload.clearPending !== undefined;
-    await agentState(
-      { socketPath: opts.socket, timeoutMs: 1500 },
-      agent,
-      typedState,
-      hasField ? payload : undefined,
-    );
+    // Read stdin at most once, shared by every consumer. A backgrounded hook
+    // (`cmd &`) has /dev/null for stdin, which ends at once: no wait.
+    const raw =
+      opts.payloadStdin || opts.captureSession || opts.clearSession || opts.skipUnnamedSubagent
+        ? await readStdinJson()
+        : null;
+    await applyAgentStateReport(agent, state as AgentActivityState, opts, raw);
   } catch {
     // Fire-and-forget: a missing/late daemon must never break an agent hook.
   }
 }
 
-interface HookPayload {
+/** The report itself, given the hook payload already read. Split out for unit tests. */
+export async function applyAgentStateReport(
+  agent: string,
+  typedState: AgentActivityState,
+  opts: AgentStateOptions,
+  raw: HookPayload | null,
+): Promise<void> {
+  // About 0.5s after every Stop, claude runs a hidden prompt-suggestion fork
+  // that fires SubagentStop with `agent_type: ""`; reporting it as `working`
+  // held the box `working` until the idle_prompt notification a minute later.
+  if (opts.skipUnnamedSubagent && raw?.agent_type === '') return;
+  const sessionId = typeof raw?.session_id === 'string' ? raw.session_id : undefined;
+  if (opts.clearSession) {
+    if (sessionId) clearAgentSessionPointerIf(agent, sessionId);
+    else clearAgentSessionPointer(agent);
+  }
+  if (opts.captureSession && sessionId) {
+    recordAgentSessionId(agent, sessionId);
+    // The history binding is appended, never cleared (`--clear-session` only
+    // drops the resume pointer above).
+    appendHistoryBinding(
+      agent,
+      sessionId,
+      typeof raw?.transcript_path === 'string' ? raw.transcript_path : undefined,
+    );
+  }
+  const extracted = opts.payloadStdin ? extractPayload(typedState, raw) : undefined;
+  const payload: AgentStatePayload = { ...(extracted ?? {}) };
+  if (opts.clearPending) payload.clearPending = true;
+  if (opts.captureSession && sessionId && isSessionIdToken(sessionId)) {
+    payload.sessionId = sessionId;
+  }
+  if (opts.clearSession && sessionId && isSessionIdToken(sessionId)) {
+    payload.endSessionId = sessionId;
+  }
+  const hasField = Object.values(payload).some((v) => v !== undefined);
+  await agentState(
+    { socketPath: opts.socket, timeoutMs: 1500 },
+    agent,
+    typedState,
+    hasField ? payload : undefined,
+  );
+}
+
+/** What a state report may carry to the daemon beyond the state itself. */
+type AgentStatePayload = {
+  plan?: AgentPlanPayload;
+  question?: AgentQuestionPayload;
+  clearPending?: boolean;
+  sessionId?: string;
+  endSessionId?: string;
+};
+
+/** A session id fit to show in the status snapshot: an opaque, bounded token. */
+export function isSessionIdToken(id: string): boolean {
+  return /^[0-9A-Za-z][0-9A-Za-z_.-]{3,127}$/.test(id);
+}
+
+export interface HookPayload {
+  /** Claude's SubagentStart/SubagentStop; empty for the hidden prompt-suggestion fork. */
+  agent_type?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   /** Agents pass the active session id on every hook's stdin JSON. */

@@ -196,6 +196,8 @@ export async function agentState(
     plan?: AgentPlanPayload;
     question?: AgentQuestionPayload;
     clearPending?: boolean;
+    sessionId?: string;
+    endSessionId?: string;
   },
 ): Promise<'ok'> {
   return sendOneShot<'ok'>(opts, {
@@ -205,6 +207,8 @@ export async function agentState(
     ...(payload?.plan ? { plan: payload.plan } : {}),
     ...(payload?.question ? { question: payload.question } : {}),
     ...(payload?.clearPending ? { clearPending: true } : {}),
+    ...(payload?.sessionId ? { sessionId: payload.sessionId } : {}),
+    ...(payload?.endSessionId ? { endSessionId: payload.endSessionId } : {}),
   });
 }
 
