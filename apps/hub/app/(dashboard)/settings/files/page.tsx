@@ -91,7 +91,10 @@ export default function FilesPage() {
     [data, state.projects, state.boxes, accounts, machines],
   );
   const total = groups.reduce((n, g) => n + g.count, 0);
+  // Other appears only when the hub holds something this page has no group for.
+  const listed = groups.filter((g) => g.id !== 'other' || g.count > 0);
   const shown = (only ? groups.filter((g) => g.id === only) : groups).filter((g) => g.count > 0);
+  const selected = only ? groups.find((g) => g.id === only) : undefined;
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
@@ -144,7 +147,7 @@ export default function FilesPage() {
             Overview
           </SectionLabel>
           <StatGrid>
-            {groups.map((g) => (
+            {listed.map((g) => (
               <Stat
                 key={g.id}
                 k={g.label}
@@ -155,7 +158,7 @@ export default function FilesPage() {
 
           <div className="mt-6 flex flex-wrap items-center gap-1.5">
             <Pill active={only === null} onClick={() => setOnly(null)} label="All" count={total} />
-            {groups.map((g) => (
+            {listed.map((g) => (
               <Pill
                 key={g.id}
                 active={only === g.id}
@@ -169,10 +172,13 @@ export default function FilesPage() {
           {shown.length === 0 ? (
             <div className="mt-6">
               <EmptyBox>
-                <div>Nothing here yet.</div>
+                <div>
+                  {selected ? `No ${selected.label.toLowerCase()} here.` : 'Nothing here yet.'}
+                </div>
                 <div className="mt-1.5 font-mono text-xs text-muted-foreground">
-                  Logins arrive with `agentbox hub credentials push`, project files with `agentbox
-                  hub project push`; bake records and box keys are written as boxes are created.
+                  {selected
+                    ? selected.empty
+                    : 'Logins arrive with `agentbox hub credentials push`, project files with `agentbox hub project push`; bake records and box keys are written as boxes are created.'}
                 </div>
               </EmptyBox>
             </div>

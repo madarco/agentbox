@@ -33,15 +33,18 @@ export function custodyIdentityFromRegistration(reg: {
 }
 
 /**
- * A project's custody slugs, best first: the key-derived slug of its origin,
- * the slug it registered with, then the legacy `owner__repo` one custody
- * written by an older CLI still sits under. Empty when it has neither.
+ * A project's custody slugs, best first: the slug of its repo key (alias-
+ * expanded where it was computed), the key-derived slug of its origin, the slug
+ * it registered with, then the legacy `owner__repo` one custody written by an
+ * older CLI still sits under. Empty when it has none of them.
  */
 export function seedSlugsFor(project: {
   projectSlug?: string | null;
   originUrl?: string | null;
+  repoKey?: string | null;
 }): string[] {
   return custodySlugCandidates({
+    repoKey: project.repoKey ?? null,
     originUrl: project.originUrl ?? null,
     projectSlug: project.projectSlug ?? null,
   });

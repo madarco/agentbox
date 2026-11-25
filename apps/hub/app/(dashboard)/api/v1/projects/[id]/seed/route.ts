@@ -19,6 +19,6 @@ export async function GET(
   const project = projects.find((p) => p.id === id);
   if (!project) return fail('not_found', `unknown project ${id}`);
 
-  const status = await getProjectSeedStatus(seedSlugsFor(project));
+  const status = await getProjectSeedStatus(project.custodySlugs ?? seedSlugsFor(project));
   return ok(status);
 }

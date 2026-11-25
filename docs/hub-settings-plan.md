@@ -236,9 +236,12 @@ a human group and nothing exposes file contents.
 **Built:** `lib/files-view.ts` regroups the manifest; the page joins it client-side with the store's
 projects and boxes, `GET /accounts` and `GET /devices`, so no new route. Notes:
 
-- A project section is named after the hub project whose registered slug, or origin (host + path,
-  lowercased), matches; a folder name is used only for a project with no known origin. One repo
-  checked out as several hub projects lists all of them.
+- A project section is named after the hub projects whose custody slugs include it. The hub puts
+  `custodySlugs` on every project (`seedSlugsFor`: repo key, alias-expanded with `repoKeyAtEdge` for a
+  folder on the hub's machine, else the key a registration carries; origin; registered slug; legacy
+  `owner__repo`), so the browser never re-derives repo keys. All folders of one repo are listed; a
+  folder name is used only for a project with no git identity. Files under a scope the page does not
+  know go to an **Other** group, one row per file.
 - Named-account logins live per machine (`agents/<agent>/accounts/<machine>/<id>/`), and an account
   label belongs to one machine's store. `GET /accounts` gained `machine` (this hub's machine id) so a
   label is shown only on that machine's entries; another PC's account shows its id and the PC's name.
@@ -273,6 +276,3 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 
 - **Files:** a box row is titled with the box id; the Box payload has no separate name field, so a
   cloud box shows its id, not the name it was created with.
-- **Files:** a project with no origin in its payload (a localhost hub's projects carry none) is
-  matched only by folder name; adding `originUrl` to the localhost project payload would make that
-  join exact.

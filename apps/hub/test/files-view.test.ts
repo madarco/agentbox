@@ -4,7 +4,6 @@ import {
   FILES_GROUP_ORDER,
   buildFilesView,
   matchProjects,
-  originKey,
   readProjectSlug,
   type FilesGroup,
 } from '../lib/files-view';
@@ -30,6 +29,9 @@ describe('readProjectSlug', () => {
   it('reads a legacy owner__repo slug as a path', () => {
     expect(readProjectSlug('acme__web')).toEqual({ path: 'acme/web' });
   });
+  it('reads a dotless self-hosted forge host', () => {
+    expect(readProjectSlug('gitea__acme__web')).toEqual({ host: 'gitea', path: 'acme/web' });
+  });
   it('drops a lossy slug digest suffix', () => {
     expect(readProjectSlug('github.com__acme__we-b-0123456789abcdef')).toEqual({
       host: 'github.com',
@@ -38,67 +40,39 @@ describe('readProjectSlug', () => {
   });
 });
 
-describe('originKey', () => {
-  it('reads https, ssh and scp-like remotes, lowercased', () => {
-    expect(originKey('https://github.com/Acme/Web.git')).toEqual({
-      host: 'github.com',
-      path: 'acme/web',
-    });
-    expect(originKey('ssh://git@github.com/acme/web')).toEqual({
-      host: 'github.com',
-      path: 'acme/web',
-    });
-    expect(originKey('git@gitlab.com:acme/web.git')).toEqual({
-      host: 'gitlab.com',
-      path: 'acme/web',
-    });
-    expect(originKey('not a url')).toBeNull();
-  });
-});
-
 describe('matchProjects', () => {
-  it('prefers the registered slug, then the origin, then a unique folder name', () => {
+  it('matches on the hub-derived custody slugs, then a unique folder with no git identity', () => {
     const projects = [
       { id: 'p1', name: 'web', repo: 'web' },
-      { id: 'p2', name: 'api', repo: 'api', originUrl: 'git@github.com:Acme/API.git' },
+      { id: 'p2', name: 'api', repo: 'api', custodySlugs: ['github.com__acme__api', 'acme__api'] },
       { id: 'p3', name: 'Tools', repo: 'tools', projectSlug: 'github.com__acme__tools' },
     ];
     expect(ids(matchProjects('github.com__acme__tools', projects))).toEqual(['p3']);
     expect(ids(matchProjects('github.com__acme__api', projects))).toEqual(['p2']);
+    expect(ids(matchProjects('acme__api', projects))).toEqual(['p2']);
     expect(ids(matchProjects('github.com__acme__web', projects))).toEqual(['p1']);
     expect(matchProjects('github.com__acme__nope', projects)).toEqual([]);
   });
 
-  it('returns every project that registered the slug', () => {
+  it('unions registered-slug and derived-slug matches, so sibling folders of one repo all show', () => {
     const projects = [
-      { id: 'a', name: 'web', projectSlug: 'github.com__acme__web' },
-      { id: 'b', name: 'web-2', projectSlug: 'github.com__acme__web' },
+      { id: 'reg', name: 'web', projectSlug: 'github.com__acme__web' },
+      { id: 'root', name: 'mono', custodySlugs: ['github.com__acme__web'] },
+      { id: 'sub', name: 'mono/app', custodySlugs: ['github.com__acme__web'] },
     ];
-    expect(ids(matchProjects('github.com__acme__web', projects))).toEqual(['a', 'b']);
-  });
-
-  it('returns every project folder of one repo', () => {
-    const folders = [
-      { id: 'root', name: 'workspace', originUrl: 'git@github.com:acme/mono.git' },
-      { id: 'sub', name: 'express-ready', originUrl: 'git@github.com:acme/mono.git' },
-    ];
-    expect(ids(matchProjects('github.com__acme__mono', folders))).toEqual(['root', 'sub']);
-    const section = buildFilesView([entry('projects/github.com__acme__mono/seed/manifest.json')], {
-      projects: folders,
+    expect(ids(matchProjects('github.com__acme__web', projects))).toEqual(['reg', 'root', 'sub']);
+    const section = buildFilesView([entry('projects/github.com__acme__web/seed/manifest.json')], {
+      projects,
     })[0]!.sections[0]!;
-    expect(section.title).toBe('acme/mono');
+    expect(section.title).toBe('acme/web');
     expect(section.href).toBeUndefined();
-    expect(section.projects?.map((p) => p.name)).toEqual(['workspace', 'express-ready']);
+    expect(section.projects?.map((p) => p.name)).toEqual(['web', 'mono', 'mono/app']);
   });
 
-  it('does not match another host with the same owner/repo', () => {
-    const projects = [{ id: 'gl', name: 'web', originUrl: 'git@gitlab.com:acme/web.git' }];
-    expect(matchProjects('github.com__acme__web', projects)).toEqual([]);
-  });
-
-  it('never matches by folder name a project whose origin is another repo', () => {
+  it('never matches by folder name a project the hub derived other slugs for', () => {
     const projects = [
-      { id: 'alice', name: 'web', repo: 'web', originUrl: 'https://github.com/alice/web' },
+      { id: 'alice', name: 'web', repo: 'web', custodySlugs: ['github.com__alice__web'] },
+      { id: 'carol', name: 'web', repo: 'web', originUrl: 'git@github-work:carol/web.git' },
     ];
     expect(matchProjects('github.com__bob__web', projects)).toEqual([]);
   });
@@ -154,7 +128,7 @@ describe('buildFilesView', () => {
         entry('projects/github.com__acme__web/cp-out/out.log', 5),
         entry('projects/github.com__other__lib/seed/manifest.json'),
       ],
-      { projects: [{ id: 'proj-web', name: 'Web app', repo: 'web' }] },
+      { projects: [{ id: 'proj-web', name: 'Web app', custodySlugs: ['github.com__acme__web'] }] },
     );
     const projects = group(groups, 'projects');
     expect(projects.sections.map((s) => s.title)).toEqual(['other/lib', 'Web app']);
@@ -236,16 +210,52 @@ describe('buildFilesView', () => {
         entry('boxes/sb-1/ssh/id_ed25519', 400),
         entry('boxes/my-box/skills.json', 50),
         entry('boxes/gone/id_ed25519'),
+        entry('boxes/named/skills.json', 10),
       ],
-      { boxes: [{ id: 'my-box', sandboxId: 'sb-1', task: 'Fix the webhooks' }] },
+      {
+        boxes: [
+          { id: 'my-box', sandboxId: 'sb-1', task: 'Fix the webhooks' },
+          { id: 'named', displayName: 'Renamed', task: 'Renamed' },
+        ],
+      },
     );
     expect(group(groups, 'prepared').sections[0]!.rows.map((r) => r.title)).toEqual(['hetzner']);
     const rows = group(groups, 'boxes').sections[0]!.rows;
     expect(rows.map((r) => [r.title, r.detail, r.href, r.size])).toEqual([
+      ['Fix the webhooks', 'my-box · SSH key, Served skills', '/boxes/my-box', 450],
       ['gone', 'SSH key · box no longer listed', undefined, 100],
-      ['my-box', 'Fix the webhooks · SSH key, Served skills', '/boxes/my-box', 450],
+      ['Renamed', 'named · Served skills', '/boxes/named', 10],
     ]);
-    expect(rows[1]!.hint).toBe('sb-1');
+    expect(rows[0]!.hint).toBe('sb-1');
+  });
+
+  it('keeps a named account labelled Default after the default login', () => {
+    const rows = buildFilesView(
+      [
+        entry('agents/claude/accounts/m1/zzz/.credentials.json'),
+        entry('agents/claude/.credentials.json'),
+      ],
+      { accounts: [{ agent: 'claude', id: 'zzz', label: 'Default' }], machine: 'm1' },
+    )[1]!.sections[0]!.rows;
+    expect(rows.map((r) => [r.title, r.detail])).toEqual([
+      ['Default', 'Default login'],
+      ['Default', 'zzz · from m1'],
+    ]);
+  });
+
+  it('lists files under an unknown scope in Other, one row each, and counts them', () => {
+    const groups = buildFilesView([
+      entry('agents/claude/.credentials.json'),
+      entry('future/x/y.json', 7),
+    ]);
+    const other = group(groups, 'other');
+    expect([other.count, other.size]).toEqual([1, 7]);
+    expect(other.sections[0]!.rows.map((r) => r.title)).toEqual(['future/x/y.json']);
+    expect(groups.reduce((n, g) => n + g.count, 0)).toBe(2);
+  });
+
+  it('gives every group an empty message', () => {
+    expect(buildFilesView([]).every((g) => g.empty.length > 0)).toBe(true);
   });
 
   it('never carries anything but metadata', () => {

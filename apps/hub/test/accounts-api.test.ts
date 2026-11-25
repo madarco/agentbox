@@ -20,6 +20,8 @@ function backend() {
       removed.push(name);
       return Promise.resolve(volumeAnswer);
     },
+    // Never the real ~/.agentbox/machine-id.
+    machineId: () => 'm-test',
   });
 }
 

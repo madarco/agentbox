@@ -44,6 +44,7 @@ export const projects = [
   provider: p.lastProvider ?? "docker",
   createdAt: min(60 * 24 * (20 - i)),
   originUrl: p.noGit ? null : `git@github.com:${p.repo}.git`,
+  custodySlugs: p.noGit ? [] : [`github.com__${p.repo.split("/").join("__")}`, p.repo.split("/").join("__")],
   lastProvider: p.lastProvider ?? null,
   lastAgent: p.lastAgent ?? null,
   lastUsedAt: p.lastProvider ? min(30 + i * 40) : null,

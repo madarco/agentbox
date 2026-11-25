@@ -8,7 +8,7 @@
 
 import { CUSTODY_AGENT_LABELS, type CustodyEntry } from './custody-view';
 
-export type FilesGroupId = 'projects' | 'agents' | 'skills' | 'prepared' | 'boxes';
+export type FilesGroupId = 'projects' | 'agents' | 'skills' | 'prepared' | 'boxes' | 'other';
 
 export interface FilesRow {
   key: string;
@@ -39,6 +39,8 @@ export interface FilesGroup {
   id: FilesGroupId;
   label: string;
   blurb: string;
+  /** What to say when the group holds nothing, and how it gets filled. */
+  empty: string;
   /** Files the group's rows show (bookkeeping markers excluded). */
   count: number;
   size: number;
@@ -55,10 +57,13 @@ export interface FilesJoin {
     repo?: string;
     originUrl?: string | null;
     projectSlug?: string | null;
+    /** The custody slugs the hub derived for the project (GET /projects). */
+    custodySlugs?: readonly string[];
   }[];
   boxes?: readonly {
     id: string;
     task?: string;
+    displayName?: string | null;
     sandboxId?: string;
     originMachineId?: string;
     originMachineLabel?: string;
@@ -71,29 +76,40 @@ export interface FilesJoin {
   machines?: readonly { id: string; label: string }[];
 }
 
-const GROUP_META: Record<FilesGroupId, { label: string; blurb: string }> = {
+const GROUP_META: Record<FilesGroupId, { label: string; blurb: string; empty: string }> = {
   projects: {
     label: 'Project files',
     blurb:
       'Seeds and secrets pushed for a project (agentbox hub project push) and files copied with agentbox cp, carried into that project’s boxes.',
+    empty:
+      "No project files yet. `agentbox hub project push` stores a project's untracked files and secrets.",
   },
   agents: {
     label: 'Agent logins',
     blurb:
       'The login each agent account starts with, so a box created here is never signed out. Shown by account; the credentials themselves never leave the hub.',
+    empty: "No logins yet. `agentbox hub credentials push` stores this PC's agent logins.",
   },
   skills: {
     label: 'Skills library',
     blurb: 'The skills every box receives, one archive per version.',
+    empty: 'No skills yet. `agentbox skills` uploads them from a PC.',
   },
   prepared: {
     label: 'Bakes',
     blurb:
       'Each provider’s base-image bake record, so a base baked on one machine is used by both.',
+    empty: 'No bakes yet. `agentbox prepare --provider <id>` records one per provider.',
   },
   boxes: {
     label: 'Box keys',
     blurb: 'Per-box material: the SSH key a host minted for the box, and the skills it was served.',
+    empty: 'No box keys yet. They are written when a cloud box is created.',
+  },
+  other: {
+    label: 'Other',
+    blurb: 'Files under a scope this page does not know yet, listed as they are stored.',
+    empty: 'Nothing outside the known groups.',
   },
 };
 
@@ -103,7 +119,11 @@ export const FILES_GROUP_ORDER: readonly FilesGroupId[] = [
   'skills',
   'prepared',
   'boxes',
+  'other',
 ];
+
+/** The custody scopes the store knows; anything else lands in Other. */
+const KNOWN_SCOPES: readonly string[] = ['projects', 'agents', 'skills', 'prepared', 'boxes'];
 
 const ACCOUNTS_SEGMENT = 'accounts';
 
@@ -159,68 +179,36 @@ const segs = (e: CustodyEntry): string[] => e.path.split('/');
 export function readProjectSlug(slug: string): { host?: string; path: string } {
   const bare = slug.replace(/-[0-9a-f]{16}$/, '');
   const parts = bare.split('__').filter((s) => s.length > 0);
-  if (parts.length >= 3 && parts[0]!.includes('.')) {
+  // A repo-key slug is `host__owner__repo` (a self-hosted forge's host may have
+  // no dot); the legacy one is `owner__repo`, never more than two segments.
+  if (parts.length >= 3) {
     return { host: parts[0], path: parts.slice(1).join('/') };
   }
   return { path: parts.join('/') || slug };
 }
 
 /**
- * Host and `owner/repo` path of a git remote URL (https, ssh, scp-like),
- * lowercased like the repo key custody slugs are made from; null when unparsable.
- */
-export function originKey(url: string): { host: string; path: string } | null {
-  const s = url
-    .trim()
-    .replace(/\/+$/, '')
-    .replace(/\.git$/, '');
-  const scp = /^[^@/]+@([^:/]+):(.+)$/.exec(s);
-  let host: string;
-  let path: string;
-  if (scp) {
-    host = scp[1]!;
-    path = scp[2]!;
-  } else {
-    try {
-      const u = new URL(s);
-      host = u.hostname;
-      path = u.pathname;
-    } catch {
-      return null;
-    }
-  }
-  path = path.replace(/^\/+/, '');
-  if (!host || !path) return null;
-  return { host: host.toLowerCase(), path: path.toLowerCase() };
-}
-
-/**
- * The hub projects a custody slug belongs to: those that registered that slug,
- * else every project whose origin is the slug's repo (one repo can be several
- * project folders), else the only project with no known origin whose folder
- * name is the slug's repo name. Empty when none matches.
+ * The hub projects a custody slug belongs to: every project whose hub-derived
+ * custody slugs (or registered slug) include it, so all folders of one repo
+ * show. Only when none does, the single project with no git identity at all
+ * whose folder name is the slug's repo name. Empty when none matches.
  */
 export function matchProjects<P extends NonNullable<FilesJoin['projects']>[number]>(
   slug: string,
   projects: readonly P[],
 ): P[] {
-  const exact = projects.filter((p) => p.projectSlug === slug);
-  if (exact.length) return exact;
-  const read = readProjectSlug(slug);
-  const path = read.path.toLowerCase();
-  const host = read.host?.toLowerCase();
-  const byOrigin = projects.filter((p) => {
-    const o = p.originUrl ? originKey(p.originUrl) : null;
-    return o !== null && o.path === path && (host === undefined || o.host === host);
-  });
-  if (byOrigin.length) return byOrigin;
-  // A folder name alone is weak evidence: only for a project whose origin and
-  // slug are unknown, and only when exactly one matches.
-  const name = path.split('/').pop() ?? path;
+  const bySlug = projects.filter(
+    (p) => p.projectSlug === slug || (p.custodySlugs ?? []).includes(slug),
+  );
+  if (bySlug.length) return bySlug;
+  // A folder name alone is weak evidence: only for a project the hub could
+  // derive no slug for, and only when exactly one matches.
+  const name = (readProjectSlug(slug).path.split('/').pop() ?? '').toLowerCase();
   const byName = projects.filter(
     (p) =>
       !p.originUrl &&
       !p.projectSlug &&
+      !(p.custodySlugs ?? []).length &&
       ((p.repo ?? p.name).toLowerCase() === name || p.name.toLowerCase() === name),
   );
   return byName.length === 1 ? byName : [];
@@ -317,8 +305,9 @@ function agentSections(entries: readonly CustodyEntry[], join: FilesJoin): Files
           href: machine === join.machine ? '/settings/subscriptions' : undefined,
         });
       });
+      const defaultKey = `${agent}/default`;
       rows.sort((a, b) =>
-        a.title === 'Default' ? -1 : b.title === 'Default' ? 1 : a.title.localeCompare(b.title),
+        a.key === defaultKey ? -1 : b.key === defaultKey ? 1 : a.title.localeCompare(b.title),
       );
       return { key: agent, title: CUSTODY_AGENT_LABELS[agent] ?? agent, rows };
     })
@@ -382,25 +371,34 @@ function boxSections(entries: readonly CustodyEntry[], join: FilesJoin): FilesSe
     .map(([key, files]) => {
       const box = boxByKey.get(key);
       const kinds = [...new Set(files.map((f) => boxFileKind(segs(f).slice(2).join('/'))))];
-      return rollup(key, key, files, {
+      const name = box?.displayName || box?.task || key;
+      return rollup(key, name, files, {
         detail: box
-          ? [box.task, kinds.join(', ')].filter(Boolean).join(' · ')
+          ? [name !== key ? key : undefined, kinds.join(', ')].filter(Boolean).join(' · ')
           : `${kinds.join(', ')} · box no longer listed`,
         hint: box?.sandboxId && box.sandboxId !== box.id ? box.sandboxId : undefined,
         href: box ? `/boxes/${encodeURIComponent(box.id)}` : undefined,
       });
     })
-    .sort(byKey);
+    .sort((a, b) => a.title.localeCompare(b.title));
   return rows.length ? [{ key: 'boxes', title: 'Boxes', rows }] : [];
+}
+
+// ── Other ───────────────────────────────────────────────────────────────────
+
+function otherSections(entries: readonly CustodyEntry[]): FilesSection[] {
+  const rows = entries.map((e) => rollup(e.path, e.path, [e])).sort(byKey);
+  return rows.length ? [{ key: 'other', title: 'Other', rows }] : [];
 }
 
 // ── Assembly ────────────────────────────────────────────────────────────────
 
 /**
- * Regroup the custody manifest into the Files page's five groups, always in
- * {@link FILES_GROUP_ORDER} and always all five (empty ones included, so the
- * overview is complete). An entry under an unknown scope is dropped. A group's
- * count and size are those of the files its rows show.
+ * Regroup the custody manifest into the Files page's groups, always in
+ * {@link FILES_GROUP_ORDER} and always all of them (empty ones included). An
+ * entry under a scope this page does not know goes to Other, one row per file,
+ * so the total never hides it. A group's count and size are those of the files
+ * its rows show.
  */
 export function buildFilesView(
   entries: readonly CustodyEntry[],
@@ -408,7 +406,7 @@ export function buildFilesView(
 ): FilesGroup[] {
   const byScope = bucket(entries, (e) => {
     const scope = segs(e)[0] ?? '';
-    return (FILES_GROUP_ORDER as readonly string[]).includes(scope) ? scope : null;
+    return KNOWN_SCOPES.includes(scope) ? scope : 'other';
   });
   return FILES_GROUP_ORDER.map((id) => {
     const list = byScope.get(id) ?? [];
@@ -421,7 +419,9 @@ export function buildFilesView(
             ? skillSections(list)
             : id === 'prepared'
               ? bakeSections(list)
-              : boxSections(list, join);
+              : id === 'boxes'
+                ? boxSections(list, join)
+                : otherSections(list);
     const rows = sections.flatMap((s) => s.rows);
     return {
       id,

@@ -220,6 +220,7 @@ import {
   setDefaultCheckpointRefusal,
 } from './backend/accounts';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
+import { createProjectCustodySlugs } from './backend/project-custody';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
 import { createProjectDir } from './boxes/create-project';
 import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
@@ -2225,6 +2226,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     ],
   });
   const workspaces = createWorkspaceBackend(backendDeps);
+  const custodySlugs = createProjectCustodySlugs();
   const prSync = createGithubPrSync(backendDeps);
   const timeline = createTimelineBackend(backendDeps, { sync: prSync });
   const boxPrs = createBoxPrLookup({ sync: prSync });
@@ -2395,7 +2397,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // Each registered box needs a project to render under (the dashboard groups
       // strictly by projectId). Add a synthetic one per new project key not
       // already produced by listProjects — sharing the box row's id.
-      const projects = await listProjects(listed);
+      const projects = await Promise.all(
+        (await listProjects(listed)).map(async (p) => ({
+          ...p,
+          custodySlugs: await custodySlugs.local(p),
+        })),
+      );
       const projectIds = new Set(projects.map((p) => p.id));
       // Repo-identity cards for the regrouped local boxes, before the registered
       // ones (same shape, same dedupe by project id).
@@ -2410,6 +2417,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           provider: reg.backend ?? 'cloud',
           createdAt: Date.parse(reg.createdAt ?? reg.registeredAt) || Date.now(),
           ...custodyIdentityFromRegistration(reg),
+          custodySlugs: custodySlugs.registered(reg),
         });
       }
       for (const reg of registered) {
@@ -2429,6 +2437,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           // box (SQLite store, no Postgres source) shows an empty panel even when
           // custody genuinely holds the seed.
           ...custodyIdentityFromRegistration(reg),
+          custodySlugs: custodySlugs.registered(reg),
         });
       }
       // Resolved before mapping because `mapBox` is sync and the git answer is a

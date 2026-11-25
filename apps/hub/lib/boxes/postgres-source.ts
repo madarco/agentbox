@@ -5,6 +5,7 @@ import { LEGACY_AGENT_STATUS_KEYS, normalizeAgentStatus } from '@agentbox/core';
 import type { AgentStatusEntry, AgentStatusMap } from '@agentbox/core';
 import { repoNameFromRegistration } from './project-name';
 import { lastUsedFromRegistrations, type LastUsedRegistration } from './project-defaults';
+import { seedSlugsFor } from './seed-slug';
 import type { Approval, Box, BoxStatus, HubState, Project } from './types';
 
 /*
@@ -164,7 +165,13 @@ function mapBox(r: Registration, s: Snapshot | undefined): Box {
 function deriveProjects(regs: Registration[]): Project[] {
   const byKey = new Map<
     string,
-    { key: string; name: string; createdAt: number; originUrl?: string; projectSlug?: string }
+    {
+      key: string;
+      name: string;
+      createdAt: number;
+      originUrl?: string;
+      projectSlug?: string;
+    }
   >();
   // This surface has no local project registry to read the create defaults from,
   // so they come from the registrations themselves — newest per project wins.
@@ -201,6 +208,7 @@ function deriveProjects(regs: Registration[]): Project[] {
       createdAt: p.createdAt,
       originUrl: p.originUrl ?? null,
       projectSlug: p.projectSlug ?? null,
+      custodySlugs: seedSlugsFor(p),
       ...lastUsedFromRegistrations(regsByKey.get(p.key) ?? []),
     }))
     .sort((a, b) => b.createdAt - a.createdAt);
