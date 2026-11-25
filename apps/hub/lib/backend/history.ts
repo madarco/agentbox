@@ -48,8 +48,8 @@ export interface HistorySessionRow {
   /**
    * The subscription the session ran on when it was first seen, as
    * `agent/account` (a borrowed login names its lender; `<agent>/default` when
-   * the box names none); null when the box was unknown. Sessions stored before
-   * hub settings Phase 3a hold a bare account id until the backfill restamps them.
+   * the box names none); null when the box was unknown. A bare id stored before
+   * hub settings Phase 3a is migrated to the session agent's own at open.
    */
   account: string | null;
   parentSessionId: string | null;
@@ -267,7 +267,7 @@ export interface HistoryRepo {
    * (stamped purged) and its usage rows. Returns archive keys to delete.
    */
   purgeSession(key: string, nowMs: number): Promise<string[]>;
-  /** Sessions with no `agent/account` stamped yet, that name a box, keyed after `afterKey`. */
+  /** Sessions with no account stamped yet, that name a box, keyed after `afterKey`. */
   sessionsWithoutAccount(
     afterKey: string,
     limit: number,

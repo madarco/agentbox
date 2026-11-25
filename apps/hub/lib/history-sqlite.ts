@@ -296,6 +296,11 @@ function columns(db: Db, table: string): Set<string> {
 function migrateUsage(db: Db): void {
   const sessions = columns(db, 'history_sessions');
   if (!sessions.has('account')) db.exec('ALTER TABLE history_sessions ADD COLUMN account TEXT');
+  // Hub settings 3a: an account is stamped as its subscription, `agent/account`.
+  // A bare id from before was always the session agent's own.
+  db.exec(
+    "UPDATE history_sessions SET account = agent || '/' || account WHERE account IS NOT NULL AND instr(account, '/') = 0",
+  );
   if (!sessions.has('purged_at')) {
     db.exec('ALTER TABLE history_sessions ADD COLUMN purged_at INTEGER');
   }
@@ -348,17 +353,9 @@ export function projectKeyOf(value: string): string | undefined {
 const USAGE_TIME = `COALESCE(u.ts_ms,
   CAST(ROUND((julianday(s.last_ts) - 2440587.5) * 86400000) AS INTEGER), s.updated_at)`;
 
-/**
- * A session's subscription as `agent/account`. Sessions stamped before hub
- * settings Phase 3a hold a bare account id, which was always the session
- * agent's own.
- */
-const ACCOUNT_KEY = `CASE WHEN s.account IS NULL THEN NULL
-  WHEN instr(s.account, '/') > 0 THEN s.account ELSE s.agent || '/' || s.account END`;
-
 const DIMENSION_SQL: Record<Exclude<UsageDimension, 'day'>, string> = {
   agent: 's.agent',
-  account: ACCOUNT_KEY,
+  account: 's.account',
   box: 's.box_id',
   project: 'COALESCE(s.project_key, s.project_repo_url)',
   host: 's.host_id',
@@ -403,10 +400,10 @@ function usageReport(db: Db, q: UsageQuery): UsageReport {
   eq('s.agent', q.agent);
   if (q.account !== undefined) {
     if (q.account.includes('/')) {
-      eq(`(${ACCOUNT_KEY})`, q.account);
+      eq('s.account', q.account);
     } else {
       // A bare id, as before 3a: that account of any agent.
-      where.push(`(${ACCOUNT_KEY}) LIKE ? ESCAPE '\\'`);
+      where.push("s.account LIKE ? ESCAPE '\\'");
       args.push(`%/${q.account.replace(/[\\%_]/g, (c) => `\\${c}`)}`);
     }
   }
@@ -830,9 +827,7 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       return (
         db
           .prepare(
-            `SELECT key, box_id, agent FROM history_sessions
-             WHERE (account IS NULL OR instr(account, '/') = 0) AND box_id IS NOT NULL AND key > ?
-             ORDER BY key LIMIT ?`,
+            'SELECT key, box_id, agent FROM history_sessions WHERE account IS NULL AND box_id IS NOT NULL AND key > ? ORDER BY key LIMIT ?',
           )
           .all(afterKey, limit) as Row[]
       ).map((r) => ({ key: String(r.key), boxId: String(r.box_id), agent: String(r.agent) }));
@@ -852,9 +847,10 @@ export async function openSqliteHistoryRepo(path: string): Promise<HistoryRepo> 
       });
     },
     async setSessionAccount(key, account) {
-      db.prepare(
-        "UPDATE history_sessions SET account = ? WHERE key = ? AND (account IS NULL OR instr(account, '/') = 0)",
-      ).run(account, key);
+      db.prepare('UPDATE history_sessions SET account = ? WHERE key = ? AND account IS NULL').run(
+        account,
+        key,
+      );
     },
     async usage(q) {
       return usageReport(db, q);

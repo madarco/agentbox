@@ -63,11 +63,7 @@ async function setup(accounts: Record<string, string> = {}) {
     archive: memArchive(),
     retentionDays: 90,
     accountOf: async (boxId, agent) =>
-      boxId in accounts
-        ? accounts[boxId] === ''
-          ? 'default'
-          : `${agent}/${accounts[boxId]!}`
-        : null,
+      boxId in accounts ? `${agent}/${accounts[boxId] || 'default'}` : null,
   });
   const ship = async (
     o: { boxId: string; boxName?: string; hostId?: string; repo?: string },
@@ -151,7 +147,6 @@ describe('usage (Phase 7)', () => {
     });
 
     const byAccount = await svc.usage({ by: ['account'], tzOffsetMin: 0, limit: 50 });
-    // A bare `default` (stamped before 3a) reads as the session agent's own.
     expect(byAccount.groups.map((g) => g.keys.account).sort()).toEqual([
       'claude/default',
       'codex/work',
@@ -263,18 +258,6 @@ describe('usage (Phase 7)', () => {
     expect((await repo.getSession('claude:s8'))!.account).toBeNull();
   });
 
-  it('restamps a bare account id from before 3a as agent/account', async () => {
-    const accounts: Record<string, string> = { b7: '' };
-    const { svc, ship, repo } = await setup(accounts);
-    await ship({ boxId: 'b7' }, 'claude', 's7', [{ id: 'm', ts: day1, model: 'x', in: 1, out: 1 }]);
-    expect((await repo.getSession('claude:s7'))!.account).toBe('default');
-    accounts.b7 = 'team';
-    expect(await svc.backfillAccounts()).toBe(1);
-    expect((await repo.getSession('claude:s7'))!.account).toBe('claude/team');
-    // Stamped once: a later backfill leaves it alone.
-    expect(await svc.backfillAccounts()).toBe(0);
-  });
-
   it('migrates a pre-Phase-7 store: message times filled from ts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'usage-mig-'));
     const path = join(dir, 'history.db');
@@ -290,6 +273,8 @@ describe('usage (Phase 7)', () => {
       cache_read_tokens INTEGER NOT NULL, cache_write_tokens INTEGER NOT NULL, ts TEXT,
       PRIMARY KEY (session_key, message_id));
       INSERT INTO history_sessions (key, agent, session_id, created_at, updated_at) VALUES ('claude:o', 'claude', 'o', 1, 1);
+      ALTER TABLE history_sessions ADD COLUMN account TEXT;
+      INSERT INTO history_sessions (key, agent, session_id, account, created_at, updated_at) VALUES ('codex:p', 'codex', 'p', 'work', 1, 1);
       INSERT INTO history_usage VALUES ('claude:o', 'm', 1, 'x', 4, 2, 0, 0, '${day2}');`);
     old.close();
     const repo = await openSqliteHistoryRepo(path);
@@ -303,5 +288,7 @@ describe('usage (Phase 7)', () => {
       untilMs: Date.parse(day2) + 1,
     });
     expect(inWindow.totals.messages).toBe(1);
+    // A bare account id (before hub settings 3a) becomes the agent's subscription.
+    expect((await repo.getSession('codex:p'))!.account).toBe('codex/work');
   });
 });

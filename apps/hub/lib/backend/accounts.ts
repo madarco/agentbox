@@ -297,17 +297,24 @@ export function accountsInfoOf(
 /**
  * The subscription an agent's usage in a box counts under, as `agent/account`
  * (hub settings Phase 3a). An agent that borrows another agent's login
- * (`--model-auth`, `BoxRecord.borrowedCredentials`) spends the lender's plan,
- * so its sessions count under the lender's account; `env:` sources are API
- * keys from the host env and name no account. Several lenders: the first. Pure.
+ * (`--model-auth`, `BoxRecord.borrowedCredentials`) and declares that login as
+ * one of its model-auth sources spends the lender's plan, so its sessions count
+ * under the lender's account. The borrow list is box-wide: an agent that runs on
+ * its own login in the same box keeps its own. `env:` sources are API keys from
+ * the host env and name no account. Several lenders: the first. Pure apart from
+ * the default `specOf` registry lookup.
  */
 export function subscriptionOf(
   box: Pick<BoxRecord, 'accounts' | 'borrowedCredentials'>,
   agent: string,
+  specOf: (agent: string) => Pick<AgentSyncSpec, 'modelAuth'> | undefined = findAgentSpec,
 ): string {
-  const lender = (box.borrowedCredentials ?? []).find(
-    (id) => !id.startsWith('env:') && id !== agent,
+  const borrows = new Set(
+    (specOf(agent)?.modelAuth?.sources ?? []).flatMap((s) =>
+      s.kind === 'agent' ? [s.agent as string] : [],
+    ),
   );
+  const lender = (box.borrowedCredentials ?? []).find((id) => id !== agent && borrows.has(id));
   const owner = lender ?? agent;
   return `${owner}/${box.accounts?.[owner] ?? 'default'}`;
 }

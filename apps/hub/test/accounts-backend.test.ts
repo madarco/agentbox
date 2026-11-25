@@ -58,18 +58,42 @@ describe('subscriptionOf', () => {
     expect(subscriptionOf({ accounts: { claude: 'work' } }, 'claude')).toBe('claude/work');
   });
 
+  const specs = (agent: string) =>
+    agent === 'claude'
+      ? {}
+      : {
+          modelAuth: {
+            sources: [
+              { kind: 'agent' as const, agent: 'claude', label: 'Claude' },
+              { kind: 'agent' as const, agent: 'codex', label: 'Codex' },
+            ],
+          },
+        };
+
   it('counts a borrowed login under the lender', () => {
     expect(
       subscriptionOf(
         { borrowedCredentials: ['claude'], accounts: { claude: 'personal' } },
         'opencode',
+        specs,
       ),
     ).toBe('claude/personal');
-    expect(subscriptionOf({ borrowedCredentials: ['codex'] }, 'pi')).toBe('codex/default');
+    expect(subscriptionOf({ borrowedCredentials: ['codex'] }, 'pi', specs)).toBe('codex/default');
+  });
+
+  it('keeps an agent that does not consume the borrowed login on its own', () => {
+    // A box that borrows codex for pi, where claude runs on its own login.
+    expect(
+      subscriptionOf(
+        { borrowedCredentials: ['codex'], accounts: { claude: 'work' } },
+        'claude',
+        specs,
+      ),
+    ).toBe('claude/work');
   });
 
   it('ignores env: sources, which name no account', () => {
-    expect(subscriptionOf({ borrowedCredentials: ['env:OPENAI_API_KEY'] }, 'pi')).toBe(
+    expect(subscriptionOf({ borrowedCredentials: ['env:OPENAI_API_KEY'] }, 'pi', specs)).toBe(
       'pi/default',
     );
   });

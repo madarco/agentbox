@@ -117,6 +117,12 @@ function subscriptionFromUrl(): string | undefined {
   return new URLSearchParams(window.location.search).get('subscription')?.trim() || undefined;
 }
 
+/** Every subscription key with recorded usage, whatever the page's filters. */
+async function fetchUsedSubscriptions(): Promise<string[]> {
+  const r = await fetchUsage({ by: 'account', limit: '1000' });
+  return r.groups.flatMap((g) => (g.keys.account ? [g.keys.account] : []));
+}
+
 async function fetchAccounts(): Promise<SubscriptionAccount[]> {
   const r = await fetch('/api/v1/accounts', { credentials: 'same-origin' });
   if (!r.ok) return [];
@@ -128,6 +134,7 @@ export default function UsagePage() {
   // Unset until the URL is read on mount, so the first load already filters.
   const [filters, setFilters] = useState<Partial<Record<FilterDim, string>> | null>(null);
   const [accounts, setAccounts] = useState<SubscriptionAccount[]>([]);
+  const [usedKeys, setUsedKeys] = useState<string[]>([]);
   const [daily, setDaily] = useState<Report | null>(null);
   const [tables, setTables] = useState<Partial<Record<Dim, Report>>>({});
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +144,9 @@ export default function UsagePage() {
     setFilters(sub ? { account: sub } : {});
     void fetchAccounts()
       .then(setAccounts)
+      .catch(() => {});
+    void fetchUsedSubscriptions()
+      .then(setUsedKeys)
       .catch(() => {});
   }, []);
 
@@ -190,14 +200,11 @@ export default function UsagePage() {
     const opts = new Map<string, string>(
       accounts.map((a) => [subscriptionKey(a), subscriptionLabel(a)]),
     );
-    for (const g of tables.account?.groups ?? []) {
-      const k = g.keys.account;
-      if (k && !opts.has(k)) opts.set(k, k);
-    }
+    for (const k of usedKeys) if (!opts.has(k)) opts.set(k, k);
     const cur = filters?.account;
     if (cur && !opts.has(cur)) opts.set(cur, usageKeyLabel(cur, accounts));
     return [...opts.entries()].sort(([, x], [, y]) => x.localeCompare(y));
-  }, [accounts, tables.account, filters?.account]);
+  }, [accounts, usedKeys, filters?.account]);
 
   const totals = daily?.totals;
   const days = RANGES.find((r) => r.id === range)!.days;

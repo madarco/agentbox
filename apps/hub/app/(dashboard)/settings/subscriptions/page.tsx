@@ -96,12 +96,15 @@ export default function SubscriptionsPage() {
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ accounts: Account[]; agents: AgentKinds[] }>('');
+      // Usage is a side fact: the cards render without it.
+      const [r, week] = await Promise.all([
+        api<{ accounts: Account[]; agents: AgentKinds[] }>(''),
+        loadWeekTokens().catch(() => null),
+      ]);
       setAccounts(r.accounts);
       setAgents(r.agents);
+      setWeekTokens(week);
       setError(null);
-      // Usage is a side fact: the cards render without it.
-      setWeekTokens(await loadWeekTokens().catch(() => null));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
