@@ -30,6 +30,8 @@ export interface FilesSection {
   /** Shown next to the title in mono, e.g. the custody slug. */
   subtitle?: string;
   href?: string;
+  /** Hub projects that share this section's files (one repo, several folders). */
+  projects?: { id: string; name: string; href: string }[];
   rows: FilesRow[];
 }
 
@@ -169,23 +171,23 @@ export function originPath(url: string): string | null {
 }
 
 /**
- * The hub project a custody slug belongs to: the one that registered that slug,
- * else the one whose origin has the slug's path, else the only project whose
- * folder name is the slug's repo name. Null when none (or more than one by
- * name alone) matches.
+ * The hub projects a custody slug belongs to: the one that registered that
+ * slug, else every project whose origin has the slug's path (one repo can be
+ * several project folders), else the only project whose folder name is the
+ * slug's repo name. Empty when none (or more than one by name alone) matches.
  */
-export function matchProject<P extends NonNullable<FilesJoin['projects']>[number]>(
+export function matchProjects<P extends NonNullable<FilesJoin['projects']>[number]>(
   slug: string,
   projects: readonly P[],
-): P | null {
+): P[] {
   const exact = projects.find((p) => p.projectSlug === slug);
-  if (exact) return exact;
+  if (exact) return [exact];
   const { path } = readProjectSlug(slug);
-  const byOrigin = projects.find((p) => p.originUrl && originPath(p.originUrl) === path);
-  if (byOrigin) return byOrigin;
+  const byOrigin = projects.filter((p) => p.originUrl && originPath(p.originUrl) === path);
+  if (byOrigin.length) return byOrigin;
   const name = path.split('/').pop() ?? path;
   const byName = projects.filter((p) => (p.repo ?? p.name) === name || p.name === name);
-  return byName.length === 1 ? byName[0]! : null;
+  return byName.length === 1 ? byName : [];
 }
 
 function projectFileDetail(rel: string): string | undefined {
@@ -200,7 +202,8 @@ function projectSections(entries: readonly CustodyEntry[], join: FilesJoin): Fil
   const bySlug = bucket(entries, (e) => e.path.split('/')[1] ?? null);
   return [...bySlug.entries()]
     .map(([slug, list]): FilesSection => {
-      const project = matchProject(slug, join.projects ?? []);
+      const matched = matchProjects(slug, join.projects ?? []);
+      const project = matched.length === 1 ? matched[0] : undefined;
       const read = readProjectSlug(slug);
       const rows = list
         .map((e) => {
@@ -213,6 +216,14 @@ function projectSections(entries: readonly CustodyEntry[], join: FilesJoin): Fil
         title: project?.name ?? read.path,
         subtitle: read.host ? `${read.host}/${read.path}` : read.path,
         href: project ? `/projects/${encodeURIComponent(project.id)}` : undefined,
+        projects:
+          matched.length > 1
+            ? matched.map((p) => ({
+                id: p.id,
+                name: p.name,
+                href: `/projects/${encodeURIComponent(p.id)}`,
+              }))
+            : undefined,
         rows,
       };
     })
@@ -301,7 +312,7 @@ function bakeSections(entries: readonly CustodyEntry[]): FilesSection[] {
 
 function boxFileKind(rel: string): string {
   const head = rel.split('/')[0];
-  if (head === 'ssh') return 'SSH key';
+  if (head === 'ssh' || /^id_/.test(rel)) return 'SSH key';
   if (rel === 'skills.json') return 'Served skills';
   if (head === 'cp' || head === 'cp-out') return 'Copied files';
   return rel;
@@ -316,7 +327,9 @@ function boxSections(entries: readonly CustodyEntry[], join: FilesJoin): FilesSe
         ...new Set(files.map((f) => boxFileKind(f.path.split('/').slice(2).join('/')))),
       ];
       return rollup(key, box ? box.id : key, files, {
-        detail: box ? kinds.join(', ') : `${kinds.join(', ')} · box no longer listed`,
+        detail: box
+          ? [box.task, kinds.join(', ')].filter(Boolean).join(' · ')
+          : `${kinds.join(', ')} · box no longer listed`,
         hint: box?.sandboxId && box.sandboxId !== box.id ? box.sandboxId : undefined,
         href: box ? `/boxes/${encodeURIComponent(box.id)}` : undefined,
       });

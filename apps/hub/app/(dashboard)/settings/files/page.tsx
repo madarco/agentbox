@@ -208,6 +208,18 @@ function GroupView({ group }: { group: FilesGroup }) {
                 ) : (
                   <span className="truncate text-[13.5px] font-medium">{s.title}</span>
                 )}
+                {s.projects ? (
+                  <span className="truncate text-[12px] text-muted-foreground">
+                    {s.projects.map((p, i) => (
+                      <span key={p.id}>
+                        {i ? ', ' : ''}
+                        <Link href={p.href} className="hover:underline">
+                          {p.name}
+                        </Link>
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
                 {s.subtitle && s.subtitle !== s.title ? (
                   <span className="truncate font-mono text-[11px] text-[#a4a9b0]">
                     {s.subtitle}

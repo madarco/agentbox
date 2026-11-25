@@ -3,7 +3,7 @@ import type { CustodyEntry } from '../lib/custody-view';
 import {
   FILES_GROUP_ORDER,
   buildFilesView,
-  matchProject,
+  matchProjects,
   originPath,
   readProjectSlug,
   type FilesGroup,
@@ -46,24 +46,40 @@ describe('originPath', () => {
   });
 });
 
-describe('matchProject', () => {
+describe('matchProjects', () => {
   const projects = [
     { id: 'p1', name: 'web', repo: 'web', originUrl: null, projectSlug: null },
     { id: 'p2', name: 'api', repo: 'api', originUrl: 'git@github.com:acme/api.git' },
     { id: 'p3', name: 'Tools', repo: 'tools', projectSlug: 'github.com__acme__tools' },
   ];
   it('prefers the registered slug, then the origin, then a unique folder name', () => {
-    expect(matchProject('github.com__acme__tools', projects)?.id).toBe('p3');
-    expect(matchProject('github.com__acme__api', projects)?.id).toBe('p2');
-    expect(matchProject('github.com__acme__web', projects)?.id).toBe('p1');
-    expect(matchProject('github.com__acme__nope', projects)).toBeNull();
+    expect(matchProjects('github.com__acme__tools', projects).map((p) => p.id)).toEqual(['p3']);
+    expect(matchProjects('github.com__acme__api', projects).map((p) => p.id)).toEqual(['p2']);
+    expect(matchProjects('github.com__acme__web', projects).map((p) => p.id)).toEqual(['p1']);
+    expect(matchProjects('github.com__acme__nope', projects)).toEqual([]);
   });
   it('refuses an ambiguous folder-name match', () => {
     const twins = [
       { id: 'a', name: 'web', repo: 'web' },
       { id: 'b', name: 'web', repo: 'web' },
     ];
-    expect(matchProject('github.com__acme__web', twins)).toBeNull();
+    expect(matchProjects('github.com__acme__web', twins)).toEqual([]);
+  });
+  it('returns every project folder of one repo', () => {
+    const folders = [
+      { id: 'root', name: 'workspace', originUrl: 'git@github.com:acme/mono.git' },
+      { id: 'sub', name: 'express-ready', originUrl: 'git@github.com:acme/mono.git' },
+    ];
+    expect(matchProjects('github.com__acme__mono', folders).map((p) => p.id)).toEqual([
+      'root',
+      'sub',
+    ]);
+    const section = buildFilesView([entry('projects/github.com__acme__mono/seed/manifest.json')], {
+      projects: folders,
+    })[0]!.sections[0]!;
+    expect(section.title).toBe('acme/mono');
+    expect(section.href).toBeUndefined();
+    expect(section.projects?.map((p) => p.name)).toEqual(['workspace', 'express-ready']);
   });
 });
 
