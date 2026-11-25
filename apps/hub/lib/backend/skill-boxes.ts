@@ -117,8 +117,11 @@ export async function syncSkillBoxes(
   /**
    * `recorded`: every box that ever pulled from this hub, behind or not (an
    * unskipped skill is in no box's record, so "behind" can't find them).
+   * `holding`: every box that was served one of these skills, behind or not
+   * (a repaired tarball of the version it already names). Skipped names never
+   * count: a box drops those.
    */
-  opts: { boxIds?: string[]; names?: string[]; recorded?: boolean } = {},
+  opts: { boxIds?: string[]; names?: string[]; recorded?: boolean; holding?: string[] } = {},
 ): Promise<SkillSyncOutcome[]> {
   let targets: string[];
   const explicit = opts.boxIds !== undefined;
@@ -136,15 +139,17 @@ export async function syncSkillBoxes(
       deps.log(`skills: fan-out skipped: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
+    const holding = opts.holding ? new Set(opts.holding.filter((n) => !skipped.has(n))) : null;
+    if (holding && holding.size === 0) return [];
     targets = [];
     for (const id of ids) {
       const st = await boxSkillsStatus(deps.store, id, skipped).catch(() => null);
-      if (
-        opts.recorded
-          ? st?.recordedAt !== undefined
-          : st?.skills.some((s) => s.behind && (!want || want.has(s.name)))
-      )
-        targets.push(id);
+      const hit = opts.recorded
+        ? st?.recordedAt !== undefined
+        : holding
+          ? st?.skills.some((s) => holding.has(s.name))
+          : st?.skills.some((s) => s.behind && (!want || want.has(s.name)));
+      if (hit) targets.push(id);
     }
   }
   const out: SkillSyncOutcome[] = [];

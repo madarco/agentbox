@@ -2,7 +2,8 @@
 
 **Status:** Phases 1, 2, 3a, 3b and 4 done (2026-11-25, `feat/hub-settings-nav`,
 `feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-limits`,
-`feat/hub-settings-files`), plus the per-skill skip (`feat/hub-settings-skill-skip`). Phase 3c not
+`feat/hub-settings-files`), plus the per-skill skip (`feat/hub-settings-skill-skip`) and the fix for skill uploads over 10 MB
+stored truncated (`fix/skill-upload-truncated`). Phase 3c not
 started (its Phase 0 first).
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
@@ -190,6 +191,17 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   Send (landed on disk), and a nested docker claude box from `examples/express-ready` received every
   library skill in `/etc/claude-code/.claude/skills`. The remote-hub half of "Done" was not run (see
   Backlog).
+- **Fix: uploads over 10 MB were stored truncated.** `proxy.ts` gates `/api/v1`, so Next buffers
+  every request body for it and kept only the first 10 MB (`experimental.proxyClientMaxBodySize`);
+  a 17.8 MB skill was stored as a 10,483,944-byte tarball that failed gzip and every box sync. The
+  cap is now 110 MB (just above the route's 100 MiB custody blob cap; it is held before auth), and `importSkill` buffers
+  the whole body and checks it before storing: the length against `Content-Length`, then gunzip +
+  tar + tree hash against the named version (400 otherwise, 413 over the cap). A current version
+  stored before this is checked once on the next listing and marked `verified` or `broken`; a
+  broken one shows as "broken copy" on the page, compares `differs` (PC newer) so a Pull replaces
+  it, and Send refuses it. A repair (same current version, rewritten tarball) re-syncs every box
+  holding the skill, since a box whose install failed is not `behind`. Content over 100 MiB unpacked
+  (what a box installs) is its own 413. Box sync already fails only that skill.
 
 ### Phase 2b — a persistent "skip" per skill — done
 
@@ -442,11 +454,10 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
   with only a "different copies" note. A per-dir view of the PC side would make this visible.
 - **Pull of a differing skill overwrites the hub's current version** without showing the diff first
   (the TUI does the same). A "compare" view of PC vs hub content would help before *Sync all*.
-- **Skill uploads over ~10 MB are stored truncated** (found in the skip live check, not caused by it):
-  the first seed stored `ux-writing` (17.8 MB tree) as a 10,483,944-byte tarball that fails `gzip -t`,
-  with that truncated size in its meta, so every box sync fails on it (`not a gzip tarball: unexpected
-  end of file`). The likely cause is a ~10 MB request-body cap in front of the upload route; the import
-  should fail loudly instead of storing a cut blob. Not reproduced in isolation yet.
+- **Pre-auth body buffer (known trade-off).** `experimental.proxyClientMaxBodySize: '110mb'` lets Next
+  buffer up to 110 MB of a request body before `proxy.ts` checks auth, on every proxied route. On an
+  exposed hub or a control box, a few concurrent unauthenticated large bodies cost that much memory
+  each. The alternative is a skill upload route outside the proxy matcher with its own auth.
 - **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin
   token there (the API key is refused).
 - **Vendor per agent** (3a): the Anthropic / OpenAI grouping is a map in `apps/hub/lib/subscriptions.ts`

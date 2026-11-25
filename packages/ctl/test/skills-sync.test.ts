@@ -126,6 +126,22 @@ describe('syncBoxSkills', () => {
     expect(readFileSync(join(d.root, 'alpha', 'SKILL.md'), 'utf8')).toContain('one');
   });
 
+  it('a truncated blob fails only that skill; the others install', async () => {
+    const d = dirs();
+    const a = skill('alpha', 'one');
+    const b = skill('beta', 'two');
+    const cut = { ...b, tar: b.tar.subarray(0, Math.floor(b.tar.length / 2)) };
+    const r = await syncBoxSkills({
+      ...d,
+      linkDirs: [d.linkDir],
+      log: () => {},
+      rpc: host([a, cut], { chunk: 16 }).rpc,
+    });
+    expect(r.installed).toEqual(['alpha']);
+    expect(r.failed.map((f) => f.name)).toEqual(['beta']);
+    expect(existsSync(join(d.root, 'beta'))).toBe(false);
+  });
+
   it('never replaces an entry in an injection dir that ctl did not create', async () => {
     const d = dirs();
     mkdirSync(join(d.linkDir, 'alpha'), { recursive: true });

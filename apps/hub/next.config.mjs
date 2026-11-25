@@ -19,6 +19,15 @@ const config = {
     serverActions: {
       allowedOrigins: ['agentbox.localhost'],
     },
+    // proxy.ts gates /api/v1, so Next buffers every request body through it and
+    // by default keeps only the first 10 MB: a bigger skill upload reached the
+    // route cut short and was stored truncated. This buffer is held before the
+    // gate checks auth, so it stays near the route's own default cap
+    // (AGENTBOX_CUSTODY_MAX_BLOB_BYTES, 100 MiB) instead of far above it. It is
+    // fixed at build time: a hub that raises the custody cap past it gets a
+    // clear "cut short" 400 from the route's Content-Length check, never a
+    // stored truncated blob.
+    proxyClientMaxBodySize: '110mb',
   },
   // The configuration pages live under /settings. Three old paths have callers
   // that already shipped outside the hub (the tray's "Review skills in Hub", the

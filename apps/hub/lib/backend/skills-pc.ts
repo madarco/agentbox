@@ -13,11 +13,9 @@ import {
   agentsForSkillDirs,
   compareSkills,
   isOutOfSync,
-  readTar,
   skillDirOfPath,
   EXPOSED_HUB_ENV,
   SKILL_NAME_RE,
-  treeHash,
   type AgentSkillDirs,
   type InstallOutcome,
   type PcSkill,
@@ -27,6 +25,7 @@ import {
   importSkill,
   listSkills,
   openSkillTarball,
+  tarballProblem,
   SkillsError,
   type SkillsStore,
   type SkillSummary,
@@ -62,6 +61,7 @@ export interface PcSkillsBackendDeps {
   runDevice?(deviceId: string, label: string, method: string, params: unknown): Promise<PcReach>;
   /** `current` moved for these skills: running boxes sync. */
   skillsChanged(names: string[]): void;
+  skillsRepaired?(names: string[]): void;
   /** Registry agents and their PC skill dirs (tests). */
   agentDirs?(): AgentSkillDirs[];
   /** Override {@link COMPARE_TIMEOUT_MS} (tests). */
@@ -84,7 +84,7 @@ export interface SkillCompareRow {
   /** The agents whose PC skill dirs it came from. Information only. */
   agents: string[];
   /** Present when the hub holds it. */
-  hub?: { current: string; updatedAt: string; pending: boolean };
+  hub?: { current: string; updatedAt: string; pending: boolean; broken?: string };
   /** Present when the PC holds it. */
   pc?: {
     treeSha: string;
@@ -290,6 +290,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
         current: s.current,
         updatedAt: s.updatedAt,
         pending: s.pending !== undefined,
+        ...(s.broken ? { broken: s.broken } : {}),
       });
 
       let pcSkills: PcSkill[] | null = null;
@@ -333,8 +334,13 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
           name: c.name,
           description: hub?.description || pc?.description || '',
           // No tree hash: the PC couldn't read its copy (too big, unreadable).
-          status: c.status !== 'skipped' && pc && pc.treeSha === '' ? 'unknown' : c.status,
-          ...(c.newer ? { newer: c.newer } : {}),
+          // A skipped row stays skipped; a broken hub copy of the very version
+          // the PC has is not in sync: a Pull re-uploads it whole.
+          ...(c.status !== 'skipped' && pc && pc.treeSha === ''
+            ? { status: 'unknown' as const }
+            : hub?.broken && c.status === 'same'
+              ? { status: 'differs' as const, newer: 'local' as const }
+              : { status: c.status, ...(c.newer ? { newer: c.newer } : {}) }),
           agents: pc ? pc.agents : hub ? hubSkillAgents(hub, agents) : [],
           ...(hub ? { hub: hubRow(hub) } : {}),
           ...(pc
@@ -369,6 +375,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       const max = deps.maxTarballBytes?.();
       const out: PullResult[] = [];
       const changed: string[] = [];
+      const repaired: string[] = [];
       let stalled = false;
       for (const name of names) {
         if (!SKILL_NAME_RE.test(name)) {
@@ -391,14 +398,8 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
         try {
           const got = parseExport(JSON.parse(r.stdout), name);
           const tar = Buffer.from(got.tarball, 'base64');
-          // The PC names the version; the hub re-derives it, so the library never
-          // stores a tree under an id it does not hash to.
-          const sha = treeHash(readTar(tar, max !== undefined ? { maxBytes: max } : {}));
-          if (sha !== got.version) {
-            throw new Error(
-              `files hash to ${sha.slice(0, 12)}, ${machine.label} said ${got.version.slice(0, 12)}`,
-            );
-          }
+          // The PC names the version; importSkill re-derives it, so the library
+          // never stores a tree under an id it does not hash to.
           // A confirm on a device can take minutes: a skip set meanwhile still wins.
           await assertNotSkipped(store, [name]);
           const res = await importSkill(store, {
@@ -414,6 +415,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
             ...(max !== undefined ? { maxBytes: max } : {}),
           });
           if (res.currentChanged) changed.push(name);
+          else if (res.blobReplaced) repaired.push(name);
           out.push({
             name,
             status: res.held ? 'held' : res.changed ? 'imported' : 'unchanged',
@@ -428,6 +430,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
         }
       }
       if (changed.length > 0) deps.skillsChanged(changed);
+      if (repaired.length > 0) deps.skillsRepaired?.(repaired);
       return out;
     },
 
@@ -450,6 +453,14 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
           for await (const c of t.data as AsyncIterable<Buffer>) chunks.push(c);
           tarball = Buffer.concat(chunks);
           version = t.version;
+          const broken = tarballProblem(tarball, version);
+          if (broken) {
+            throw new Error(
+              broken.tooBig
+                ? `${broken.message}, so it isn't sent`
+                : `the hub's copy is broken (${broken.message}); Pull it to the hub again from a PC that has it`,
+            );
+          }
         } catch (err) {
           out.push({
             name,

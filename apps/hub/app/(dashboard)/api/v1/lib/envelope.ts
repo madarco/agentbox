@@ -13,6 +13,7 @@ export type ApiErrorCode =
   | 'wrong_host'
   | 'forbidden'
   | 'rate_limited'
+  | 'payload_too_large'
   // Device enrollment (RFC 8628 vocabulary): the CLI's poll keeps going on the
   // first, and stops on the other two.
   | 'authorization_pending'
@@ -26,6 +27,7 @@ const STATUS_HINT: Record<ApiErrorCode, number> = {
   forbidden: 403,
   not_found: 404,
   rate_limited: 429,
+  payload_too_large: 413,
   authorization_pending: 400,
   access_denied: 400,
   expired_token: 400,

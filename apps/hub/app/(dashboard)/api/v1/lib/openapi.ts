@@ -5255,7 +5255,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Store a version of a skill',
           description:
-            "Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). Under the skill's `auto` policy the version becomes current and running boxes behind on it sync; under `manual` it waits as `pending`. `linked: true` in the metadata marks a PC's linked-folder upload. The newest 5 versions are kept, never dropping current or pending. Streamed into custody and capped by the hub custody blob cap. The first import ever marks the library seeded. A skipped name (`/skill-skips`) is refused with 409. Backs `agentbox skills --upload` and the automatic first seed.",
+            "Raw gzip tarball body of the normalized skill tree. Metadata rides the `X-AgentBox-Skill-Meta` header as base64 JSON: `{sha256, description, size, files, source?: {host, machineId, path}}`, where `sha256` is the tree hash the PC computed (the version id). Under the skill's `auto` policy the version becomes current and running boxes behind on it sync; under `manual` it waits as `pending`. `linked: true` in the metadata marks a PC's linked-folder upload. The newest 5 versions are kept, never dropping current or pending. The body is received whole and checked before anything is stored: a length other than `Content-Length` or a tarball that does not unpack to the tree `sha256` names is refused 400, one over the hub custody blob cap (`AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, default 100 MiB) or over 100 MiB unpacked 413. A skipped name (`/skill-skips`) is refused with 409. The first import ever marks the library seeded. Backs `agentbox skills --upload` and the automatic first seed.",
           parameters: [
             {
               name: 'X-AgentBox-Skill-Meta',
@@ -5278,6 +5278,7 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             '400': errorResponse,
             '409': errorResponse,
+            '413': errorResponse,
             '401': errorResponse,
             '503': errorResponse,
           },
@@ -6016,6 +6017,11 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             versions: { type: 'integer', description: 'Stored versions (max 5)' },
+            broken: {
+              type: 'string',
+              description:
+                "Why the current version's stored tarball is unusable (stored cut short before imports were verified). Boxes can't install it; a re-upload of the skill replaces it.",
+            },
           },
           required: ['name', 'description', 'current', 'size', 'files', 'updatedAt', 'versions'],
         },
@@ -6059,6 +6065,10 @@ export function buildOpenApi(): Record<string, unknown> {
                       current: { type: 'string' },
                       updatedAt: { type: 'string' },
                       pending: { type: 'boolean' },
+                      broken: {
+                        type: 'string',
+                        description: 'The stored copy is unusable; a Pull replaces it',
+                      },
                     },
                   },
                   pc: {

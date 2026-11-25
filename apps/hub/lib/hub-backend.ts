@@ -2226,6 +2226,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
       maxTarballBytes: () => globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES,
       skillsChanged: (names) => skills.skillsChanged(names),
+      skillsRepaired: (names) => skills.skillsRepaired(names),
     }),
   );
   // One per hub: it caches each account's last usage-endpoint read.

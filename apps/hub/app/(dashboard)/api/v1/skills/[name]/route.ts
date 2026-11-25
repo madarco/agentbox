@@ -49,15 +49,21 @@ export async function PUT(
     await assertNotSkipped(store, [name]);
     // DOM ReadableStream → node stream; the same bridge the custody blob route uses.
     const webBody = req.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>;
+    // The declared length: a body that arrives shorter (or longer) is refused
+    // rather than stored as a version, whatever cut it on the way.
+    const cl = req.headers.get('content-length')?.trim();
+    const declared = cl ? Number(cl) : NaN;
     const result = await importSkill(store, {
       name,
       meta,
       body: Readable.fromWeb(webBody),
+      ...(Number.isSafeInteger(declared) && declared >= 0 ? { expectedBytes: declared } : {}),
       ...(globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES !== undefined
         ? { maxBytes: globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES }
         : {}),
     });
     if (result.currentChanged) backendOrNull()?.skillsChanged([name]);
+    else if (result.blobReplaced) backendOrNull()?.skillsRepaired([name]);
     return ok(result);
   } catch (err) {
     return failFromSkills(err, 'skill import failed');
