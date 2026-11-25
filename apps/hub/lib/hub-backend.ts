@@ -56,7 +56,7 @@ import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
 import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
-import { switchBoxAccount } from './backend/account-switch';
+import { isSwitchingAccount, switchBoxAccount, withRecordAccounts } from './backend/account-switch';
 import { restartBoxAgent } from './backend/agent-restart';
 import { createSkillsBackend } from './backend/skills-backend';
 import { createPcSkillsBackend } from './backend/skills-pc';
@@ -1567,6 +1567,8 @@ async function findOrHydrateBox(id: string, hydrate?: HydrateFn): Promise<BoxRec
   return hydrate ? await hydrate(id) : null;
 }
 
+const SWITCHING_REFUSAL = 'the box is switching accounts; try again when the switch is done';
+
 async function runLifecycle(
   id: string,
   op: (box: BoxRecord, provider: Provider) => Promise<void>,
@@ -1575,6 +1577,7 @@ async function runLifecycle(
   try {
     const box = await findOrHydrateBox(id, hydrate);
     if (!box) return { ok: false, error: `box ${id} not found` };
+    if (isSwitchingAccount(box.id)) return { ok: false, error: SWITCHING_REFUSAL };
     const provider = await providerForBox(box);
     await op(box, provider);
     return { ok: true };
@@ -2620,6 +2623,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // created whose temp clone was cleaned) so `provider.destroy` tears down the
       // REAL cloud resource — not just a state reap.
       const box = await findOrHydrateBox(id, hydrate);
+      if (box && isSwitchingAccount(box.id)) return { ok: false, error: SWITCHING_REFUSAL };
       if (!box) {
         // Nothing under this id to tear down. Reap any dangling Store registration
         // + custody so it stops showing, but report `not found` — we did NOT
@@ -3619,7 +3623,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           revertSwitch: (boxId, previous) => revertAccountSwitch(boxId, previous),
           reregister: async (box) => {
             const reg = await handle.store.getBox(box.id).catch(() => undefined);
-            if (reg) await handle.store.registerBox({ ...reg, ...registrationFromRecord(box) });
+            if (reg) {
+              await handle.store.registerBox(
+                withRecordAccounts({ ...reg, ...registrationFromRecord(box) }, box),
+              );
+            }
           },
           now: () => new Date(),
           log: (line) => console.log(`[hub] account switch: ${line}`),

@@ -11,6 +11,7 @@ import {
   recordLastAgent,
   removeBoxRecord,
   reserveProjectIndex,
+  setBoxAccount,
   setBoxDisplayName,
   writeState,
 } from '../src/state.js';
@@ -26,6 +27,34 @@ describe('state.ts', () => {
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it('setBoxAccount moves one agent, keeps concurrent edits and never resurrects a box', async () => {
+    await recordBox(
+      {
+        id: 'a1',
+        name: 'demo',
+        container: 'agentbox-a1',
+        image: 'img',
+        workspacePath: '/tmp/ws',
+        snapshotDir: null,
+        createdAt: '2026-05-12T12:00:00.000Z',
+        accounts: { claude: 'work', codex: 'k' },
+      },
+      file,
+    );
+    await setBoxDisplayName('a1', 'renamed meanwhile', file);
+    await setBoxAccount('a1', 'claude', 'alt', file);
+    let b = (await readState(file)).boxes[0]!;
+    expect(b.accounts).toEqual({ claude: 'alt', codex: 'k' });
+    expect(b.displayName).toBe('renamed meanwhile');
+    await setBoxAccount('a1', 'claude', 'default', file);
+    await setBoxAccount('a1', 'codex', undefined, file);
+    b = (await readState(file)).boxes[0]!;
+    expect(b.accounts).toBeUndefined();
+    await removeBoxRecord('a1', file);
+    expect(await setBoxAccount('a1', 'claude', 'alt', file)).toBeUndefined();
+    expect((await readState(file)).boxes).toEqual([]);
   });
 
   it('recordAccountSwitch moves accounts and keeps the last 10 switches', async () => {

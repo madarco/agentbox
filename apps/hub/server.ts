@@ -470,16 +470,21 @@ async function main(): Promise<void> {
       onLimit: async () =>
         ((await loadEffectiveConfig(homedir())).effective.accounts?.onLimit ?? 'ask') as OnLimit,
       accounts: async () => (await backend.listAccounts()).accounts,
-      runningBoxes: async () =>
-        (await backend.getData()).boxes
+      runningBoxes: async () => {
+        const own = new Set((await readState()).boxes.map((b) => b.id));
+        return (await backend.getData()).boxes
           .filter((b) => b.status === 'running')
           .map((b) => ({
+            owned: own.has(b.id),
             id: b.id,
             name: b.name ?? b.id,
             provider: b.provider,
             agents: b.agents ?? (b.lastAgent ? [b.lastAgent] : []),
             ...(b.accounts ? { accounts: b.accounts } : {}),
-          })),
+          }));
+      },
+      loginSwitchable: (agent) =>
+        (AGENT_SYNC_SPECS.find((x) => x.id === agent)?.sessionFiles?.length ?? 0) > 0,
       confirm: async (boxId, message, detail) =>
         (
           await askPrompt(

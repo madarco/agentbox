@@ -19,8 +19,8 @@ import {
   accountEnvPolicy,
   findBox,
   readState,
-  recordBox,
   resolveAgentSpec,
+  setBoxAccount,
 } from '@agentbox/sandbox-core';
 import {
   inspectContainer,
@@ -32,7 +32,13 @@ import {
   type RunBoxSpec,
 } from './docker.js';
 import { startBox } from './lifecycle.js';
-import { removeSwitchImages, SWITCH_IMAGE_LABEL, SWITCH_IMAGE_REPO } from './switch-images.js';
+import {
+  PARKED_INFIX,
+  recoverParkedContainers,
+  removeSwitchImages,
+  SWITCH_IMAGE_LABEL,
+  SWITCH_IMAGE_REPO,
+} from './switch-images.js';
 
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -231,6 +237,8 @@ export async function recreateBoxOnAccount(
   const box = found.box;
   const originalAccounts = box.accounts ? { ...box.accounts } : undefined;
   const container = box.container;
+  // What an interrupted earlier switch left goes first.
+  await recoverParkedContainers(container);
   const state = await inspectContainerStatus(container);
   const refusal = recreateRefusal(box, o.agent, state);
   if (refusal) throw new Error(refusal);
@@ -282,7 +290,7 @@ export async function recreateBoxOnAccount(
 
   const wasRunning = state === 'running';
   const stamp = Date.now().toString(36);
-  const parked = `${container}-pre-switch-${stamp}`;
+  const parked = `${container}${PARKED_INFIX}${stamp}`;
   const image = `${SWITCH_IMAGE_REPO}:${box.id}-${stamp}`;
 
   if (wasRunning) {
@@ -307,52 +315,51 @@ export async function recreateBoxOnAccount(
     );
     await stopContainer(container);
   }
-  log('committing the box');
-  try {
-    await docker(['commit', '--change', `LABEL ${SWITCH_IMAGE_LABEL}=${box.id}`, container, image]);
-  } catch (err) {
-    if (wasRunning) await startBox(box.id).catch(() => undefined);
-    throw err;
-  }
 
-  if (o.sessionId) {
-    const globs = sessionGlobs(spec.sessionFiles ?? [], o.sessionId);
-    log(`copying session ${o.sessionId} to ${toVolume}`);
-    const copy = await withVolumes(
+  // From here every failure puts the box back as it was: the old container
+  // under its name, the record's accounts as they were, running if it was.
+  let committed = false;
+  let renamed = false;
+  let recorded = false;
+  try {
+    log('committing the box');
+    await docker(['commit', '--change', `LABEL ${SWITCH_IMAGE_LABEL}=${box.id}`, container, image]);
+    committed = true;
+
+    if (o.sessionId) {
+      const globs = sessionGlobs(spec.sessionFiles ?? [], o.sessionId);
+      log(`copying session ${o.sessionId} to ${toVolume}`);
+      const copy = await withVolumes(
+        image,
+        fromVolume,
+        toVolume,
+        // Each pattern is expanded by the shell under /from; a match is copied
+        // to the same relative path, ownership kept.
+        'cd /from && shopt -s nullglob && n=0; for g in "$@"; do for p in $g; do ' +
+          'mkdir -p "/to/$(dirname "$p")" && cp -a "$p" "/to/$(dirname "$p")/" && n=$((n+1)); ' +
+          'done; done; echo "$n"',
+        globs,
+      );
+      if (copy.code !== 0) throw new Error(`could not copy the session: ${copy.out}`);
+      if (copy.out.split('\n').pop() === '0') log('no session files found; the agent starts fresh');
+    }
+
+    const {
+      spec: runSpec,
+      init,
+      user,
+    } = respecFromInspect(live, {
+      name: container,
       image,
       fromVolume,
       toVolume,
-      // Each pattern is expanded by the shell under /from; a match is copied
-      // to the same relative path, ownership kept.
-      'cd /from && shopt -s nullglob && n=0; for g in "$@"; do for p in $g; do ' +
-        'mkdir -p "/to/$(dirname "$p")" && cp -a "$p" "/to/$(dirname "$p")/" && n=$((n+1)); ' +
-        'done; done; echo "$n"',
-      globs,
-    );
-    if (copy.code !== 0) {
-      await removeImage(image).catch(() => false);
-      if (wasRunning) await startBox(box.id).catch(() => undefined);
-      throw new Error(`could not copy the session: ${copy.out}`);
-    }
-    if (copy.out.split('\n').pop() === '0') log('no session files found; the agent starts fresh');
-  }
+      clearEnv,
+      setEnv: policy.inject,
+    });
 
-  const {
-    spec: runSpec,
-    init,
-    user,
-  } = respecFromInspect(live, {
-    name: container,
-    image,
-    fromVolume,
-    toVolume,
-    clearEnv,
-    setEnv: policy.inject,
-  });
-
-  log('recreating the box on the new account');
-  await docker(['rename', container, parked]);
-  try {
+    log('recreating the box on the new account');
+    await docker(['rename', container, parked]);
+    renamed = true;
     const argv = runBoxArgv(runSpec, { init });
     // `docker create`: the box comes up through startBox, which brings back
     // everything a start does (worktree binds, dockerd, ctl, VNC, sshd,
@@ -360,21 +367,23 @@ export async function recreateBoxOnAccount(
     argv.splice(0, 2, 'create');
     if (user && !argv.includes('--user')) argv.splice(1, 0, '--user', user);
     await docker(argv);
-    box.accounts = { ...(box.accounts ?? {}) };
-    if (isDefaultAccount(o.account)) delete box.accounts[o.agent];
-    else box.accounts[o.agent] = o.account;
-    if (Object.keys(box.accounts).length === 0) delete box.accounts;
-    await recordBox(box);
+    // Only the account moves, on the record as it is now: the box may have
+    // been edited (or removed) during the switch.
+    const updated = await setBoxAccount(box.id, o.agent, o.account);
+    if (!updated) throw new Error('the box was removed during the switch');
+    recorded = true;
     if (wasRunning) await startBox(box.id);
   } catch (err) {
     log(`switch failed, restoring the box: ${err instanceof Error ? err.message : String(err)}`);
-    await removeContainer(container);
-    await docker(['rename', parked, container]).catch(() => '');
-    if (originalAccounts) box.accounts = originalAccounts;
-    else delete box.accounts;
-    await recordBox(box).catch(() => undefined);
+    if (renamed) {
+      await removeContainer(container).catch(() => undefined);
+      await docker(['rename', parked, container]).catch(() => '');
+    }
+    if (recorded) {
+      await setBoxAccount(box.id, o.agent, originalAccounts?.[o.agent]).catch(() => undefined);
+    }
     if (wasRunning) await startBox(box.id).catch(() => undefined);
-    await removeImage(image).catch(() => false);
+    if (committed) await removeImage(image).catch(() => false);
     throw err;
   }
 

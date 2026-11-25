@@ -469,6 +469,15 @@ subscription runs it.
   confirm approval "box X is at the limit on A: switch to B?" (`ask`, never auto-approved) or is
   moved (`switch`) to the first other account of that agent not at its limit and usable by the box
   (a login only on docker, a token only with its secret). Once per box, account and reset time.
+- **Review fixes (#486):** the relay registration drops a named account when the box goes back to
+  `default` (or a switch is reverted), so a later login refresh is not filed under the account it
+  left; the limit watch only moves this hub's own boxes, holds one approval per box and agent, and
+  on a yes re-checks the box and re-picks the target; `nextAccount` skips a login the switch would
+  refuse (codex); a recreate puts the box back on any failure after the stop, writes only the
+  account onto the record as it is then (a box removed meanwhile stays removed), and a container
+  parked by an interrupted switch is brought back on the next start or switch and removed on
+  destroy; start, stop, pause, resume and destroy are refused while a switch runs; a cloud box can
+  go back to `default` when it was created on it.
 - **Live check (nested docker box from `examples/express-ready`, made-up tokens only):** a malformed
   setup token was refused (400). The switch to a made-up setup token restarted claude with
   `--resume` in 0.7 s: the conversation was there, the token was in the agent's env with

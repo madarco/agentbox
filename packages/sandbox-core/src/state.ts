@@ -207,6 +207,38 @@ export async function recordAccountSwitch(
 }
 
 /**
+ * Set one agent's account on a box record, touching nothing else: `default`
+ * (or undefined) drops the entry. Reads the record inside the state lock, so a
+ * long switch never writes back a stale copy; a box removed meanwhile is not
+ * brought back (undefined).
+ */
+export async function setBoxAccount(
+  boxId: string,
+  agent: string,
+  account: string | undefined,
+  path: string = STATE_FILE,
+): Promise<BoxRecord | undefined> {
+  let updated: BoxRecord | undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        const accounts = { ...(b.accounts ?? {}) };
+        if (!account || isDefaultAccount(account)) delete accounts[agent];
+        else accounts[agent] = account;
+        const rest = { ...b };
+        delete rest.accounts;
+        updated = Object.keys(accounts).length > 0 ? { ...rest, accounts } : rest;
+        return updated;
+      }),
+    }),
+    path,
+  );
+  return updated;
+}
+
+/**
  * Undo the last `recordAccountSwitch` of a box: `accounts` back to `previous`
  * and that entry dropped from the history. For a switch whose agent could not
  * be restarted (hub settings 3c), so the record never claims an account the

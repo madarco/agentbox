@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountSwitchRecord, AgentSyncSpec, BoxRecord } from '@agentbox/core';
 import {
+  createdOn,
+  isSwitchingAccount,
   switchBoxAccount,
   tokenShapeProblem,
+  withRecordAccounts,
   type AccountSwitchDeps,
 } from '../lib/backend/account-switch';
 
@@ -178,6 +181,71 @@ describe('switchBoxAccount failures', () => {
     expect((await switchBoxAccount(d, 'web', { account: 'tok' })).kind).toBe('refused');
     release();
     expect((await first).kind).toBe('ok');
+  });
+});
+
+describe('switch review fixes (#486)', () => {
+  it('a cloud box goes back to the default login it was created on, through the env path', async () => {
+    const { d, calls } = deps({
+      findBox: async () =>
+        box({
+          provider: 'hetzner',
+          accounts: { claude: 'tok' },
+          accountSwitches: [
+            { at: 'x', agent: 'claude', from: 'default', to: 'tok', how: 'env', reason: 'manual' },
+          ],
+        }),
+    });
+    const r = await switchBoxAccount(d, 'web', { account: 'default' });
+    expect(r).toMatchObject({ kind: 'ok', to: 'default', how: 'env' });
+    expect(calls).toEqual(['record:tok>default:env:manual', 'register', 'env-file', 'restart']);
+  });
+
+  it('a cloud box created on a named login cannot go to default', async () => {
+    const { d } = deps({
+      findBox: async () =>
+        box({
+          provider: 'hetzner',
+          accounts: { claude: 'tok' },
+          accountSwitches: [
+            { at: 'x', agent: 'claude', from: 'work', to: 'tok', how: 'env', reason: 'manual' },
+          ],
+        }),
+    });
+    expect((await switchBoxAccount(d, 'web', { account: 'default' })).kind).toBe('refused');
+    expect(createdOn(box({ accounts: { claude: 'work' } }), 'claude')).toBe('work');
+  });
+
+  it('a registration back on default drops the named account it left', () => {
+    expect(
+      withRecordAccounts<{ boxId: string; accounts?: Record<string, string> }>(
+        { boxId: 'b1', accounts: { claude: 'work' } },
+        {},
+      ),
+    ).toEqual({
+      boxId: 'b1',
+    });
+    expect(
+      withRecordAccounts<{ boxId: string; accounts?: Record<string, string> }>(
+        { boxId: 'b1' },
+        { accounts: { claude: 'tok' } },
+      ),
+    ).toEqual({
+      boxId: 'b1',
+      accounts: { claude: 'tok' },
+    });
+  });
+
+  it('marks the box as switching while the switch runs', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { d } = deps({ restartAgent: () => gate });
+    const p = switchBoxAccount(d, 'web', { account: 'tok' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(isSwitchingAccount('b1')).toBe(true);
+    release();
+    await p;
+    expect(isSwitchingAccount('b1')).toBe(false);
   });
 });
 

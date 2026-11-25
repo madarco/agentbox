@@ -49,6 +49,13 @@ function AgentAccountRow({
   const [target, setTarget] = useState(current);
   const [busy, setBusy] = useState(false);
   const cloud = box.provider !== 'docker';
+  // A cloud box can switch to one login only: `default`, when it was created on it.
+  const createdOn = (box.accountSwitches ?? []).find((s) => s.agent === agent)?.from ?? current;
+  const blocked = (a: Account) =>
+    cloud &&
+    a.kind === 'login' &&
+    a.id !== current &&
+    !(a.id === 'default' && createdOn === 'default');
   const rows = accounts.some((a) => a.id === current)
     ? accounts
     : [{ agent, id: current, kind: 'login', hasSecret: false, boxes: [] } as Account, ...accounts];
@@ -101,13 +108,9 @@ function AgentAccountRow({
             className="font-mono"
           >
             {rows.map((a) => (
-              <option
-                key={a.id}
-                value={a.id}
-                disabled={cloud && a.kind === 'login' && a.id !== current}
-              >
+              <option key={a.id} value={a.id} disabled={blocked(a)}>
                 {optionText(a)}
-                {cloud && a.kind === 'login' && a.id !== current ? ' · docker only' : ''}
+                {blocked(a) ? ' · docker only' : ''}
               </option>
             ))}
           </Select>

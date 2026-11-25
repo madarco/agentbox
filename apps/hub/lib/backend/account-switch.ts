@@ -101,6 +101,38 @@ export function tokenShapeProblem(
     : `the stored ${kind} does not look like a ${spec.id} ${kind} (${spec.id} would ignore it); paste it again`;
 }
 
+/** The account `agent` ran on when the box was created. Pure. */
+export function createdOn(
+  box: Pick<BoxRecord, 'accounts' | 'accountSwitches'>,
+  agent: string,
+): string {
+  return (
+    (box.accountSwitches ?? []).find((s) => s.agent === agent)?.from ??
+    box.accounts?.[agent] ??
+    'default'
+  );
+}
+
+/**
+ * A registration carrying the record's accounts and nothing older: a box back
+ * on `default` must not keep the named account it left, or the relay would
+ * file its next login refresh under that account. Pure.
+ */
+export function withRecordAccounts<T extends { accounts?: Record<string, string> }>(
+  reg: T,
+  box: Pick<BoxRecord, 'accounts'>,
+): T {
+  const out = { ...reg };
+  if (box.accounts && Object.keys(box.accounts).length > 0) out.accounts = { ...box.accounts };
+  else delete out.accounts;
+  return out;
+}
+
+/** True while a switch of `boxId` runs; lifecycle actions wait for it to end. */
+export function isSwitchingAccount(boxId: string): boolean {
+  return switching.has(boxId);
+}
+
 /** Boxes with a switch in progress: a second one (a click while the limit watch moves it) is refused. */
 const switching = new Set<string>();
 
@@ -153,8 +185,13 @@ async function switchLocked(
   let how: AccountSwitchRecord['how'] = 'env';
   let current = box;
   try {
-    if (kind === 'login') {
-      if (!isDocker) return { kind: 'refused', error: CLOUD_LOGIN_REFUSAL };
+    if (kind === 'login' && !isDocker) {
+      // The one login a cloud box can go back to is the one it was created on
+      // and still holds: `default`, after a switch to a token.
+      if (!isDefaultAccount(to) || !isDefaultAccount(createdOn(box, agent))) {
+        return { kind: 'refused', error: CLOUD_LOGIN_REFUSAL };
+      }
+    } else if (kind === 'login') {
       if (state === 'paused') {
         return {
           kind: 'refused',
