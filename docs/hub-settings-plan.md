@@ -154,6 +154,14 @@ tier from `identity.plan`, email, the boxes on it, this week's tokens (`GET /usa
 (paste a setup token / API key, or the `login` command to copy, as today), rename, remove (409 while
 a box uses it). An opencode / pi box that borrows a login (`--model-auth`) counts under the lender.
 
+**Usage per subscription** (part of 3a). The Usage page can already narrow to one account, but only
+by clicking a row of its "By account" breakdown, and an account id alone (`default`) is ambiguous
+across agents. Add a **Subscription** filter to the page's filter bar: a selector of `agent/account`
+pairs labelled like the cards ("Personal · Anthropic"), kept in the URL (`/usage?subscription=
+claude/personal`) so each subscription card links to its usage. The breakdown is renamed "By
+subscription" and shows the same labels. `GET /usage` takes the pair (`account=<agent>/<id>`),
+and a borrowed login's usage counts under the lender, as on the cards.
+
 **3b — limits. Phase 0 first** (measure before building):
 
 1. **Codex:** confirm `rate_limits` in the last `token_count` of a live session matches codex's own
@@ -193,7 +201,8 @@ never 0%.
 - Box record and payload: `BoxRecord.accounts` updated on switch, plus a short switch history for
   the box page.
 
-**Done (3a):** the page shows each real account with its boxes and tokens. **Done (3b):** a codex box
+**Done (3a):** the page shows each real account with its boxes and tokens; a card's usage link opens
+Usage filtered to that subscription, and the totals match the card. **Done (3b):** a codex box
 mid-turn shows its windows matching `/status`; an Ultra claude account shows weekly meters only.
 **Done (3c):** a docker claude box switched by hand continues the same conversation on the other
 account; with `onLimit: switch`, a box whose account hits the limit moves to the next one on its own;
@@ -221,7 +230,7 @@ a human group and nothing exposes file contents.
 | --- | --- | --- | --- |
 | `set-nav` | 1 | sidebar, topbar, route moves, redirects, docs, catalog shots; tray one-liner (coordinator) | first |
 | `set-skills` | 2 | `settings/skills`, a shared skills-compare package, PC relay host actions, CLI TUI on the shared code | after 1 merges |
-| `set-subs` | 3a → 3b PoC → 3b → 3c PoC → 3c | `settings/subscriptions`, accounts backend, history parser (codex `rate_limits`), top bar, box account switch across providers | after 1 merges |
+| `set-subs` | 3a → 3b PoC → 3b → 3c PoC → 3c | `settings/subscriptions`, Usage filter, accounts backend, history parser (codex `rate_limits`), top bar, box account switch across providers | after 1 merges |
 | `set-files` | 4 | `settings/files`, a custody view helper | after 1 merges |
 
 Phase 1 is small; holding the others until it merges avoids three boxes rebasing over moved files.
