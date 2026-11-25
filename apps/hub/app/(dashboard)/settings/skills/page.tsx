@@ -344,9 +344,9 @@ export default function SkillsPage() {
         <div className="min-w-0">
           <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Skills</h1>
           <div className="mt-1.5 text-sm text-muted-foreground">
-            The skills library every box on this hub gets. Add skills from git or a marketplace
-            here, or from a PC with{' '}
-            <span className="font-mono text-secondary-foreground">agentbox skills</span>.
+            The skills library every box on this hub gets, next to the skills on one of your
+            machines. Pull a machine’s skills to the Hub, send the Hub’s to it, or add from git or a
+            marketplace.
           </div>
         </div>
         <div className="ml-auto flex flex-none flex-wrap gap-2 max-md:ml-0">
@@ -532,7 +532,7 @@ export default function SkillsPage() {
             </div>
           ) : (
             <Card className="mt-4 overflow-hidden">
-              <div className="grid grid-cols-[minmax(0,1fr)_140px_190px_minmax(220px,auto)] gap-3 border-b border-border/60 px-5 py-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-[#a4a9b0] max-lg:hidden">
+              <div className="grid grid-cols-[minmax(0,1fr)_150px_170px_360px] gap-3 border-b border-border/60 px-5 py-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-[#a4a9b0] max-lg:hidden">
                 <span>Skill</span>
                 <span>Agents</span>
                 <span>Status</span>
@@ -648,7 +648,7 @@ function SkillTableRow({
         ? 'Only on Hub'
         : `${machine} offline`;
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_140px_190px_minmax(220px,auto)] items-start gap-3 px-5 py-3.5 max-lg:grid-cols-1">
+    <div className="grid grid-cols-[minmax(0,1fr)_150px_170px_360px] items-start gap-3 px-5 py-3.5 max-lg:grid-cols-1">
       <div className="flex min-w-0 items-start gap-3">
         <Icons.book className="mt-0.5 size-4 flex-none text-muted-foreground" />
         <div className="min-w-0">
