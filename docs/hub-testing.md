@@ -180,13 +180,13 @@ agentbox hub deploy hetzner --domain hub.example.com # your own hostname
 **`--ref` is how you test unreleased code**, and a CLI you built yourself falls back to it
 automatically (a dev version has nothing published to install).
 
-> **A from-source deploy needs swap on the default `cx23`.** `--ref` builds the monorepo on the
-> VPS, and the Next build does not fit in 4 GB with no swap: the kernel OOM-kills the build,
-> compose restarts it, and the box thrashes forever — both cores pegged with almost no network,
-> `sshd` too starved to finish a banner exchange, so it reads like a build that never ends.
-> Add swap before deploying a ref (`fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap
-> /swapfile && swapon /swapfile`, plus an `/etc/fstab` line), or deploy a `--package`, which
-> builds nothing on the box. Seen 2026-09-18 on the §F run.
+> **A from-source deploy gets swap automatically.** `--ref` builds the monorepo on the VPS, and
+> the Next build does not fit in 4 GB with no swap (seen 2026-09-18: the kernel OOM-killed the
+> build, compose restarted it, and the box thrashed with `sshd` too starved to answer). The
+> control-box cloud-init now makes a `/swapfile` before anything else
+> (`docs/cloud-providers.md` §3.5.1). A control box deployed before that change still needs it by
+> hand: `fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`,
+> plus an `/etc/fstab` line.
 
 ### Lifecycle
 

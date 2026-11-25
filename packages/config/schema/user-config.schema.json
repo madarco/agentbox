@@ -234,6 +234,10 @@
           "type": "string",
           "minLength": 1
         },
+        "swap": {
+          "type": "string",
+          "pattern": "^\\s*(?:[Aa][Uu][Tt][Oo]|[Oo][Nn]|[Oo][Ff][Ff]|[Nn][Oo][Nn][Ee]|[0-9]+\\s*(?:[MmGg](?:[Ii]?[Bb])?)?)\\s*$"
+        },
         "vercelTimeoutMs": {
           "type": "integer",
           "minimum": 1

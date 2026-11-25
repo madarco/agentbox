@@ -213,7 +213,9 @@ describe('box.swap', () => {
 
   it('is ignored by every non-VPS provider', () => {
     for (const p of ['daytona', 'vercel', 'e2b', 'docker', 'remote-docker']) {
-      expect(cloudSizingProviderOptions(p, makeCfg({ swap: 'off' })).swap).toBeUndefined();
+      expect(
+        cloudSizingProviderOptions(p, makeCfg({ swap: 'off', remoteDockerHost: 'me@host' })).swap,
+      ).toBeUndefined();
     }
   });
 });
