@@ -8,8 +8,11 @@ import { StatusBadge } from '@/components/status-badge';
 import { Alert } from '@/components/ui/alert';
 import { Card } from '@/components/ui/card';
 import { useStore } from '@/lib/boxes/store';
+import type { Box } from '@/lib/boxes/types';
+import { boxRunning } from '@/lib/live-status-view';
 import { BoxApprovals } from '../../approvals/components/box-approvals';
 import { Access } from '../components/access';
+import { agentLiveRows } from '../components/agent-live';
 import { BackLink } from '../components/back-link';
 import { BotPanel } from '../components/bot-panel';
 import { BoxActions } from '../components/box-actions';
@@ -79,6 +82,8 @@ export default function BoxDetailPage() {
         <Stat k="Last activity" v={<Ago ms={box.lastActivity} />} mono />
       </StatGrid>
 
+      <AgentSessions box={box} />
+
       {/* Access owns its "Access" heading and self-hides when the box has no
           web/VNC endpoint and no launchable host app. */}
       <Access box={box} />
@@ -126,5 +131,46 @@ export default function BoxDetailPage() {
         <DRow k="Created" v={new Date(box.createdAt).toLocaleString()} mono />
       </Card>
     </div>
+  );
+}
+
+/**
+ * Each reporting agent's session title, working-on line and tokens. Hidden when
+ * no agent has any of them (an older hub, or a box whose agent has not run).
+ */
+function AgentSessions({ box }: { box: Box }) {
+  const running = boxRunning(box);
+  const agents = Object.entries(box.agentStatus ?? {})
+    .map(([agent, entry]) => ({
+      agent,
+      entry,
+      rows: agentLiveRows(entry, running, box.task),
+    }))
+    .filter((a) => a.rows.length > 0)
+    .sort((a, b) => Number(b.agent === box.agent) - Number(a.agent === box.agent));
+  if (agents.length === 0) return null;
+  const many = agents.length > 1;
+  return (
+    <>
+      <SectionLabel>Agent session</SectionLabel>
+      <Card className="divide-y divide-border/60 overflow-hidden">
+        {agents.flatMap(({ agent, entry, rows }) =>
+          [
+            // The agent's state only while the box runs: a paused or stopped
+            // box keeps its last snapshot, which can still say `working`.
+            ...(many
+              ? [
+                  {
+                    k: 'Agent',
+                    v: running && entry.state ? `${agent} · ${entry.state}` : agent,
+                    mono: true,
+                  },
+                ]
+              : []),
+            ...rows,
+          ].map((r) => <DRow key={`${agent}-${r.k}`} k={r.k} v={r.v} mono={r.mono} />),
+        )}
+      </Card>
+    </>
   );
 }

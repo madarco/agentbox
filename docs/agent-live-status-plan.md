@@ -1,6 +1,6 @@
 # Agent live status: title, working-on line and tokens per box
 
-**Status:** Phases 0-3 done; Phase 4 (surfaces) is open. Open items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
+**Status:** Phases 0-3 done; Phase 4 done for the hub web, the CLI and the public docs (the tray is tracked separately). Open items: [`agent-live-status-backlog.md`](./agent-live-status-backlog.md).
 
 Every box should tell the hub, the web UI and the tray four things about the agent in it:
 
@@ -258,8 +258,18 @@ first prompt, a working-on line during a turn, and token totals that match the a
 
 ### Phase 4: surfaces
 
+**Done (hub web, CLI, docs):** the presentation rules live in `@agentbox/core`
+(`sync/live-status-view.ts`: `formatTokenCount`, `liveActivity`, `usageSummary`,
+`usageBreakdown`), mirrored client-side in `apps/hub/lib/live-status-view.ts` and held equal by a
+parity test. The working-on line shows only while the state is `working`, `waiting` or `question`
+(`ls`: only `working`), and only on a running box. The box row shows the title when it differs from
+the task, the working-on line and a token figure with a context bar; hover gives the breakdown,
+and cost appears only when positive. The box detail has an **Agent session** card. `ls` prints a
+`> <agent>: <activity>` line under a working box; `status --inspect` (text and `--json`
+`agentLive`) reads the hub row.
+
 - **Hub web:** the box row and box detail show the title, the working-on line and a token figure
-  (context fill on hover).
+  with an inline context-fill bar; hover gives the per-kind breakdown.
 - **Tray:** the box row shows the working-on line under the title, and tokens in the box submenu.
   Update `../agentbox-tray/CLAUDE.md`, since this changes the `/api/v1` Box payload.
 - **CLI:** `agentbox ls` adds the working-on line, and `agentbox inspect` adds everything.

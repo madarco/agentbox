@@ -12,7 +12,7 @@
  */
 import { parseAgentStatusEntry } from '@agentbox/core';
 import { openOnHost } from '@agentbox/sandbox-core';
-import type { AgentId, AgentMode, AgentStatusMap } from '@agentbox/core';
+import type { AgentId, AgentLiveUsageView, AgentMode, AgentStatusMap } from '@agentbox/core';
 import type { CreateJobRequestOpts } from '@agentbox/relay';
 
 /**
@@ -59,7 +59,18 @@ export interface HubApiBox {
    * Read it through `hubBoxAgentStatus`, never directly — that helper falls back
    * to the named fields so an older hub still renders.
    */
-  agentStatus?: Record<string, { state?: string; sessionTitle?: string; sessionId?: string }>;
+  agentStatus?: Record<
+    string,
+    {
+      state?: string;
+      updatedAt?: string;
+      sessionTitle?: string;
+      sessionId?: string;
+      /** Hub-derived working-on line (Phase 3); see `liveActivity` for when it applies. */
+      activity?: string;
+      usage?: AgentLiveUsageView;
+    }
+  >;
   claudeActivity?: string;
   codexActivity?: string;
   opencodeActivity?: string;
@@ -90,6 +101,15 @@ export interface HubApiBox {
   /** Other agents' logins this box borrows as model auth. */
   borrowedCredentials?: string[];
   topology?: string;
+}
+
+/**
+ * A hub row's effective runtime state: the host-only raw `state`, else the
+ * topology-agnostic `status` (the plane view and synthetic `job:` rows carry
+ * only that). Every "is it running" gate on a hub row reads this.
+ */
+export function hubBoxState(b: Pick<HubApiBox, 'state' | 'status'>): string {
+  return b.state ?? b.status;
 }
 
 /**

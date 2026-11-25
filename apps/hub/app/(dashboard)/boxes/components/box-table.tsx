@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { Box } from '@/lib/boxes/types';
+import { AgentLiveLine, BoxUsageFigure } from './agent-live';
 import { BoxActions } from './box-actions';
 
 export function BoxTable({ boxes }: { boxes: Box[] }) {
@@ -45,6 +46,7 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
                 <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
                   {box.id} · {box.host}
                 </div>
+                <AgentLiveLine box={box} />
               </TableCell>
               <TableCell className="max-md:hidden">
                 <span className="inline-flex max-w-full items-center gap-1.5 font-mono text-xs text-secondary-foreground">
@@ -62,6 +64,9 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
               </TableCell>
               <TableCell className="max-md:hidden">
                 <StatusBadge status={box.status} />
+                <div className="mt-1">
+                  <BoxUsageFigure box={box} />
+                </div>
               </TableCell>
               <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                 <BoxActions box={box} />

@@ -139,3 +139,14 @@ export {
   pushRefspecTarget,
   pushDestructiveReason,
 } from './git-refs.js';
+export type { AgentLiveUsageView } from './live-status-view.js';
+export {
+  contextFillPct,
+  formatCostUsd,
+  formatTokenCount,
+  isLiveActivityState,
+  liveActivity,
+  usageBreakdown,
+  usageSummary,
+  usageTotal,
+} from './live-status-view.js';

@@ -6,8 +6,15 @@ export function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+/**
+ * One line of at most `max` chars, with control characters blanked: the text
+ * comes from agent transcripts, and an ESC sequence in it must not reach a tty.
+ */
 export function clip(text: string | null | undefined, max: number): string {
-  const one = (text ?? '').replace(/\s+/g, ' ').trim();
+  const one = (text ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   return one.length > max ? `${one.slice(0, max - 1)}…` : one;
 }
 
