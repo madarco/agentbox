@@ -13,6 +13,7 @@ export type {
   HistoryIngestSink,
   HistoryMemorySink,
   HistoryOrigin,
+  HistoryLimitWindow,
   HistoryRecord,
   MemoryFileWire,
   MemoryOrigin,

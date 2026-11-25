@@ -35,6 +35,14 @@ function lineModule(id: string): AgentHistoryModule {
       const partial = lines.pop() ?? '';
       const records: HistoryRecord[] = lines.map((raw) => {
         const l = JSON.parse(raw) as Record<string, string | number>;
+        if (l.limits) {
+          return {
+            kind: 'limits',
+            windows: [{ id: 'primary', pct: Number(l.limits), windowMinutes: 10080 }],
+            ...(l.ts ? { ts: String(l.ts) } : {}),
+            at: chunk.offset,
+          };
+        }
         return {
           kind: 'usage',
           messageId: String(l.id),
@@ -257,6 +265,23 @@ describe('usage (Phase 7)', () => {
     expect(await svc.backfillAccounts()).toBe(1);
     expect((await repo.getSession('claude:s9'))!.account).toBe('claude/team');
     expect((await repo.getSession('claude:s8'))!.account).toBeNull();
+  });
+
+  it('keeps the newest limits per subscription, across its sessions (3b)', async () => {
+    const { svc, ship, repo } = await setup({ b1: 'work', b2: 'work', b3: '' });
+    await ship({ boxId: 'b1' }, 'codex', 'x1', [{ limits: 20, ts: day1 }]);
+    await ship({ boxId: 'b2' }, 'codex', 'x2', [{ limits: 55, ts: day2 }]);
+    // An older record shipped later does not win.
+    await ship({ boxId: 'b1' }, 'codex', 'x3', [{ limits: 10, ts: day1late }]);
+    await ship({ boxId: 'b3' }, 'codex', 'x4', [{ limits: 90, ts: day1 }]);
+    expect(await repo.accountLimits('codex/work')).toMatchObject({
+      windows: [{ id: 'primary', pct: 55, windowMinutes: 10080 }],
+      ts: day2,
+    });
+    expect((await repo.accountLimits('codex/default'))?.windows[0]?.pct).toBe(90);
+    expect(await repo.accountLimits('codex/none')).toBeNull();
+    // Limits are not turns or usage.
+    expect((await svc.usage({ by: [], tzOffsetMin: 0, limit: 10 })).totals.messages).toBe(0);
   });
 
   it('migrates a pre-Phase-7 store: message times filled from ts', async () => {

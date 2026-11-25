@@ -234,7 +234,33 @@ export type HistoryRecord =
       at: number;
     }
   /** Size of the last request's context, and the model's window when the agent records it. */
-  | { kind: 'context'; tokens: number; window?: number; ts?: string; at: number };
+  | { kind: 'context'; tokens: number; window?: number; ts?: string; at: number }
+  /**
+   * The plan-limit windows of the account the session runs on, as the agent
+   * last saw them (codex `token_count.rate_limits`). Account data, not the
+   * session's: the hub keeps the newest per account (hub settings Phase 3b).
+   */
+  | {
+      kind: 'limits';
+      windows: HistoryLimitWindow[];
+      /** The agent says a limit is hit (codex `rate_limit_reached_type`). */
+      reached?: string;
+      /** The plan the agent reports (codex `plan_type`). */
+      plan?: string;
+      ts?: string;
+      at: number;
+    };
+
+/** One plan-limit window: how much of it is used and when it resets. */
+export interface HistoryLimitWindow {
+  /** Stable within the source (`primary`, `secondary`). */
+  id: string;
+  /** Percent used, 0-100 (may exceed 100 at the limit). */
+  pct: number;
+  windowMinutes?: number;
+  /** ISO time the window resets. */
+  resetsAt?: string;
+}
 
 /** New bytes of one file, line-aligned at the start (the parser buffers the tail). */
 export interface RawChunk {

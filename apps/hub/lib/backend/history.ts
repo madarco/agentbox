@@ -17,6 +17,7 @@ import {
   type HistoryIngestResult,
   type HistoryIngestSink,
   type AgentHistoryModule,
+  type HistoryLimitWindow,
   type HistoryRecord,
   type ParseState,
 } from '@agentbox/core';
@@ -199,6 +200,17 @@ export function ftsQuery(q: string): string | null {
     .join(' ');
 }
 
+/** The plan limits a transcript last reported for an account (codex `rate_limits`). */
+export interface HistoryAccountLimits {
+  windows: HistoryLimitWindow[];
+  reached?: string;
+  plan?: string;
+  /** The record's own time, when the transcript had one. */
+  ts: string | null;
+  /** When the hub stored it, epoch ms. */
+  updatedAt: number;
+}
+
 /**
  * A session's live-status inputs (docs/agent-live-status-plan.md, Phase 3):
  * the newest working-on line, the plan line, context fill, the agent's own
@@ -287,6 +299,11 @@ export interface HistoryRepo {
   setSessionParserVersion(key: string, version: number): Promise<void>;
   /** Forget a session's live row (a re-parse derives it again). */
   clearLive(key: string): Promise<void>;
+  /**
+   * The newest plan limits a session on subscription `account`
+   * (`agent/account`) reported, or null (hub settings Phase 3b).
+   */
+  accountLimits(account: string): Promise<HistoryAccountLimits | null>;
   /** A session's live-status inputs, or null when it has none. */
   liveRow(key: string): Promise<HistoryLiveRow | null>;
   /** The most recent session `agent` ran in box `boxId`, by its own last activity. */
