@@ -1208,7 +1208,7 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'box.swap',
     type: 'string',
     description:
-      'Swap for VPS boxes (hetzner, digitalocean) and the control boxes `hub deploy` makes there. `auto` (default) = a `/swapfile` of min(RAM, 8 GiB), at least 2 GiB, at most a quarter of the free disk, made at boot by cloud-init; `off` = none (removes one a checkpoint carried); or a size like `4G` / `2048M`. Applies to boxes created after the change. Ignored by other providers (managed microVMs, your own remote-docker machine, Docker Desktop).',
+      'Swap for VPS boxes (hetzner, digitalocean). `auto` (default) = a `/swapfile` of min(RAM, 8 GiB), at least 2 GiB, at most a quarter of the free disk, made at boot by cloud-init; `off` = none (removes one a checkpoint carried); or a size like `4G` / `2048M`. Applies to boxes created after the change. Control boxes made by `hub deploy` always get `auto`. Ignored by other providers (managed microVMs, your own remote-docker machine, Docker Desktop).',
   },
   {
     key: 'box.vercelNetworkPolicy',

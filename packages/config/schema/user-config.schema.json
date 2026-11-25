@@ -236,7 +236,7 @@
         },
         "swap": {
           "type": "string",
-          "pattern": "^\\s*(?:[Aa][Uu][Tt][Oo]|[Oo][Nn]|[Oo][Ff][Ff]|[Nn][Oo][Nn][Ee]|[0-9]+\\s*(?:[MmGg](?:[Ii]?[Bb])?)?)\\s*$"
+          "pattern": "^\\s*(?:[Aa][Uu][Tt][Oo]|[Oo][Nn]|[Oo][Ff][Ff]|[Nn][Oo][Nn][Ee]|0|[0-9]+\\s*[MmGg])\\s*$"
         },
         "vercelTimeoutMs": {
           "type": "integer",

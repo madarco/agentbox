@@ -22,14 +22,14 @@ export type SwapSpec = 'auto' | 'off' | { mib: number };
 
 /**
  * Parse a `box.swap` value: `auto` (default; empty means auto), `off`, or a
- * size like `4G` / `2048M` (a bare number is GiB). Throws on anything else so a
+ * size like `4G` / `2048M` (the unit is required). Throws on anything else so a
  * typo surfaces at create instead of silently giving a box no swap.
  */
 export function parseSwapSpec(raw: string | undefined): SwapSpec {
   const value = (raw ?? '').trim().toLowerCase();
   if (value === '' || value === 'auto' || value === 'on') return 'auto';
   if (value === 'off' || value === 'none' || value === '0') return 'off';
-  const m = /^(\d+)\s*([mg])?i?b?$/.exec(value);
+  const m = /^(\d+)\s*([mg])$/.exec(value);
   if (m) {
     const n = Number(m[1]);
     const mib = m[2] === 'm' ? n : n * 1024;
@@ -75,19 +75,23 @@ FSTAB_LINE="$F none swap sw 0 0"
 log() { echo "agentbox-swap: $*"; }
 
 active() { swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$F"; }
+drop_fstab() {
+  if grep -q "^$F " "$FSTAB" 2>/dev/null; then sed -i "\\\\#^$F #d" "$FSTAB"; fi
+}
+# A failed create must not leave an fstab line pointing at a missing file.
+fail() { rm -f "$F"; drop_fstab; log "$1"; exit 1; }
 
 if [ "$MODE" = off ]; then
   if active; then swapoff "$F" || true; fi
-  if grep -q "^$F " "$FSTAB" 2>/dev/null; then
-    sed -i "\\\\#^$F #d" "$FSTAB"
+  drop_fstab
+  if [ -f "$SYSCTL_CONF" ]; then
+    rm -f "$SYSCTL_CONF"
+    sysctl -q -w vm.swappiness=60 >/dev/null 2>&1 || true
   fi
-  rm -f "$F" "$SYSCTL_CONF"
+  rm -f "$F"
   log "off"
   exit 0
 fi
-
-echo 'vm.swappiness=10' > "$SYSCTL_CONF"
-sysctl -q -w vm.swappiness=10 >/dev/null 2>&1 || true
 
 # Swap from somewhere else (not our file): respect it, add nothing.
 OTHER=$(swapon --show=NAME --noheadings 2>/dev/null | grep -vx "$F" | head -n 1)
@@ -95,6 +99,9 @@ if [ -n "$OTHER" ] && ! active; then
   log "existing swap $OTHER, not adding $F"
   exit 0
 fi
+
+echo 'vm.swappiness=10' > "$SYSCTL_CONF"
+sysctl -q -w vm.swappiness=10 >/dev/null 2>&1 || true
 
 MEM_MIB=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
 if [ "$MODE" = auto ]; then
@@ -133,14 +140,15 @@ else
   rm -f "$F"
   # fallocate is instant; dd covers filesystems where swapon rejects a
   # fallocated (unwritten-extent) file.
-  fallocate -l "\${WANT}M" "$F" 2>/dev/null || dd if=/dev/zero of="$F" bs=1M count="$WANT" status=none
+  fallocate -l "\${WANT}M" "$F" 2>/dev/null ||
+    dd if=/dev/zero of="$F" bs=1M count="$WANT" status=none || fail "cannot write $F"
   chmod 600 "$F"
-  mkswap "$F" >/dev/null || { rm -f "$F"; log "mkswap failed"; exit 1; }
+  mkswap "$F" >/dev/null || fail "mkswap failed"
   if ! swapon "$F" 2>/dev/null; then
     rm -f "$F"
-    dd if=/dev/zero of="$F" bs=1M count="$WANT" status=none
+    dd if=/dev/zero of="$F" bs=1M count="$WANT" status=none || fail "cannot write $F"
     chmod 600 "$F"
-    mkswap "$F" >/dev/null && swapon "$F" || { rm -f "$F"; log "swapon failed"; exit 1; }
+    mkswap "$F" >/dev/null && swapon "$F" || fail "swapon failed"
   fi
 fi
 

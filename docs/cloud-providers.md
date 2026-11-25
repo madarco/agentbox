@@ -1043,7 +1043,7 @@ control box now gets a `/swapfile` **at boot**, from cloud-init:
   were actually swapped out cost anything; a box that never swapped holds only
   unwritten (zero) extents, which the image compresses away.
 - **Config:** `box.swap` = `auto` (default) | `off` | a size (`4G`, `2048M`;
-  a bare number is GiB). Global or project config, carried to the backend as
+  the unit is required). Global or project config, carried to the backend as
   `providerOptions.swap` by `cloudSizingProviderOptions` (only when not `auto`)
   and validated by `parseSwapSpec` before any billable resource exists. `off`
   still runs the script, which removes a swapfile a checkpoint carried. Control

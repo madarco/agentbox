@@ -16,16 +16,17 @@ describe('parseSwapSpec', () => {
     ['0', 'off'],
     ['4G', { mib: 4096 }],
     ['4g', { mib: 4096 }],
-    ['4GiB', { mib: 4096 }],
     ['2048M', { mib: 2048 }],
-    ['6', { mib: 6144 }],
   ])('%j -> %j', (raw, want) => {
     expect(parseSwapSpec(raw)).toEqual(want);
   });
 
-  it.each(['lots', '4T', '-1G', '100M', '65G', '4.5G'])('rejects %j', (raw) => {
-    expect(() => parseSwapSpec(raw)).toThrow(/invalid box\.swap/);
-  });
+  it.each(['lots', '4T', '-1G', '100M', '65G', '4.5G', '2048', '4GiB', '4b'])(
+    'rejects %j',
+    (raw) => {
+      expect(() => parseSwapSpec(raw)).toThrow(/invalid box\.swap/);
+    },
+  );
 });
 
 describe('swapCloudInit', () => {
@@ -184,12 +185,27 @@ describe.runIf(process.platform === 'linux')('swap script (shimmed)', () => {
     expect(active()).toEqual([join(dir, 'swapfile')]);
   });
 
+  it('a resize that fails after removing the old file leaves no dangling fstab line', () => {
+    expect(run('2048').status).toBe(0);
+    expect(fstabLines()).toHaveLength(1);
+    writeFileSync(join(dir, 'state', 'swapon_fail'), '');
+    // dd is the fallback after a refused swapon; make it a no-op writer.
+    shim('dd', 'for a; do case "$a" in of=*) : > "${a#of=}";; esac; done');
+    const r = run('1024');
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('swapon failed');
+    expect(fstabLines()).toHaveLength(0);
+    expect(() => statSync(join(dir, 'swapfile'))).toThrow();
+  });
+
   it('leaves swap that is not ours alone', () => {
     writeFileSync(join(dir, 'state', 'active'), '/dev/zram0\n');
     const r = run('auto');
     expect(r.status).toBe(0);
     expect(r.out).toContain('existing swap /dev/zram0');
     expect(fstabLines()).toHaveLength(0);
+    // Not ours to tune either.
+    expect(() => statSync(join(dir, 'sysctl.conf'))).toThrow();
   });
 
   it('off removes the swapfile, its fstab line and the sysctl drop-in, and is repeatable', () => {
