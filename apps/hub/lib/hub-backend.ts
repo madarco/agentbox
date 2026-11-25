@@ -395,7 +395,10 @@ function mapStatus(b: ListedBox): BoxStatus {
 function hostLabel(b: ListedBox): string {
   const provider = b.provider ?? 'docker';
   if (provider === 'docker') return 'local · docker';
-  return b.cloud?.backend ? `${provider} · ${b.cloud.backend}` : provider;
+  // Every built-in cloud records its own name as the backend; only a backend
+  // that differs from the provider says anything.
+  const backend = b.cloud?.backend;
+  return backend && backend !== provider ? `${provider} · ${backend}` : provider;
 }
 
 /**

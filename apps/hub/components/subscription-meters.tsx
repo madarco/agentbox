@@ -4,7 +4,7 @@
 // the top bar's meter (design: control-shadcn/views-env.jsx). One meter per
 // limit window the account reports; none is ever invented.
 
-import { Icons, type Icon } from '@/components/icons';
+import { agentIcon, Icons, type Icon } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { agoText, resetText, type Account } from '@/lib/accounts-client';
 import { vendorOf } from '@/lib/subscriptions';
@@ -117,10 +117,9 @@ export function LimitsAge({ limits }: { limits: NonNullable<Account['limits']> }
   );
 }
 
-/** The glyph a subscription is drawn with: its agent's, or a key. */
+/** The glyph a subscription is drawn with: its agent's brand mark, or a key. */
 export function subGlyph(a: Pick<Account, 'agent' | 'kind'>): Icon {
-  if (a.kind === 'api-key') return Icons.key;
-  return a.agent === 'claude' ? Icons.claude : a.agent === 'codex' ? Icons.codex : Icons.key;
+  return agentIcon(a.agent, Icons.key);
 }
 
 export function SubMark({ account: a, className }: { account: Account; className?: string }) {
