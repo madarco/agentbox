@@ -411,3 +411,8 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - **Codex limits without a session** (3b): `wham/usage` would give a codex login's limits before its
   first session; the transcript is the only source today.
 - **Key spend** (3b): the design's "this month" for an API key needs a cost per account in usage.
+- **Store-only boxes and limits** (3b review): a box known only from its relay registration (a
+  control box's adopted boxes) carries its named accounts but no agents or state, so it never counts
+  under a `default` account and never triggers a claude limits read.
+- **One secret read per listing** (3b review): `GET /accounts` reads a claude account's secret file
+  for `hasSecret` and again for the usage token; the limits source also ignores a custom `store`.

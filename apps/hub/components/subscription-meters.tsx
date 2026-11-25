@@ -4,7 +4,7 @@
 // the top bar's meter (design: control-shadcn/views-env.jsx). One meter per
 // limit window the account reports; none is ever invented.
 
-import { Icons } from '@/components/icons';
+import { Icons, type Icon } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { resetText, type Account } from '@/lib/accounts-client';
 import { vendorOf } from '@/lib/subscriptions';
@@ -92,15 +92,14 @@ export function SubMeters({ account: a, compact }: { account: Account; compact?:
   );
 }
 
+/** The glyph a subscription is drawn with: its agent's, or a key. */
+export function subGlyph(a: Pick<Account, 'agent' | 'kind'>): Icon {
+  if (a.kind === 'api-key') return Icons.key;
+  return a.agent === 'claude' ? Icons.claude : a.agent === 'codex' ? Icons.codex : Icons.key;
+}
+
 export function SubMark({ account: a, className }: { account: Account; className?: string }) {
-  const Icon =
-    a.kind === 'api-key'
-      ? Icons.key
-      : a.agent === 'claude'
-        ? Icons.claude
-        : a.agent === 'codex'
-          ? Icons.codex
-          : Icons.key;
+  const Glyph = subGlyph(a);
   return (
     <span
       className={cn(
@@ -108,7 +107,7 @@ export function SubMark({ account: a, className }: { account: Account; className
         className,
       )}
     >
-      <Icon className="size-4" />
+      <Glyph className="size-4" />
     </span>
   );
 }

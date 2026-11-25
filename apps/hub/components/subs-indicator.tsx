@@ -10,20 +10,17 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Icons } from '@/components/icons';
-import { SubMark, SubMeters, TierBadge, subName, toneOf } from '@/components/subscription-meters';
+import {
+  SubMark,
+  SubMeters,
+  TierBadge,
+  subGlyph,
+  subName,
+  toneOf,
+} from '@/components/subscription-meters';
 import { agoText, rankInUse, topPct, useAccounts, type Account } from '@/lib/accounts-client';
 import { subscriptionKey } from '@/lib/subscriptions';
 import { cn } from '@/lib/utils';
-
-function glyph(a: Account) {
-  return a.kind === 'api-key'
-    ? Icons.key
-    : a.agent === 'claude'
-      ? Icons.claude
-      : a.agent === 'codex'
-        ? Icons.codex
-        : Icons.key;
-}
 
 function say(a: Account): string {
   if (!a.limits) return `${subName(a)}: no limit data`;
@@ -84,7 +81,7 @@ export function SubsIndicator() {
         onFocus={show}
       >
         {shown.map((a) => {
-          const Icon = glyph(a);
+          const Icon = subGlyph(a);
           const full = a.limits?.atLimit === true;
           const pct = Math.min(100, topPct(a));
           const windows = (a.limits?.windows ?? []).slice(0, 2);

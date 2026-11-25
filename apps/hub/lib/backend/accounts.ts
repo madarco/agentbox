@@ -283,6 +283,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         };
       }
       await removeStoredAccount(spec.id, id, store);
+      deps.limits?.forget(spec.id, id);
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);
       return {

@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CLAUDE_USAGE_URL,
+  FIRST_READ_WAIT_MS,
   LIMITS_REFRESH_MS,
   claudeUsageToken,
   claudeUsageWindows,
   codexLimits,
   createLimitsSource,
+  freshLimits,
+  type AccountLimits,
   windowLabel,
 } from '../lib/backend/account-limits';
 import { boxesOnSubscription } from '../lib/backend/accounts';
@@ -187,6 +190,31 @@ describe('createLimitsSource', () => {
     expect((await src.limitsFor('claude', 'ci', true))?.atLimit).toBe(false);
   });
 
+  it('a slow endpoint never holds the listing; its answer lands for the next read', async () => {
+    vi.useFakeTimers();
+    try {
+      const { src, fetch } = setup();
+      let answer!: (r: Response) => void;
+      fetch.mockImplementationOnce(() => new Promise<Response>((r) => (answer = r)));
+      const first = src.limitsFor('claude', 'slow', true);
+      await vi.advanceTimersByTimeAsync(FIRST_READ_WAIT_MS);
+      expect(await first).toBeUndefined();
+      answer(new Response(JSON.stringify(MAX_20X), { status: 200 }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await src.limitsFor('claude', 'slow', false))?.windows).toHaveLength(2);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forget drops a removed account, so a new one under the id starts empty', async () => {
+    const { src } = setup();
+    expect(await src.limitsFor('claude', 'work', true)).toBeDefined();
+    src.forget('claude', 'work');
+    expect(await src.limitsFor('claude', 'work', false)).toBeUndefined();
+  });
+
   it('codex reads the transcript, with no network call', async () => {
     const { src, fetch } = setup();
     expect(await src.limitsFor('codex', 'default', false)).toMatchObject({
@@ -212,5 +240,25 @@ describe('boxesOnSubscription', () => {
     expect(boxesOnSubscription(boxes, 'codex', 'default').map((b) => b.name)).toEqual(['c']);
     expect(boxesOnSubscription(boxes, 'claude', 'work').map((b) => b.name)).toEqual(['b', 'd']);
     expect(boxesOnSubscription(boxes, 'opencode', 'default')).toEqual([]);
+  });
+});
+
+describe('freshLimits', () => {
+  const l = (resets: string[]): AccountLimits => ({
+    windows: resets.map((r, i) => ({ id: String(i), label: String(i), pct: 100, resetsAt: r })),
+    atLimit: true,
+    updatedAt: '2026-11-25T08:00:00Z',
+    source: 'transcript',
+  });
+  const now = Date.parse('2026-11-25T10:00:00Z');
+
+  it('drops windows that have reset, and the at-limit that came with them', () => {
+    expect(freshLimits(l(['2026-11-25T09:00:00Z']), now)).toBeUndefined();
+    const mixed = freshLimits(l(['2026-11-25T09:00:00Z', '2026-11-28T09:00:00Z']), now);
+    expect(mixed?.windows.map((w) => w.id)).toEqual(['1']);
+    expect(mixed?.atLimit).toBe(true);
+    const current = l(['2026-11-28T09:00:00Z']);
+    expect(freshLimits(current, now)).toBe(current);
+    expect(freshLimits(undefined, now)).toBeUndefined();
   });
 });

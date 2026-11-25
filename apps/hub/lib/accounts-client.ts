@@ -8,22 +8,10 @@
 // nothing. Pure REST client.
 
 import { useEffect, useSyncExternalStore } from 'react';
+import type { AccountLimits, AccountLimitWindow } from '@/lib/boxes/backend-types';
 import type { AccountKind } from '@/lib/subscriptions';
 
-export interface LimitWindow {
-  id: string;
-  label: string;
-  pct: number;
-  resetsAt?: string;
-  windowMinutes?: number;
-}
-
-export interface AccountLimits {
-  windows: LimitWindow[];
-  atLimit: boolean;
-  updatedAt: string;
-  source: 'usage-api' | 'transcript';
-}
+export type { AccountLimits, AccountLimitWindow as LimitWindow };
 
 export interface Account {
   agent: string;
@@ -52,6 +40,7 @@ let snapshot: AccountsSnapshot = { accounts: null, agents: [], error: null };
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let inflight: Promise<void> | null = null;
+let queued: Promise<void> | null = null;
 let users = 0;
 
 function emit(next: AccountsSnapshot): void {
@@ -59,9 +48,19 @@ function emit(next: AccountsSnapshot): void {
   for (const l of listeners) l();
 }
 
-/** Fetch now (after an add, a label or a remove); concurrent calls share one request. */
+/**
+ * Fetch now (after an add, a label or a remove). A call made while a request
+ * is in flight queues one more after it: the running one may have started
+ * before the change and would answer with the old list.
+ */
 export function refreshAccounts(): Promise<void> {
-  if (inflight) return inflight;
+  if (inflight) {
+    queued ??= inflight.then(() => {
+      queued = null;
+      return refreshAccounts();
+    });
+    return queued;
+  }
   inflight = (async () => {
     try {
       const r = await fetch('/api/v1/accounts', { credentials: 'same-origin' });

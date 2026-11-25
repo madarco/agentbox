@@ -35,6 +35,8 @@ export interface AccountLimits {
 
 export const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 /** At most one usage call per account in this long (plan Phase 3b, step 3). */
+/** How long a listing waits on a usage call before answering without it. */
+export const FIRST_READ_WAIT_MS = 1_500;
 export const LIMITS_REFRESH_MS = 5 * 60_000;
 const FETCH_TIMEOUT_MS = 8_000;
 
@@ -51,6 +53,22 @@ export function windowLabel(minutes: number | undefined, fallback: string): stri
 
 const atLimitOf = (windows: readonly { pct: number }[]): boolean =>
   windows.some((w) => w.pct >= 100);
+
+/**
+ * Drops the windows that have reset since they were read: their old percent
+ * is no longer true and the new one is unknown. Undefined when none is left,
+ * so a stale "at limit" never outlives its window.
+ */
+export function freshLimits(
+  l: AccountLimits | undefined,
+  nowMs: number,
+): AccountLimits | undefined {
+  if (!l) return undefined;
+  const windows = l.windows.filter((w) => !w.resetsAt || Date.parse(w.resetsAt) > nowMs);
+  if (windows.length === 0) return undefined;
+  if (windows.length === l.windows.length) return l;
+  return { ...l, windows, atLimit: atLimitOf(windows) };
+}
 
 /** A codex account's limits from the newest transcript record. Pure. */
 export function codexLimits(h: HistoryAccountLimits): AccountLimits {
@@ -171,9 +189,13 @@ export interface LimitsSource {
   /**
    * The account's limits, or undefined (no data). `running`: a box on it runs,
    * which is the only time a usage call is made, at most every
-   * `LIMITS_REFRESH_MS`; otherwise the last value read is returned.
+   * `LIMITS_REFRESH_MS`; otherwise the last value read is returned. A call
+   * waits at most `FIRST_READ_WAIT_MS` for the endpoint, so a slow one never
+   * holds the accounts list; its answer lands for the next read.
    */
   limitsFor(agent: string, id: string, running: boolean): Promise<AccountLimits | undefined>;
+  /** Forget an account's cached limits (it was removed; a new one may reuse the id). */
+  forget(agent: string, id: string): void;
 }
 
 export function createLimitsSource(deps: LimitsSourceDeps): LimitsSource {
@@ -222,18 +244,28 @@ export function createLimitsSource(deps: LimitsSourceDeps): LimitsSource {
       const key = `${agent}/${id}`;
       if (agent === 'claude') {
         const entry = cache.get(key);
-        if (running && (!entry || now() - entry.at >= LIMITS_REFRESH_MS)) {
-          let p = inflight.get(key);
-          if (!p) {
-            p = fetchClaude(key, agent, id).finally(() => inflight.delete(key));
-            inflight.set(key, p);
-          }
-          await p;
+        let p = inflight.get(key);
+        if (!p && running && (!entry || now() - entry.at >= LIMITS_REFRESH_MS)) {
+          p = fetchClaude(key, agent, id).finally(() => inflight.delete(key));
+          inflight.set(key, p);
         }
-        return cache.get(key)?.limits;
+        if (p) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            p,
+            new Promise<void>((r) => {
+              timer = setTimeout(r, FIRST_READ_WAIT_MS);
+            }),
+          ]);
+          clearTimeout(timer);
+        }
+        return freshLimits(cache.get(key)?.limits, now());
       }
       const h = await deps.transcriptLimits(key).catch(() => null);
-      return h && h.windows.length > 0 ? codexLimits(h) : undefined;
+      return h && h.windows.length > 0 ? freshLimits(codexLimits(h), now()) : undefined;
+    },
+    forget(agent, id) {
+      cache.delete(`${agent}/${id}`);
     },
   };
 }
