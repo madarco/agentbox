@@ -169,9 +169,10 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   tarball (base64).
 - **Hub slice** `lib/backend/skills-pc.ts` (+ `skills-pc-wiring.ts` for the relay seams) and routes
   `GET /api/v1/skill-machines`, `GET …/{id}/compare`, `POST …/{id}/pull`, `POST …/{id}/send`. Pull
-  re-derives the tree hash hub-side before importing. Pull and send take the elevated skill-content
+  re-derives the tree hash hub-side before importing. Compare, pull and send take the elevated skill-content
   auth (owner session, admin token, or loopback on a local hub). A deployed server (deploy record
-  provider other than `local`) is not offered as a machine.
+  provider other than `local`) is not offered as a machine. A device that doesn't answer an inventory
+  within 20 s is reported as not answering (an earlier confirm may be waiting there).
 - **Page**: one table over the library plus the machine's own skills, toolbar with Machine, Agent and
   search, the out-of-sync banner with *Sync all* (moves each differing skill from the side that
   changed last; skips skills with problems or secret-scan findings), offline note. Add / edit /
@@ -289,6 +290,12 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - **Big skills over host-reach.** An export rides the host-action result as base64 and an install the
   action params; both are capped near the custody blob cap. A skill near `skills.maxSkillBytes`
   (50 MiB) on a remote device should stream through custody instead.
+- **The host-reach result cap is raised for every result.** `/admin/hostreach/result` reads up to
+  ~4/3 of the custody blob cap for any authenticated machine, not just `pcskills.export`. Tie the
+  larger cap to the parked action's method (or move exports to custody, above).
+- **A send leaves an agent's own different copy in place** (e.g. a real folder in `~/.claude/skills`):
+  the install lands in `~/.agents/skills`, discovery reads that first, and the row then says "same"
+  with only a "different copies" note. A per-dir view of the PC side would make this visible.
 - **Pull of a differing skill overwrites the hub's current version** without showing the diff first
   (the TUI does the same). A "compare" view of PC vs hub content would help before *Sync all*.
 - **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin

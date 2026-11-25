@@ -156,6 +156,23 @@ describe('hub <-> PC skills backend', () => {
     expect(deviceCalls).toEqual(['mac-id:pcskills.inventory']);
   });
 
+  it('gives up on a device that does not answer the inventory in time', async () => {
+    const backend = createPcSkillsBackend({
+      store: () => memStore(),
+      self: () => null,
+      devices: () => [{ id: 'mac-id', label: 'MacBook' }],
+      present: () => ['mac-id'],
+      runSelf: () => Promise.reject(new Error('unused')),
+      runDevice: () => new Promise<PcReach>(() => {}),
+      skillsChanged: () => {},
+      agentDirs: () => AGENTS,
+      compareTimeoutMs: 20,
+    });
+    const c = await backend.compareMachineSkills('mac-id');
+    expect(c.error).toMatch(/did not answer in time/);
+    expect(c.machine.online).toBe(false);
+  });
+
   it('refuses an unknown machine', async () => {
     const { backend } = setup();
     await expect(backend.compareMachineSkills('nope')).rejects.toThrow(/no machine/);

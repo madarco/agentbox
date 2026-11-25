@@ -8,7 +8,7 @@
 // dirs (`/skill-machines/{id}/compare`), with Pull to Hub and Send to <machine>
 // run on that machine by its relay.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
@@ -75,28 +75,31 @@ export default function SkillsPage() {
   const [machines, setMachines] = useState<SkillMachine[] | null>(null);
   const [machineId, setMachineId] = useState<string | null>(null);
   const [compare, setCompare] = useState<SkillCompare | null>(null);
-  const [comparing, setComparing] = useState(false);
   const [query, setQuery] = useState('');
   const [agent, setAgent] = useState('');
 
+  // Only the newest comparison may land: switching machines quickly must never
+  // leave one machine's rows under another machine's id.
+  const compareSeq = useRef(0);
   const loadCompare = useCallback(async (id: string | null) => {
+    const seq = ++compareSeq.current;
     if (!id) {
       setCompare(null);
       return;
     }
-    setComparing(true);
+    let next: SkillCompare;
     try {
-      setCompare(await api<SkillCompare>(`/skill-machines/${encodeURIComponent(id)}/compare`));
+      next = await api<SkillCompare>(`/skill-machines/${encodeURIComponent(id)}/compare`);
     } catch (err) {
-      setCompare({
+      next = {
         machine: { id, label: id, self: false, online: false },
         error: errText(err),
         rows: [],
         outOfSync: 0,
-      });
-    } finally {
-      setComparing(false);
+      };
     }
+    if (seq !== compareSeq.current) return;
+    setCompare(next);
   }, []);
 
   const load = useCallback(async () => {
@@ -193,9 +196,34 @@ export default function SkillsPage() {
     });
   };
 
-  const machine = compare?.machine ?? machines?.find((m) => m.id === machineId) ?? null;
+  // A comparison of another machine (the one before a switch) is never shown or acted on.
+  const current = compare && compare.machine.id === machineId ? compare : null;
+  const machine = current?.machine ?? machines?.find((m) => m.id === machineId) ?? null;
   const machineLabel = machine?.label ?? 'this machine';
-  const pcOnline = Boolean(machine?.online) && !compare?.error;
+  const pcOnline = Boolean(machine?.online) && current !== null && !current.error;
+
+  /** POST a pull or send to the selected machine; one notice line per skill. */
+  const post = async (
+    kind: 'pull' | 'send',
+    names: string[],
+    opts: { overwrite?: boolean; allowFindings?: boolean } = {},
+  ): Promise<{ lines: string[]; bad: boolean }> => {
+    if (!machineId || names.length === 0) return { lines: [], bad: false };
+    const r = await api<{ results: (PullResult | SendResult)[] }>(
+      `/skill-machines/${encodeURIComponent(machineId)}/${kind}`,
+      { method: 'POST', body: JSON.stringify({ names, ...opts }) },
+    );
+    return {
+      lines: r.results.map((x) => resultLine(x, machineLabel)),
+      bad: r.results.some((x) => x.status === 'failed' || x.status === 'skipped'),
+    };
+  };
+
+  const finish = (lines: string[], bad: boolean): string | null => {
+    if (!bad) return lines.join(' · ');
+    setNotice({ text: lines.join(' · '), bad: true });
+    return null;
+  };
 
   const move = (
     kind: 'pull' | 'send',
@@ -203,17 +231,8 @@ export default function SkillsPage() {
     opts: { overwrite?: boolean; allowFindings?: boolean } = {},
   ) =>
     run(`${kind}:${names.length === 1 ? names[0]! : '*'}`, async () => {
-      if (!machineId) return null;
-      const r = await api<{ results: (PullResult | SendResult)[] }>(
-        `/skill-machines/${encodeURIComponent(machineId)}/${kind}`,
-        { method: 'POST', body: JSON.stringify({ names, ...opts }) },
-      );
-      const lines = r.results.map((x) => resultLine(x, machineLabel));
-      if (r.results.some((x) => x.status === 'failed' || x.status === 'skipped')) {
-        setNotice({ text: lines.join(' · '), bad: true });
-        return null;
-      }
-      return lines.join(' · ');
+      const r = await post(kind, names, opts);
+      return finish(r.lines, r.bad);
     });
 
   const pullOne = (row: CompareRow) => {
@@ -242,7 +261,7 @@ export default function SkillsPage() {
     if (
       row.status === 'differs' &&
       !window.confirm(
-        `Replace ${row.name} on ${machineLabel} (${row.pc?.path ?? '~/.agents/skills'}) with the Hub's version?`,
+        `Replace ${row.name} in ~/.agents/skills on ${machineLabel} with the Hub's version?${row.pc && !row.pc.dirs.includes('.agents/skills') ? ` Its copy in ~/${row.pc.dirs[0] ?? ''} is kept; an agent reading that folder keeps the old one until you remove it.` : ''}`,
       )
     ) {
       return;
@@ -251,8 +270,8 @@ export default function SkillsPage() {
   };
 
   const syncAll = () => {
-    if (!compare) return;
-    const plan = syncPlan(compare.rows);
+    if (!current) return;
+    const plan = syncPlan(current.rows);
     const parts = [
       plan.pull.length ? `pull ${plan.pull.join(', ')} to the Hub` : '',
       plan.send.length ? `send ${plan.send.join(', ')} to ${machineLabel}` : '',
@@ -270,41 +289,25 @@ export default function SkillsPage() {
     }
     if (!window.confirm(`Sync all: ${parts.join(' ')}?`)) return;
     void run('sync-all', async () => {
-      const lines: string[] = [];
-      let bad = false;
-      const go = async (kind: 'pull' | 'send', names: string[], overwrite: boolean) => {
-        if (names.length === 0 || !machineId) return;
-        const r = await api<{ results: (PullResult | SendResult)[] }>(
-          `/skill-machines/${encodeURIComponent(machineId)}/${kind}`,
-          {
-            method: 'POST',
-            body: JSON.stringify({ names, ...(overwrite ? { overwrite: true } : {}) }),
-          },
-        );
-        for (const x of r.results) {
-          if (x.status === 'failed' || x.status === 'skipped') bad = true;
-          lines.push(resultLine(x, machineLabel));
-        }
-      };
-      await go('pull', plan.pull, false);
-      await go(
-        'send',
-        plan.send.filter((n) => !plan.overwrite.includes(n)),
-        false,
+      const steps = [
+        await post('pull', plan.pull),
+        await post(
+          'send',
+          plan.send.filter((n) => !plan.overwrite.includes(n)),
+        ),
+        await post('send', plan.overwrite, { overwrite: true }),
+      ];
+      return finish(
+        steps.flatMap((x) => x.lines),
+        steps.some((x) => x.bad),
       );
-      await go('send', plan.overwrite, true);
-      if (bad) {
-        setNotice({ text: lines.join(' · '), bad: true });
-        return null;
-      }
-      return lines.join(' · ');
     });
   };
 
   // One row per skill name: the library's skills, plus the machine's own ones.
   const byName = useMemo(
-    () => new Map((compare?.rows ?? []).map((r) => [r.name, r] as const)),
-    [compare],
+    () => new Map((current?.rows ?? []).map((r) => [r.name, r] as const)),
+    [current],
   );
   const rows = useMemo(() => {
     const out: { name: string; skill?: SkillRow; cmp?: CompareRow }[] = (listing?.skills ?? []).map(
@@ -314,11 +317,11 @@ export default function SkillsPage() {
         ...(byName.get(s.name) ? { cmp: byName.get(s.name)! } : {}),
       }),
     );
-    for (const r of compare?.rows ?? []) {
+    for (const r of current?.rows ?? []) {
       if (!listing?.skills.some((s) => s.name === r.name)) out.push({ name: r.name, cmp: r });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name));
-  }, [listing, compare, byName]);
+  }, [listing, current, byName]);
   const agents = useMemo(
     () => [...new Set(rows.flatMap((r) => r.cmp?.agents ?? []))].sort(),
     [rows],
@@ -331,7 +334,7 @@ export default function SkillsPage() {
         r.name.includes(q) ||
         (r.skill?.description ?? r.cmp?.description ?? '').toLowerCase().includes(q)),
   );
-  const outOfSync = compare && !compare.error ? compare.outOfSync : 0;
+  const outOfSync = current && !current.error ? current.outOfSync : 0;
 
   const total = listing?.skills.reduce((n, s) => n + s.tarballBytes, 0) ?? 0;
   const pendingCount = listing?.skills.filter((s) => s.pending).length ?? 0;
@@ -492,14 +495,18 @@ export default function SkillsPage() {
             </span>
           </div>
 
-          {machine && !pcOnline ? (
+          {machine && !current ? (
+            <div className="mt-3 rounded-lg border border-border bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
+              Checking {machineLabel}’s skills…
+            </div>
+          ) : machine && !pcOnline ? (
             <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
               <Icons.warn className="size-4 flex-none" />
               <span>
                 {machine.online
                   ? `Couldn’t read ${machineLabel}’s skills`
                   : `${machineLabel} offline`}
-                {compare?.error ? ` — ${compare.error}` : ''}. Pull and Send are off until it
+                {current?.error ? ` — ${current.error}` : ''}. Pull and Send are off until it
                 answers.
               </span>
             </div>
@@ -552,7 +559,7 @@ export default function SkillsPage() {
                       {...(r.cmp ? { cmp: r.cmp } : {})}
                       machine={machineLabel}
                       online={pcOnline}
-                      comparing={comparing && !compare}
+                      comparing={!current}
                       busy={busy}
                       onPull={() => r.cmp && pullOne(r.cmp)}
                       onSend={() => r.cmp && sendOne(r.cmp)}
@@ -690,7 +697,13 @@ function SkillTableRow({
           ) : null}
           {blocked ? (
             <div className="mt-0.5 font-mono text-[11px] text-red-400">can’t upload: {blocked}</div>
-          ) : cmp?.pc && cmp.pc.findings.length > 0 ? (
+          ) : null}
+          {cmp?.pc?.conflicting ? (
+            <div className="mt-0.5 font-mono text-[11px] text-[var(--amber)]">
+              different copies in {cmp.pc.dirs.map((d) => `~/${d}`).join(', ')} on {machine}
+            </div>
+          ) : null}
+          {!blocked && cmp?.pc && cmp.pc.findings.length > 0 ? (
             <div className="mt-0.5 font-mono text-[11px] text-[var(--amber)]">
               {cmp.pc.findings.length} secret-scan finding(s) on {machine}
             </div>

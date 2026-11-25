@@ -5461,7 +5461,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Compare the skills library with a machine',
           description:
-            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`. When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Metadata only; nothing about the machine is stored.",
+            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`. When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the elevated skill-content auth (owner session or admin token).",
           responses: {
             '200': {
               description: 'The comparison',
@@ -5469,6 +5469,7 @@ export function buildOpenApi(): Record<string, unknown> {
                 'application/json': { schema: { $ref: '#/components/schemas/SkillCompare' } },
               },
             },
+            '403': { description: 'Not the owner session or admin token' },
             '404': { description: 'No such machine' },
           },
         },

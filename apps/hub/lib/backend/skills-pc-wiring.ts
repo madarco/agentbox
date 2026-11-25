@@ -13,12 +13,32 @@ import { controlPlaneDeployPath } from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
 import type { PcReach, PcSkillsBackendDeps } from './skills-pc';
 
+let deployedMemo: { at: number; value: boolean } | null = null;
+let maxBytesMemo: { at: number; value: number | undefined } | null = null;
+const MEMO_MS = 30_000;
+
 /**
  * Whether this hub runs on a deployed server rather than a PC: a deploy record
  * for any provider but `local` (`hub expose` keeps the PC a PC). Its skill dirs
  * are not anyone's, so it is not offered as a machine.
  */
 function isDeployedServer(): boolean {
+  if (deployedMemo && Date.now() - deployedMemo.at < MEMO_MS) return deployedMemo.value;
+  const value = readDeployedServer();
+  deployedMemo = { at: Date.now(), value };
+  return value;
+}
+
+async function maxSkillBytes(): Promise<number | undefined> {
+  if (maxBytesMemo && Date.now() - maxBytesMemo.at < MEMO_MS) return maxBytesMemo.value;
+  const value = await loadEffectiveConfig(homedir())
+    .then((c) => c.effective.skills.maxSkillBytes)
+    .catch(() => undefined);
+  maxBytesMemo = { at: Date.now(), value };
+  return value;
+}
+
+function readDeployedServer(): boolean {
   try {
     const rec = JSON.parse(readFileSync(controlPlaneDeployPath(), 'utf8')) as {
       provider?: string;
@@ -49,9 +69,7 @@ export function pcSkillsDeps(
     present: () => hostReach?.devicesPresent() ?? [],
     async runSelf(method, params): Promise<PcReach> {
       if (!isPcSkillsMethod(method)) throw new Error(`not a pcskills method: ${method}`);
-      const maxBytes = await loadEffectiveConfig(homedir())
-        .then((c) => c.effective.skills.maxSkillBytes)
-        .catch(() => undefined);
+      const maxBytes = await maxSkillBytes();
       // No confirm: the click in this hub's own UI is the owner's act on this machine.
       const r = await executePcSkillsAction(method, params, {
         ...(maxBytes !== undefined ? { maxBytes } : {}),

@@ -405,7 +405,12 @@ export type {
 } from './llm-accounts.js';
 // The skills library's PC-side modules (discovery, normalization, secret scan)
 // and the skills digest cloud bases fold into their fingerprint.
-export { LOCAL_SKILL_DIRS, discoverLocalSkills, readLocalSkill } from './skills/discover.js';
+export {
+  LOCAL_SKILL_DIRS,
+  SKILL_NAME_RE,
+  discoverLocalSkills,
+  readLocalSkill,
+} from './skills/discover.js';
 export type { LocalSkill } from './skills/discover.js';
 export { parseSkillFrontmatter } from './skills/frontmatter.js';
 export type { SkillFrontmatter } from './skills/frontmatter.js';

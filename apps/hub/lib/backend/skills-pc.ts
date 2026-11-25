@@ -14,6 +14,7 @@ import {
   compareSkills,
   readTar,
   skillDirOfPath,
+  SKILL_NAME_RE,
   treeHash,
   type AgentSkillDirs,
   type InstallOutcome,
@@ -60,6 +61,8 @@ export interface PcSkillsBackendDeps {
   skillsChanged(names: string[]): void;
   /** Registry agents and their PC skill dirs (tests). */
   agentDirs?(): AgentSkillDirs[];
+  /** Override {@link COMPARE_TIMEOUT_MS} (tests). */
+  compareTimeoutMs?: number;
 }
 
 export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'unknown';
@@ -117,7 +120,12 @@ export interface PcSkillsBackend {
   ): Promise<SendResult[]>;
 }
 
-const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/**
+ * How long a comparison waits for a device. Once a device takes an action the
+ * queue waits for it with no limit, and a device runs its actions in order, so
+ * an inventory queued behind an unanswered confirm would hang the page.
+ */
+export const COMPARE_TIMEOUT_MS = 20_000;
 
 function storeOrThrow(deps: PcSkillsBackendDeps): SkillsStore {
   const s = deps.store();
@@ -187,7 +195,21 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
 
       let pcSkills: PcSkill[] | null = null;
       let error: string | undefined;
-      const r = await run(machine, 'pcskills.inventory', {});
+      const limit = deps.compareTimeoutMs ?? COMPARE_TIMEOUT_MS;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const r = await Promise.race([
+        run(machine, 'pcskills.inventory', {}),
+        new Promise<PcReach>((done) => {
+          timer = setTimeout(
+            () =>
+              done({
+                kind: 'unreachable',
+                detail: `${machine.label} did not answer in time (a confirm may be waiting there)`,
+              }),
+            limit,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
       if (r.kind === 'result' && r.exitCode === 0) {
         try {
           pcSkills = (JSON.parse(r.stdout) as PcSkillsInventory).skills;
@@ -253,7 +275,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       const out: PullResult[] = [];
       const changed: string[] = [];
       for (const name of names) {
-        if (!NAME_RE.test(name)) {
+        if (!SKILL_NAME_RE.test(name)) {
           out.push({ name, status: 'failed', reason: 'invalid skill name' });
           continue;
         }
@@ -318,7 +340,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       const store = storeOrThrow(deps);
       const out: SendResult[] = [];
       for (const name of names) {
-        if (!NAME_RE.test(name)) {
+        if (!SKILL_NAME_RE.test(name)) {
           out.push({ name, status: 'failed', reason: 'invalid skill name' });
           continue;
         }

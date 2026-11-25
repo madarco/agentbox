@@ -16,6 +16,7 @@ import {
   pcSkillsInventory,
   readPcSkill,
   readTar,
+  SKILL_NAME_RE,
   uploadBlocker,
   writeTar,
   type InstallOutcome,
@@ -115,7 +116,7 @@ export async function executePcSkillsAction(
       return ok(inv);
     }
     const name = str(p.name);
-    if (!name || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+    if (!name || !SKILL_NAME_RE.test(name)) {
       return fail(64, 'pcskills: a valid skill name is required');
     }
     if (method === 'pcskills.export') {

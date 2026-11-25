@@ -12,7 +12,7 @@ import { lstat, mkdir, readlink, rename, rm, stat, symlink, writeFile } from 'no
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { agentSkillDirs, agentsForSkillDirs, type AgentSkillDirs } from './compare.js';
-import { discoverLocalSkills, type LocalSkill } from './discover.js';
+import { discoverLocalSkills, SKILL_NAME_RE, type LocalSkill } from './discover.js';
 import { readSkillTree, treeHash } from './tree.js';
 import type { TarFile } from './tar.js';
 
@@ -156,8 +156,8 @@ async function lstatOrNull(p: string): Promise<Awaited<ReturnType<typeof lstat>>
 
 /**
  * Point `~/<dir>/<name>` at the installed copy, for an agent that doesn't read
- * `~/.agents/skills`. Only when that agent is set up here (its top-level dir,
- * e.g. `~/.claude`, exists).
+ * `~/.agents/skills`. Only when that agent is set up here (the dir holding its
+ * skills dir, e.g. `~/.claude`, exists).
  *
  * Never deletes a real directory: a separate copy with different content is the
  * user's. It is reported back (`kept`) so the caller can say that agent still
@@ -172,9 +172,12 @@ async function linkInto(
   target: string,
   overwrite: boolean,
 ): Promise<{ link?: string; kept?: string }> {
-  const top = rel.split('/')[0]!;
+  // The agent counts as set up when the dir holding its skills dir exists
+  // (`~/.claude` for `.claude/skills`, `~/.config/foo` for `.config/foo/skills`).
+  const parts = rel.split('/');
+  const agentRoot = parts.length > 1 ? parts.slice(0, -1) : parts;
   // `stat`, not `lstat`: a dotfile manager often makes `~/.claude` itself a link.
-  const agentHome = await stat(join(home, top)).catch(() => null);
+  const agentHome = await stat(join(home, ...agentRoot)).catch(() => null);
   if (!agentHome?.isDirectory()) return {};
   const link = join(home, ...rel.split('/'), name);
   const st = await lstatOrNull(link);
@@ -226,7 +229,7 @@ export async function installSkillFiles(
 ): Promise<InstallOutcome> {
   const home = opts.home ?? homedir();
   const linkDirs = opts.linkDirs ?? linkDirsForAgents();
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+  if (!SKILL_NAME_RE.test(name)) {
     throw new Error(`invalid skill name '${name}'`);
   }
   if (!/^[0-9a-f]{64}$/.test(version)) {

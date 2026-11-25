@@ -127,6 +127,15 @@ describe('installSkillFiles', () => {
       status: 'unchanged',
     });
   });
+  it('links into a nested agent dir only when its parent exists', async () => {
+    const home = tmp('pcinst4-');
+    mkdirSync(join(home, '.config'));
+    const r = await installSkillFiles('s', files, sha, { home, linkDirs: ['.config/foo/skills'] });
+    expect(r).not.toHaveProperty('links');
+    mkdirSync(join(home, '.config/foo'));
+    const r2 = await installSkillFiles('s', files, sha, { home, linkDirs: ['.config/foo/skills'] });
+    expect(r2).toMatchObject({ links: [join(home, '.config/foo/skills/s')] });
+  });
   it('skips a different copy without overwrite and replaces it with', async () => {
     const home = tmp('pcinst2-');
     writeSkill(join(home, '.agents/skills'), 's', 'mine');
