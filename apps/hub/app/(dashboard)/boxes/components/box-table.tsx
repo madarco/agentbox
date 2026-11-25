@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { Ago } from '@/components/ago';
-import { Icons } from '@/components/icons';
+import { agentIcon, Icons } from '@/components/icons';
 import { PersistentMark } from '@/components/persistent-mark';
 import { StatusBadge } from '@/components/status-badge';
 import { Card } from '@/components/ui/card';
@@ -44,7 +44,7 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
                   {box.persistent ? <PersistentMark /> : null}
                 </div>
                 <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
-                  {box.id} · {box.host}
+                  {box.name || box.id} · {box.host}
                 </div>
                 <AgentLiveLine box={box} />
               </TableCell>
@@ -53,7 +53,8 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
                   <Icons.branch className="size-3 flex-none text-muted-foreground" />
                   <span className="truncate">{box.branch}</span>
                 </span>
-                <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
+                <div className="mt-0.5 flex items-center gap-1 font-mono text-[11px] text-[#a4a9b0]">
+                  <AgentGlyph agent={box.agent} />
                   {box.agent}
                   {/* The named LLM account the agent runs on, when not the default. */}
                   {box.accounts?.[box.agent] && box.accounts[box.agent] !== 'default'
@@ -77,4 +78,9 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
       </Table>
     </Card>
   );
+}
+
+function AgentGlyph({ agent }: { agent: string }) {
+  const Glyph = agentIcon(agent);
+  return <Glyph className="size-3 flex-none" />;
 }
