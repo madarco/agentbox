@@ -405,7 +405,10 @@ function mapStatus(b: ListedBox): BoxStatus {
 function hostLabel(b: ListedBox): string {
   const provider = b.provider ?? 'docker';
   if (provider === 'docker') return 'local · docker';
-  return b.cloud?.backend ? `${provider} · ${b.cloud.backend}` : provider;
+  // Every built-in cloud records its own name as the backend; only a backend
+  // that differs from the provider says anything.
+  const backend = b.cloud?.backend;
+  return backend && backend !== provider ? `${provider} · ${backend}` : provider;
 }
 
 /**
@@ -2236,6 +2239,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
       maxTarballBytes: () => globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES,
       skillsChanged: (names) => skills.skillsChanged(names),
+      skillsRepaired: (names) => skills.skillsRepaired(names),
     }),
   );
   // One per hub: it caches each account's last usage-endpoint read.

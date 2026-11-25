@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterAll, describe, expect, it } from 'vitest';
-import { writeTar } from '@agentbox/sandbox-core';
+import { treeHash, writeTar } from '@agentbox/sandbox-core';
 import {
   MAX_SKILL_VERSIONS,
   approveSkillUpdate,
@@ -25,8 +25,9 @@ import {
 } from '../lib/backend/skill-sources';
 import { boxSkillsStatus, syncSkillBoxes } from '../lib/backend/skill-boxes';
 import { memStore } from './_skills-mem-store';
+import { fixtureBody, fixtureSha } from './_skill-tar';
 
-const sha = (c: string) => c.repeat(64);
+const sha = fixtureSha;
 const meta = (s: string, extra: { linked?: boolean } = {}) => ({
   sha256: s,
   description: 'A skill.',
@@ -35,7 +36,7 @@ const meta = (s: string, extra: { linked?: boolean } = {}) => ({
   source: { host: 'mac', path: '/x' },
   ...extra,
 });
-const body = (t: string) => Readable.from([Buffer.from(t)]);
+const body = fixtureBody;
 const gitOrigin = {
   kind: 'git' as const,
   url: 'https://example.com/r.git',
@@ -385,12 +386,21 @@ describe('diff', () => {
 
   it('defaults to current -> previous when nothing is pending', async () => {
     const store = memStore();
-    const tar = (t: string) =>
-      Readable.from([writeTar([{ path: 'SKILL.md', mode: 0o644, data: Buffer.from(t) }])]);
-    await importSkill(store, { name: 's', meta: meta(sha('a')), body: tar('one') });
-    await importSkill(store, { name: 's', meta: meta(sha('b')), body: tar('two') });
+    const files = (t: string) => [{ path: 'SKILL.md', mode: 0o644, data: Buffer.from(t) }];
+    const one = treeHash(files('one'));
+    const two = treeHash(files('two'));
+    await importSkill(store, {
+      name: 's',
+      meta: meta(one),
+      body: Readable.from([writeTar(files('one'))]),
+    });
+    await importSkill(store, {
+      name: 's',
+      meta: meta(two),
+      body: Readable.from([writeTar(files('two'))]),
+    });
     const d = await diffSkillVersions(store, 's');
-    expect(d).toMatchObject({ from: sha('a'), to: sha('b') });
+    expect(d).toMatchObject({ from: one, to: two });
   });
 });
 
@@ -517,8 +527,9 @@ describe('review fixes', () => {
     const { resolveSkillVersion } = await import('../lib/backend/skills');
     const store = memStore();
     await importSkill(store, { name: 's', meta: meta(sha('a')), body: body('A') });
-    expect(await resolveSkillVersion(store, 's', 'aaaaaaaaaaaa')).toBe(sha('a'));
-    await expect(resolveSkillVersion(store, 's', 'bbbbbbb')).rejects.toThrow(/no version/);
+    expect(await resolveSkillVersion(store, 's', sha('a').slice(0, 12))).toBe(sha('a'));
+    const other = sha('b').startsWith(sha('a').slice(0, 7)) ? 'fffffff' : sha('b').slice(0, 7);
+    await expect(resolveSkillVersion(store, 's', other)).rejects.toThrow(/no version/);
   });
 
   it('parses an scp URL without a slash, and marketplace skills paths add to skills/', () => {

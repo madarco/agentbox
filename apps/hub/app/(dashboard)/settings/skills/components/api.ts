@@ -31,6 +31,8 @@ export interface SkillRow {
   origin?: SkillOrigin;
   policy?: SkillPolicy;
   pending?: { version: string; uploadedAt: string; size: number; files: number; commit?: string };
+  /** The stored copy is unusable (e.g. cut short); a re-upload replaces it. */
+  broken?: string;
 }
 
 export interface SkillsListing {
@@ -175,7 +177,7 @@ export interface CompareRow {
   status: CompareStatus;
   newer?: 'local' | 'hub';
   agents: string[];
-  hub?: { current: string; updatedAt: string; pending: boolean };
+  hub?: { current: string; updatedAt: string; pending: boolean; broken?: string };
   pc?: {
     treeSha: string;
     dirs: string[];

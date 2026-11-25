@@ -12,8 +12,9 @@ import {
   skillNameProblem,
 } from '../lib/backend/skills';
 import { memStore } from './_skills-mem-store';
+import { fixtureBody, fixtureSha, skillTar } from './_skill-tar';
 
-const sha = (c: string) => c.repeat(64);
+const sha = fixtureSha;
 const meta = (s: string, extra: Partial<{ description: string }> = {}) => ({
   sha256: s,
   description: extra.description ?? 'A skill.',
@@ -21,7 +22,7 @@ const meta = (s: string, extra: Partial<{ description: string }> = {}) => ({
   files: 1,
   source: { host: 'mac', machineId: 'm1', path: '/Users/x/.agents/skills/one' },
 });
-const body = (text: string) => Readable.from([Buffer.from(text)]);
+const body = fixtureBody;
 
 describe('skill names', () => {
   it('accepts spec names and rejects the rest', () => {
@@ -70,7 +71,7 @@ describe('skills library over custody', () => {
         name: 'one',
         current: sha('a'),
         versions: 1,
-        tarballBytes: 5,
+        tarballBytes: skillTar('a').tar.length,
         source: expect.objectContaining({ host: 'mac' }),
       }),
     ]);
@@ -107,7 +108,7 @@ describe('skills library over custody', () => {
     const t = await openSkillTarball(store, 'one');
     const chunks: Buffer[] = [];
     for await (const c of t.data as AsyncIterable<Buffer>) chunks.push(Buffer.from(c));
-    expect(Buffer.concat(chunks).toString()).toBe('tar-a');
+    expect(Buffer.concat(chunks).equals(skillTar('a').tar)).toBe(true);
     await expect(openSkillTarball(store, 'one', sha('b'))).rejects.toMatchObject({
       code: 'not_found',
     });
@@ -134,11 +135,11 @@ describe('skills library over custody', () => {
     expect(store.paths()).toEqual([]);
   });
 
-  it('passes the size cap to the store', async () => {
+  it('refuses a body over the size cap before storing anything', async () => {
     const store = memStore();
     await expect(
-      importSkill(store, { name: 'one', meta: meta(sha('a')), body: body('123456'), maxBytes: 3 }),
-    ).rejects.toMatchObject({ name: 'CustodyTooLargeError' });
+      importSkill(store, { name: 'one', meta: meta(sha('a')), body: body('a'), maxBytes: 3 }),
+    ).rejects.toMatchObject({ code: 'payload_too_large' });
     expect(store.paths()).toEqual([]);
   });
 });
