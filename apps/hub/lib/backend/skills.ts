@@ -165,6 +165,8 @@ export class SkillsError extends Error {
   constructor(
     readonly code: 'invalid_request' | 'not_found' | 'conflict',
     message: string,
+    /** Machine-readable `error.details` for the envelope (e.g. `{reason: 'skipped'}`). */
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'SkillsError';

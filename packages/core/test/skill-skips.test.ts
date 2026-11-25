@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SKILL_SKIPS_PATH,
+  SkillSkipsUnreadableError,
   applySkip,
   emptySkips,
   parseSkips,
@@ -38,11 +39,18 @@ describe('skill skips', () => {
     expect(skippedNames(b)).toEqual(['one']);
   });
 
-  it('reads leniently by default and strictly for a writer', async () => {
+  it('a missing file is nothing skipped; a broken one fails closed', async () => {
     expect(skippedNames(await readSkips(memStore()))).toEqual([]);
     const corrupt = memStore({ [SKILL_SKIPS_PATH]: '{nope' });
-    expect(skippedNames(await readSkips(corrupt))).toEqual([]);
-    await expect(readSkips(corrupt, { strict: true })).rejects.toThrow(/not valid JSON/);
+    await expect(readSkips(corrupt)).rejects.toThrow(SkillSkipsUnreadableError);
+    await expect(readSkips(corrupt)).rejects.toThrow(/not valid JSON/);
+    for (const body of ['[]', 'null', '{"skipped":[]}', '{"schema":1}']) {
+      await expect(readSkips(memStore({ [SKILL_SKIPS_PATH]: body }))).rejects.toThrow(
+        /no `skipped` object/,
+      );
+    }
+    const unreadable = { get: () => Promise.reject(new Error('EIO: i/o error')) };
+    await expect(readSkips(unreadable)).rejects.toThrow(/can't be read \(EIO: i\/o error\)/);
     const ok = memStore({
       [SKILL_SKIPS_PATH]: JSON.stringify({ schema: 1, skipped: { x: { at: 'now' } } }),
     });

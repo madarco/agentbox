@@ -152,6 +152,7 @@ export * from './mcp/index.js';
 
 export {
   SKILL_SKIPS_PATH,
+  SkillSkipsUnreadableError,
   applySkip,
   emptySkips,
   isSkippableName,

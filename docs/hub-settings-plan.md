@@ -200,6 +200,13 @@ ticked by default; unticking means "never sync this skill", and the hub remember
   box). Keyed by name, so a skill only on a PC can be skipped. `@agentbox/core` `skill-skips.ts`
   (parse, lenient/strict read, apply); hub slice `lib/backend/skill-skips.ts` (serialized writes,
   `assertNotSkipped`).
+- **Fail closed**: a missing `.skipped.json` is "nothing skipped"; one that exists but can't be read,
+  isn't JSON or has no `skipped` object throws `SkillSkipsUnreadableError` everywhere. `skills.get`
+  refuses with the reason (the box keeps what it has), the hub's gates, listing and comparison answer
+  500 with it (the page shows the error, never "everything synced"), and the fan-out does nothing.
+  Pull re-checks the skip right before each import, since a device confirm can take minutes. A skip
+  refusal is a 409 `conflict` with `details: {reason: 'skipped', names}`, which the CLI's first
+  seed reads instead of the message.
 - **Not a global `exclude` binding**: a box or project `include`, or `--skills`, overrides that, and
   bindings say nothing about PC sync. A skip wins over every binding and create flag.
 - **Every path honours it**: the relay's `skills.get` drops skipped names before the bindings

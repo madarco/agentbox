@@ -6,7 +6,11 @@
  * custody directly), so a local hub and a remote control box behave the same.
  */
 import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
-import type { HubApiClient, HubApiSkill } from '../../control-plane/hub-api-client.js';
+import {
+  HubApiError,
+  type HubApiClient,
+  type HubApiSkill,
+} from '../../control-plane/hub-api-client.js';
 import {
   compareSkills as compareShared,
   discoverLocalSkills,
@@ -71,6 +75,13 @@ export async function uploadLocalSkill(
   return { name: skill.name, status: res.changed ? 'uploaded' : 'unchanged', version: res.version };
 }
 
+/** The hub's 409 for a skill marked "never sync" (`error.details.reason: 'skipped'`). */
+export function isSkippedRefusal(err: unknown): boolean {
+  if (!(err instanceof HubApiError) || err.status !== 409 || err.code !== 'conflict') return false;
+  const d = err.details as { reason?: unknown } | undefined;
+  return d?.reason === 'skipped';
+}
+
 export interface SeedOutcome {
   uploaded: string[];
   skipped: { name: string; reason: string }[];
@@ -102,10 +113,12 @@ export async function seedSkillsIfEmpty(
       if (r.status === 'skipped') out.skipped.push({ name: r.name, reason: r.reason });
       else out.uploaded.push(r.name);
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
       // Skipped on the hub after the listing above: intended, not a failure.
-      if (/is skipped \(never synced\)/.test(reason)) continue;
-      out.failed.push({ name: skill.name, reason });
+      if (isSkippedRefusal(err)) continue;
+      out.failed.push({
+        name: skill.name,
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return out;

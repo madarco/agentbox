@@ -86,6 +86,50 @@ describe('skill skips store', () => {
     expect((await listSkills(store)).skills.map((s) => s.name)).toEqual(['kept']);
   });
 
+  it('fails closed on a corrupt or unreadable skips file', async () => {
+    const store = memStore();
+    await seedHub(store, 'one');
+    await store.put('skills/.skipped.json', Buffer.from('{broken'));
+    await expect(assertNotSkipped(store, ['one'])).rejects.toThrow(/can't be read/);
+    await expect(listSkills(store)).rejects.toThrow(/can't be read/);
+    await expect(setSkillSkipped(store, 'one', true)).rejects.toThrow(/can't be read/);
+    await expect(previewSkillSet(store, {})).rejects.toThrow(/can't be read/);
+    const unreadable: typeof store = {
+      ...store,
+      get: (p) => (p === 'skills/.skipped.json' ? Promise.reject(new Error('EIO')) : store.get(p)),
+    };
+    await expect(assertNotSkipped(unreadable, ['one'])).rejects.toThrow(/can't be read \(EIO\)/);
+  });
+
+  it('a corrupt skips file blocks pull, send and the comparison instead of letting them through', async () => {
+    const { home, store, backend, calls } = setup();
+    writeSkill(join(home, '.agents/skills'), 'pc-only');
+    await seedHub(store, 'hub-only');
+    await store.put('skills/.skipped.json', Buffer.from('[]'));
+    await expect(backend.pullSkills('self-id', ['pc-only'])).rejects.toThrow(/can't be read/);
+    await expect(backend.sendSkills('self-id', ['hub-only'])).rejects.toThrow(/can't be read/);
+    await expect(backend.compareMachineSkills('self-id')).rejects.toThrow(/can't be read/);
+    expect(calls).toEqual([]);
+  });
+
+  it('the fan-out does nothing (and never throws) on an unreadable skips file', async () => {
+    const store = memStore();
+    await store.put('skills/.skipped.json', Buffer.from('{broken'));
+    const logs: string[] = [];
+    const r = await syncSkillBoxes(
+      {
+        store,
+        boxIds: () => Promise.resolve(['b1']),
+        probeState: () => Promise.resolve('running'),
+        exec: () => Promise.reject(new Error('should not run')),
+        log: (l) => logs.push(l),
+      },
+      { recorded: true },
+    );
+    expect(r).toEqual([]);
+    expect(logs.join('\n')).toMatch(/can't be read/);
+  });
+
   it('assertNotSkipped answers a 409 conflict naming the skill', async () => {
     const store = memStore();
     await setSkillSkipped(store, 'x', true);
@@ -94,6 +138,7 @@ describe('skill skips store', () => {
     expect(err).toBeInstanceOf(SkillsError);
     expect((err as SkillsError).code).toBe('conflict');
     expect((err as SkillsError).message).toMatch(/'x' is skipped/);
+    expect((err as SkillsError).details).toEqual({ reason: 'skipped', names: ['x'] });
   });
 });
 
@@ -133,6 +178,32 @@ describe('skipped skills against a PC', () => {
     });
     expect(calls).toEqual([]);
     expect((await listSkills(store)).skills.map((s) => s.name)).toEqual(['hub-only']);
+  });
+});
+
+describe('a skip set while a pull waits', () => {
+  it('is checked again right before the import', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hub-skip-late-'));
+    writeSkill(join(home, '.agents/skills'), 'late');
+    const store = memStore();
+    const backend = createPcSkillsBackend({
+      store: () => store,
+      self: () => ({ id: 'self-id', label: 'devbox' }),
+      devices: () => [],
+      present: () => [],
+      runSelf: async (method: string, params: unknown): Promise<PcReach> => {
+        if (!isPcSkillsMethod(method)) throw new Error(method);
+        // The owner skips it while the PC is answering (a confirm on a device).
+        if (method === 'pcskills.export') await setSkillSkipped(store, 'late', true);
+        return { kind: 'result', ...(await executePcSkillsAction(method, params, { home })) };
+      },
+      skillsChanged: () => undefined,
+      agentDirs: () => AGENTS,
+    });
+    const [r] = await backend.pullSkills('self-id', ['late']);
+    expect(r).toMatchObject({ name: 'late', status: 'failed' });
+    expect((r as { reason: string }).reason).toMatch(/is skipped/);
+    expect((await listSkills(store)).skills).toEqual([]);
   });
 });
 

@@ -122,6 +122,16 @@ describe('skipped skills', () => {
     expect(r.exitCode).not.toBe(0);
   });
 
+  it('fails skills.get closed when the skips file is corrupt', async () => {
+    const store = await library([{ name: 'one', version: sha('a'), bytes: Buffer.from('x') }]);
+    await store.put('skills/.skipped.json', Buffer.from('{broken'));
+    const r = await runSkillsRpc(store, undefined, 'skills.get', {}, { boxId: 'b1' });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toMatch(/skipped\.json can't be read \(not valid JSON\)/);
+    // Nothing was recorded as served either.
+    expect(await store.get(boxSkillsRecordPath('b1'))).toBeNull();
+  });
+
   it('delivers it again once unskipped', async () => {
     const store = await library([{ name: 'one', version: sha('a'), bytes: Buffer.from('x') }]);
     await store.put(

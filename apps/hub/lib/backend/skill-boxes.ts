@@ -127,7 +127,15 @@ export async function syncSkillBoxes(
   } else {
     const ids = await deps.boxIds().catch(() => [] as string[]);
     const want = opts.names ? new Set(opts.names) : null;
-    const skipped = new Set(skippedNamesOf(await readSkips(deps.store)));
+    let skipped: Set<string>;
+    try {
+      skipped = new Set(skippedNamesOf(await readSkips(deps.store)));
+    } catch (err) {
+      // Unreadable skips: no box can be told what to drop, and its own
+      // skills.get fails closed on the same file, so there is nothing to sync.
+      deps.log(`skills: fan-out skipped: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
     targets = [];
     for (const id of ids) {
       const st = await boxSkillsStatus(deps.store, id, skipped).catch(() => null);

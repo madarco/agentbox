@@ -46,30 +46,47 @@ export function parseSkips(raw: unknown): SkillSkipsDoc {
 }
 
 /**
- * Read the stored skips. A reader (box delivery, a comparison) tolerates a
- * failed read or a corrupt file as "nothing skipped"; a writer passes `strict`,
- * so a failed read is never overwritten with only the one change.
+ * The skips file exists but can't be read or parsed. Every reader fails closed
+ * on it: "nothing skipped" would deliver, upload, pull and send every skipped
+ * skill on one transient read error or one hand-broken file.
  */
-export async function readSkips(
-  store: Pick<BindingsStore, 'get'>,
-  opts: { strict?: boolean } = {},
-): Promise<SkillSkipsDoc> {
+export class SkillSkipsUnreadableError extends Error {
+  constructor(detail: string, options?: { cause?: unknown }) {
+    super(
+      `${SKILL_SKIPS_PATH} can't be read (${detail}); skipped skills can't be told apart until it is fixed or deleted`,
+      options,
+    );
+    this.name = 'SkillSkipsUnreadableError';
+  }
+}
+
+/**
+ * Read the stored skips. A missing file is "nothing skipped"; a file that
+ * exists but can't be read, isn't JSON or isn't a skips document throws
+ * {@link SkillSkipsUnreadableError} (fail closed).
+ */
+export async function readSkips(store: Pick<BindingsStore, 'get'>): Promise<SkillSkipsDoc> {
   let found: { data: Buffer } | null;
   try {
     found = await store.get(SKILL_SKIPS_PATH);
   } catch (err) {
-    if (opts.strict) throw err;
-    return emptySkips();
+    throw new SkillSkipsUnreadableError(err instanceof Error ? err.message : String(err), {
+      cause: err,
+    });
   }
   if (!found) return emptySkips();
+  let raw: unknown;
   try {
-    return parseSkips(JSON.parse(found.data.toString('utf8')));
+    raw = JSON.parse(found.data.toString('utf8'));
   } catch (err) {
-    if (opts.strict) {
-      throw new Error(`${SKILL_SKIPS_PATH} is not valid JSON; fix or delete it`, { cause: err });
-    }
-    return emptySkips();
+    throw new SkillSkipsUnreadableError('not valid JSON', { cause: err });
   }
+  const skipped =
+    raw && typeof raw === 'object' ? (raw as Record<string, unknown>).skipped : undefined;
+  if (!skipped || typeof skipped !== 'object' || Array.isArray(skipped)) {
+    throw new SkillSkipsUnreadableError('no `skipped` object');
+  }
+  return parseSkips(raw);
 }
 
 /** The skipped names, sorted. */

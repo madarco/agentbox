@@ -37,7 +37,11 @@ import {
   seedSkillsIfEmpty,
   uploadBlocker,
 } from '../src/lib/skills/sync.js';
-import type { HubApiClient, HubApiSkill } from '../src/control-plane/hub-api-client.js';
+import {
+  HubApiError,
+  type HubApiClient,
+  type HubApiSkill,
+} from '../src/control-plane/hub-api-client.js';
 import { rememberSeeded, seededHubs } from '../src/lib/skills/auto-seed.js';
 import { gzipSync } from 'node:zlib';
 
@@ -437,9 +441,19 @@ describe('seed + download', () => {
     writeSkill(join(home, '.agents/skills'), 'late');
     const { client } = fakeClient();
     (client as unknown as { uploadSkill: () => Promise<never> }).uploadSkill = () =>
-      Promise.reject(new Error("skill 'late' is skipped (never synced); tick its Sync box"));
+      Promise.reject(
+        new HubApiError("skill 'late' is skipped (never synced)", 'conflict', 409, {
+          reason: 'skipped',
+          names: ['late'],
+        }),
+      );
     const out = await seedSkillsIfEmpty(client, { home, maxBytes: 1 << 20 });
     expect(out).toEqual({ uploaded: [], skipped: [], failed: [] });
+    // Another 409 (or a skip message without the reason) is still a failure.
+    (client as unknown as { uploadSkill: () => Promise<never> }).uploadSkill = () =>
+      Promise.reject(new HubApiError("skill 'late' is skipped", 'conflict', 409));
+    const other = await seedSkillsIfEmpty(client, { home, maxBytes: 1 << 20 });
+    expect(other?.failed.map((f) => f.name)).toEqual(['late']);
   });
 
   it('compares a skipped skill as skipped', async () => {

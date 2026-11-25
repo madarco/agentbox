@@ -59,7 +59,7 @@ export function setSkillSkipped(
     return Promise.reject(new SkillsError('invalid_request', `invalid skill name '${name}'`));
   }
   return serialized(async () => {
-    const doc = await readSkips(store, { strict: true });
+    const doc = await readSkips(store);
     const was = Object.hasOwn(doc.skipped, name);
     if (was === skip) return { changed: false, skipped: rows(doc) };
     const next = applySkip(doc, name, skip, now);
@@ -67,6 +67,9 @@ export function setSkillSkipped(
     return { changed: true, skipped: rows(next) };
   });
 }
+
+/** `error.details.reason` of a 409 for a skipped skill, so a client needn't parse the message. */
+export const SKIPPED_REASON = 'skipped';
 
 /** The message every refused move of a skipped skill carries. */
 export function skippedMessage(names: readonly string[]): string {
@@ -83,5 +86,7 @@ export async function assertNotSkipped(
 ): Promise<void> {
   const skipped = await skippedSet(store);
   const hit = names.filter((n) => skipped.has(n));
-  if (hit.length > 0) throw new SkillsError('conflict', skippedMessage(hit));
+  if (hit.length > 0) {
+    throw new SkillsError('conflict', skippedMessage(hit), { reason: SKIPPED_REASON, names: hit });
+  }
 }

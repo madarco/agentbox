@@ -399,6 +399,8 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
               `files hash to ${sha.slice(0, 12)}, ${machine.label} said ${got.version.slice(0, 12)}`,
             );
           }
+          // A confirm on a device can take minutes: a skip set meanwhile still wins.
+          await assertNotSkipped(store, [name]);
           const res = await importSkill(store, {
             name,
             meta: {

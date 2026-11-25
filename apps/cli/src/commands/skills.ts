@@ -20,6 +20,7 @@ import {
   skillsEnableCommand,
 } from './skills-bindings.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
+import { SKILL_NAME_RE } from '../lib/skills/selection.js';
 import type { HubApiClient } from '../control-plane/hub-api-client.js';
 import { skillsSubcommands } from './skills-updates.js';
 import { discoverLocalSkills, isOutOfSync, type LocalSkill } from '@agentbox/sandbox-core';
@@ -371,19 +372,24 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
       if (isCancel(chosen) || chosen.length === 0) continue;
       await doDownload(client, pick(rows, chosen), ctx, { yes: false, ask: true });
     } else if (action === 'skip') {
-      if (rows.length === 0) {
+      // A local folder whose name is no valid skill name can't be uploaded
+      // anyway, and the hub refuses to skip it (400): name it, don't offer it.
+      const skippable = rows.filter((r) => SKILL_NAME_RE.test(r.name));
+      const odd = rows.filter((r) => !SKILL_NAME_RE.test(r.name)).map((r) => r.name);
+      if (odd.length > 0) log.info(`Not skippable (not a valid skill name): ${odd.join(', ')}`);
+      if (skippable.length === 0) {
         log.info('No skills here or on the hub.');
         continue;
       }
       const synced = await multiselect({
         message: 'Which skills sync? (untick to skip)',
         required: false,
-        initialValues: rows.filter((r) => r.status !== 'skipped').map((r) => r.name),
-        options: rows.map((r) => ({ value: r.name, label: r.name, hint: statusCell(r) })),
+        initialValues: skippable.filter((r) => r.status !== 'skipped').map((r) => r.name),
+        options: skippable.map((r) => ({ value: r.name, label: r.name, hint: statusCell(r) })),
       });
       if (isCancel(synced)) continue;
       const keep = new Set(synced);
-      for (const r of rows) {
+      for (const r of skippable) {
         const skip = !keep.has(r.name);
         if (skip === (r.status === 'skipped')) continue;
         await setSkipped(client, r.name, skip);
@@ -428,6 +434,12 @@ function skipCommand(verb: 'skip' | 'unskip'): Command {
     )
     .argument('<names...>', 'skill names')
     .action(async (names: string[]) => {
+      const bad = names.filter((n) => !SKILL_NAME_RE.test(n));
+      if (bad.length > 0) {
+        process.stderr.write(`invalid skill name(s): ${bad.join(', ')}\n`);
+        process.exitCode = 1;
+        return;
+      }
       await withHubClient(workspaceHub(), async (client) => {
         let ok = true;
         for (const n of names) ok = (await setSkipped(client, n, verb === 'skip')) && ok;
