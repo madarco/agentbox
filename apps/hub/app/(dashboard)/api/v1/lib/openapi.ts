@@ -634,6 +634,64 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/boxes/{id}/account': {
+        post: {
+          tags: ['Boxes'],
+          summary: "Switch the box's agent to another LLM account",
+          description:
+            "A setup token or API key: the box record moves and the agent's session restarts with that token set and the other auth var cleared, resuming its conversation (every provider; a cloud box gets its agent env file rewritten first). The stored token's shape is checked first. A login: a docker box is rebuilt on that account's config volume (committed, recreated with the same name, mounts, ports and env), the session's files copied across, and the agent resumes; a cloud box is refused (409) for now. A box that is not running is recorded only and takes the account at its next start. Backs `agentbox accounts switch`.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['account'],
+                  properties: {
+                    account: {
+                      type: 'string',
+                      description: 'The target account id (`default` for the default login).',
+                    },
+                    agent: { type: 'string', description: "Default: the box's agent." },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'What the switch did',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      boxId: { type: 'string' },
+                      agent: { type: 'string' },
+                      from: { type: 'string' },
+                      to: { type: 'string' },
+                      how: { type: 'string', enum: ['env', 'recreate'] },
+                      restarted: {
+                        type: 'boolean',
+                        description:
+                          'False when the box was not running: the account applies at its next start.',
+                      },
+                    },
+                    required: ['boxId', 'agent', 'from', 'to', 'how', 'restarted'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+            '500': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/boxes/{id}/agent': {
         get: {
           tags: ['Boxes'],
@@ -1078,6 +1136,45 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '401': errorResponse,
+          },
+        },
+      },
+      '/accounts/policy': {
+        get: {
+          tags: ['Accounts'],
+          summary: 'What the hub does when an account hits its limit',
+          description:
+            "`accounts.onLimit` from this machine's global config: `ask` (default) raises an approval offering the next account of the same agent that is not at its limit; `switch` moves the box on its own.",
+          responses: {
+            '200': {
+              description: 'The policy',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/AccountPolicy' } },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Accounts'],
+          summary: 'Set what the hub does when an account hits its limit',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/AccountPolicy' } },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The policy',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/AccountPolicy' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
           },
         },
       },
@@ -6469,7 +6566,24 @@ export function buildOpenApi(): Record<string, unknown> {
               type: 'object',
               additionalProperties: { type: 'string' },
               description:
-                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Fixed at create. Absent = every agent on its default login. Labels and kinds are in `accountsInfo`.',
+                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Chosen at create, changed by a switch (`POST /boxes/{id}/account`). Absent = every agent on its default login. Labels and kinds are in `accountsInfo`.',
+            },
+            accountSwitches: {
+              type: 'array',
+              description:
+                "The box's account switches, newest last, at most 10. `how`: `env` (the agent restarted with the token) or `recreate` (a docker box rebuilt on the login's volume). `reason`: `manual` or `limit` (`accounts.onLimit`).",
+              items: {
+                type: 'object',
+                properties: {
+                  at: { type: 'string', format: 'date-time' },
+                  agent: { type: 'string' },
+                  from: { type: 'string' },
+                  to: { type: 'string' },
+                  how: { type: 'string', enum: ['env', 'recreate'] },
+                  reason: { type: 'string', enum: ['manual', 'limit'] },
+                },
+                required: ['at', 'agent', 'from', 'to', 'how', 'reason'],
+              },
             },
             accountsInfo: {
               type: 'array',
@@ -7215,6 +7329,11 @@ export function buildOpenApi(): Record<string, unknown> {
             createdAt: { type: 'string' },
           },
           required: ['id', 'status'],
+        },
+        AccountPolicy: {
+          type: 'object',
+          required: ['onLimit'],
+          properties: { onLimit: { type: 'string', enum: ['ask', 'switch'] } },
         },
         AgentState: {
           type: 'object',

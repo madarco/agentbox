@@ -43,6 +43,40 @@ describe('renderAgentEnvFile', () => {
     }
   });
 
+  it("a switched account's keys override the sandbox env and clear the other one", () => {
+    // Hub settings 3c: a box created on one account and switched to a setup
+    // token must use the token even though its sandbox env holds the old key.
+    const dir = mkdtempSync(join(tmpdir(), 'agent-env-test-'));
+    try {
+      const file = join(dir, 'agent.env');
+      writeFileSync(
+        file,
+        renderAgentEnvFile(
+          { CLAUDE_CODE_OAUTH_TOKEN: 'from-forward', EXTRA: 'filled' },
+          { set: { CLAUDE_CODE_OAUTH_TOKEN: 'new-token' }, unset: ['ANTHROPIC_API_KEY'] },
+        ),
+      );
+      const out = execFileSync(
+        'bash',
+        [
+          '-c',
+          `set -a; . ${file}; set +a; printf %s "$CLAUDE_CODE_OAUTH_TOKEN|\${ANTHROPIC_API_KEY-unset}|$EXTRA"`,
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            PATH: process.env.PATH ?? '',
+            CLAUDE_CODE_OAUTH_TOKEN: 'from-create',
+            ANTHROPIC_API_KEY: 'old-key',
+          },
+        },
+      );
+      expect(out).toBe('new-token|unset|filled');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('drops a key that is not a shell identifier', () => {
     expect(renderAgentEnvFile({ 'BAD;rm -rf /': 'x', OK: 'y' })).toBe(
       `[ -n "\${OK+x}" ] || export OK='y'\n`,

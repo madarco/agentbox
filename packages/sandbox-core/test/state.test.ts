@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   findBox,
   readState,
+  recordAccountSwitch,
   recordBox,
   recordLastAgent,
   removeBoxRecord,
@@ -25,6 +26,36 @@ describe('state.ts', () => {
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it('recordAccountSwitch moves accounts and keeps the last 10 switches', async () => {
+    const box: BoxRecord = {
+      id: 'a1',
+      name: 'demo',
+      container: 'agentbox-a1',
+      image: 'img',
+      workspacePath: '/tmp/ws',
+      snapshotDir: null,
+      createdAt: '2026-05-12T12:00:00.000Z',
+      accounts: { claude: 'work' },
+    };
+    await recordBox(box, file);
+    const entry = (i: number, to: string) => ({
+      at: `2026-11-25T00:00:${String(i).padStart(2, '0')}Z`,
+      agent: 'claude',
+      from: 'x',
+      to,
+      how: 'env' as const,
+      reason: 'manual' as const,
+    });
+    for (let i = 0; i < 11; i++) await recordAccountSwitch('a1', entry(i, 'tok'), file);
+    let b = (await readState(file)).boxes[0]!;
+    expect(b.accounts).toEqual({ claude: 'tok' });
+    expect(b.accountSwitches).toHaveLength(10);
+    expect(b.accountSwitches?.[0]?.at).toBe('2026-11-25T00:00:01Z');
+    await recordAccountSwitch('a1', entry(12, 'default'), file);
+    b = (await readState(file)).boxes[0]!;
+    expect(b.accounts).toBeUndefined();
   });
 
   it('returns empty state when file does not exist', async () => {
