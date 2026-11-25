@@ -34,17 +34,9 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
       <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">General</h1>
-      <div className="mt-1.5 text-sm text-muted-foreground">
-        Providers, GitHub access &amp; hub configuration.
-      </div>
+      <div className="mt-1.5 text-sm text-muted-foreground">Providers, GitHub access &amp; hub configuration.</div>
 
-      <SectionLabel
-        right={
-          <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-            credentials &amp; base images
-          </span>
-        }
-      >
+      <SectionLabel right={<span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">credentials &amp; base images</span>}>
         Sandbox providers
       </SectionLabel>
       <ProvidersSection />
@@ -65,9 +57,8 @@ export default function SettingsPage() {
                 <Badge className="gap-1.5 normal-case">not available</Badge>
               </div>
               <div className="mt-0.5 text-[12.5px] text-muted-foreground">
-                The GitHub App leases repo-scoped tokens to cloud boxes from the hosted hub. On a
-                local machine boxes use your own git credentials directly, so there is nothing to
-                configure here.
+                The GitHub App leases repo-scoped tokens to cloud boxes from the hosted hub. On a local machine boxes
+                use your own git credentials directly, so there is nothing to configure here.
               </div>
             </div>
           </div>
@@ -101,13 +92,7 @@ export default function SettingsPage() {
             </div>
           </Card>
 
-          <SectionLabel
-            right={
-              <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                {gh.repos.length} repos
-              </span>
-            }
-          >
+          <SectionLabel right={<span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">{gh.repos.length} repos</span>}>
             Authorized repositories
           </SectionLabel>
           <Card className="divide-y divide-border/60 overflow-hidden">
@@ -126,12 +111,7 @@ export default function SettingsPage() {
                     <span>
                       updated <Ago ms={r.pushedAt} />
                     </span>
-                    <Badge
-                      className={cn(
-                        'px-1.5 py-0 text-[10px] uppercase tracking-[.03em]',
-                        r.private ? '' : 'border-[var(--green-line)] text-primary',
-                      )}
-                    >
+                    <Badge className={cn('px-1.5 py-0 text-[10px] uppercase tracking-[.03em]', r.private ? '' : 'border-[var(--green-line)] text-primary')}>
                       {r.private ? 'private' : 'public'}
                     </Badge>
                   </span>

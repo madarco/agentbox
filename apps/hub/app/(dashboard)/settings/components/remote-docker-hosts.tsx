@@ -8,13 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogBody, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Icons } from '@/components/icons';
 import { JobLogStream } from '../../boxes/components/job-log-stream';
@@ -93,11 +87,7 @@ export function RemoteDockerHosts({ onCount }: { onCount?: (n: number) => void }
   };
 
   const remove = async (alias: string): Promise<void> => {
-    if (
-      !window.confirm(
-        `Remove host "${alias}"? Boxes created on it become unreachable. The remote machine is untouched.`,
-      )
-    )
+    if (!window.confirm(`Remove host "${alias}"? Boxes created on it become unreachable. The remote machine is untouched.`))
       return;
     setRemoveError(null);
     setWarn(null);
@@ -114,9 +104,7 @@ export function RemoteDockerHosts({ onCount }: { onCount?: (n: number) => void }
       const j = (await res.json().catch(() => null)) as { boxesAffected?: string[] } | null;
       const affected = j?.boxesAffected ?? [];
       if (affected.length > 0) {
-        setWarn(
-          `Removed ${alias}. ${affected.length} box(es) are now unreachable: ${affected.join(', ')}`,
-        );
+        setWarn(`Removed ${alias}. ${affected.length} box(es) are now unreachable: ${affected.join(', ')}`);
       }
       await load();
     } catch (err) {
@@ -128,9 +116,7 @@ export function RemoteDockerHosts({ onCount }: { onCount?: (n: number) => void }
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-card/50 p-3">
-      {loadError ? (
-        <div className="text-xs text-red-400">Could not load hosts: {loadError}</div>
-      ) : null}
+      {loadError ? <div className="text-xs text-red-400">Could not load hosts: {loadError}</div> : null}
 
       {hosts && hosts.length === 0 ? (
         <div className="text-[12.5px] text-muted-foreground">
