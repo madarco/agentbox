@@ -5461,7 +5461,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Compare the skills library with a machine',
           description:
-            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`. When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the elevated skill-content auth (owner session or admin token).",
+            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`. When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the owner: a session or the admin token (an enrolled device's token is refused).",
           responses: {
             '200': {
               description: 'The comparison',
@@ -5469,7 +5469,9 @@ export function buildOpenApi(): Record<string, unknown> {
                 'application/json': { schema: { $ref: '#/components/schemas/SkillCompare' } },
               },
             },
-            '403': { description: 'Not the owner session or admin token' },
+            '403': {
+              description: 'Not the owner session or admin token (a device token is refused)',
+            },
             '404': { description: 'No such machine' },
           },
         },
@@ -5488,7 +5490,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Pull skills from a machine into the library',
           description:
-            'Reads each named skill off that machine (an enrolled device confirms on its side first, mirrored to `/approvals`) and imports it, as `agentbox skills` uploads. A skill with secret-scan findings is refused unless `allowFindings`. Needs the elevated skill-content auth (owner session or admin token).',
+            'Reads each named skill off that machine (an enrolled device confirms on its side first, mirrored to `/approvals`) and imports it, as `agentbox skills` uploads. A skill with secret-scan findings is refused unless `allowFindings`. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch.',
           requestBody: {
             required: true,
             content: {
@@ -5510,7 +5512,9 @@ export function buildOpenApi(): Record<string, unknown> {
                 'One result per name: `{name, status: imported|unchanged|held, version}` or `{name, status: failed, reason}`',
               content: { 'application/json': { schema: { type: 'object' } } },
             },
-            '403': { description: 'Not the owner session or admin token' },
+            '403': {
+              description: 'Not the owner session or admin token (a device token is refused)',
+            },
           },
         },
       },
@@ -5528,7 +5532,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Send library skills to a machine',
           description:
-            "Installs each named skill's current version at `~/.agents/skills/<name>` on that machine (plus a link for an agent that does not read that dir), after a confirm on an enrolled device. The machine re-derives the tree hash before writing. A different local copy is replaced only with `overwrite`. Needs the elevated skill-content auth.",
+            "Installs each named skill's current version at `~/.agents/skills/<name>` on that machine (plus a link for an agent that does not read that dir), after a confirm on an enrolled device. The machine re-derives the tree hash before writing. A different local copy is replaced only with `overwrite`. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch. A local copy that cannot be read is never replaced.",
           requestBody: {
             required: true,
             content: {
@@ -5550,7 +5554,9 @@ export function buildOpenApi(): Record<string, unknown> {
                 'One result per name: `{name, status: installed|replaced|unchanged, dir, links?, kept?}`, `{name, status: skipped, reason}` or `{name, status: failed, reason}`',
               content: { 'application/json': { schema: { type: 'object' } } },
             },
-            '403': { description: 'Not the owner session or admin token' },
+            '403': {
+              description: 'Not the owner session or admin token (a device token is refused)',
+            },
           },
         },
       },

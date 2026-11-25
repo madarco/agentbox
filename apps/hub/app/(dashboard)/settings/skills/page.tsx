@@ -111,6 +111,12 @@ export default function SkillsPage() {
     }
     await loadCompare(machineId);
   }, [loadCompare, machineId]);
+  // `run` reloads with the newest `load`, not the one captured at the click: a
+  // reload after an action must compare the machine selected NOW.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   useEffect(() => {
     void load();
@@ -131,7 +137,7 @@ export default function SkillsPage() {
     try {
       const text = await fn();
       if (text) setNotice({ text });
-      await load();
+      await loadRef.current();
     } catch (err) {
       setNotice({ text: errText(err), bad: true });
     } finally {
@@ -219,6 +225,15 @@ export default function SkillsPage() {
     };
   };
 
+  /** On another PC each skill waits for a yes there (mirrored to Approvals). */
+  const waitingNotice = () => {
+    if (machine && !machine.self) {
+      setNotice({
+        text: `Waiting for confirm on ${machineLabel} (also in Approvals). An unanswered confirm counts as a no after two minutes.`,
+      });
+    }
+  };
+
   const finish = (lines: string[], bad: boolean): string | null => {
     if (!bad) return lines.join(' · ');
     setNotice({ text: lines.join(' · '), bad: true });
@@ -231,6 +246,7 @@ export default function SkillsPage() {
     opts: { overwrite?: boolean; allowFindings?: boolean } = {},
   ) =>
     run(`${kind}:${names.length === 1 ? names[0]! : '*'}`, async () => {
+      waitingNotice();
       const r = await post(kind, names, opts);
       return finish(r.lines, r.bad);
     });
@@ -289,6 +305,7 @@ export default function SkillsPage() {
     }
     if (!window.confirm(`Sync all: ${parts.join(' ')}?`)) return;
     void run('sync-all', async () => {
+      waitingNotice();
       const steps = [
         await post('pull', plan.pull),
         await post(
@@ -437,7 +454,8 @@ export default function SkillsPage() {
               aria-label="Machine"
               title="The machine whose skill dirs the library is compared with"
               value={machineId ?? ''}
-              disabled={!machines || machines.length === 0}
+              // Switching mid-action would aim the rest of it at another machine.
+              disabled={!machines || machines.length === 0 || busy !== null}
               onChange={(e) => {
                 setMachineId(e.target.value || null);
                 setNotice(null);

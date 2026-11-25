@@ -2,7 +2,12 @@ import { checkoutEntriesFor, deviceTokenFor } from '@agentbox/sandbox-core';
 import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
 import { homedir } from 'node:os';
 import { askPrompt } from './prompts.js';
-import { executePcSkillsAction, isPcSkillsMethod } from './pc-skills.js';
+import {
+  executePcSkillsAction,
+  isPcSkillsMethod,
+  PC_SKILLS_CONFIRM_TTL_MS,
+  type PcSkillsMethod,
+} from './pc-skills.js';
 import { createLlmProxyServer, llmProxyCredentialMatches, llmProxyHosts } from './llm-proxy.js';
 import { startSkillLinkWatcher } from './skill-link-watch.js';
 import { startRelayServer, type RelayServerHandle, type RelayServerOptions } from './server.js';
@@ -388,7 +393,8 @@ async function executePcSkillsReach(
   deps: Parameters<typeof executeHostReachAction>[1],
 ): Promise<HostActionResult | HostReachDecline> {
   if (!action.route) return { decline: 'a skills action must name the machine it is for' };
-  if (!isPcSkillsMethod(action.method)) return 'not-mine';
+  // The caller already matched the method (`isPcSkillsMethod`).
+  const method = action.method as PcSkillsMethod;
   const maxBytes = await loadEffectiveConfig(homedir())
     .then((c) => c.effective.skills.maxSkillBytes)
     .catch(() => undefined);
@@ -404,7 +410,7 @@ async function executePcSkillsReach(
       })
     : () => {};
   try {
-    return await executePcSkillsAction(action.method, action.params, {
+    return await executePcSkillsAction(method, action.params, {
       ...(maxBytes !== undefined ? { maxBytes } : {}),
       log: deps.log,
       confirm: async (p) => {
@@ -419,8 +425,9 @@ async function executePcSkillsReach(
             defaultAnswer: 'n',
             context: { command: p.command },
           },
-          // Skills reach every box: never answered by a box's auto-approve.
-          { noAutoApprove: true },
+          // Skills reach every box: never answered by a box's auto-approve. An
+          // unanswered confirm turns into a no, so this PC's queue moves on.
+          { noAutoApprove: true, ttlMs: PC_SKILLS_CONFIRM_TTL_MS },
         );
         return r.answer === 'y' && r.cancelled !== true;
       },

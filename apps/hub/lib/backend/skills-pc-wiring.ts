@@ -1,7 +1,6 @@
 // The relay seams the hub <-> PC skills slice (`skills-pc.ts`) runs on: the hub's
 // own machine executes `pcskills.*` in-process, an enrolled device gets it through
 // the control box's host-reach queue, routed to that device only.
-import { readFileSync } from 'node:fs';
 import { getMachineLabel, loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
 import {
   executePcSkillsAction,
@@ -9,25 +8,11 @@ import {
   pcSkillsActionId,
   type RelayServerHandle,
 } from '@agentbox/relay';
-import { controlPlaneDeployPath } from '@agentbox/sandbox-core';
 import { homedir } from 'node:os';
-import type { PcReach, PcSkillsBackendDeps } from './skills-pc';
+import { hubRunsOnPc, type PcReach, type PcSkillsBackendDeps } from './skills-pc';
 
-let deployedMemo: { at: number; value: boolean } | null = null;
 let maxBytesMemo: { at: number; value: number | undefined } | null = null;
 const MEMO_MS = 30_000;
-
-/**
- * Whether this hub runs on a deployed server rather than a PC: a deploy record
- * for any provider but `local` (`hub expose` keeps the PC a PC). Its skill dirs
- * are not anyone's, so it is not offered as a machine.
- */
-function isDeployedServer(): boolean {
-  if (deployedMemo && Date.now() - deployedMemo.at < MEMO_MS) return deployedMemo.value;
-  const value = readDeployedServer();
-  deployedMemo = { at: Date.now(), value };
-  return value;
-}
 
 async function maxSkillBytes(): Promise<number | undefined> {
   if (maxBytesMemo && Date.now() - maxBytesMemo.at < MEMO_MS) return maxBytesMemo.value;
@@ -36,17 +21,6 @@ async function maxSkillBytes(): Promise<number | undefined> {
     .catch(() => undefined);
   maxBytesMemo = { at: Date.now(), value };
   return value;
-}
-
-function readDeployedServer(): boolean {
-  try {
-    const rec = JSON.parse(readFileSync(controlPlaneDeployPath(), 'utf8')) as {
-      provider?: string;
-    };
-    return typeof rec.provider === 'string' && rec.provider !== 'local';
-  } catch {
-    return false;
-  }
 }
 
 export function pcSkillsDeps(
@@ -58,7 +32,7 @@ export function pcSkillsDeps(
     ...base,
     self() {
       const id = tryGetMachineId();
-      if (!id || isDeployedServer()) return null;
+      if (!id || !hubRunsOnPc()) return null;
       return { id, label: getMachineLabel() };
     },
     devices() {

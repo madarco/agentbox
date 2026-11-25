@@ -8,7 +8,17 @@
  * host-reach routing), so both land a skill the same way.
  */
 import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { agentSkillDirs, agentsForSkillDirs, type AgentSkillDirs } from './compare.js';
@@ -221,6 +231,40 @@ async function linkAll(
  * `overwrite`. Written next to the target under a dot-name (discovery skips
  * those) and swapped in, so a failed install never leaves a half-written skill.
  */
+/** What {@link installSkillFiles} would do, read before asking anyone. */
+export interface InstallCheck {
+  action: 'install' | 'replace' | 'unchanged' | 'skip';
+  /** `~/.agents/skills/<name>`. */
+  target: string;
+  /** The target's real path when it (or a dir above it) is a link. */
+  realTarget?: string;
+}
+
+/**
+ * Look at what an install of `version` would do, without writing: a confirm
+ * asks only for an install or a replace, and says which one it is.
+ */
+export async function installCheck(
+  name: string,
+  version: string,
+  opts: { home?: string; overwrite?: boolean } = {},
+): Promise<InstallCheck> {
+  const home = opts.home ?? homedir();
+  const target = agentsSkillDir(home, name);
+  const real = await realpath(dirname(target))
+    .then((d) => join(d, name))
+    .catch(() => undefined);
+  const withReal = real && real !== target ? { realTarget: real } : {};
+  const existing = await lstatOrNull(target);
+  if (!existing) return { action: 'install', target, ...withReal };
+  const local = await readSkillTree(target).catch(() => null);
+  if (local && treeHash(local.files) === version)
+    return { action: 'unchanged', target, ...withReal };
+  // A copy that can't be read is never replaced: nobody saw what it holds.
+  if (!local) return { action: 'skip', target, ...withReal };
+  return { action: opts.overwrite === true ? 'replace' : 'skip', target, ...withReal };
+}
+
 export async function installSkillFiles(
   name: string,
   files: readonly TarFile[],
@@ -252,6 +296,13 @@ export async function installSkillFiles(
         status: 'unchanged',
         dir: target,
         ...(await linkAll(home, name, target, overwrite, linkDirs)),
+      };
+    }
+    if (!local) {
+      return {
+        name,
+        status: 'skipped',
+        reason: `the local copy at ${target} can't be read, so it is not replaced`,
       };
     }
     if (!overwrite) {

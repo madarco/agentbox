@@ -4,7 +4,7 @@
 import { authMode } from '@/lib/auth-config';
 import { SkillsError, type SkillsStore } from '@/lib/backend/skills';
 import { requestActor } from '@/lib/request-actor';
-import { skillContentReadAuthorized } from '@/lib/skill-auth';
+import { skillContentReadAuthorized, skillMachineActAuthorized } from '@/lib/skill-auth';
 import { PEER_LOOPBACK_HEADER } from '@/lib/peer';
 import { fail } from '../lib/envelope';
 
@@ -26,6 +26,21 @@ export function skillBytesReadAllowed(req: Request): boolean {
     mode: authMode(),
     adminToken: process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '',
     providedToken: provided,
+    isLoopback: req.headers.get(PEER_LOOPBACK_HEADER) === '1',
+  });
+}
+
+/**
+ * Comparing, pulling and sending with a machine: the owner session, the admin
+ * token, or loopback on a token hub. Never an enrolled device's token (see
+ * `skillMachineActAuthorized`).
+ */
+export function skillMachineActAllowed(req: Request): boolean {
+  return skillMachineActAuthorized({
+    actor: requestActor(req),
+    mode: authMode(),
+    adminToken: process.env.AGENTBOX_RELAY_ADMIN_TOKEN ?? '',
+    providedToken: req.headers.get('x-agentbox-admin-token') ?? '',
     isLoopback: req.headers.get(PEER_LOOPBACK_HEADER) === '1',
   });
 }

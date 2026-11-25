@@ -169,10 +169,16 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   tarball (base64).
 - **Hub slice** `lib/backend/skills-pc.ts` (+ `skills-pc-wiring.ts` for the relay seams) and routes
   `GET /api/v1/skill-machines`, `GET …/{id}/compare`, `POST …/{id}/pull`, `POST …/{id}/send`. Pull
-  re-derives the tree hash hub-side before importing. Compare, pull and send take the elevated skill-content
-  auth (owner session, admin token, or loopback on a local hub). A deployed server (deploy record
-  provider other than `local`) is not offered as a machine. A device that doesn't answer an inventory
-  within 20 s is reported as not answering (an earlier confirm may be waiting there).
+  re-derives the tree hash hub-side before importing. Compare, pull and send take the owner: a session, the admin token, or loopback on a
+  token hub (`skillMachineActAuthorized`); an enrolled device's own token is refused. The hub offers
+  itself as a machine only when it runs on a PC, decided from its own env: a `localhost` hub, or a
+  password hub that `hub expose` started (`AGENTBOX_HUB_EXPOSED=1`); a deployed hetzner/vercel hub
+  never. A device gets 20 s to answer an inventory and 3 min per pull or send; its confirm turns
+  into a no after 2 min (`PC_SKILLS_CONFIRM_TTL_MS`), and after one timeout the rest of a batch is
+  not sent. A PC copy without a tree hash (too big, unreadable) is `unknown`, and no path replaces
+  a copy that can't be read. The poller names the action in the result URL, so the hub checks the
+  id and caller before buffering a body, sizes the cap from `skills.maxSkillBytes` only for a
+  `pcskills.export`, and settles an oversize result as failed.
 - **Page**: one table over the library plus the machine's own skills, toolbar with Machine, Agent and
   search, the out-of-sync banner with *Sync all* (moves each differing skill from the side that
   changed last; skips skills with problems or secret-scan findings), offline note. Add / edit /
@@ -290,9 +296,8 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - **Big skills over host-reach.** An export rides the host-action result as base64 and an install the
   action params; both are capped near the custody blob cap. A skill near `skills.maxSkillBytes`
   (50 MiB) on a remote device should stream through custody instead.
-- **The host-reach result cap is raised for every result.** `/admin/hostreach/result` reads up to
-  ~4/3 of the custody blob cap for any authenticated machine, not just `pcskills.export`. Tie the
-  larger cap to the parked action's method (or move exports to custody, above).
+- **Device pull/send is synchronous.** One request waits on each skill's confirm in turn (bounded:
+  2 min per confirm, 3 min per skill). Making it a job the page polls would free the request.
 - **A send leaves an agent's own different copy in place** (e.g. a real folder in `~/.claude/skills`):
   the install lands in `~/.agents/skills`, discovery reads that first, and the row then says "same"
   with only a "different copies" note. A per-dir view of the PC side would make this visible.

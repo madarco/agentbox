@@ -29,7 +29,9 @@ export function statusLabel(row: CompareRow, machine: string, online: boolean): 
 export function rowMoves(row: CompareRow): PcMove[] {
   if (row.status === 'local-only') return ['pull'];
   if (row.status === 'hub-only') return ['send'];
-  if (row.status === 'differs') return ['pull', 'send'];
+  // A PC copy with problems is never replaced from here: it couldn't be read
+  // whole (too big, unreadable), so nobody has seen what a send would delete.
+  if (row.status === 'differs') return pullBlocker(row) ? ['pull'] : ['pull', 'send'];
   return [];
 }
 
@@ -50,20 +52,28 @@ export interface SyncPlan {
 /**
  * "Sync all": a PC-only skill goes to the hub, a hub-only one to the PC, and a
  * differing one moves from the side that changed last. A PC copy that can't be
- * uploaded (problems or secret-scan findings) is left for the row's own button.
+ * uploaded (problems or secret-scan findings) is left for the row's own button,
+ * and one with problems is never overwritten.
  */
 export function syncPlan(rows: readonly CompareRow[]): SyncPlan {
   const plan: SyncPlan = { pull: [], send: [], overwrite: [], skipped: [] };
   for (const r of rows) {
     const toHub = r.status === 'local-only' || (r.status === 'differs' && r.newer === 'local');
-    const toPc = r.status === 'hub-only' || (r.status === 'differs' && r.newer !== 'local');
-    if (toHub) {
+    const toPc = r.status === 'hub-only' || (r.status === 'differs' && r.newer === 'hub');
+    if (r.status === 'differs' && r.newer === undefined) {
+      plan.skipped.push({ name: r.name, reason: 'no way to tell which side is newer' });
+    } else if (toHub) {
       const blocked = pullBlocker(r);
       if (blocked) plan.skipped.push({ name: r.name, reason: blocked });
       else if ((r.pc?.findings.length ?? 0) > 0)
         plan.skipped.push({ name: r.name, reason: 'secret-scan findings' });
       else plan.pull.push(r.name);
     } else if (toPc) {
+      const blocked = pullBlocker(r);
+      if (blocked) {
+        plan.skipped.push({ name: r.name, reason: blocked });
+        continue;
+      }
       plan.send.push(r.name);
       if (r.status === 'differs') plan.overwrite.push(r.name);
     }

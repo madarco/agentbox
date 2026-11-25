@@ -49,7 +49,11 @@ export function compareSkills<L extends CompareLocal, H extends CompareHub>(
       row.status = 'same';
     } else {
       row.status = 'differs';
-      row.newer = row.local!.newestMtimeMs > Date.parse(h.updatedAt) ? 'local' : 'hub';
+      // An unread local copy (too big, unreadable: no tree hash) has no age to
+      // compare, so neither side is called newer.
+      if (row.local!.treeSha !== '') {
+        row.newer = row.local!.newestMtimeMs > Date.parse(h.updatedAt) ? 'local' : 'hub';
+      }
     }
   }
   return [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));

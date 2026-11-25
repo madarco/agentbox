@@ -5,7 +5,7 @@
 // the same elevated skill-content auth as pull and send.
 import { backendOrNull } from '../../../lib/backend';
 import { fail, ok } from '../../../lib/envelope';
-import { failFromSkills, skillBytesReadAllowed } from '../../../skills/_service';
+import { failFromSkills, skillMachineActAllowed } from '../../../skills/_service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,10 +16,10 @@ export async function GET(
 ): Promise<Response> {
   const backend = backendOrNull();
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
-  if (!skillBytesReadAllowed(req)) {
+  if (!skillMachineActAllowed(req)) {
     return fail(
       'forbidden',
-      "reading a machine's skills needs the owner session or the admin token",
+      "reading a machine's skills needs the owner session or the admin token (a device token is refused)",
     );
   }
   const { id } = await ctx.params;

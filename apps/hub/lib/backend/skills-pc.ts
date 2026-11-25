@@ -14,6 +14,7 @@ import {
   compareSkills,
   readTar,
   skillDirOfPath,
+  EXPOSED_HUB_ENV,
   SKILL_NAME_RE,
   treeHash,
   type AgentSkillDirs,
@@ -42,7 +43,7 @@ export interface SkillMachine {
 /** A PC's answer to one `pcskills.*` action, or why it gave none. */
 export type PcReach =
   | { kind: 'result'; exitCode: number; stdout: string; stderr: string }
-  | { kind: 'unreachable'; detail?: string };
+  | { kind: 'unreachable'; detail?: string; timedOut?: boolean };
 
 export interface PcSkillsBackendDeps {
   store(): SkillsStore | null;
@@ -63,6 +64,8 @@ export interface PcSkillsBackendDeps {
   agentDirs?(): AgentSkillDirs[];
   /** Override {@link COMPARE_TIMEOUT_MS} (tests). */
   compareTimeoutMs?: number;
+  /** Override {@link DEVICE_ACTION_TIMEOUT_MS} (tests). */
+  deviceActionTimeoutMs?: number;
 }
 
 export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'unknown';
@@ -121,11 +124,42 @@ export interface PcSkillsBackend {
 }
 
 /**
+ * Whether this hub process runs on a PC, so its own skill dirs are the owner's
+ * and it is offered as a machine. Decided from the hub's own env, never from the
+ * deploy record (that lives on the PC that ran `hub deploy`, not on the server):
+ * a `localhost` hub is a PC; a password-profile hub is a PC only when `hub
+ * expose` spawned it (`AGENTBOX_HUB_EXPOSED`). A deployed hetzner / vercel hub
+ * is a server whose `/root` is nobody's skill dir.
+ */
+export function hubRunsOnPc(env: Record<string, string | undefined> = process.env): boolean {
+  const profile = env.AGENTBOX_HUB_PROFILE ?? 'localhost';
+  if (profile === 'localhost') return true;
+  return env[EXPOSED_HUB_ENV] === '1';
+}
+
+/**
  * How long a comparison waits for a device. Once a device takes an action the
  * queue waits for it with no limit, and a device runs its actions in order, so
  * an inventory queued behind an unanswered confirm would hang the page.
  */
 export const COMPARE_TIMEOUT_MS = 20_000;
+
+/**
+ * How long one pull or send waits for a device. The PC turns an unanswered
+ * confirm into a no after two minutes (`PC_SKILLS_CONFIRM_TTL_MS` in the relay);
+ * this is that plus room for the transfer, so a lost answer can't hold the page.
+ */
+export const DEVICE_ACTION_TIMEOUT_MS = 180_000;
+
+function withTimeout(p: Promise<PcReach>, ms: number, detail: string): Promise<PcReach> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<PcReach>((done) => {
+      timer = setTimeout(() => done({ kind: 'unreachable', detail, timedOut: true }), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 function storeOrThrow(deps: PcSkillsBackendDeps): SkillsStore {
   const s = deps.store();
@@ -145,6 +179,51 @@ function reachError(r: PcReach, label: string): string {
   if (r.kind === 'unreachable') return r.detail ?? `${label} is offline`;
   if (r.exitCode === 77) return r.stderr.trim() || `declined on ${label}`;
   return r.stderr.trim() || `failed on ${label} (exit ${String(r.exitCode)})`;
+}
+
+interface PcExport {
+  version: string;
+  description: string;
+  size: number;
+  files: number;
+  path: string;
+  tarball: string;
+}
+
+/**
+ * A device's answer to `pcskills.export`, checked before anything of it is
+ * stored: the library records its description, size and path as the skill's.
+ */
+export function parseExport(v: unknown, name: string): PcExport {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  const bad = (what: string): never => {
+    throw new Error(`the machine's answer for ${name} has no valid ${what}`);
+  };
+  if (o.name !== undefined && o.name !== name) bad('name');
+  const version =
+    typeof o.version === 'string' && /^[0-9a-f]{64}$/.test(o.version) ? o.version : bad('version');
+  const description =
+    typeof o.description === 'string' && o.description.length <= 1024
+      ? o.description
+      : bad('description');
+  const size =
+    typeof o.size === 'number' && Number.isSafeInteger(o.size) && o.size >= 0
+      ? o.size
+      : bad('size');
+  const files =
+    typeof o.files === 'number' && Number.isSafeInteger(o.files) && o.files >= 1
+      ? o.files
+      : bad('file count');
+  const path =
+    typeof o.path === 'string' &&
+    o.path.length > 0 &&
+    o.path.length <= 4096 &&
+    !/[\0\n]/.test(o.path)
+      ? o.path
+      : bad('path');
+  const tarball =
+    typeof o.tarball === 'string' && o.tarball.length > 0 ? o.tarball : bad('tarball');
+  return { version, description, size, files, path, tarball };
 }
 
 export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBackend {
@@ -176,6 +255,19 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
     return deps.runDevice!(m.id, m.label, method, params);
   };
 
+  /** A pull or send of one skill, bounded on a device (a confirm waits there). */
+  const act = (m: SkillMachine, method: string, params: unknown): Promise<PcReach> =>
+    m.self
+      ? run(m, method, params)
+      : withTimeout(
+          run(m, method, params),
+          deps.deviceActionTimeoutMs ?? DEVICE_ACTION_TIMEOUT_MS,
+          `no answer from ${m.label} in time (was the confirm there answered?)`,
+        );
+
+  /** After a device stops answering, the rest of a batch is not sent to it. */
+  const gaveUp = (m: SkillMachine): string => `not tried: ${m.label} stopped answering`;
+
   return {
     skillMachines() {
       const machines = listMachines();
@@ -195,21 +287,11 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
 
       let pcSkills: PcSkill[] | null = null;
       let error: string | undefined;
-      const limit = deps.compareTimeoutMs ?? COMPARE_TIMEOUT_MS;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const r = await Promise.race([
+      const r = await withTimeout(
         run(machine, 'pcskills.inventory', {}),
-        new Promise<PcReach>((done) => {
-          timer = setTimeout(
-            () =>
-              done({
-                kind: 'unreachable',
-                detail: `${machine.label} did not answer in time (a confirm may be waiting there)`,
-              }),
-            limit,
-          );
-        }),
-      ]).finally(() => clearTimeout(timer));
+        deps.compareTimeoutMs ?? COMPARE_TIMEOUT_MS,
+        `${machine.label} did not answer in time (a confirm may be waiting there)`,
+      );
       if (r.kind === 'result' && r.exitCode === 0) {
         try {
           pcSkills = (JSON.parse(r.stdout) as PcSkillsInventory).skills;
@@ -241,7 +323,8 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
         return {
           name: c.name,
           description: hub?.description || pc?.description || '',
-          status: c.status,
+          // No tree hash: the PC couldn't read its copy (too big, unreadable).
+          status: pc && pc.treeSha === '' ? 'unknown' : c.status,
           ...(c.newer ? { newer: c.newer } : {}),
           agents: pc ? pc.agents : hub ? hubSkillAgents(hub, agents) : [],
           ...(hub ? { hub: hubRow(hub) } : {}),
@@ -264,7 +347,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       return {
         machine,
         rows,
-        outOfSync: rows.filter((x) => x.status !== 'same').length,
+        outOfSync: rows.filter((x) => x.status !== 'same' && x.status !== 'unknown').length,
       };
     },
 
@@ -274,28 +357,27 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       const max = deps.maxTarballBytes?.();
       const out: PullResult[] = [];
       const changed: string[] = [];
+      let stalled = false;
       for (const name of names) {
         if (!SKILL_NAME_RE.test(name)) {
           out.push({ name, status: 'failed', reason: 'invalid skill name' });
           continue;
         }
-        const r = await run(machine, 'pcskills.export', {
+        if (stalled) {
+          out.push({ name, status: 'failed', reason: gaveUp(machine) });
+          continue;
+        }
+        const r = await act(machine, 'pcskills.export', {
           name,
           ...(opts.allowFindings ? { allowFindings: true } : {}),
         });
         if (r.kind !== 'result' || r.exitCode !== 0) {
+          if (r.kind === 'unreachable' && r.timedOut) stalled = true;
           out.push({ name, status: 'failed', reason: reachError(r, machine.label) });
           continue;
         }
         try {
-          const got = JSON.parse(r.stdout) as {
-            version: string;
-            description: string;
-            size: number;
-            files: number;
-            path: string;
-            tarball: string;
-          };
+          const got = parseExport(JSON.parse(r.stdout), name);
           const tar = Buffer.from(got.tarball, 'base64');
           // The PC names the version; the hub re-derives it, so the library never
           // stores a tree under an id it does not hash to.
@@ -339,6 +421,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       const machine = machineOrThrow(machineId);
       const store = storeOrThrow(deps);
       const out: SendResult[] = [];
+      let stalled = false;
       for (const name of names) {
         if (!SKILL_NAME_RE.test(name)) {
           out.push({ name, status: 'failed', reason: 'invalid skill name' });
@@ -360,13 +443,18 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
           });
           continue;
         }
-        const r = await run(machine, 'pcskills.install', {
+        if (stalled) {
+          out.push({ name, status: 'failed', reason: gaveUp(machine) });
+          continue;
+        }
+        const r = await act(machine, 'pcskills.install', {
           name,
           version,
           tarball: tarball.toString('base64'),
           ...(opts.overwrite ? { overwrite: true } : {}),
         });
         if (r.kind !== 'result' || r.exitCode !== 0) {
+          if (r.kind === 'unreachable' && r.timedOut) stalled = true;
           out.push({ name, status: 'failed', reason: reachError(r, machine.label) });
           continue;
         }

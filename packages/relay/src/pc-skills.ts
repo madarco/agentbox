@@ -11,7 +11,9 @@
  * (`confirm`), which a host-reach PC also raises on the hub's approvals. The
  * inventory is metadata only (names, descriptions, tree hashes) and is not.
  */
+import { realpath } from 'node:fs/promises';
 import {
+  installCheck,
   installSkillFiles,
   pcSkillsInventory,
   readPcSkill,
@@ -42,6 +44,13 @@ export function isPcSkillsMethod(method: string): method is PcSkillsMethod {
 export function pcSkillsActionId(deviceId: string): string {
   return `pc:${deviceId}`;
 }
+
+/**
+ * How long a `pcskills.*` confirm waits on the PC before it counts as a no.
+ * A device runs its host-reach actions one at a time, so an unanswered confirm
+ * would hold every later action for that PC (the hub's compare included).
+ */
+export const PC_SKILLS_CONFIRM_TTL_MS = 120_000;
 
 export interface PcSkillsExportParams {
   name: string;
@@ -125,9 +134,19 @@ export async function executePcSkillsAction(
       const blocker = uploadBlocker(skill, { allowFindings: p.allowFindings === true });
       if (blocker) return fail(65, `${name}: ${blocker}`);
       if (deps.confirm) {
+        const shown = await realpath(skill.dir).catch(() => skill.dir);
+        const overridden =
+          skill.findings.length > 0
+            ? ` · ${String(skill.findings.length)} secret-scan finding(s) overridden (${[
+                ...new Set(skill.findings.map((f) => f.rule)),
+              ].join(', ')})`
+            : '';
         const yes = await deps.confirm({
-          message: `Upload skill ${name} from this machine to the hub's library?`,
-          detail: `${skill.dir} · every box on the hub gets it`,
+          message:
+            skill.findings.length > 0
+              ? `Upload skill ${name} from this machine to the hub's library, despite its secret-scan findings?`
+              : `Upload skill ${name} from this machine to the hub's library?`,
+          detail: `${shown} · every box on the hub gets it${overridden}`,
           command: method,
         });
         if (!yes) return fail(77, `${name}: declined on this machine`);
@@ -150,19 +169,30 @@ export async function executePcSkillsAction(
     const files = readTar(Buffer.from(tarball, 'base64'), {
       ...(deps.maxBytes !== undefined ? { maxBytes: deps.maxBytes } : {}),
     });
-    if (deps.confirm) {
+    const home = deps.home ? { home: deps.home } : {};
+    const check = await installCheck(name, version, {
+      ...home,
+      ...(p.overwrite === true ? { overwrite: true } : {}),
+    });
+    // Ask only when something is written: an identical copy or a refused
+    // overwrite needs no one's yes.
+    if (deps.confirm && (check.action === 'install' || check.action === 'replace')) {
+      const where = check.realTarget ?? check.target;
       const yes = await deps.confirm({
-        message: `Install skill ${name} from the hub into ~/.agents/skills?`,
+        message:
+          check.action === 'replace'
+            ? `Replace skill ${name} on this machine with the hub's version?`
+            : `Install skill ${name} from the hub on this machine?`,
         detail:
-          p.overwrite === true
-            ? `replaces this machine's copy with version ${version.slice(0, 12)}`
-            : `version ${version.slice(0, 12)}`,
+          check.action === 'replace'
+            ? `replaces the copy at ${where} with version ${version.slice(0, 12)}`
+            : `writes ${where} · version ${version.slice(0, 12)}`,
         command: method,
       });
       if (!yes) return fail(77, `${name}: declined on this machine`);
     }
     const res: InstallOutcome = await installSkillFiles(name, files, version, {
-      ...(deps.home ? { home: deps.home } : {}),
+      ...home,
       ...(p.overwrite === true ? { overwrite: true } : {}),
     });
     deps.log?.(`pcskills: ${name} ${res.status}`);

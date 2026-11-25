@@ -98,6 +98,70 @@ describe('executePcSkillsAction', () => {
     expect(readFileSync(join(home, '.agents/skills/beta/SKILL.md'), 'utf8')).toMatch(/beta/);
   });
 
+  it('an overridden scan names the findings in the confirm', async () => {
+    const home = tmp('pcs-ovr-');
+    const dir = writeSkill(join(home, '.agents/skills'), 'leaky');
+    writeFileSync(join(dir, 'conn.md'), 'use postgres://admin:Zq81vP0xLm@db.internal/app\n');
+    const asked: { message: string; detail?: string }[] = [];
+    const r = await executePcSkillsAction(
+      'pcskills.export',
+      { name: 'leaky', allowFindings: true },
+      {
+        home,
+        confirm: (p) => {
+          asked.push(p);
+          return Promise.resolve(true);
+        },
+      },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(asked[0]!.message).toMatch(/despite its secret-scan findings/);
+    expect(asked[0]!.detail).toMatch(/1 secret-scan finding\(s\) overridden \(/);
+  });
+
+  it('install asks only when it writes, and says replace only for an existing copy', async () => {
+    const home = tmp('pcs-ask-');
+    const files = [
+      { path: 'SKILL.md', mode: 0o644, data: Buffer.from('---\nname: s\ndescription: d\n---\n') },
+    ];
+    const version = treeHash(files);
+    const tarball = writeTar(files).toString('base64');
+    const asked: string[] = [];
+    const confirm = (p: { message: string }) => {
+      asked.push(p.message);
+      return Promise.resolve(true);
+    };
+    await executePcSkillsAction(
+      'pcskills.install',
+      { name: 's', version, tarball },
+      { home, confirm },
+    );
+    expect(asked).toEqual([expect.stringMatching(/^Install skill s/) as unknown]);
+    // Same version again: nothing to write, nothing to ask.
+    await executePcSkillsAction(
+      'pcskills.install',
+      { name: 's', version, tarball },
+      { home, confirm },
+    );
+    expect(asked).toHaveLength(1);
+    // A different local copy without overwrite: skipped, not asked.
+    writeFileSync(join(home, '.agents/skills/s/SKILL.md'), 'changed\n');
+    const skip = await executePcSkillsAction(
+      'pcskills.install',
+      { name: 's', version, tarball },
+      { home, confirm },
+    );
+    expect(JSON.parse(skip.stdout)).toMatchObject({ status: 'skipped' });
+    expect(asked).toHaveLength(1);
+    const rep = await executePcSkillsAction(
+      'pcskills.install',
+      { name: 's', version, tarball, overwrite: true },
+      { home, confirm },
+    );
+    expect(JSON.parse(rep.stdout)).toMatchObject({ status: 'replaced' });
+    expect(asked[1]).toMatch(/^Replace skill s/);
+  });
+
   it('refuses a bad name', async () => {
     const r = await executePcSkillsAction('pcskills.export', { name: '../x' }, {});
     expect(r.exitCode).toBe(64);

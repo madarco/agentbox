@@ -40,6 +40,7 @@ export {
   type SshTarget,
 } from './ssh-config.js';
 export {
+  EXPOSED_HUB_ENV,
   EXPOSED_HUB_PROFILE,
   buildExposedHubEnv,
   parseEnvFileBody,
@@ -435,6 +436,7 @@ export type {
 export {
   AGENTS_SKILLS_DIR,
   agentsSkillDir,
+  installCheck,
   installSkillFiles,
   linkDirsForAgents,
   pcSkillsInventory,
@@ -442,7 +444,7 @@ export {
   toPcSkill,
   uploadBlocker,
 } from './skills/pc.js';
-export type { InstallOutcome, PcSkill, PcSkillsInventory } from './skills/pc.js';
+export type { InstallCheck, InstallOutcome, PcSkill, PcSkillsInventory } from './skills/pc.js';
 export type { TarFile } from './skills/tar.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {

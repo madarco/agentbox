@@ -4,7 +4,7 @@
 // replaced only with `overwrite`. A device confirms on its own side first.
 import { backendOrNull } from '../../../lib/backend';
 import { fail, ok } from '../../../lib/envelope';
-import { failFromSkills, readJson, skillBytesReadAllowed } from '../../../skills/_service';
+import { failFromSkills, readJson, skillMachineActAllowed } from '../../../skills/_service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,10 +15,10 @@ export async function POST(
 ): Promise<Response> {
   const backend = backendOrNull();
   if (!backend) return fail('backend_unavailable', 'hub backend unavailable (run the hub server)');
-  if (!skillBytesReadAllowed(req)) {
+  if (!skillMachineActAllowed(req)) {
     return fail(
       'forbidden',
-      'moving skills to and from a machine needs the owner session or the admin token',
+      'moving skills to and from a machine needs the owner session or the admin token (a device token is refused)',
     );
   }
   const { id } = await ctx.params;

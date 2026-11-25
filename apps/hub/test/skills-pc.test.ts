@@ -6,7 +6,13 @@ import { describe, expect, it } from 'vitest';
 import { executePcSkillsAction, isPcSkillsMethod } from '@agentbox/relay';
 import { treeHash, writeTar, type AgentSkillDirs } from '@agentbox/sandbox-core';
 import { importSkill, readSkillMeta } from '../lib/backend/skills';
-import { createPcSkillsBackend, type PcReach } from '../lib/backend/skills-pc';
+import {
+  createPcSkillsBackend,
+  hubRunsOnPc,
+  parseExport,
+  type PcReach,
+} from '../lib/backend/skills-pc';
+import { skillMachineActAuthorized } from '../lib/skill-auth';
 import {
   rowMoves,
   statusLabel,
@@ -173,6 +179,74 @@ describe('hub <-> PC skills backend', () => {
     expect(c.machine.online).toBe(false);
   });
 
+  it('stops a batch on a device that stops answering, and says why for the rest', async () => {
+    const calls: string[] = [];
+    const store = memStore();
+    await seedHub(store, 'a');
+    await seedHub(store, 'b');
+    const backend = createPcSkillsBackend({
+      store: () => store,
+      self: () => null,
+      devices: () => [{ id: 'mac-id', label: 'MacBook' }],
+      present: () => ['mac-id'],
+      runSelf: () => Promise.reject(new Error('unused')),
+      runDevice: (_id, _l, method) => {
+        calls.push(method);
+        return new Promise<PcReach>(() => {});
+      },
+      skillsChanged: () => {},
+      agentDirs: () => AGENTS,
+      deviceActionTimeoutMs: 20,
+    });
+    const sent = await backend.sendSkills('mac-id', ['a', 'b']);
+    expect(sent[0]).toMatchObject({ status: 'failed', reason: expect.stringMatching(/no answer/) });
+    expect(sent[1]).toMatchObject({ status: 'failed', reason: expect.stringMatching(/not tried/) });
+    expect(calls).toEqual(['pcskills.install']);
+    const pulled = await backend.pullSkills('mac-id', ['a', 'b']);
+    expect(pulled.map((r) => r.status)).toEqual(['failed', 'failed']);
+    expect(calls).toEqual(['pcskills.install', 'pcskills.export']);
+  });
+
+  it('an unread PC copy (no tree hash) is unknown, not differs, and not out of sync', async () => {
+    const store = memStore();
+    await seedHub(store, 'big');
+    const backend = createPcSkillsBackend({
+      store: () => store,
+      self: () => ({ id: 'self-id', label: 'devbox' }),
+      devices: () => [],
+      present: () => [],
+      runSelf: () =>
+        Promise.resolve({
+          kind: 'result',
+          exitCode: 0,
+          stderr: '',
+          stdout: JSON.stringify({
+            skills: [
+              {
+                name: 'big',
+                description: '',
+                treeSha: '',
+                newestMtimeMs: 0,
+                size: 0,
+                files: 0,
+                dirs: ['.agents/skills'],
+                path: '/h/.agents/skills/big',
+                agents: [],
+                problems: ['larger than skills.maxSkillBytes'],
+                findings: [],
+              },
+            ],
+          }),
+        }),
+      skillsChanged: () => {},
+      agentDirs: () => AGENTS,
+    });
+    const c = await backend.compareMachineSkills('self-id');
+    expect(c.rows[0]).toMatchObject({ name: 'big', status: 'unknown' });
+    expect(c.rows[0]).not.toHaveProperty('newer');
+    expect(c.outOfSync).toBe(0);
+  });
+
   it('refuses an unknown machine', async () => {
     const { backend } = setup();
     await expect(backend.compareMachineSkills('nope')).rejects.toThrow(/no machine/);
@@ -225,5 +299,84 @@ describe('skills page helpers', () => {
     expect(plan.send).toEqual(['b', 'd']);
     expect(plan.overwrite).toEqual(['d']);
     expect(plan.skipped.map((s) => s.name)).toEqual(['e', 'f']);
+  });
+  it('never overwrites a PC copy with problems, nor guesses a side without an age', () => {
+    const broken = {
+      treeSha: '',
+      dirs: [],
+      path: '/p',
+      size: 0,
+      files: 0,
+      problems: ['larger than skills.maxSkillBytes'],
+      findings: [],
+    };
+    expect(rowMoves(row({ status: 'differs', newer: 'hub', pc: broken }))).toEqual(['pull']);
+    const plan = syncPlan([
+      row({ name: 'h', status: 'differs', newer: 'hub', pc: broken }),
+      row({ name: 'i', status: 'differs', pc: { ...broken, problems: [] } }),
+    ]);
+    expect(plan.send).toEqual([]);
+    expect(plan.overwrite).toEqual([]);
+    expect(plan.skipped.map((s) => s.name)).toEqual(['h', 'i']);
+  });
+});
+
+describe('which hub offers itself as a machine', () => {
+  it('a localhost hub is a PC', () => {
+    expect(hubRunsOnPc({})).toBe(true);
+    expect(hubRunsOnPc({ AGENTBOX_HUB_PROFILE: 'localhost' })).toBe(true);
+  });
+  it('an exposed PC hub is a PC; a deployed hetzner or vercel hub is not', () => {
+    expect(hubRunsOnPc({ AGENTBOX_HUB_PROFILE: 'hetzner', AGENTBOX_HUB_EXPOSED: '1' })).toBe(true);
+    expect(hubRunsOnPc({ AGENTBOX_HUB_PROFILE: 'hetzner' })).toBe(false);
+    expect(hubRunsOnPc({ AGENTBOX_HUB_PROFILE: 'vercel' })).toBe(false);
+  });
+});
+
+describe('who may act on a machine', () => {
+  const base = {
+    mode: 'password' as const,
+    adminToken: 'admin-secret',
+    providedToken: '',
+    isLoopback: false,
+    actor: { kind: 'api-key' } as const,
+  };
+  it('refuses an enrolled device token on a password hub', () => {
+    expect(
+      skillMachineActAuthorized({ ...base, providedToken: 'dev', providedTokenIsDevice: true }),
+    ).toBe(false);
+  });
+  it('accepts the admin token and the owner session', () => {
+    expect(skillMachineActAuthorized({ ...base, providedToken: 'admin-secret' })).toBe(true);
+    expect(skillMachineActAuthorized({ ...base, actor: { kind: 'session' } as const })).toBe(true);
+  });
+  it('a token hub: loopback only', () => {
+    expect(skillMachineActAuthorized({ ...base, mode: 'token', isLoopback: true })).toBe(true);
+    expect(skillMachineActAuthorized({ ...base, mode: 'token' })).toBe(false);
+  });
+});
+
+describe('a device export answer', () => {
+  const good = {
+    name: 's',
+    version: 'a'.repeat(64),
+    description: 'd',
+    size: 3,
+    files: 1,
+    path: '/h/.agents/skills/s',
+    tarball: 'eA==',
+  };
+  it('is accepted when well formed', () => {
+    expect(parseExport(good, 's')).toMatchObject({ version: good.version, files: 1 });
+  });
+  it('is refused with a bad field', () => {
+    expect(() => parseExport({ ...good, name: 'other' }, 's')).toThrow(/name/);
+    expect(() => parseExport({ ...good, version: 'x' }, 's')).toThrow(/version/);
+    expect(() => parseExport({ ...good, size: -1 }, 's')).toThrow(/size/);
+    expect(() => parseExport({ ...good, files: 0 }, 's')).toThrow(/file count/);
+    expect(() => parseExport({ ...good, path: 'a\nb' }, 's')).toThrow(/path/);
+    expect(() => parseExport({ ...good, description: 'x'.repeat(2000) }, 's')).toThrow(
+      /description/,
+    );
   });
 });

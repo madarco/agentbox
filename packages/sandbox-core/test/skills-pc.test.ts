@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -16,6 +17,7 @@ import {
   type AgentSkillDirs,
 } from '../src/skills/compare.js';
 import {
+  installCheck,
   installSkillFiles,
   linkDirsForAgents,
   pcSkillsInventory,
@@ -68,6 +70,11 @@ describe('compareSkills', () => {
   it('says the hub is newer when the hub changed last', () => {
     const [r] = compareSkills([l('a', 'y', 1)], [h('a', 'q')]);
     expect(r!.newer).toBe('hub');
+  });
+  it('names no newer side for a local copy that was not read (no tree hash)', () => {
+    const [r] = compareSkills([l('a', '', 0)], [h('a', 'q')]);
+    expect(r!.status).toBe('differs');
+    expect(r!.newer).toBeUndefined();
   });
 });
 
@@ -146,6 +153,34 @@ describe('installSkillFiles', () => {
       await installSkillFiles('s', files, sha, { home, linkDirs: [], overwrite: true }),
     ).toMatchObject({ status: 'replaced' });
     expect(readFileSync(join(home, '.agents/skills/s/SKILL.md'), 'utf8')).toMatch(/name: s/);
+  });
+  it('never replaces a local copy it cannot read, even with overwrite', async () => {
+    const home = tmp('pcinst5-');
+    mkdirSync(join(home, '.agents/skills'), { recursive: true });
+    symlinkSync(join(home, 'gone'), join(home, '.agents/skills/s'));
+    expect(await installCheck('s', sha, { home, overwrite: true })).toMatchObject({
+      action: 'skip',
+    });
+    expect(
+      await installSkillFiles('s', files, sha, { home, linkDirs: [], overwrite: true }),
+    ).toMatchObject({ status: 'skipped', reason: expect.stringMatching(/can't be read/) });
+  });
+  it('installCheck tells install, unchanged and replace apart, with the real path', async () => {
+    const home = tmp('pcinst6-');
+    const real = tmp('pcinst6-real-');
+    mkdirSync(join(home, '.agents'));
+    symlinkSync(real, join(home, '.agents/skills'));
+    expect(await installCheck('s', sha, { home })).toEqual({
+      action: 'install',
+      target: join(home, '.agents/skills/s'),
+      realTarget: join(realpathSync(real), 's'),
+    });
+    await installSkillFiles('s', files, sha, { home, linkDirs: [] });
+    expect((await installCheck('s', sha, { home })).action).toBe('unchanged');
+    expect((await installCheck('s', 'b'.repeat(64), { home, overwrite: true })).action).toBe(
+      'replace',
+    );
+    expect((await installCheck('s', 'b'.repeat(64), { home })).action).toBe('skip');
   });
   it('refuses files that do not hash to the named version', async () => {
     await expect(
