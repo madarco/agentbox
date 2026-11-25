@@ -53,6 +53,17 @@ export {
   type HostReachUnreachable,
 } from './host-reach.js';
 export { HostReachPoller, type HostReachPollerDeps } from './host-reach-poller.js';
+export {
+  executePcSkillsAction,
+  isPcSkillsMethod,
+  pcSkillsActionId,
+  PC_SKILLS_METHODS,
+  type PcSkillsDeps,
+  type PcSkillsExport,
+  type PcSkillsExportParams,
+  type PcSkillsInstallParams,
+  type PcSkillsMethod,
+} from './pc-skills.js';
 export { SseFrameReader, type SseFrame } from './sse-read.js';
 export {
   cpCacheKey,

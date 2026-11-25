@@ -399,11 +399,19 @@ export class HostReachPoller {
         });
         return;
       }
-      await this.post(`${base}/admin/hostreach/result`, {
-        id: action.id,
-        poller: this.pollerId,
-        ...result,
-      });
+      const resultUrl = `${base}/admin/hostreach/result?id=${encodeURIComponent(action.id)}&poller=${encodeURIComponent(this.pollerId)}`;
+      const res = await this.post(resultUrl, { id: action.id, poller: this.pollerId, ...result });
+      if (res.status === 413) {
+        // The hub marks the action failed itself; this covers an older hub that
+        // only refused the body, so the request never waits on a lost answer.
+        await this.post(resultUrl, {
+          id: action.id,
+          poller: this.pollerId,
+          exitCode: 1,
+          stdout: '',
+          stderr: `${action.method}: the result was too large for the hub\n`,
+        });
+      }
     } catch (err) {
       // The box is still blocked on this action; the control box will time it
       // out as 'went-away' once we stop polling, so it can't hang forever.

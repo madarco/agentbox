@@ -487,7 +487,7 @@ describe('seed + download', () => {
     );
     expect(got).toMatchObject({
       status: 'installed',
-      claudeKept: join(pcB, '.claude/skills/shared'),
+      kept: [join(pcB, '.claude/skills/shared')],
     });
     expect(readFileSync(join(pcB, '.claude/skills/shared/mine.md'), 'utf8')).toBe('my edits');
   });

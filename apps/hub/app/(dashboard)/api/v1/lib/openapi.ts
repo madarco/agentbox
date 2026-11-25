@@ -5419,6 +5419,147 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/skill-machines': {
+        get: {
+          tags: ['Skills'],
+          summary: 'Machines to compare the skills library with',
+          description:
+            "The hub's own machine (unless it is a deployed server) and the enrolled devices, each with `online` (its relay is connected now). `defaultId` is the one the skills page opens on.",
+          responses: {
+            '200': {
+              description: 'The machines',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      machines: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/SkillMachine' },
+                      },
+                      defaultId: { type: 'string', nullable: true },
+                    },
+                    required: ['machines', 'defaultId'],
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/skill-machines/{id}/compare': {
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Machine id (`GET /skill-machines`)',
+          },
+        ],
+        get: {
+          tags: ['Skills'],
+          summary: 'Compare the skills library with a machine',
+          description:
+            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`. When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the owner: a session or the admin token (an enrolled device's token is refused).",
+          responses: {
+            '200': {
+              description: 'The comparison',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/SkillCompare' } },
+              },
+            },
+            '403': {
+              description: 'Not the owner session or admin token (a device token is refused)',
+            },
+            '404': { description: 'No such machine' },
+          },
+        },
+      },
+      '/skill-machines/{id}/pull': {
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Machine id (`GET /skill-machines`)',
+          },
+        ],
+        post: {
+          tags: ['Skills'],
+          summary: 'Pull skills from a machine into the library',
+          description:
+            'Reads each named skill off that machine (an enrolled device confirms on its side first, mirrored to `/approvals`) and imports it, as `agentbox skills` uploads. A skill with secret-scan findings is refused unless `allowFindings`. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    names: { type: 'array', items: { type: 'string' } },
+                    allowFindings: { type: 'boolean' },
+                  },
+                  required: ['names'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description:
+                'One result per name: `{name, status: imported|unchanged|held, version}` or `{name, status: failed, reason}`',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '403': {
+              description: 'Not the owner session or admin token (a device token is refused)',
+            },
+          },
+        },
+      },
+      '/skill-machines/{id}/send': {
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Machine id (`GET /skill-machines`)',
+          },
+        ],
+        post: {
+          tags: ['Skills'],
+          summary: 'Send library skills to a machine',
+          description:
+            "Installs each named skill's current version at `~/.agents/skills/<name>` on that machine (plus a link for an agent that does not read that dir), after a confirm on an enrolled device. The machine re-derives the tree hash before writing. A different local copy is replaced only with `overwrite`. Needs the owner: a session or the admin token (a device token is refused). A device that does not answer within 3 min fails that skill and the rest of the batch. A local copy that cannot be read is never replaced.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    names: { type: 'array', items: { type: 'string' } },
+                    overwrite: { type: 'boolean' },
+                  },
+                  required: ['names'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description:
+                'One result per name: `{name, status: installed|replaced|unchanged, dir, links?, kept?}`, `{name, status: skipped, reason}` or `{name, status: failed, reason}`',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '403': {
+              description: 'Not the owner session or admin token (a device token is refused)',
+            },
+          },
+        },
+      },
       '/skills/{name}/tarball': {
         parameters: [
           {
@@ -5749,6 +5890,67 @@ export function buildOpenApi(): Record<string, unknown> {
             versions: { type: 'integer', description: 'Stored versions (max 5)' },
           },
           required: ['name', 'description', 'current', 'size', 'files', 'updatedAt', 'versions'],
+        },
+        SkillMachine: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: "The machine's id (`~/.agentbox/machine-id`)" },
+            label: { type: 'string' },
+            self: { type: 'boolean', description: "The hub's own machine" },
+            online: { type: 'boolean' },
+          },
+          required: ['id', 'label', 'self', 'online'],
+        },
+        SkillCompare: {
+          type: 'object',
+          properties: {
+            machine: { $ref: '#/components/schemas/SkillMachine' },
+            error: { type: 'string', description: 'Why the machine side is missing' },
+            outOfSync: { type: 'integer' },
+            rows: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  status: {
+                    type: 'string',
+                    enum: ['same', 'differs', 'local-only', 'hub-only', 'unknown'],
+                  },
+                  newer: { type: 'string', enum: ['local', 'hub'] },
+                  agents: { type: 'array', items: { type: 'string' } },
+                  hub: {
+                    type: 'object',
+                    properties: {
+                      current: { type: 'string' },
+                      updatedAt: { type: 'string' },
+                      pending: { type: 'boolean' },
+                    },
+                  },
+                  pc: {
+                    type: 'object',
+                    properties: {
+                      treeSha: { type: 'string' },
+                      dirs: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Home-relative skill dirs holding it',
+                      },
+                      path: { type: 'string' },
+                      size: { type: 'integer' },
+                      files: { type: 'integer' },
+                      problems: { type: 'array', items: { type: 'string' } },
+                      findings: { type: 'array', items: { type: 'object' } },
+                      conflicting: { type: 'boolean' },
+                    },
+                  },
+                },
+                required: ['name', 'description', 'status', 'agents'],
+              },
+            },
+          },
+          required: ['machine', 'rows', 'outOfSync'],
         },
         SkillsListing: {
           type: 'object',
