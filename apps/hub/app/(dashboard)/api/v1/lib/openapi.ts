@@ -1144,6 +1144,11 @@ export function buildOpenApi(): Record<string, unknown> {
                           },
                         },
                       },
+                      machine: {
+                        type: 'string',
+                        description:
+                          "This hub machine's id. Custody holds a named account's login under `agents/<agent>/accounts/<machine>/<id>/`, so a client joins those entries to these accounts only when the machine matches.",
+                      },
                     },
                     required: ['accounts', 'agents'],
                   },

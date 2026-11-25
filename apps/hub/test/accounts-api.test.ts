@@ -53,6 +53,15 @@ describe('GET /api/v1/accounts (backend)', () => {
     expect(JSON.stringify(r)).not.toContain('refreshToken');
     expect(r.agents.map((a) => a.id)).toEqual(expect.arrayContaining(['claude', 'codex']));
   });
+
+  it('names the machine the accounts belong to, the key custody files them under', async () => {
+    const b = createAccountBackend({
+      store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
+      boxes: () => Promise.resolve(boxes),
+      machineId: () => 'm-hub',
+    });
+    expect((await b.listAccounts()).machine).toBe('m-hub');
+  });
 });
 
 describe('POST /api/v1/accounts (backend)', () => {

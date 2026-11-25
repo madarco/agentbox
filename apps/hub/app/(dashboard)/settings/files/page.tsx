@@ -4,7 +4,8 @@
 // the PC, grouped for people (project files, agent logins, skills, bakes, box
 // keys). Read-only. PURE REST CLIENT: GET /api/v1/custody returns metadata only
 // (path, size, sha256, mtime), never a value; project and box names come from
-// the store, account labels from GET /api/v1/accounts — none returns contents.
+// the store, account labels from GET /api/v1/accounts, machine names from GET
+// /api/v1/devices. None returns contents.
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
@@ -31,6 +32,11 @@ interface CustodyResponse {
 
 interface AccountsResponse {
   accounts?: { agent: string; id: string; label?: string }[];
+  machine?: string;
+}
+
+interface DevicesResponse {
+  devices?: { id: string; label: string }[];
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -42,7 +48,8 @@ async function getJson<T>(url: string): Promise<T> {
 export default function FilesPage() {
   const { state } = useStore();
   const [data, setData] = useState<CustodyResponse | null>(null);
-  const [accounts, setAccounts] = useState<AccountsResponse['accounts']>([]);
+  const [accounts, setAccounts] = useState<AccountsResponse>({});
+  const [machines, setMachines] = useState<DevicesResponse['devices']>([]);
   const [error, setError] = useState<string | null>(null);
   const [only, setOnly] = useState<FilesGroupId | null>(null);
 
@@ -55,10 +62,16 @@ export default function FilesPage() {
       .catch((err: unknown) => {
         if (alive) setError(err instanceof Error ? err.message : String(err));
       });
-    // Labels only; a hub without an account store just shows account ids.
+    // Names only, both optional: without them a row shows ids. A local hub has
+    // no device service (503).
     getJson<AccountsResponse>('/api/v1/accounts')
       .then((j) => {
-        if (alive) setAccounts(j.accounts ?? []);
+        if (alive) setAccounts(j);
+      })
+      .catch(() => {});
+    getJson<DevicesResponse>('/api/v1/devices')
+      .then((j) => {
+        if (alive) setMachines(j.devices ?? []);
       })
       .catch(() => {});
     return () => {
@@ -71,9 +84,11 @@ export default function FilesPage() {
       buildFilesView(data?.entries ?? [], {
         projects: state.projects,
         boxes: state.boxes,
-        accounts,
+        accounts: accounts.accounts,
+        machine: accounts.machine,
+        machines,
       }),
-    [data, state.projects, state.boxes, accounts],
+    [data, state.projects, state.boxes, accounts, machines],
   );
   const total = groups.reduce((n, g) => n + g.count, 0);
   const shown = (only ? groups.filter((g) => g.id === only) : groups).filter((g) => g.count > 0);
@@ -195,7 +210,7 @@ function GroupView({ group }: { group: FilesGroup }) {
       <Card className="divide-y divide-border/60 overflow-hidden">
         {group.sections.map((s) => (
           <div key={s.key} className="p-4 px-5">
-            {group.sections.length > 1 || group.id === 'projects' ? (
+            {group.sections.length > 1 || group.id === 'projects' || group.id === 'agents' ? (
               <div className="mb-2 flex min-w-0 items-center gap-2">
                 <Icons.folder className="size-[15px] flex-none text-muted-foreground" />
                 {s.href ? (

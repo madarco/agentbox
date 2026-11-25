@@ -1500,7 +1500,12 @@ export type AccountResult<T> =
   | { ok: false; code: 'invalid_request' | 'not_found' | 'conflict'; error: string };
 
 export interface AccountBackend {
-  listAccounts(): Promise<{ accounts: AccountView[]; agents: AccountAgentView[] }>;
+  listAccounts(): Promise<{
+    accounts: AccountView[];
+    agents: AccountAgentView[];
+    /** The machine id these accounts belong to (custody keys named accounts by it). */
+    machine?: string;
+  }>;
   /** A pasteable kind (`api-key` / `setup-token`); a login is interactive only. */
   addPastedAccount(input: unknown): Promise<AccountResult<AccountView>>;
   labelAccount(agent: string, id: string, label: unknown): Promise<AccountResult<AccountView>>;
