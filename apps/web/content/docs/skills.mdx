@@ -104,7 +104,7 @@ The table compares each skill by content: `same`, `differs` (with which side cha
 
 A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. A skill that holds a symlink pointing **outside its own folder** (for example `refs -> ~/Projects/app`) is skipped too, with the link named: following it would upload that whole folder, `.env` files included.
 
-**In the hub web UI**, the **Skills** page lists what the library holds (description, size, file count, the PC it came from, when it was updated, how many versions are kept) and manages it without a terminal. See [The Skills page](#the-skills-page). Uploading from and downloading to a PC's folders stays with `agentbox skills` on that PC, since only it can read and write them.
+**In the hub web UI**, the **Settings → Skills** page (`/settings/skills`) lists what the library holds (description, size, file count, the PC it came from, when it was updated, how many versions are kept) and manages it without a terminal. See [The Skills page](#the-skills-page). Uploading from and downloading to a PC's folders stays with `agentbox skills` on that PC, since only it can read and write them.
 
 ### Library skills in boxes
 
@@ -232,7 +232,7 @@ Each **box's page** has a **Skills** section: the library skills the box was las
 
 ### Cloud bases go stale when your skills change
 
-A cloud base (Hetzner, DigitalOcean, Daytona, Vercel, E2B) is baked with the skills on the machine that baked it, and the bake now records a digest of those skills (the ones the library would hold: valid, no secret-scan finding). When your skills change, that machine reports the base **stale** ("host skills changed since this base was baked"): `agentbox prepare --provider <id>` re-bakes instead of skipping, and the hub's **System** page shows the base as stale. If you have no skills, or the base was baked before this existed or on another machine, nothing changes. Docker and remote-docker boxes are unaffected; they receive skills when each box is created.
+A cloud base (Hetzner, DigitalOcean, Daytona, Vercel, E2B) is baked with the skills on the machine that baked it, and the bake now records a digest of those skills (the ones the library would hold: valid, no secret-scan finding). When your skills change, that machine reports the base **stale** ("host skills changed since this base was baked"): `agentbox prepare --provider <id>` re-bakes instead of skipping, and the hub's **Settings → System** page shows the base as stale. If you have no skills, or the base was baked before this existed or on another machine, nothing changes. Docker and remote-docker boxes are unaffected; they receive skills when each box is created.
 
 ## Next steps
 

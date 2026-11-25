@@ -15,9 +15,9 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { fmtBytes } from '@/lib/boxes/format';
 import { useStore } from '@/lib/boxes/store';
-import { ApprovalActions } from '../approvals/components/approval-actions';
-import { EmptyBox } from '../boxes/components/empty-box';
-import { SectionLabel } from '../boxes/components/section-label';
+import { ApprovalActions } from '../../approvals/components/approval-actions';
+import { EmptyBox } from '../../boxes/components/empty-box';
+import { SectionLabel } from '../../boxes/components/section-label';
 import { AddSourceDialog } from './components/add-source-dialog';
 import {
   api,

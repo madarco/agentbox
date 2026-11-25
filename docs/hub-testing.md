@@ -443,7 +443,7 @@ Run from a Mac (the PC) against a real Hetzner control box built from source at
   Symptom when you forget: a change that is definitely in the source doesn't show up — e.g.
   `hub status` missing a field the running hub never learned to report.
 - **Every provider "unverified"? Check the hub child's env, not the bakes.** Hub-side base
-  freshness (`/system`, `/settings`) and custody bake adoption both hash the staged `runtime/`
+  freshness (`/settings/system`, `/settings`) and custody bake adoption both hash the staged `runtime/`
   tree, which the hub bundle can't find on its own — `spawnHub` passes `AGENTBOX_RUNTIME_ROOT`
   (and `AGENTBOX_DOCKER_CONTEXT`) for it. If every cloud provider reads "baked · unverified"
   (`baseStatus: unknown`), or a control box re-bakes something custody already holds, confirm

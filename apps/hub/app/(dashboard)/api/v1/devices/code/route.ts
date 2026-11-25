@@ -26,7 +26,7 @@ export async function POST(req: Request): Promise<Response> {
     {
       deviceCode: res.deviceCode,
       userCode: res.userCode,
-      verificationPath: `/devices?code=${encodeURIComponent(res.userCode)}`,
+      verificationPath: `/settings/devices?code=${encodeURIComponent(res.userCode)}`,
       expiresIn: res.expiresIn,
       interval: res.interval,
     },

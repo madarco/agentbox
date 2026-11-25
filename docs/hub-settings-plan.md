@@ -1,6 +1,6 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** plan (2026-11-25, revised the same day after owner review). Nothing implemented.
+**Status:** Phase 1 done (2026-11-25, `feat/hub-settings-nav`). Phases 2-4 not started.
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -92,9 +92,11 @@ PROJECTS
 
 Routes: `/settings` (General), `/settings/subscriptions`, `/settings/skills`, `/settings/files`,
 `/settings/devices`, `/settings/system`. The old `/accounts`, `/custody`, `/skills`, `/devices`,
-`/system` pages are deleted. Two have callers outside the hub that already shipped, so they get a
+`/system` pages are deleted. Three have callers outside the hub that already shipped, so they get a
 permanent redirect instead of a 404: `/skills` (the tray's "Review skills in Hub",
-`AppDelegate.swift:550`) and `/devices` (the enrollment `verificationPath` an older hub printed).
+`AppDelegate.swift:550`), `/devices` (the enrollment `verificationPath` an older hub printed) and
+`/system` (a PC hub's "Bake details on the control box" link, `<control box>/system`, which must
+work against control boxes of either version).
 Usage stays top-level: it is a report, not configuration.
 
 ## Phases
@@ -102,7 +104,7 @@ Usage stays top-level: it is a report, not configuration.
 Each phase is one PR into `nightly`, built in an agentbox. Phase 1 goes first because it moves every
 page; Phases 2, 3 and 4 then run **in parallel** (disjoint route folders and backend slices).
 
-### Phase 1 — navigation and moves (hub web only)
+### Phase 1 — navigation and moves (hub web only) — done
 
 - `SideItem` gains `children`: a nested, indented list under its parent. The parent is active on any
   child route; a child on its own subtree. `aria-current` and keyboard behave like the existing
@@ -110,13 +112,19 @@ page; Phases 2, 3 and 4 then run **in parallel** (disjoint route folders and bac
 - Move the pages under `app/(dashboard)/settings/`: `subscriptions` (today's Accounts page, renamed,
   no behavior change yet), `skills`, `files` (today's Custody page, renamed), `devices`, `system`.
   General is today's Settings page.
-- Redirects for `/skills` and `/devices`, query string kept (so `?code=` still pre-fills). The hub's
+- Redirects for `/skills`, `/devices` and `/system`, query string kept (so `?code=` still pre-fills). The hub's
   `verificationPath` points at `/settings/devices`.
 - Breadcrumbs: `control / settings / <sub>`. Every in-app link to the old paths updated (System, the
   skills dialogs, the custody page, the box detail skills panel).
 - Tray: `reviewSkillsInHub` opens `/settings/skills` (one line, tray `nightly`, coordinator).
 - Public docs (`apps/web/content/docs/hub.mdx` and friends): the new paths; recapture the hub
   screenshots per `apps/web/images.md` and the catalog's hub shots (`catalog/`).
+
+**Built:** as above, with two notes. The breadcrumb root stays `hub` (`hub / settings / <sub>`),
+matching every other page. The CLI's control-box hint prints `<hub>/settings/devices`; `hub login` takes
+the path from `verificationPath`. `/accounts` and `/custody` have no redirect.
+`hub-dashboard.png` in the public docs still needs real boxes to recapture (marked stale in
+`apps/web/images.md`); the catalog's hub shots are retaken.
 
 **Done:** every old page is reachable under Settings from the main sidebar with no second nav;
 `/devices?code=X` lands on the approve form pre-filled; hub tests; a standalone-build click-through.

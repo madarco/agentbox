@@ -41,8 +41,11 @@ function Crumbs() {
     const p = b ? project(b.projectId) : undefined;
     if (p) parts.push(<Sep key="s1" />, <Crumb key="p" to={'/projects/' + p.id}>{p.name}</Crumb>);
     parts.push(<Sep key="s2" />, <Crumb key="b" current>{b ? b.id : 'box'}</Crumb>);
-  } else if (seg[0] === 'settings') {
-    parts.push(<Sep key="s1" />, <Crumb key="se" current>settings</Crumb>);
+  } else if (seg[0] === 'settings' && seg[1]) {
+    parts.push(<Sep key="s1" />, <Crumb key="se" to="/settings">settings</Crumb>);
+    parts.push(<Sep key="s2" />, <Crumb key="sub" current>{seg[1]}</Crumb>);
+  } else if (seg[0] === 'settings' || seg[0] === 'approvals' || seg[0] === 'usage') {
+    parts.push(<Sep key="s1" />, <Crumb key="pg" current>{seg[0]}</Crumb>);
   } else {
     parts.push(<Sep key="s1" />, <Crumb key="d" current>dashboard</Crumb>);
   }

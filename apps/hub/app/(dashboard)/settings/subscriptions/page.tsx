@@ -1,6 +1,6 @@
 'use client';
 
-// Accounts page — the named LLM accounts of this hub's machine (logins, setup
+// Subscriptions page (Settings → Subscriptions) — the named LLM accounts of this hub's machine (logins, setup
 // tokens, API keys per agent; docs/llm-accounts-plan.md, Phase 5). PURE REST
 // CLIENT over /api/v1/accounts: list, add a pasted key or setup token, relabel,
 // remove. A login is interactive and runs on the machine, so it is a command
@@ -12,8 +12,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { EmptyBox } from '../boxes/components/empty-box';
-import { SectionLabel } from '../boxes/components/section-label';
+import { EmptyBox } from '../../boxes/components/empty-box';
+import { SectionLabel } from '../../boxes/components/section-label';
 
 type Kind = 'login' | 'setup-token' | 'api-key';
 
@@ -55,7 +55,7 @@ function identityOf(a: Account): string {
   return [a.identity?.email, a.identity?.org, a.identity?.plan].filter(Boolean).join(' · ');
 }
 
-export default function AccountsPage() {
+export default function SubscriptionsPage() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [agents, setAgents] = useState<AgentKinds[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -136,7 +136,7 @@ export default function AccountsPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Accounts</h1>
+      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Subscriptions</h1>
       <div className="mt-1.5 text-sm text-muted-foreground">
         The LLM accounts boxes can run on: several logins, setup tokens or API keys per agent.
         Choose one when you create a box; <span className="font-mono">default</span> is the

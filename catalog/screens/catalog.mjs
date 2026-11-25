@@ -116,20 +116,20 @@ export const SCREENS = [
     social: { title: "Where the tokens went, per box and per account", crop: [0, 0, 2880, 1800] },
   }),
   hub({
-    id: "hub/custody",
-    title: "Custody: what the hub holds for boxes",
+    id: "hub/files",
+    title: "Files: what the hub holds for boxes",
     what: "Agent logins, project seeds, bake records, the skills library and a box SSH key, metadata only.",
-    files: [{ shoot: "pnpm shoot hub/custody.png /custody --full" }],
+    files: [{ shoot: "pnpm shoot hub/files.png /settings/files --full" }],
   }),
   hub({
     id: "hub/devices",
     title: "Devices: the PCs enrolled on this hub",
     what: "Three enrolled machines, a revoked one, and an enrollment code waiting for approval.",
-    files: [{ shoot: "pnpm shoot hub/devices.png /devices --full" }],
+    files: [{ shoot: "pnpm shoot hub/devices.png /settings/devices --full" }],
   }),
   hub({
     id: "hub/settings",
-    title: "Settings: providers",
+    title: "Settings: General (providers)",
     what: "Docker, Hetzner and Vercel ready; E2B, Daytona and DigitalOcean not set up.",
     files: [{ shoot: "pnpm shoot hub/settings.png /settings --full" }],
   }),
@@ -137,7 +137,7 @@ export const SCREENS = [
     id: "hub/system",
     title: "System: hub version, bakes and the box image",
     what: "The hub's own state: version, deploy record, which provider bases are baked, the docker image.",
-    files: [{ shoot: "pnpm shoot hub/system.png /system --full" }],
+    files: [{ shoot: "pnpm shoot hub/system.png /settings/system --full" }],
   }),
 
   /* ======== Web hub: skills and accounts ======== */
@@ -147,7 +147,7 @@ export const SCREENS = [
     topic: "Web hub: skills and accounts",
     title: "Skills library",
     what: "The hub-owned skills library: git, marketplace, linked-folder and uploaded skills, two updates waiting for approval.",
-    files: [{ shoot: "pnpm shoot hub/skills.png /skills" }],
+    files: [{ shoot: "pnpm shoot hub/skills.png /settings/skills" }],
     social: { title: "One skills library for every box" },
   }),
   hub({
@@ -157,15 +157,15 @@ export const SCREENS = [
     what: "The update dialog of a library skill: the file diff between the current and the pending version, and the secret scan.",
     from: "hub/skills",
     via: "Review update on a skill with an update waiting",
-    files: [{ shoot: "pnpm shoot hub/skills-update.png /skills --size 1440x1500 --click text=Review\\ update" }],
+    files: [{ shoot: "pnpm shoot hub/skills-update.png /settings/skills --size 1440x1500 --click text=Review\\ update" }],
     notes: ["Taken 1500px tall: at 900 the dialog squeezes each file panel."],
   }),
   hub({
-    id: "hub/accounts",
+    id: "hub/subscriptions",
     topic: "Web hub: skills and accounts",
-    title: "LLM accounts",
+    title: "Subscriptions: LLM accounts",
     what: "Several logins, setup tokens and API keys per agent, with the boxes that use each one.",
-    files: [{ shoot: "pnpm shoot hub/accounts.png /accounts" }],
+    files: [{ shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions" }],
     social: { title: "Several Claude and Codex accounts, one per box" },
   }),
 

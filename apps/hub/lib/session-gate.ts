@@ -267,7 +267,7 @@ export function gateActor(i: GateInput): GateActor {
 /**
  * Where a signed-out page request is sent: `/signin?returnUrl=<path + query>`,
  * URL-encoded. The query is kept so a deep link survives sign-in — the device
- * approval link `/devices?code=XXXX-XXXX` is the reason. Only the path and query
+ * approval link `/settings/devices?code=XXXX-XXXX` is the reason. Only the path and query
  * of the hub's OWN request go in, never a scheme or host, so it cannot become an
  * open redirect (the sign-in page re-checks with {@link safeReturnPath}).
  */

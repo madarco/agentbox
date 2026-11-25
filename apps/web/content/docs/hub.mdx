@@ -178,7 +178,11 @@ clean URL is what the box's desktop sees (the redirect also sends
 **password-profile** hub — a deployed control box — page routes require a real
 login instead, so the first such click of a session lands on `/signin`.
 
-The **Accounts** page lists the machine's named LLM accounts (logins, setup
+The hub's configuration pages sit under **Settings** in the sidebar, which opens
+to its sub-pages: **General** (providers, remote docker hosts, GitHub),
+**Subscriptions**, **Skills**, **Files**, **Devices** and **System**.
+
+The **Settings → Subscriptions** page (`/settings/subscriptions`) lists the machine's named LLM accounts (logins, setup
 tokens, API keys per agent), with the boxes using each one. Add a setup token or
 an API key there, relabel or remove an account; a login runs on the machine
 with `agentbox <agent> login --account <name>`. The create dialog offers an
@@ -192,7 +196,7 @@ by agent, model, account, project, box, PC and session. Clicking a row filters
 the page to it. It reads the same numbers as
 [`agentbox usage`](/docs/cli#usage).
 
-A password-profile hub also has a **Devices** page: the computers enrolled with
+A password-profile hub also has a **Settings → Devices** page (`/settings/devices`): the computers enrolled with
 `agentbox hub login`, each with its own token, plus the codes waiting for your
 approval. A local hub needs no login and shows none. See
 [Using the hub from another computer](/docs/deployed-hub#using-the-hub-from-another-computer).
