@@ -365,6 +365,63 @@ never 0%.
 - Box record and payload: `BoxRecord.accounts` updated on switch, plus a short switch history for
   the box page.
 
+**3c Phase 0 findings (docker, 2026-11-25, Claude Code 2.1.326):** run in this box's own dockerd on a
+nested box from `examples/express-ready` and on scratch containers and volumes holding only made-up
+tokens. The real login was never copied, refreshed or used outside its own box. One account here
+is a login; there is no second real login, so a login-to-login switch was measured with a stand-in
+target (a fake token on a fresh volume): it proves the session is found, not that a second
+subscription runs it.
+
+- **Where a session lives (measured).** The account's config volume (`agentbox-claude-config` or
+  `...-acct-<id>`) is `~/.claude`, and it holds the credentials, `_claude.json` **and** the
+  transcripts, under `projects/<cwd key>/<session>.jsonl`. The key is the cwd, `-workspace` in every
+  docker box, so all boxes on one account share one directory. A short session is that one file; a
+  longer one also has a `<session>/` directory (subagents), which a copy must carry.
+  `sessions/<pid>.json` is a per-process index and need not move. The shared
+  `agentbox-claude-projects` volume the llm-accounts plan recommended was never built.
+- **`--resume` across volumes works (measured).** With the transcript absent, `claude -p --resume <id>`
+  answers "No conversation found". Copied into another volume under the same cwd key, the same command
+  finds it and proceeds to authenticate with whatever that container has. Nothing in the transcript
+  is bound to the account.
+- **Auth precedence (measured, `claude auth status`).** Credentials file only → `claude.ai`.
+  The file plus `CLAUDE_CODE_OAUTH_TOKEN` → `oauth_token` (the env token wins). The file plus
+  `ANTHROPIC_API_KEY` → `api_key` (the key wins, as in the llm-accounts plan's (a′)). The file
+  was not modified in any of these runs. A malformed `CLAUDE_CODE_OAUTH_TOKEN` is ignored outright
+  ("Not logged in"), so a switch must check the token's shape, not just that one exists.
+- **A docker container's env and mounts are fixed (code + measured).** A pasted account's token is
+  injected into the container env at create (`accountEnvPolicy`); a default login is read from the
+  volume and the container env carries no auth at all. Changing either means recreating the
+  container, **or** passing the env per exec: the agent's process is started by `docker exec` into
+  tmux, and an exec with a different `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` resumed the
+  same session on the other token in the same container (measured with made-up tokens: a 401 from
+  the API, not "No conversation found").
+- **Recreate cost (measured on the nested box).** `/workspace` sits on the container's writable layer
+  (8 MB here, no volume), so a recreate has to keep that layer: `docker commit` took 1.2 s, and a
+  container run from the commit on another config volume had the uncommitted workspace file and
+  resumed the copied session, 7.4 s in all. There is no in-place recreate today: `create` builds the
+  run args (relay socket, binds, ports) and the checkpoint path makes a new box, so a switch needs a
+  "recreate this box from its own commit with another account volume, same id and name" step.
+
+**Recommendation (for the OK):**
+
+| Switch | How | Mounts |
+| --- | --- | --- |
+| to a **setup token** or **API key** | keep the container and the current volume; restart the agent's tmux session with the target's env var set on the exec (and the other auth var unset), `--resume <id>` | unchanged |
+| to a **login** (incl. `default`) | stop the agent; copy the session's `.jsonl` (+ its directory) into the target account's volume under the same cwd key; `docker commit` the box, recreate it on the target volume with the same id, name and run args; start the agent with `--resume <id>` | the target account's volume |
+
+- Never put the target login's credentials into the current volume: that switches every other box
+  on that volume too, and makes a second holder of the target's refresh token, which the
+  llm-accounts incident shows logs the other holders out on the first refresh.
+- The env-only switch leaves the box's transcripts in the old account's volume, so later sessions
+  of that box land there; the box's `accounts` record must still change, and usage is attributed
+  from the record (3a), not the volume.
+- **Not measured:** a real login-to-login switch (needs a second, throwaway login), codex (a resume
+  is `codex resume <id>` from `~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` plus its
+  `state_*.sqlite` index, so the copy is the rollout file plus a re-index; code only, no codex box
+  was run), the agent's own limit error text (needs an account at its limit), and any cloud
+  provider (the plan's "then one cloud").
+
+
 **Done (3a):** the page shows each real account with its boxes and tokens; a card's usage link opens
 Usage filtered to that subscription, and the totals match the card. **Done (3b):** a codex box
 mid-turn shows its windows matching `/status`; an Ultra claude account shows weekly meters only.
