@@ -19,6 +19,9 @@ export function vendorOf(agent: string): string {
   return VENDOR[agent] ?? agent;
 }
 
+/** A plan group's title: the product the login is for. */
+const GROUP_TITLE: Record<string, string> = { claude: 'Anthropic', codex: 'OpenAI Codex' };
+
 export function subscriptionKey(a: { agent: string; id: string }): string {
   return `${a.agent}/${a.id}`;
 }
@@ -47,7 +50,7 @@ export interface SubscriptionGroup<A extends SubscriptionAccount> {
 
 /**
  * The page's sections: one per vendor for logins and setup tokens (Anthropic,
- * OpenAI, then any other agent's), and API keys of every agent last. Empty
+ * OpenAI Codex, then any other agent's), and API keys of every agent last. Empty
  * groups are dropped.
  */
 export function groupSubscriptions<A extends SubscriptionAccount>(
@@ -60,12 +63,12 @@ export function groupSubscriptions<A extends SubscriptionAccount>(
       keys.push(a);
       continue;
     }
-    const v = vendorOf(a.agent);
+    const v = GROUP_TITLE[a.agent] ?? a.agent;
     plans.set(v, [...(plans.get(v) ?? []), a]);
   }
   const order = (v: string): number => {
-    const i = Object.values(VENDOR).indexOf(v);
-    return i >= 0 ? i : Object.keys(VENDOR).length;
+    const i = Object.values(GROUP_TITLE).indexOf(v);
+    return i >= 0 ? i : Object.keys(GROUP_TITLE).length;
   };
   const groups = [...plans.entries()]
     .sort(([x], [y]) => order(x) - order(y) || x.localeCompare(y))
