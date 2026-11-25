@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { useStore } from '@/lib/boxes/store';
 import { SectionLabel } from '../boxes/components/section-label';
+import { LimitPolicyCard } from './components/limit-policy';
 import { ProvidersSection } from './components/provider-actions';
 
 export default function SettingsPage() {
@@ -39,6 +40,9 @@ export default function SettingsPage() {
         Sandbox providers
       </SectionLabel>
       <ProvidersSection />
+
+      <SectionLabel>Subscriptions</SectionLabel>
+      <LimitPolicyCard />
 
       <SectionLabel>GitHub App</SectionLabel>
       {!gh.available ? (

@@ -94,6 +94,8 @@ export const CLONE_RECORD_POLICY = {
   agents: 'drop',
   borrowedCredentials: 'carry',
   accounts: 'carry',
+  // A clone starts its own history; the accounts it runs on are carried above.
+  accountSwitches: 'drop',
   llmProxy: 'carry',
   createdAt: 'n/a',
 } as const satisfies Record<keyof BoxRecord, ClonePolicy>;

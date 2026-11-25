@@ -312,6 +312,21 @@ export interface SkillSelection {
   exclude?: string[];
 }
 
+/** One account switch of a box's agent (hub settings Phase 3c). */
+export interface AccountSwitchRecord {
+  at: string; // ISO-8601
+  agent: string;
+  from: string;
+  to: string;
+  /** `env`: the agent restarted in place with the new token; `recreate`: the box was rebuilt on the account's volume. */
+  how: 'env' | 'recreate';
+  /** `manual`: a person asked; `limit`: the old account was at its limit. */
+  reason: 'manual' | 'limit';
+}
+
+/** How many switches a box keeps in `accountSwitches`. */
+export const ACCOUNT_SWITCH_HISTORY = 10;
+
 export interface BoxRecord {
   id: string;
   name: string;
@@ -543,6 +558,12 @@ export interface BoxRecord {
    * credential fan-out — reads this, never current config.
    */
   accounts?: Record<string, string>;
+  /**
+   * The box's account switches, newest last, at most `ACCOUNT_SWITCH_HISTORY`
+   * (hub settings Phase 3c). `accounts` is the current state; this is what the
+   * box page shows as its history.
+   */
+  accountSwitches?: AccountSwitchRecord[];
   /**
    * The hub egress proxy this box's agents use (llm-accounts Phase 7),
    * resolved at create: `upstream` is the `host:port` of the hub's CONNECT

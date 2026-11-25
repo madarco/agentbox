@@ -173,7 +173,8 @@ agentbox config set claude.account work --global
 none, the box uses the default account. A repo's `agentbox.yaml` cannot choose
 an account: it is your choice which subscription a project bills, so a value
 there is ignored with a warning. The account is fixed when the box is created
-and recorded on it, so changing the setting later does not move existing boxes.
+and recorded on it, so changing the setting later does not move existing boxes;
+[switch the box](#switching-a-box-to-another-account) to move it.
 
 A box on a named account gets exactly that account's auth:
 
@@ -194,6 +195,45 @@ account's other boxes (and to your control box, if you have one), never to
 boxes on another account. Each renewal still signs the other copies out until
 they receive it, so give an account that several cloud boxes use at once a
 setup token: it never renews.
+
+### Switching a box to another account
+
+```bash
+agentbox accounts switch my-box claude/ci      # a setup token or API key
+agentbox accounts switch my-box claude/work    # a login (docker boxes)
+```
+
+The box page in the hub has the same choice: an account selector on the agent's
+row in **Details**, with the box's last switches under it. Either way the agent
+picks its conversation back up on the new account:
+
+- To a **setup token** or **API key**, on any provider: the agent's session
+  restarts with that token set and the other auth variable cleared, and resumes
+  the same conversation. A token that does not have the agent's shape is
+  refused before anything changes (Claude ignores a malformed setup token and
+  reads as logged out).
+- To a **login**, on docker: the box is rebuilt on that account's config volume,
+  with the same name, mounts, ports, workspace and inner docker data, and the
+  conversation's files are copied across. The old account's credentials never
+  enter the new volume or the other way round. It takes a few seconds.
+- A **cloud** box cannot switch to a login yet; use a setup token or API key.
+  The exception is going back to `default` when the box was created on it.
+  Codex boxes switch to an API key only.
+
+A box that is not running records the new account and uses it at its next
+start. Its later sessions keep landing in the volume it runs on, and usage is
+counted under the account the box records.
+
+When an account hits its plan limit, the hub can do this for you. The
+`accounts.onLimit` key (global, or **Settings → General** in the hub) is `ask`
+by default: an approval offers to move each running box on that account to the
+next account of the same agent that is not at its limit, and you answer it in
+the web, the tray or the CLI. With `switch` the hub moves the box on its own.
+Each box is asked once per limit window.
+
+```bash
+agentbox config set accounts.onLimit switch --global
+```
 
 ## Route LLM traffic through the hub
 

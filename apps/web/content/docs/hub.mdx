@@ -208,8 +208,12 @@ their limit.
 Add a setup token or
 an API key there, relabel or remove an account; a login runs on the machine
 with `agentbox <agent> login --account <name>`. The create dialog offers an
-**Account** picker for an agent that has named accounts, and the box table and
-detail page show the account a box runs on. See
+**Account** picker for an agent that has named accounts, and the box table
+shows the account a box runs on. On the box page, the agent's account row is a
+selector: pick another account and **Switch**, and the agent resumes its
+conversation there; the box's recent switches are listed under it.
+**Settings → General** sets what happens when an account hits its limit: ask
+(an approval offering the next account) or switch on its own. See
 [several accounts per agent](/docs/run-an-agent#several-accounts-per-agent).
 
 The **Usage** page shows the tokens your boxes' agents spent: totals for a

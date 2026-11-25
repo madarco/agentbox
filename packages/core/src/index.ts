@@ -12,6 +12,7 @@ export type { AgentLauncher } from './agent.js';
 export { resolveAgentLauncher } from './agent.js';
 export type {
   BoxRecord,
+  AccountSwitchRecord,
   CloudBoxFields,
   DockerBoxFields,
   FindBoxResult,
@@ -23,6 +24,7 @@ export type {
   SkillSelection,
 } from './box-record.js';
 export {
+  ACCOUNT_SWITCH_HISTORY,
   dockerField,
   agentConfigVolume,
   primaryAgent,

@@ -81,6 +81,17 @@ export const SCREENS = [
     social: { crop: [0, 0, 2880, 1800] },
   }),
   hub({
+    id: "hub/account-switch",
+    topic: "Web hub: skills and accounts",
+    title: "Switching a box to another account",
+    url: "/boxes/<box id>",
+    what: "The box page's account row: a selector of the agent's accounts (each with its kind, and a note at its limit) and the box's recent switches, restarted on a token or rebuilt on a login.",
+    from: "hub/boxes",
+    via: "Click a box row, then the Details card at the bottom",
+    files: [{ shoot: "pnpm shoot hub/account-switch.png /boxes/a3c9e61d20f4 --full" }],
+    social: { title: "Move a box to another subscription; the conversation carries on" },
+  }),
+  hub({
     id: "hub/project",
     title: "Project page",
     url: "/projects/<project id>",
@@ -130,7 +141,7 @@ export const SCREENS = [
   hub({
     id: "hub/settings",
     title: "Settings: General (providers)",
-    what: "Docker, Hetzner and Vercel ready; E2B, Daytona and DigitalOcean not set up.",
+    what: "Docker, Hetzner and Vercel ready; E2B, Daytona and DigitalOcean not set up. Below them, what the hub does when a box's subscription hits its limit: ask, or switch on its own.",
     files: [{ shoot: "pnpm shoot hub/settings.png /settings --full" }],
   }),
   hub({

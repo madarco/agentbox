@@ -8,6 +8,7 @@
  */
 import { dockerField } from '@agentbox/core';
 import {
+  accountEnvClears,
   accountEnvPolicy,
   applyAccountEnv,
   allAgentLlmHosts,
@@ -35,13 +36,21 @@ export async function sessionAccountPolicy(
   }
 }
 
-/** The host env to forward at a session start, after the box's account policy. */
+/**
+ * The host env to forward at a session start, after the box's account policy.
+ * A suppressed key the policy does not inject comes back empty: the container
+ * may have been created on another account (hub settings 3c switches in
+ * place), and an exec only adds to its env.
+ */
 export async function sessionForwardEnv(
   agent: string,
   container: string,
   forwarded: Record<string, string>,
 ): Promise<Record<string, string>> {
-  return applyAccountEnv(forwarded, await sessionAccountPolicy(agent, container));
+  const policy = await sessionAccountPolicy(agent, container);
+  const out = applyAccountEnv(forwarded, policy);
+  for (const k of accountEnvClears(policy)) out[k] = '';
+  return out;
 }
 
 /**

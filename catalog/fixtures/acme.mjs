@@ -63,7 +63,7 @@ const raw = [
   { id: "9e5c3a7d14b6", projectId: "fx-payments-worker", name: "queue-retries", agent: "claude", status: "running", provider: "e2b", host: "e2b", age: 45, webUrl: "https://8080-i3kq2m9x.e2b.app", branch: "agentbox/queue-retries", activity: "waiting", title: "Move charge retries onto the job queue", managerId: PLAN, commits: 1, files: 3, tasks: { total: 1, done: 0, current: { id: "T-4", title: "Move charge retries onto the job queue" } } },
   { id: "job:q7k2m9", projectId: "fx-storefront-web", label: "promo-banner", agent: "opencode", status: "creating", provider: "docker", host: "local · docker", age: 2, managerId: PLAN },
   { id: "5d27b0c8f39e", projectId: "fx-storefront-web", name: "cart-badges", agent: "codex", status: "paused", provider: "docker", host: "local · docker", age: 60 * 5, branch: "fix/cart-badges", activity: "idle", title: "Cart badge count drifts after refresh", managerId: COPY, tasks: { total: 2, done: 0, current: { id: "T-6", title: "Fix cart badge count after a refresh" } }, commits: 2, files: 2 },
-  { id: "a3c9e61d20f4", projectId: "fx-storefront-web", name: "perf-audit", agent: "claude", status: "running", provider: "docker", host: "local · docker", age: 20, webUrl: "https://perf-audit.localhost", branch: "agentbox/perf-audit", activity: "idle", title: "Audit storefront page weight", commits: 0, files: 0, vnc: true },
+  { id: "a3c9e61d20f4", projectId: "fx-storefront-web", name: "perf-audit", agent: "claude", status: "running", provider: "docker", host: "local · docker", age: 20, webUrl: "https://perf-audit.localhost", branch: "agentbox/perf-audit", activity: "idle", title: "Audit storefront page weight", commits: 0, files: 0, vnc: true , accounts: { claude: "work" }, accountSwitches: [{ at: iso(60 * 5), agent: "claude", from: "default", to: "ci", how: "env", reason: "limit" }, { at: iso(40), agent: "claude", from: "ci", to: "work", how: "recreate", reason: "manual" }] },
   { id: "job:r4t8w1", projectId: "fx-checkout-api", label: "refund-limits", agent: "claude", status: "error", provider: "e2b", host: "e2b", age: 30, error: "e2b base template not found: run agentbox prepare --provider e2b" },
   { id: "b6f14e92ad03", projectId: "fx-docs", name: "search-filters", agent: "opencode", status: "running", provider: "docker", host: "local · docker", age: 35, webUrl: "https://search-filters.localhost", branch: "agentbox/search-filters", activity: "working", title: "Add faceted search filters to the docs", commits: 2, files: 5 },
   { id: "e08a5c3f71b9", projectId: "fx-sandbox", name: "scratch", agent: "claude", status: "stopped", provider: "docker", host: "local · docker", age: 60 * 50, activity: "idle", hasGit: false, commits: null, files: null },
@@ -140,6 +140,7 @@ export const boxes = raw.map((b) => {
   if (b.tasks) box.tasks = b.tasks;
   if (b.managerId) box.managerId = b.managerId;
   if (b.pr) box.pr = b.pr;
+  if (b.accountSwitches) box.accountSwitches = b.accountSwitches;
   if (b.accounts) {
     box.accounts = b.accounts;
     box.accountsInfo = Object.entries(b.accounts).map(([agent, account]) => ({ agent, account, ...ACCOUNT_INFO[`${agent}:${account}`] }));
@@ -239,7 +240,7 @@ export const hubState = {
 export const accounts = {
   accounts: [
     /* limits: one window per limit the plan reports (hub settings 3b); a Max login here has two weekly windows. */
-    { agent: "claude", id: "work", label: "Acme work", kind: "login", identity: { email: "dev@acme.example", org: "Acme", plan: "Max" }, hasSecret: true, boxes: ["checkout-copy", "queue-retries"], createdAt: iso(60 * 24 * 9), updatedAt: iso(60 * 3),
+    { agent: "claude", id: "work", label: "Acme work", kind: "login", identity: { email: "dev@acme.example", org: "Acme", plan: "Max" }, hasSecret: true, boxes: ["checkout-copy", "queue-retries", "perf-audit"], createdAt: iso(60 * 24 * 9), updatedAt: iso(60 * 3),
       limits: { windows: [{ id: "weekly_all", label: "Weekly, all models", pct: 64, resetsAt: iso(-60 * 24 * 3.6), windowMinutes: 10080 }, { id: "weekly_scoped:Fable", label: "Weekly, Fable", pct: 31, resetsAt: iso(-60 * 24 * 3.6), windowMinutes: 10080 }], atLimit: false, updatedAt: iso(2), source: "usage-api" } },
     { agent: "claude", id: "ci", kind: "setup-token", hasSecret: true, boxes: [], createdAt: iso(60 * 24 * 4), updatedAt: iso(60 * 24 * 4) },
     { agent: "codex", id: "personal", label: "Personal", kind: "api-key", hasSecret: true, boxes: ["fix-webhooks"], createdAt: iso(60 * 24 * 6), updatedAt: iso(60 * 24 * 6) },

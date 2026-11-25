@@ -437,3 +437,12 @@ export {
   sessionForwardEnv,
   withSessionLlmProxy,
 } from './sync/account-session-env.js';
+export {
+  mountedConfigVolume,
+  recreateBoxOnAccount,
+  recreateRefusal,
+  respecFromInspect,
+  sessionGlobs,
+  type RecreateOnAccountOptions,
+} from './account-recreate.js';
+export { removeSwitchImages, SWITCH_IMAGE_LABEL } from './switch-images.js';

@@ -500,6 +500,15 @@
         }
       }
     },
+    "accounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "onLimit": {
+          "enum": ["ask", "switch"]
+        }
+      }
+    },
     "llm": {
       "type": "object",
       "additionalProperties": false,

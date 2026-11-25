@@ -2,7 +2,9 @@ import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/prom
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { ACCOUNT_SWITCH_HISTORY, isDefaultAccount } from '@agentbox/core';
 import type {
+  AccountSwitchRecord,
   AgentId,
   BoxRecord,
   DockerBoxFields,
@@ -167,6 +169,106 @@ export async function recordLastAgent(
     }),
     path,
   );
+}
+
+/**
+ * Record that `agent` in a box now runs on `account` (hub settings 3c): moves
+ * `accounts` (a `default` account leaves no entry) and appends `entry` to the
+ * box's switch history, newest last, capped. Returns the updated record.
+ */
+export async function recordAccountSwitch(
+  boxId: string,
+  entry: AccountSwitchRecord,
+  path: string = STATE_FILE,
+): Promise<BoxRecord | undefined> {
+  let updated: BoxRecord | undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        const accounts = { ...(b.accounts ?? {}) };
+        if (isDefaultAccount(entry.to)) delete accounts[entry.agent];
+        else accounts[entry.agent] = entry.to;
+        const history = [...(b.accountSwitches ?? []), entry].slice(-ACCOUNT_SWITCH_HISTORY);
+        const rest = { ...b };
+        delete rest.accounts;
+        updated = {
+          ...rest,
+          ...(Object.keys(accounts).length ? { accounts } : {}),
+          accountSwitches: history,
+        };
+        return updated;
+      }),
+    }),
+    path,
+  );
+  return updated;
+}
+
+/**
+ * Set one agent's account on a box record, touching nothing else: `default`
+ * (or undefined) drops the entry. Reads the record inside the state lock, so a
+ * long switch never writes back a stale copy; a box removed meanwhile is not
+ * brought back (undefined).
+ */
+export async function setBoxAccount(
+  boxId: string,
+  agent: string,
+  account: string | undefined,
+  path: string = STATE_FILE,
+): Promise<BoxRecord | undefined> {
+  let updated: BoxRecord | undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        const accounts = { ...(b.accounts ?? {}) };
+        if (!account || isDefaultAccount(account)) delete accounts[agent];
+        else accounts[agent] = account;
+        const rest = { ...b };
+        delete rest.accounts;
+        updated = Object.keys(accounts).length > 0 ? { ...rest, accounts } : rest;
+        return updated;
+      }),
+    }),
+    path,
+  );
+  return updated;
+}
+
+/**
+ * Undo the last `recordAccountSwitch` of a box: `accounts` back to `previous`
+ * and that entry dropped from the history. For a switch whose agent could not
+ * be restarted (hub settings 3c), so the record never claims an account the
+ * agent does not run on.
+ */
+export async function revertAccountSwitch(
+  boxId: string,
+  previous: Readonly<Record<string, string>> | undefined,
+  path: string = STATE_FILE,
+): Promise<BoxRecord | undefined> {
+  let updated: BoxRecord | undefined;
+  await mutateState(
+    (state) => ({
+      version: 1,
+      boxes: state.boxes.map((b) => {
+        if (b.id !== boxId) return b;
+        const rest = { ...b };
+        delete rest.accounts;
+        const history = (b.accountSwitches ?? []).slice(0, -1);
+        updated = {
+          ...rest,
+          ...(previous && Object.keys(previous).length ? { accounts: { ...previous } } : {}),
+          accountSwitches: history,
+        };
+        return updated;
+      }),
+    }),
+    path,
+  );
+  return updated;
 }
 
 /**

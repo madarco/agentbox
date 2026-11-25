@@ -42,6 +42,7 @@ import {
   type Provider,
   registrationFromRecord,
   providerWarning,
+  findAccount,
 } from '@agentbox/core';
 import type { BoxStatus as CtlBoxStatus, StatusReply } from '@agentbox/ctl';
 import { createBoxFactSeams } from './backend/box-facts';
@@ -55,6 +56,8 @@ import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
 import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
+import { isSwitchingAccount, switchBoxAccount, withRecordAccounts } from './backend/account-switch';
+import { restartBoxAgent } from './backend/agent-restart';
 import { createSkillsBackend } from './backend/skills-backend';
 import { createPcSkillsBackend } from './backend/skills-pc';
 import { pcSkillsDeps } from './backend/skills-pc-wiring';
@@ -144,6 +147,11 @@ import {
   readAccounts,
   readAccountSecret,
   resolveLlmProxyRecord,
+  accountEnvPolicy,
+  findBox as findBoxRecord,
+  recordAccountSwitch,
+  revertAccountSwitch,
+  resolveAgentSpec,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
@@ -159,6 +167,7 @@ import {
   resolveCloudCheckpoint,
   type BaseStatus,
   type CloudCheckpointInfo,
+  rewriteCloudAgentEnv,
 } from '@agentbox/sandbox-cloud';
 import {
   clearRelayNotice,
@@ -173,6 +182,7 @@ import {
   readBoxStatus,
   registerBoxWithRelay,
   removeCheckpoint as removeDockerCheckpoint,
+  recreateBoxOnAccount,
   resolveVncViewerUrl,
   setRelayNotice,
   type CheckpointInfo,
@@ -532,6 +542,9 @@ function mapBox(
     ...(b.agents && b.agents.length > 0 ? { agents: [...b.agents] } : {}),
     borrowedCredentials: b.borrowedCredentials,
     ...(b.accounts ? { accounts: { ...b.accounts } } : {}),
+    ...(b.accountSwitches?.length
+      ? { accountSwitches: b.accountSwitches.map((x) => ({ ...x })) }
+      : {}),
     ...(b.llmProxy ? { llmProxy: { ...b.llmProxy } } : {}),
     topology: b.cloud?.topology,
   };
@@ -1554,6 +1567,8 @@ async function findOrHydrateBox(id: string, hydrate?: HydrateFn): Promise<BoxRec
   return hydrate ? await hydrate(id) : null;
 }
 
+const SWITCHING_REFUSAL = 'the box is switching accounts; try again when the switch is done';
+
 async function runLifecycle(
   id: string,
   op: (box: BoxRecord, provider: Provider) => Promise<void>,
@@ -1562,6 +1577,7 @@ async function runLifecycle(
   try {
     const box = await findOrHydrateBox(id, hydrate);
     if (!box) return { ok: false, error: `box ${id} not found` };
+    if (isSwitchingAccount(box.id)) return { ok: false, error: SWITCHING_REFUSAL };
     const provider = await providerForBox(box);
     await op(box, provider);
     return { ok: true };
@@ -2607,6 +2623,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       // created whose temp clone was cleaned) so `provider.destroy` tears down the
       // REAL cloud resource — not just a state reap.
       const box = await findOrHydrateBox(id, hydrate);
+      if (box && isSwitchingAccount(box.id)) return { ok: false, error: SWITCHING_REFUSAL };
       if (!box) {
         // Nothing under this id to tear down. Reap any dangling Store registration
         // + custody so it stops showing, but report `not found` — we did NOT
@@ -3574,6 +3591,49 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         },
         id,
         agent,
+      );
+      if (res.kind === 'ok') handle.hubNotifier.notify();
+      return res;
+    },
+
+    async switchBoxAccount(id, req) {
+      const res = await switchBoxAccount(
+        {
+          // By id, name or unique prefix, as the CLI passes what the user typed.
+          findBox: async (ref) => {
+            const found = findBoxRecord(ref, await readState());
+            if (found.kind === 'ok') return found.box;
+            return findOrHydrateBox(ref, hydrate).catch(() => null);
+          },
+          agentSpec: (agent) => findAgentSpec(agent),
+          accountKind: async (agent, account) =>
+            findAccount(await readAccounts(), agent, account)?.kind ?? null,
+          accountInject: async (agent, account) =>
+            (await accountEnvPolicy(resolveAgentSpec(agent), account)).inject,
+          boxState: async (box) => (await providerForBox(box)).probeState(box),
+          sessionId: async (box, agent) => {
+            const disk = await readBoxStatus(box).catch(() => null);
+            return normalizeAgentStatus(disk)[agent]?.sessionId ?? undefined;
+          },
+          recreate: (box, o) => recreateBoxOnAccount(box.id, o),
+          rewriteCloudEnv: async (box) => rewriteCloudAgentEnv(await providerForBox(box), box),
+          restartAgent: async (box, agent) =>
+            restartBoxAgent(await providerForBox(box), box, agent),
+          recordSwitch: (boxId, entry) => recordAccountSwitch(boxId, entry),
+          revertSwitch: (boxId, previous) => revertAccountSwitch(boxId, previous),
+          reregister: async (box) => {
+            const reg = await handle.store.getBox(box.id).catch(() => undefined);
+            if (reg) {
+              await handle.store.registerBox(
+                withRecordAccounts({ ...reg, ...registrationFromRecord(box) }, box),
+              );
+            }
+          },
+          now: () => new Date(),
+          log: (line) => console.log(`[hub] account switch: ${line}`),
+        },
+        id,
+        req,
       );
       if (res.kind === 'ok') handle.hubNotifier.notify();
       return res;

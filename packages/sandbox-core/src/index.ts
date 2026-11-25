@@ -9,6 +9,9 @@ export {
   recordBox,
   clearBoxPortlessWebAlias,
   recordBoxSsh,
+  recordAccountSwitch,
+  setBoxAccount,
+  revertAccountSwitch,
   recordAgentAdded,
   recordLastAgent,
   removeBoxRecord,
@@ -468,6 +471,7 @@ export {
 } from './skills/digest.js';
 export type { SkillsStamp } from './skills/digest.js';
 export {
+  accountEnvClears,
   accountEnvPolicy,
   applyAccountEnv,
   boxAccount,

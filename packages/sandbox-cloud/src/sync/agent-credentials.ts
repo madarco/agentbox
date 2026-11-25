@@ -23,7 +23,9 @@
  * after a host re-auth.
  */
 
+import type { AccountEnvAuthority } from '../agent-env-file.js';
 import {
+  accountEnvClears,
   accountEnvPolicy,
   AGENT_SYNC_SPECS,
   applyAccountEnv,
@@ -281,6 +283,44 @@ export function buildCloudBoxRunEnv(agents: readonly CloudAgentKind[]): Record<s
   const env: Record<string, string> = {};
   for (const agent of agents) Object.assign(env, resolveAgentSpec(agent).boxRunEnv);
   return env;
+}
+
+/**
+ * The account keys a cloud box's env file sets or unsets over the sandbox env:
+ * each agent on a named account gets its token (a pasted account) and loses
+ * the other `accountEnv` keys. An agent on its default account adds nothing,
+ * unless it was switched there (hub settings 3c, `switched`): the sandbox env
+ * may still hold the token it was created with, so its account keys become
+ * what the host forwards now (`forwarded`) and the rest are unset.
+ */
+export async function cloudAccountAuthority(
+  agents: readonly string[] | undefined,
+  accounts: Readonly<Record<string, string>> = {},
+  opts: { switched?: readonly string[]; forwarded?: Readonly<Record<string, string>> } = {},
+): Promise<AccountEnvAuthority> {
+  const out: AccountEnvAuthority = { set: {}, unset: [] };
+  const unset = (k: string): void => {
+    if (!out.unset.includes(k)) out.unset.push(k);
+  };
+  const named = new Set<string>();
+  for (const [agent, account] of Object.entries(accounts)) {
+    if (agents && !agents.includes(agent)) continue;
+    if (!account || isDefaultAccount(account)) continue;
+    named.add(agent);
+    const policy = await accountEnvPolicy(resolveAgentSpec(agent), account);
+    Object.assign(out.set, policy.inject);
+    for (const k of accountEnvClears(policy)) unset(k);
+  }
+  for (const agent of opts.switched ?? []) {
+    if (named.has(agent) || (agents && !agents.includes(agent))) continue;
+    for (const k of Object.values(resolveAgentSpec(agent).accountEnv ?? {})) {
+      if (typeof k !== 'string' || k in out.set) continue;
+      const v = opts.forwarded?.[k];
+      if (v) out.set[k] = v;
+      else unset(k);
+    }
+  }
+  return out;
 }
 
 /**

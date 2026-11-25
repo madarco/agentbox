@@ -11,6 +11,7 @@ import { useStore } from '@/lib/boxes/store';
 import type { Box } from '@/lib/boxes/types';
 import { boxRunning } from '@/lib/live-status-view';
 import { BoxApprovals } from '../../approvals/components/box-approvals';
+import { AccountRows } from '../components/account-switcher';
 import { Access } from '../components/access';
 import { agentLiveRows } from '../components/agent-live';
 import { BackLink } from '../components/back-link';
@@ -120,14 +121,7 @@ export default function BoxDetailPage() {
             that does not exist anywhere. */}
         {box.hasGit === false ? null : <DRow k="Branch" v={box.branch} mono />}
         <DRow k="Host" v={box.host} mono />
-        {box.accountsInfo?.map((a) => (
-          <DRow
-            key={`acct-${a.agent}`}
-            k={`${a.agent} account`}
-            v={[a.account, a.label, a.kind].filter(Boolean).join(' · ')}
-            mono
-          />
-        ))}
+        {box.status === 'creating' || box.status === 'error' ? null : <AccountRows box={box} />}
         <DRow k="Created" v={new Date(box.createdAt).toLocaleString()} mono />
       </Card>
     </div>

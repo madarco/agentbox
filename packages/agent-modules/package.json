@@ -2,7 +2,7 @@
   "name": "@agentbox/agent-modules",
   "version": "0.0.0",
   "private": true,
-  "description": "Registers every built-in agent's behavior — the one place an app wires agents in",
+  "description": "Registers every built-in agent's behavior \u2014 the one place an app wires agents in",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -32,7 +32,8 @@
     "@agentbox/agent-opencode": "workspace:*",
     "@agentbox/agent-pi": "workspace:*",
     "@agentbox/agent-registry": "workspace:*",
-    "@agentbox/sandbox-docker": "workspace:*"
+    "@agentbox/sandbox-docker": "workspace:*",
+    "@agentbox/cli-kit": "workspace:*"
   },
   "devDependencies": {
     "@agentbox/agent-registry": "workspace:*",

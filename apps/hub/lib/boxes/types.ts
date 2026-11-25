@@ -230,6 +230,19 @@ export interface Box {
     kind?: 'login' | 'setup-token' | 'api-key';
   }>;
   /**
+   * The box's account switches, newest last, at most 10 (hub settings 3c):
+   * `how` is `env` (restarted with the token) or `recreate` (rebuilt on the
+   * login's volume); `reason` is `manual` or `limit`. Read-only.
+   */
+  accountSwitches?: Array<{
+    at: string;
+    agent: string;
+    from: string;
+    to: string;
+    how: 'env' | 'recreate';
+    reason: 'manual' | 'limit';
+  }>;
+  /**
    * The hub egress proxy this box's agents use (`{ mode: 'forward', upstream }`,
    * `upstream` = the hub proxy's `host:port` as the box dials it); absent = LLM
    * traffic goes direct. Fixed at create. Read-only. (llm-accounts Phase 7.)

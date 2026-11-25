@@ -1085,6 +1085,18 @@ export interface HubApiUsageQuery {
   limit?: number;
 }
 
+/** `POST /api/v1/boxes/{id}/account`: what a switch did. */
+export interface BoxAccountSwitchView {
+  boxId: string;
+  agent: string;
+  from: string;
+  to: string;
+  /** `env`: restarted with the token; `recreate`: rebuilt on the login's volume. */
+  how: 'env' | 'recreate';
+  /** False when the box was not running: the switch applies at its next start. */
+  restarted: boolean;
+}
+
 /** An error carrying the `/api/v1` envelope's code + HTTP status (+ optional details). */
 export class HubApiError extends Error {
   constructor(
@@ -1270,6 +1282,18 @@ export class HubApiClient {
       'POST',
       `/boxes/${encodeURIComponent(id)}/agent`,
       { agent },
+    );
+  }
+
+  /** Switch the box's agent to another LLM account (hub settings 3c). */
+  async switchBoxAccount(
+    id: string,
+    body: { account: string; agent?: string },
+  ): Promise<BoxAccountSwitchView> {
+    return this.request<BoxAccountSwitchView>(
+      'POST',
+      `/boxes/${encodeURIComponent(id)}/account`,
+      body,
     );
   }
 

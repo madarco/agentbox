@@ -957,6 +957,21 @@ export interface AgentSyncSpec {
    */
   accountEnv?: Readonly<Partial<Record<Exclude<LlmAccountKind, 'login'>, string>>>;
   /**
+   * The shape a pasted token of each kind must have (a regular expression
+   * source), checked before a box is switched onto it (hub settings 3c): an
+   * agent can ignore a malformed token outright, so a switch would leave the box
+   * logged out with nothing saying why (claude does, measured in 3c Phase 0).
+   */
+  accountTokenPattern?: Readonly<Partial<Record<Exclude<LlmAccountKind, 'login'>, string>>>;
+  /**
+   * Where a session's files sit in the agent's config volume, relative to its
+   * root, with `{id}` for the session id and `*` for one path segment
+   * (claude: `projects/*\/{id}.jsonl`). Copied into another account's volume
+   * when a docker box is switched onto that login (hub settings 3c), so the
+   * agent can resume the session there. Absent: such a switch is refused.
+   */
+  sessionFiles?: readonly string[];
+  /**
    * The hosts this agent's model traffic goes to — inference, OAuth refresh,
    * the account calls (llm-accounts Phase 7). With `llm.proxy: forward` these,
    * and only these, leave through the hub's CONNECT proxy; telemetry and tool

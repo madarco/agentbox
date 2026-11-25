@@ -40,7 +40,9 @@ import { createHubBackend } from './lib/hub-backend';
 import { HEARTBEAT_INTERVAL_MS } from './lib/backend/managers';
 import { startManagerHeartbeats } from './lib/manager-heartbeat';
 import { startPtyJanitor } from './lib/pty-janitor';
+import { createLimitWatch, type OnLimit } from './lib/backend/account-limit-watch';
 import {
+  askPrompt,
   askMcpApproval,
   configureManagerStoreFromConfig,
   configureTimelineSinkFromConfig,
@@ -460,6 +462,51 @@ async function main(): Promise<void> {
   // A pty host outlives the hub, so a crashed one's socket and meta are only
   // ever cleaned up by someone looking — this is that someone.
   startPtyJanitor({ warn });
+  // `accounts.onLimit` (hub settings 3c): a box whose account is at its limit
+  // is offered, or moved to, the next account of its agent.
+  {
+    const backend = globalThis.__AGENTBOX_HUB_BACKEND;
+    const watch = createLimitWatch({
+      onLimit: async () =>
+        ((await loadEffectiveConfig(homedir())).effective.accounts?.onLimit ?? 'ask') as OnLimit,
+      accounts: async () => (await backend.listAccounts()).accounts,
+      runningBoxes: async () => {
+        const own = new Set((await readState()).boxes.map((b) => b.id));
+        return (await backend.getData()).boxes
+          .filter((b) => b.status === 'running')
+          .map((b) => ({
+            owned: own.has(b.id),
+            id: b.id,
+            name: b.name ?? b.id,
+            provider: b.provider,
+            agents: b.agents ?? (b.lastAgent ? [b.lastAgent] : []),
+            ...(b.accounts ? { accounts: b.accounts } : {}),
+          }));
+      },
+      loginSwitchable: (agent) =>
+        (AGENT_SYNC_SPECS.find((x) => x.id === agent)?.sessionFiles?.length ?? 0) > 0,
+      confirm: async (boxId, message, detail) =>
+        (
+          await askPrompt(
+            daemon.handle.prompts,
+            daemon.handle.subscribers,
+            boxId,
+            {
+              kind: 'confirm',
+              message,
+              detail,
+              defaultAnswer: 'n',
+              context: { command: 'switch account' },
+            },
+            { noAutoApprove: true },
+          )
+        ).answer === 'y',
+      switchAccount: (boxId, req) => backend.switchBoxAccount(boxId, req),
+      log: (line) => warn(`account limit: ${line}`),
+    });
+    const t = setInterval(() => void watch.tick().catch(() => undefined), 60_000);
+    t.unref();
+  }
   globalThis.__AGENTBOX_HUB_NOTIFIER = daemon.handle.hubNotifier;
   // Payload-carrying prompt fan-out for the `/api/v1` prompt-stream route (the
   // attach footer). Reaches the relay handle's in-process subscribers/prompts/

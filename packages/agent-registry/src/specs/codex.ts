@@ -146,6 +146,7 @@ export const codexSpec: AgentSyncSpec = {
   // Named LLM accounts (docs/llm-accounts-plan.md). Codex has no setup-token.
   accountKinds: ['login', 'api-key'],
   accountEnv: { 'api-key': 'OPENAI_API_KEY' },
+  accountTokenPattern: { 'api-key': '^sk-[A-Za-z0-9_-]{20,}$' },
   // ChatGPT backend + responses, feature flags, OAuth refresh, API-key mode
   // (Phase 0 (c); `api.openai.com` from code).
   llmHosts: ['chatgpt.com', 'ab.chatgpt.com', 'auth.openai.com', 'api.openai.com'],

@@ -123,6 +123,17 @@ async function labelAccountCommand(
   });
 }
 
+async function switchAccountCommand(box: string, ref: string): Promise<void> {
+  const { agent: name, id } = parseAccountRef(ref);
+  const spec = resolveAgentSpec(name);
+  await withHubClient({ preferLocal: true }, async (client) => {
+    const r = await client.switchBoxAccount(box, { agent: spec.id, account: id });
+    const how = r.how === 'recreate' ? ' (box rebuilt on its volume)' : '';
+    log.success(`${r.agent} in ${box} moved from '${r.from}' to '${r.to}'${how}`);
+    if (!r.restarted) log.info('the box is not running: the account applies at its next start');
+  });
+}
+
 const listCmd = new Command('list')
   .description('list the LLM accounts on this host (no secrets)')
   .option('--json', 'machine-readable output')
@@ -143,6 +154,15 @@ export const accountsCommand = new Command('accounts')
       .action((ref: string, opts: { yes?: boolean }) =>
         removeAccountCommand(ref, opts).catch(fail),
       ),
+  )
+  .addCommand(
+    new Command('switch')
+      .description(
+        "move a box's agent to another account: a setup token or API key restarts the agent with it, a login rebuilds a docker box on that account's volume; the conversation resumes",
+      )
+      .argument('<box>', 'box id or name')
+      .argument('<agent/account>', 'e.g. claude/work, or claude/default')
+      .action((box: string, ref: string) => switchAccountCommand(box, ref).catch(fail)),
   )
   .addCommand(
     new Command('label')
