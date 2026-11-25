@@ -279,6 +279,13 @@ export interface Project {
    */
   projectSlug?: string | null;
   /**
+   * Every custody `projects/<slug>` key this project's files may sit under,
+   * best first (repo key alias-expanded where the folder is, origin-derived,
+   * registered, legacy `owner__repo`). Clients join custody on these rather
+   * than re-deriving repo keys. Empty when the project has no git identity.
+   */
+  custodySlugs?: string[];
+  /**
    * What the last create for this project picked — the pre-selection a create
    * picker should open on. Advisory, never a contract: `lastProvider` may be a
    * `docker:<alias>` host spec and either may name a provider/agent this host no

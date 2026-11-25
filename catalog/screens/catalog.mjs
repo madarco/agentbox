@@ -118,7 +118,7 @@ export const SCREENS = [
   hub({
     id: "hub/files",
     title: "Files: what the hub holds for boxes",
-    what: "Agent logins, project seeds, bake records, the skills library and a box SSH key, metadata only.",
+    what: "Project files per project, agent logins per account, the skills library, bakes and box keys, with size and last update; metadata only.",
     files: [{ shoot: "pnpm shoot hub/files.png /settings/files --full" }],
   }),
   hub({

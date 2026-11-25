@@ -5,7 +5,7 @@
 // (Phase 5), so a named account is refused there with a message naming it.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig, tryGetMachineId } from '@agentbox/config';
 import {
   accountConfigVolume,
   modelAuthSourceId,
@@ -87,6 +87,8 @@ export interface AccountBackendDeps {
    */
   removeVolume?: (name: string) => Promise<{ removed: boolean; error?: string }>;
   store?: AccountStoreOptions;
+  /** This hub's machine id, the `<machine>` its named accounts sit under in custody. */
+  machineId?: () => string | undefined;
 }
 
 const execFileAsync = promisify(execFile);
@@ -149,7 +151,9 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       const agents = (store?.specs ?? AGENT_SYNC_SPECS)
         .filter((s) => agentAccountKinds(s).length > 0 && !s.hidden)
         .map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
-      return { accounts: views, agents };
+      // A machine with no id yet (unwritable HOME) lists its accounts without one.
+      const machine = deps.machineId ? deps.machineId() : tryGetMachineId();
+      return { accounts: views, agents, ...(machine ? { machine } : {}) };
     },
 
     async addPastedAccount(input) {

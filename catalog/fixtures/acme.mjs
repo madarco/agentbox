@@ -44,6 +44,7 @@ export const projects = [
   provider: p.lastProvider ?? "docker",
   createdAt: min(60 * 24 * (20 - i)),
   originUrl: p.noGit ? null : `git@github.com:${p.repo}.git`,
+  custodySlugs: p.noGit ? [] : [`github.com__${p.repo.split("/").join("__")}`, p.repo.split("/").join("__")],
   lastProvider: p.lastProvider ?? null,
   lastAgent: p.lastAgent ?? null,
   lastUsedAt: p.lastProvider ? min(30 + i * 40) : null,
@@ -131,6 +132,7 @@ export const boxes = raw.map((b) => {
     [`${b.agent}Activity`]: b.activity ?? "idle",
     shellCount: running ? 1 : 0,
     originUrl: p.originUrl,
+    originMachineId: "5c1e0f7a9b3d",
     originMachineLabel: HOST,
     lastAgent: b.agent,
     agents: [b.agent],
@@ -246,6 +248,7 @@ export const accounts = {
     { id: "codex", label: "Codex", kinds: ["login", "api-key"] },
     { id: "opencode", label: "OpenCode", kinds: ["api-key"] },
   ],
+  machine: "5c1e0f7a9b3d",
 };
 
 /* ---- Skills (GET /api/v1/skills, /api/v1/skill-status) ---- */
@@ -435,7 +438,9 @@ export const custody = {
   entries: [
     entry("agents/claude/.claude.json", 4_812, 60 * 3),
     entry("agents/claude/.credentials.json", 1_116, 60 * 3),
+    entry("agents/claude/accounts/5c1e0f7a9b3d/work/.credentials.json", 1_204, 60 * 3),
     entry("agents/codex/auth.json", 2_405, 60 * 30),
+    entry("agents/codex/accounts/5c1e0f7a9b3d/team/auth.json", 2_391, 60 * 30),
     entry("agents/codex/config.toml", 318, 60 * 24 * 6, 0o644),
     entry("agents/opencode/auth.json", 744, 60 * 24 * 9),
     ...Object.values(seeds).flatMap((s) => s.entries.map((e) => entry(`projects/${s.slug}/seed/${e.name}`, e.size, (NOW - Date.parse(e.updatedAt)) / 60_000))),
@@ -448,8 +453,9 @@ export const custody = {
       entry(`skills/${s.name}/${s.current}.tar.gz`, s.tarballBytes, (NOW - Date.parse(s.updatedAt)) / 60_000, 0o644),
       ...(s.pending ? [entry(`skills/${s.name}/${s.pending.version}.tar.gz`, Math.round(s.tarballBytes * 1.07), (NOW - Date.parse(s.pending.uploadedAt)) / 60_000, 0o644)] : []),
     ]),
-    entry("boxes/2b98d6f1e0a7/id_ed25519", 411, 60 * 26),
-    entry("boxes/2b98d6f1e0a7/id_ed25519.pub", 97, 60 * 26, 0o644),
+    entry("boxes/2b98d6f1e0a7/ssh/id_ed25519", 411, 60 * 26),
+    entry("boxes/2b98d6f1e0a7/ssh/id_ed25519.pub", 97, 60 * 26, 0o644),
+    entry("boxes/2b98d6f1e0a7/skills.json", 612, 60 * 26, 0o644),
   ],
 };
 
