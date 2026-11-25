@@ -104,6 +104,15 @@ export interface HubApiBox {
 }
 
 /**
+ * A hub row's effective runtime state: the host-only raw `state`, else the
+ * topology-agnostic `status` (the plane view and synthetic `job:` rows carry
+ * only that). Every "is it running" gate on a hub row reads this.
+ */
+export function hubBoxState(b: Pick<HubApiBox, 'state' | 'status'>): string {
+  return b.state ?? b.status;
+}
+
+/**
  * The per-agent status map for a hub row, however that hub spells it.
  *
  * A current hub sends `agentStatus`; one older than this build sends only the

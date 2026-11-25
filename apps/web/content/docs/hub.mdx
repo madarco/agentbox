@@ -37,8 +37,15 @@ a cookie (30 days) and strips it from the address, so from then on a plain
 
 - **Dashboard** — every box on this machine, grouped by project, with live status
   (running / paused / stopped / error) and per-box **pause / resume / stop /
-  destroy** controls.
-- **Box detail** — a box's task, agent, branch, host, and timestamps, plus common
+  destroy** controls. Each row also shows what the agent is on: the session's
+  title (when it differs from the box's task, which defaults to it), a **working-on** line (the tool call or step it is running, shown only
+  while the agent is working, waiting on a permission or asking a question) and
+  the session's **tokens**, with a context-fill bar; hover the figure for the
+  input / output / cache / reasoning breakdown, and the cost when the agent
+  records one (opencode, pi). The hub derives these from the transcripts it
+  already collects, so they can be up to a minute behind the agent.
+- **Box detail** — a box's task, agent, branch, host, and timestamps, an **Agent
+  session** card with each agent's working-on line and tokens (and its session title, when that is not already the heading), plus common
   box operations: **Access** (open the box's [web / VNC URL](/docs/web-apps-and-tunnels),
   and, on a local hub running on macOS, an **Apps** row that opens the box in a host
   app — Claude, Codex, VS Code / Cursor, cmux, Herdr, iTerm2, or Finder; the same as

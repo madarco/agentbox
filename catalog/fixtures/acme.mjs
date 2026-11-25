@@ -68,6 +68,18 @@ const raw = [
   { id: "e08a5c3f71b9", projectId: "fx-sandbox", name: "scratch", agent: "claude", status: "stopped", provider: "docker", host: "local · docker", age: 60 * 50, activity: "idle", hasGit: false, commits: null, files: null },
 ];
 
+// Live status (docs/agent-live-status-plan.md): the working-on line and the
+// current session's tokens, by box name. `doing` shows only while the agent is
+// working, waiting or asking; an idle box keeps its usage.
+const LIVE = {
+  "payment-retries": { doing: "bash: pnpm test -- retry.spec.ts", usage: { input: 18_400, output: 9_200, cacheRead: 0, cacheWrite: 0, reasoning: 4_100, contextTokens: 61_000, contextWindow: 272_000 } },
+  "checkout-copy": { usage: { input: 2_100, output: 14_300, cacheRead: 1_840_000, cacheWrite: 96_000, contextTokens: 118_000, contextWindow: 200_000 } },
+  "fix-webhooks": { usage: { input: 240_000, output: 41_000, cacheRead: 0, cacheWrite: 0, reasoning: 22_000, contextTokens: 188_000, contextWindow: 272_000 } },
+  "queue-retries": { doing: "Edit src/jobs/charge-retry.ts", usage: { input: 900, output: 5_600, cacheRead: 412_000, cacheWrite: 38_000, contextTokens: 52_000, contextWindow: 200_000 } },
+  "cart-badges": { usage: { input: 31_000, output: 6_800, cacheRead: 0, cacheWrite: 0, contextTokens: 37_000, contextWindow: 272_000 } },
+  "search-filters": { doing: "Read docs/search/facets.md", usage: { input: 46_000, output: 7_900, cacheRead: 210_000, cacheWrite: 0, contextTokens: 74_000, contextWindow: 200_000, costUsd: 0.38 } },
+};
+
 const ACCOUNT_INFO = {
   "claude:work": { label: "Acme work", kind: "login" },
   "claude:ci": { kind: "setup-token" },
@@ -107,7 +119,14 @@ export const boxes = raw.map((b) => {
     persistent: Boolean(b.persistent),
     gitWorktrees: b.hasGit === false ? [] : [{ kind: "root", branch: box.branch }],
     hasGit: b.hasGit !== false,
-    agentStatus: { [b.agent]: { state: b.activity ?? "idle", ...(b.title ? { sessionTitle: b.title } : {}) } },
+    agentStatus: {
+      [b.agent]: {
+        state: b.activity ?? "idle",
+        ...(b.title ? { sessionTitle: b.title } : {}),
+        ...(LIVE[b.name]?.doing ? { activity: LIVE[b.name].doing } : {}),
+        ...(LIVE[b.name]?.usage ? { usage: { ...LIVE[b.name].usage, updatedAt: new Date(min(1)).toISOString() } } : {}),
+      },
+    },
     [`${b.agent}SessionTitle`]: b.title,
     [`${b.agent}Activity`]: b.activity ?? "idle",
     shellCount: running ? 1 : 0,

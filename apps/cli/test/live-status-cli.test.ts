@@ -49,6 +49,24 @@ describe('ls working-on line', () => {
   });
 });
 
+describe('control characters never reach the terminal', () => {
+  it('ls and inspect blank ESC sequences from transcript text', () => {
+    const b = box({
+      agentStatus: {
+        claude: {
+          state: 'working',
+          sessionTitle: 'T\x1b]0;pwned\x07',
+          activity: 'bash: echo \x1b[2Jhi',
+        },
+      },
+    });
+    for (const line of [...workingOnLines(b, 120), ...renderAgentLiveLines(b)]) {
+      // eslint-disable-next-line no-control-regex
+      expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    }
+  });
+});
+
 describe('inspect agent block', () => {
   it('title, activity while working, tokens', () => {
     const lines = renderAgentLiveLines(
@@ -77,5 +95,10 @@ describe('inspect agent block', () => {
     expect(idle.join('\n')).not.toContain('working on');
     expect(renderAgentLiveLines(box({ agentStatus: { claude: { state: 'idle' } } }))).toEqual([]);
     expect(renderAgentLiveLines(null)).toEqual([]);
+  });
+  it('a cached listing from an unreachable hub is flagged', () => {
+    const b = box({ agentStatus: { claude: { state: 'idle', sessionTitle: 'T' } } });
+    expect(renderAgentLiveLines(b, true)[0]).toBe('(hub unreachable: last known agent status)');
+    expect(renderAgentLiveLines(b, false)[0]).not.toContain('unreachable');
   });
 });

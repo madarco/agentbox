@@ -13,7 +13,8 @@ import { fmtBytes } from '../fmt.js';
 import { providerForBox } from '../provider/registry.js';
 import { agentboxAliasFor, readAgentboxSshAlias } from '@agentbox/sandbox-core';
 import { watchRender } from '../watch.js';
-import type { HubApiBox } from '../control-plane/hub-api-client.js';
+import { hubBoxState, type HubApiBox } from '../control-plane/hub-api-client.js';
+import { clip } from '../lib/sessions-format.js';
 import { fetchBoxListing } from '../control-plane/hub-list.js';
 import { fetchLive, renderLiveSections, renderPersistedSections } from './_status-render.js';
 import { handleLifecycleError } from './_errors.js';
@@ -69,7 +70,7 @@ async function renderText(i: InspectedBox): Promise<string> {
     `checkpoint    ${renderCheckpoint(i, ckptBytes)}`,
     `host export   ${i.hostPaths.mergedExport}  (run \`agentbox open\` to refresh)`,
     `created       ${i.record.createdAt}`,
-    ...renderAgentLiveLines(await hubRowFor(i.record)),
+    ...(await hubLiveLines(i.record)),
   ];
 
   // Append the same service/task/port detail plain `status` shows: live from the
@@ -112,29 +113,49 @@ function renderOtherAgents(i: InspectedBox): string[] {
 
 /**
  * The box's row on the hub, for what only the hub knows: the session title,
- * working-on line and tokens (docs/agent-live-status-plan.md). Null when the
- * hub is unreachable, which `inspect` must survive.
+ * working-on line and tokens (docs/agent-live-status-plan.md). Matched by id
+ * only: names repeat across projects. Null when the hub has no such row or
+ * cannot be reached, which `inspect` must survive; `stale` when the listing is
+ * the cached copy of an unreachable hub.
  */
-async function hubRowFor(box: Pick<BoxRecord, 'id' | 'name'>): Promise<HubApiBox | null> {
+async function hubRowFor(
+  box: Pick<BoxRecord, 'id'>,
+): Promise<{ row: HubApiBox | null; stale: boolean }> {
   try {
-    const { boxes } = await fetchBoxListing();
-    return boxes.find((b) => b.id === box.id) ?? boxes.find((b) => b.name === box.name) ?? null;
+    const { boxes, stale } = await fetchBoxListing();
+    return { row: boxes.find((b) => b.id === box.id) ?? null, stale };
   } catch {
-    return null;
+    return { row: null, stale: false };
   }
 }
 
+async function hubLiveLines(box: Pick<BoxRecord, 'id'>): Promise<string[]> {
+  const { row, stale } = await hubRowFor(box);
+  return renderAgentLiveLines(row, stale);
+}
+
+/** `--json`'s view of the same: the hub's `agentStatus`, flagged when cached. */
+async function hubLiveJson(
+  box: Pick<BoxRecord, 'id'>,
+): Promise<{ agentLive: HubApiBox['agentStatus'] | null; agentLiveStale?: true }> {
+  const { row, stale } = await hubRowFor(box);
+  return {
+    agentLive: row?.agentStatus ?? null,
+    ...(stale ? { agentLiveStale: true as const } : {}),
+  };
+}
+
 /** One block per agent the hub has live status for; nothing when none. */
-export function renderAgentLiveLines(b: HubApiBox | null): string[] {
+export function renderAgentLiveLines(b: HubApiBox | null, stale = false): string[] {
   const out: string[] = [];
-  const running = (b?.state ?? b?.status) === 'running';
+  const running = b !== null && hubBoxState(b) === 'running';
   for (const [agent, e] of Object.entries(b?.agentStatus ?? {})) {
     const activity = running ? liveActivity(e) : undefined;
     const usage = usageSummary(e.usage);
     if (!e.sessionTitle && !activity && !usage) continue;
-    out.push(`${agent} (hub)`.padEnd(13) + ` ${e.state ?? 'unknown'}`);
-    if (e.sessionTitle) out.push(`  title       ${e.sessionTitle}`);
-    if (activity) out.push(`  working on  ${activity}`);
+    out.push(`${agent} (hub)`.padEnd(13) + ` ${clip(e.state ?? 'unknown', 40)}`);
+    if (e.sessionTitle) out.push(`  title       ${clip(e.sessionTitle, 200)}`);
+    if (activity) out.push(`  working on  ${clip(activity, 200)}`);
     if (usage) {
       out.push(`  tokens      ${usage}`);
       const detail = usageBreakdown(e.usage)
@@ -144,6 +165,7 @@ export function renderAgentLiveLines(b: HubApiBox | null): string[] {
       out.push(`              ${detail}`);
     }
   }
+  if (stale && out.length > 0) out.unshift('(hub unreachable: last known agent status)');
   return out;
 }
 
@@ -249,7 +271,7 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
     `pids limit    ${fmtLimit(lim?.pidsLimit, '')}`,
     `persisted     ${persisted ? `${persisted.timestamp} (${String(persisted.services.length)} svc, ${String(persisted.tasks.length)} tasks, ${String(persisted.ports.length)} ports)` : '(none)'}`,
     `created       ${box.createdAt}`,
-    ...renderAgentLiveLines(await hubRowFor(box)),
+    ...(await hubLiveLines(box)),
   ];
 
   // Cloud boxes have no host container to `docker exec` into, so the persisted
@@ -301,26 +323,28 @@ export async function runInspect(box: BoxRecord, opts: InspectRunOptions): Promi
       // Provider-level inspect gives us state + endpoints; for JSON we surface
       // the box record + a probeState (cheap), avoiding heavy SDK round-trips.
       if (opts.json) {
+        const live = hubLiveJson(box);
         const provider = await providerForBox(box);
         const state = await provider.probeState(box);
         const persisted = await readBoxStatus(box);
-        const agentLive = (await hubRowFor(box))?.agentStatus ?? null;
         process.stdout.write(
-          JSON.stringify({ record: box, state, persistedStatus: persisted, agentLive }, null, 2) +
-            '\n',
+          JSON.stringify(
+            { record: box, state, persistedStatus: persisted, ...(await live) },
+            null,
+            2,
+          ) + '\n',
         );
       } else {
         process.stdout.write((await renderCloudText(box)) + '\n');
       }
       return;
     }
-    const result = await inspectBox(box.id);
     if (opts.json) {
-      const agentLive = (await hubRowFor(box))?.agentStatus ?? null;
-      process.stdout.write(JSON.stringify({ ...result, agentLive }, null, 2) + '\n');
-    } else {
-      process.stdout.write((await renderText(result)) + '\n');
+      const [result, live] = await Promise.all([inspectBox(box.id), hubLiveJson(box)]);
+      process.stdout.write(JSON.stringify({ ...result, ...live }, null, 2) + '\n');
+      return;
     }
+    process.stdout.write((await renderText(await inspectBox(box.id))) + '\n');
   } catch (err) {
     handleLifecycleError(err);
   }

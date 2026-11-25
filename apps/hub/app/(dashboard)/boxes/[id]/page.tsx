@@ -142,7 +142,7 @@ function AgentSessions({ box }: { box: Box }) {
     .map(([agent, entry]) => ({
       agent,
       entry,
-      rows: agentLiveRows(entry, box.status === 'running'),
+      rows: agentLiveRows(entry, box.status === 'running', box.task),
     }))
     .filter((a) => a.rows.length > 0)
     .sort((a, b) => Number(b.agent === box.agent) - Number(a.agent === box.agent));

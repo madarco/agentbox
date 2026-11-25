@@ -9,7 +9,8 @@ import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { boxLabel } from '../box-label.js';
 import { hyperlink } from '../hyperlink.js';
-import { hubBoxAgentStatus } from '../control-plane/hub-api-client.js';
+import { hubBoxAgentStatus, hubBoxState } from '../control-plane/hub-api-client.js';
+import { clip } from '../lib/sessions-format.js';
 import type { HubApiBox } from '../control-plane/hub-api-client.js';
 import { cacheAge, fetchBoxListing, type BoxListing } from '../control-plane/hub-list.js';
 import { hubUnauthorizedHint } from '../control-plane/unauthorized-hint.js';
@@ -231,14 +232,11 @@ export function workingOnLines(b: HubApiBox, width: number): string[] {
   for (const [agent] of sortedAgentStatus(b)) {
     const raw = b.agentStatus[agent];
     if (raw?.state !== 'working' || !raw.activity) continue;
-    out.push(clipLine(`   > ${agent}: ${raw.activity.replace(/\s+/g, ' ')}`, width));
+    // One column short of the width, so a full line never wraps on terminals
+    // that wrap at the last column.
+    out.push(`   ${clip(`> ${agent}: ${raw.activity}`, Math.max(8, width - 4))}`);
   }
   return out;
-}
-
-function clipLine(s: string, width: number): string {
-  const max = Math.max(8, width - 1);
-  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
 /**
@@ -439,7 +437,7 @@ function stateCell(b: HubApiBox): string {
  * plane box reading `running` in STATE yet `-`/`[running]` in the agent slot.
  */
 function effectiveState(b: HubApiBox): string {
-  return b.state ?? b.status;
+  return hubBoxState(b);
 }
 
 /**

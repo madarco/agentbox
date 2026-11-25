@@ -79,10 +79,11 @@ done; Phase 4 (surfaces) tracks its own items in the plan.
   supported box reports `sessionId`.
 - **The slice's per-box maps** (`current`, `lastNotify`) keep an entry per box ever listed while the
   hub runs; `seen` is capped at 5000 sessions. Prune destroyed boxes if a long-lived hub shows it.
-- **An idle claude or pi box shows its final reply as the working-on line**, since the plan takes the
-  last assistant text when it is newer than the last tool call (codex uses commentary only). Phase 4
-  can show `activity` only while the state is `working`, or the parser can drop text-only final
-  turns.
+- **An idle claude or pi box's `activity` is its final reply**, since the plan takes the last
+  assistant text when it is newer than the last tool call (codex uses commentary only). Phase 4
+  hides it outside `working`/`waiting`/`question` on every surface, but the payload still carries
+  it; a client that ignores the rule shows the reply. Dropping text-only final turns in the parser
+  would fix it at the source.
 - **`session_index.jsonl` is read whole** on every change of its stamp, and its rows are keyed by line
   number. Fine at its size today; if codex ever rewrites or compacts it, a rename between the
   rewrite and the next pass is skipped.
@@ -93,3 +94,20 @@ done; Phase 4 (surfaces) tracks its own items in the plan.
   line lags more than the other agents'. The in-progress todo is copied without a settle delay.
 - **Ship cadence.** The docker host watcher ships every 60s, so a docker box's working-on line can be
   a minute old. Lowering it for `working` boxes is the plan's open question.
+
+## From Phase 4 (surfaces)
+
+- **Two copies of the presentation rules.** The hub's client bundle cannot value-import
+  `@agentbox/core`, so `apps/hub/lib/live-status-view.ts` mirrors `sync/live-status-view.ts`;
+  `apps/hub/test/live-status-view.test.ts` fails on drift. A client-safe subpath export of core
+  (`@agentbox/core/view`) would remove the copy.
+- **`inspect` reads the whole box listing** to find one row (`fetchBoxListing`, memoized). A
+  `GET /api/v1/boxes/{id}` client call would be cheaper on a big fleet.
+- **The dashboard TUI and the cmux dock** do not show the working-on line or tokens yet.
+- **The project page's box list** uses the same `BoxTable`, so it shows the live line too; the
+  workspace timeline and the manager view do not.
+- **The title-vs-task check is a string compare.** `task` falls back to a session title, so the row
+  and the detail card hide a title equal to it (trimmed). The Box payload does not say where `task`
+  came from; a `taskSource` field would make this exact when the hub picked another agent's title.
+- **The catalog fixture's `fix-webhooks` box reports `thinking`**, not an `AgentActivityState`
+  (pre-existing); align it with the tray's fixture when that story is next retold.

@@ -23,7 +23,7 @@ import { cn } from '@/lib/utils';
 export function AgentLiveLine({ box }: { box: Box }) {
   const live = primaryLive(box);
   if (!live) return null;
-  const title = live.entry.sessionTitle;
+  const title = distinctTitle(live.entry.sessionTitle, box.task);
   // A paused or stopped box keeps its last snapshot, whose state can still say
   // `working`; it is doing nothing now.
   const activity = box.status === 'running' ? liveActivity(live.entry) : undefined;
@@ -101,6 +101,14 @@ function ContextBar({ pct }: { pct: number }) {
   );
 }
 
+/**
+ * The session title, unless it is the box's task: `task` falls back to a
+ * session title, so printing both would repeat one line.
+ */
+function distinctTitle(title: string | undefined, task: string): string | undefined {
+  return title && title.trim() !== task.trim() ? title : undefined;
+}
+
 /** Usage figure for a box row's status cell (the primary agent's). */
 export function BoxUsageFigure({ box }: { box: Box }) {
   const live = primaryLive(box);
@@ -111,13 +119,18 @@ export function BoxUsageFigure({ box }: { box: Box }) {
 export function agentLiveRows(
   entry: AgentStatusWire,
   running: boolean,
+  task: string,
 ): Array<{ k: string; v: ReactNode; mono?: boolean }> {
   const rows: Array<{ k: string; v: ReactNode; mono?: boolean }> = [];
-  if (entry.sessionTitle) rows.push({ k: 'Session', v: entry.sessionTitle });
+  const title = distinctTitle(entry.sessionTitle, task);
+  if (title) rows.push({ k: 'Session', v: title });
   const activity = running ? liveActivity(entry) : undefined;
   if (activity) rows.push({ k: 'Working on', v: <WorkingOn text={activity} /> });
   if (usageTotal(entry.usage) !== undefined) {
-    rows.push({ k: 'Tokens', v: <UsageFigure usage={entry.usage} className="text-[12px]" /> });
+    rows.push({
+      k: 'Tokens',
+      v: <UsageFigure usage={entry.usage} className="text-[12px] text-secondary-foreground" />,
+    });
   }
   return rows;
 }
