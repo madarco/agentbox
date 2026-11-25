@@ -1707,7 +1707,13 @@ export function buildOpenApi(): Record<string, unknown> {
               description: 'Minutes east of UTC that `day` buckets in (default 0).',
             },
             { name: 'agent', in: 'query', schema: { type: 'string' } },
-            { name: 'account', in: 'query', schema: { type: 'string' } },
+            {
+              name: 'account',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                "A subscription as `<agent>/<account>` (`claude/personal`); a bare account id matches that id of any agent. A box that borrows another agent's login (`--model-auth`) counts under the lender's subscription, and the `account` dimension's keys use the same `<agent>/<account>` form.",
+            },
             {
               name: 'box',
               in: 'query',

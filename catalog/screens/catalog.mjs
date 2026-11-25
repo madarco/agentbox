@@ -110,8 +110,8 @@ export const SCREENS = [
   }),
   hub({
     id: "hub/usage",
-    title: "Usage: tokens by day, agent, account, box and model",
-    what: "Seven days of token usage (demo numbers) by day, agent, account, box and model.",
+    title: "Usage: tokens by day, agent, subscription, box and model",
+    what: "Seven days of token usage (demo numbers) by day, agent, subscription, box and model, with the Subscription filter.",
     files: [{ shoot: "pnpm shoot hub/usage.png /usage --full" }],
     social: { title: "Where the tokens went, per box and per account", crop: [0, 0, 2880, 1800] },
   }),
@@ -163,8 +163,8 @@ export const SCREENS = [
   hub({
     id: "hub/subscriptions",
     topic: "Web hub: skills and accounts",
-    title: "Subscriptions: LLM accounts",
-    what: "Several logins, setup tokens and API keys per agent, with the boxes that use each one.",
+    title: "Subscriptions: plans and keys",
+    what: "Logins and setup tokens grouped by Anthropic and OpenAI, plus API keys: each card with its tier, email, boxes and last 7 days of tokens.",
     files: [{ shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions" }],
     social: { title: "Several Claude and Codex accounts, one per box" },
   }),

@@ -58,6 +58,7 @@ import {
   sourceAddress,
 } from './lib/peer';
 import { createDeviceService, type DeviceService } from './lib/backend/devices';
+import { subscriptionOf } from './lib/backend/accounts';
 import { createHistoryService, type HistoryService } from './lib/backend/history';
 import { createMemoryService, type MemoryService } from './lib/backend/history-memory';
 import { createMcpServer, MCP_INSTRUCTIONS, type McpHubScope } from './lib/backend/mcp';
@@ -143,14 +144,15 @@ async function openHistoryService(dbPath: string, archiveDir: string): Promise<H
     repo: await openSqliteHistoryRepo(dbPath),
     archive: fsHistoryArchive(archiveDir),
     retentionDays: Math.max(1, retentionDays),
-    // The account a session's agent ran on, from this hub's box record
-    // (llm-accounts Phase 3). Boxes known only from a Store registration get
+    // The subscription (`agent/account`) a session's agent ran on, from this
+    // hub's box record (llm-accounts Phase 3); a borrowed login counts under
+    // its lender (hub settings Phase 3a). Boxes known only from a Store registration get
     // none (backlog). The state is cached briefly: a backfill asks once per
     // session.
     accountOf: async (boxId, agent) => {
       const boxes = await cachedBoxes();
       const box = boxes.find((b) => b.id === boxId);
-      return box ? (box.accounts?.[agent] ?? 'default') : null;
+      return box ? subscriptionOf(box, agent) : null;
     },
     log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
   });

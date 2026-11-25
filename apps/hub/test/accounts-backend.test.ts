@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { setDefaultCheckpointRefusal } from '../lib/backend/accounts';
+import { setDefaultCheckpointRefusal, subscriptionOf } from '../lib/backend/accounts';
 import { accountIdProblem } from '@agentbox/core';
 import { ACCOUNT_ID_RE, parseCreateBox } from '../app/(dashboard)/api/v1/lib/validate';
 
@@ -49,5 +49,28 @@ describe('the browser-safe account-id rule matches core', () => {
     '',
   ])('%j', (id) => {
     expect(ACCOUNT_ID_RE.test(id)).toBe(accountIdProblem(id) === null);
+  });
+});
+
+describe('subscriptionOf', () => {
+  it("names the agent's own account, default when the box names none", () => {
+    expect(subscriptionOf({}, 'claude')).toBe('claude/default');
+    expect(subscriptionOf({ accounts: { claude: 'work' } }, 'claude')).toBe('claude/work');
+  });
+
+  it('counts a borrowed login under the lender', () => {
+    expect(
+      subscriptionOf(
+        { borrowedCredentials: ['claude'], accounts: { claude: 'personal' } },
+        'opencode',
+      ),
+    ).toBe('claude/personal');
+    expect(subscriptionOf({ borrowedCredentials: ['codex'] }, 'pi')).toBe('codex/default');
+  });
+
+  it('ignores env: sources, which name no account', () => {
+    expect(subscriptionOf({ borrowedCredentials: ['env:OPENAI_API_KEY'] }, 'pi')).toBe(
+      'pi/default',
+    );
   });
 });

@@ -151,7 +151,18 @@ describe('usage (Phase 7)', () => {
     });
 
     const byAccount = await svc.usage({ by: ['account'], tzOffsetMin: 0, limit: 50 });
-    expect(byAccount.groups.map((g) => g.keys.account).sort()).toEqual(['codex/work', 'default']);
+    // A bare `default` (stamped before 3a) reads as the session agent's own.
+    expect(byAccount.groups.map((g) => g.keys.account).sort()).toEqual([
+      'claude/default',
+      'codex/work',
+    ]);
+    const msgs = async (account: string) =>
+      (await svc.usage({ by: [], tzOffsetMin: 0, limit: 50, account })).totals.messages;
+    expect(await msgs('codex/work')).toBe(1);
+    expect(await msgs('claude/work')).toBe(0);
+    expect(await msgs('work')).toBe(1);
+    expect(await msgs('claude/default')).toBe(2);
+    expect(await msgs('w%')).toBe(0);
 
     expect(
       (await svc.usage({ by: [], tzOffsetMin: 0, limit: 50, project: 'o/b' })).totals.messages,
@@ -250,6 +261,18 @@ describe('usage (Phase 7)', () => {
     expect(await svc.backfillAccounts()).toBe(1);
     expect((await repo.getSession('claude:s9'))!.account).toBe('claude/team');
     expect((await repo.getSession('claude:s8'))!.account).toBeNull();
+  });
+
+  it('restamps a bare account id from before 3a as agent/account', async () => {
+    const accounts: Record<string, string> = { b7: '' };
+    const { svc, ship, repo } = await setup(accounts);
+    await ship({ boxId: 'b7' }, 'claude', 's7', [{ id: 'm', ts: day1, model: 'x', in: 1, out: 1 }]);
+    expect((await repo.getSession('claude:s7'))!.account).toBe('default');
+    accounts.b7 = 'team';
+    expect(await svc.backfillAccounts()).toBe(1);
+    expect((await repo.getSession('claude:s7'))!.account).toBe('claude/team');
+    // Stamped once: a later backfill leaves it alone.
+    expect(await svc.backfillAccounts()).toBe(0);
   });
 
   it('migrates a pre-Phase-7 store: message times filled from ts', async () => {

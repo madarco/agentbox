@@ -3,8 +3,9 @@
 // Usage page — tokens spent by every recorded agent session (agent-history
 // Phase 7). PURE REST CLIENT over GET /api/v1/usage: one request per view
 // (per-day by agent, and one per breakdown), all with the same window and
-// filters. A breakdown row click adds its key as a filter. No cost: prices
-// are not modelled yet.
+// filters. A breakdown row click adds its key as a filter. The subscription
+// filter (`agent/account`) lives in the URL (`?subscription=claude/personal`)
+// so a Subscriptions card links here. No cost: prices are not modelled yet.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
@@ -12,6 +13,12 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
+import {
+  subscriptionKey,
+  subscriptionLabel,
+  usageKeyLabel,
+  type SubscriptionAccount,
+} from '@/lib/subscriptions';
 
 type Dim = 'day' | 'agent' | 'account' | 'box' | 'project' | 'host' | 'model' | 'session';
 type FilterDim = Exclude<Dim, 'day' | 'session'>;
@@ -47,7 +54,7 @@ type RangeId = (typeof RANGES)[number]['id'];
 const BREAKDOWNS: Array<{ dim: Dim; title: string; filter?: FilterDim }> = [
   { dim: 'agent', title: 'By agent', filter: 'agent' },
   { dim: 'model', title: 'By model', filter: 'model' },
-  { dim: 'account', title: 'By account', filter: 'account' },
+  { dim: 'account', title: 'By subscription', filter: 'account' },
   { dim: 'project', title: 'By project', filter: 'project' },
   { dim: 'box', title: 'By box', filter: 'box' },
   { dim: 'host', title: 'By PC', filter: 'host' },
@@ -75,10 +82,11 @@ function shortRepo(url: string): string {
   return m ? m[1]! : url;
 }
 
-function keyLabel(dim: Dim, g: Group): string {
+function keyLabel(dim: Dim, g: Group, accounts: readonly SubscriptionAccount[]): string {
   const k = g.keys[dim];
   if (k === null || k === undefined) return dim === 'box' ? 'no box (host session)' : 'unknown';
   if (dim === 'box') return g.labels.box ?? k;
+  if (dim === 'account') return usageKeyLabel(k, accounts);
   if (dim === 'project') return shortRepo(k);
   if (dim === 'host') return k.slice(0, 12);
   if (dim === 'session') {
@@ -103,14 +111,46 @@ async function fetchUsage(params: Record<string, string>): Promise<Report> {
   return body;
 }
 
+/** The subscription filter carried in the page URL. */
+function subscriptionFromUrl(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  return new URLSearchParams(window.location.search).get('subscription')?.trim() || undefined;
+}
+
+async function fetchAccounts(): Promise<SubscriptionAccount[]> {
+  const r = await fetch('/api/v1/accounts', { credentials: 'same-origin' });
+  if (!r.ok) return [];
+  return ((await r.json()) as { accounts?: SubscriptionAccount[] }).accounts ?? [];
+}
+
 export default function UsagePage() {
   const [range, setRange] = useState<RangeId>('7d');
-  const [filters, setFilters] = useState<Partial<Record<FilterDim, string>>>({});
+  // Unset until the URL is read on mount, so the first load already filters.
+  const [filters, setFilters] = useState<Partial<Record<FilterDim, string>> | null>(null);
+  const [accounts, setAccounts] = useState<SubscriptionAccount[]>([]);
   const [daily, setDaily] = useState<Report | null>(null);
   const [tables, setTables] = useState<Partial<Record<Dim, Report>>>({});
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const sub = subscriptionFromUrl();
+    setFilters(sub ? { account: sub } : {});
+    void fetchAccounts()
+      .then(setAccounts)
+      .catch(() => {});
+  }, []);
+
+  // Keep `?subscription=` in step with the filter, without a navigation.
+  useEffect(() => {
+    if (!filters) return;
+    const url = new URL(window.location.href);
+    if (filters.account) url.searchParams.set('subscription', filters.account);
+    else url.searchParams.delete('subscription');
+    if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+  }, [filters]);
+
   const load = useCallback(async () => {
+    if (!filters) return;
     const base: Record<string, string> = {
       tzOffset: String(-new Date().getTimezoneOffset()),
       ...(filters as Record<string, string>),
@@ -137,6 +177,28 @@ export default function UsagePage() {
     return () => clearInterval(t);
   }, [load]);
 
+  const setFilter = (dim: FilterDim, value: string | undefined): void =>
+    setFilters((f) => {
+      const next = { ...f };
+      if (value) next[dim] = value;
+      else delete next[dim];
+      return next;
+    });
+  // Every stored account, plus keys that only have usage (a default never
+  // captured here, a removed account) and the one in the URL.
+  const subscriptionOptions = useMemo(() => {
+    const opts = new Map<string, string>(
+      accounts.map((a) => [subscriptionKey(a), subscriptionLabel(a)]),
+    );
+    for (const g of tables.account?.groups ?? []) {
+      const k = g.keys.account;
+      if (k && !opts.has(k)) opts.set(k, k);
+    }
+    const cur = filters?.account;
+    if (cur && !opts.has(cur)) opts.set(cur, usageKeyLabel(cur, accounts));
+    return [...opts.entries()].sort(([, x], [, y]) => x.localeCompare(y));
+  }, [accounts, tables.account, filters?.account]);
+
   const totals = daily?.totals;
   const days = RANGES.find((r) => r.id === range)!.days;
 
@@ -159,24 +221,33 @@ export default function UsagePage() {
             {r.label}
           </Button>
         ))}
-        {Object.entries(filters).map(([k, v]) => (
-          <Button
-            key={k}
-            size="sm"
-            variant="ghost"
-            className="font-mono text-[12px]"
-            onClick={() =>
-              setFilters((f) => {
-                const next = { ...f };
-                delete next[k as FilterDim];
-                return next;
-              })
-            }
-            title="Remove this filter"
-          >
-            {k}: {k === 'project' ? shortRepo(v) : v} <Icons.x />
-          </Button>
-        ))}
+        <select
+          aria-label="Subscription"
+          className="h-8 rounded-md border bg-background px-2 text-[13px]"
+          value={filters?.account ?? ''}
+          onChange={(ev) => setFilter('account', ev.target.value || undefined)}
+        >
+          <option value="">All subscriptions</option>
+          {subscriptionOptions.map(([k, label]) => (
+            <option key={k} value={k}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {Object.entries(filters ?? {})
+          .filter(([k]) => k !== 'account')
+          .map(([k, v]) => (
+            <Button
+              key={k}
+              size="sm"
+              variant="ghost"
+              className="font-mono text-[12px]"
+              onClick={() => setFilter(k as FilterDim, undefined)}
+              title="Remove this filter"
+            >
+              {k}: {k === 'project' ? shortRepo(v) : v} <Icons.x />
+            </Button>
+          ))}
       </div>
 
       {error ? (
@@ -221,7 +292,7 @@ export default function UsagePage() {
             const r = tables[b.dim];
             if (!r || r.groups.length === 0) return null;
             // A dimension already filtered to one value says nothing new.
-            if (b.filter && filters[b.filter]) return null;
+            if (b.filter && filters?.[b.filter]) return null;
             return (
               <div key={b.dim}>
                 <SectionLabel
@@ -236,10 +307,9 @@ export default function UsagePage() {
                 <Breakdown
                   dim={b.dim}
                   report={r}
+                  accounts={accounts}
                   total={totals.totalTokens}
-                  onPick={
-                    b.filter ? (key) => setFilters((f) => ({ ...f, [b.filter!]: key })) : undefined
-                  }
+                  onPick={b.filter ? (key) => setFilter(b.filter!, key) : undefined}
                 />
               </div>
             );
@@ -469,11 +539,13 @@ function DailyChart({ groups, days }: { groups: Group[]; days: number }) {
 function Breakdown({
   dim,
   report,
+  accounts,
   total,
   onPick,
 }: {
   dim: Dim;
   report: Report;
+  accounts: readonly SubscriptionAccount[];
   total: number;
   onPick?: (key: string) => void;
 }) {
@@ -482,7 +554,9 @@ function Breakdown({
       <table className="w-full text-[12.5px] tabular-nums">
         <thead className="text-left font-mono text-[11px] uppercase text-[#a4a9b0]">
           <tr>
-            <th className="px-5 py-2 font-normal">{dim === 'host' ? 'PC' : dim}</th>
+            <th className="px-5 py-2 font-normal">
+              {dim === 'host' ? 'PC' : dim === 'account' ? 'subscription' : dim}
+            </th>
             <th className="w-[22%] px-2 py-2 font-normal">Share</th>
             <th className="px-2 py-2 text-right font-normal">Total</th>
             <th className="px-2 py-2 text-right font-normal">Input</th>
@@ -502,9 +576,15 @@ function Breakdown({
                 key={key ?? `unknown-${String(i)}`}
                 className={`border-t border-border/60 ${pick ? 'cursor-pointer hover:bg-muted/50' : ''}`}
                 onClick={pick}
-                title={pick ? `Filter by this ${dim}` : (key ?? undefined)}
+                title={
+                  pick
+                    ? `Filter by this ${dim === 'account' ? 'subscription' : dim}`
+                    : (key ?? undefined)
+                }
               >
-                <td className="max-w-[320px] truncate px-5 py-2 font-medium">{keyLabel(dim, g)}</td>
+                <td className="max-w-[320px] truncate px-5 py-2 font-medium">
+                  {keyLabel(dim, g, accounts)}
+                </td>
                 <td className="px-2 py-2">
                   <div className="flex items-center gap-2">
                     <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">

@@ -32,7 +32,10 @@ export const usageCommand = new Command('usage')
   )
   .option('--until <when>', 'end of the window (exclusive), same forms as --since')
   .option('--agent <id>', 'only this agent (e.g. claude)')
-  .option('--account <name>', 'only this named LLM account (default = the agent default login)')
+  .option(
+    '--account <name>',
+    'only this subscription, as <agent>/<account> (claude/work); a bare name matches that account of any agent',
+  )
   .option('--box <ref>', 'only this box (id or name)')
   .option('--project <text>', 'only projects whose repo URL contains this')
   .option('--host <machineId>', 'only sessions shipped by this PC')

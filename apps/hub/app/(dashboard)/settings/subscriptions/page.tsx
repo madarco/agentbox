@@ -6,6 +6,7 @@
 // remove. A login is interactive and runs on the machine, so it is a command
 // to copy, not a form. No secret ever comes back from the API.
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
@@ -14,8 +15,14 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
+import {
+  groupSubscriptions,
+  subscriptionKey,
+  vendorOf,
+  type AccountKind,
+} from '@/lib/subscriptions';
 
-type Kind = 'login' | 'setup-token' | 'api-key';
+type Kind = AccountKind;
 
 interface Account {
   agent: string;
@@ -51,12 +58,30 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 const enc = (a: Account): string => `/${encodeURIComponent(a.agent)}/${encodeURIComponent(a.id)}`;
 
-function identityOf(a: Account): string {
-  return [a.identity?.email, a.identity?.org, a.identity?.plan].filter(Boolean).join(' · ');
+function fmtTokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`;
+  return String(n);
+}
+
+/** Tokens per subscription over the last 7 days, keyed `agent/account`; null = history off. */
+async function loadWeekTokens(): Promise<Map<string, number> | null> {
+  const r = await fetch('/api/v1/usage?by=account&since=7d&limit=1000', {
+    credentials: 'same-origin',
+  });
+  if (!r.ok) return null;
+  const body = (await r.json()) as {
+    groups: Array<{ keys: { account?: string | null }; totalTokens: number }>;
+  };
+  const m = new Map<string, number>();
+  for (const g of body.groups) if (g.keys.account) m.set(g.keys.account, g.totalTokens);
+  return m;
 }
 
 export default function SubscriptionsPage() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [weekTokens, setWeekTokens] = useState<Map<string, number> | null>(null);
   const [agents, setAgents] = useState<AgentKinds[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -75,6 +100,8 @@ export default function SubscriptionsPage() {
       setAccounts(r.accounts);
       setAgents(r.agents);
       setError(null);
+      // Usage is a side fact: the cards render without it.
+      setWeekTokens(await loadWeekTokens().catch(() => null));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -138,9 +165,9 @@ export default function SubscriptionsPage() {
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
       <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Subscriptions</h1>
       <div className="mt-1.5 text-sm text-muted-foreground">
-        The LLM accounts boxes can run on: several logins, setup tokens or API keys per agent.
-        Choose one when you create a box; <span className="font-mono">default</span> is the
-        agent&apos;s plain login.
+        The plans and keys boxes run on: several logins, setup tokens or API keys per agent. Choose
+        one when you create a box; <span className="font-mono">default</span> is the agent&apos;s
+        plain login. A box that borrows another agent&apos;s login counts under that login.
       </div>
 
       {error ? (
@@ -158,86 +185,46 @@ export default function SubscriptionsPage() {
             <div className="mt-4 font-mono text-xs text-red-400">{actionError}</div>
           ) : null}
 
-          <SectionLabel
-            right={
-              <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
-                {accounts.length}
-              </span>
-            }
-          >
-            On this machine
-          </SectionLabel>
           {accounts.length === 0 ? (
-            <EmptyBox>
-              <div>No accounts yet.</div>
-              <div className="mt-1.5 font-mono text-xs text-muted-foreground">
-                Sign in with `agentbox claude login`, or add a named one below.
-              </div>
-            </EmptyBox>
+            <>
+              <SectionLabel>On this machine</SectionLabel>
+              <EmptyBox>
+                <div>No accounts yet.</div>
+                <div className="mt-1.5 font-mono text-xs text-muted-foreground">
+                  Sign in with `agentbox claude login`, or add a named one below.
+                </div>
+              </EmptyBox>
+            </>
           ) : (
-            <Card className="divide-y divide-border/60 overflow-hidden">
-              {accounts.map((a) => {
-                const key = `${a.agent}/${a.id}`;
-                const named = a.id !== 'default';
-                return (
-                  <div key={key} className="flex items-center gap-4 p-4 px-5 max-sm:flex-wrap">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[13px]">{key}</span>
-                        {a.label ? (
-                          <span className="text-[13px] text-secondary-foreground">{a.label}</span>
-                        ) : null}
-                        <Badge variant="outline">{KIND_LABEL[a.kind]}</Badge>
-                        {a.hasSecret ? null : <Badge variant="outline">no secret stored</Badge>}
-                      </div>
-                      <div className="mt-1 text-[12px] text-muted-foreground">
-                        {identityOf(a) || '—'}
-                        {a.boxes.length > 0 ? ` · used by ${a.boxes.join(', ')}` : ''}
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy !== null}
-                      onClick={() => relabel(a)}
-                    >
-                      <Icons.pencil /> Label
-                    </Button>
-                    {named ? (
-                      confirmRemove === key ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            disabled={busy !== null}
-                            onClick={() => void remove(a)}
-                          >
-                            Remove {key}
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(null)}>
-                            Keep
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy !== null || a.boxes.length > 0}
-                          title={
-                            a.boxes.length > 0
-                              ? 'Destroy the boxes that use it first'
-                              : 'Remove its stored login and config volume'
-                          }
-                          onClick={() => setConfirmRemove(key)}
-                        >
-                          <Icons.trash /> Remove
-                        </Button>
-                      )
-                    ) : null}
-                  </div>
-                );
-              })}
-            </Card>
+            groupSubscriptions(accounts).map((g) => (
+              <div key={g.title}>
+                <SectionLabel
+                  right={
+                    <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+                      {g.accounts.length}
+                    </span>
+                  }
+                >
+                  {g.title}
+                </SectionLabel>
+                <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+                  {g.accounts.map((a) => (
+                    <SubscriptionCard
+                      key={subscriptionKey(a)}
+                      account={a}
+                      weekTokens={weekTokens?.get(subscriptionKey(a))}
+                      weekLoaded={weekTokens !== null}
+                      busy={busy !== null}
+                      confirming={confirmRemove === subscriptionKey(a)}
+                      onLabel={() => relabel(a)}
+                      onAskRemove={() => setConfirmRemove(subscriptionKey(a))}
+                      onKeep={() => setConfirmRemove(null)}
+                      onRemove={() => void remove(a)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
           )}
 
           <SectionLabel>Add a setup token or API key</SectionLabel>
@@ -319,5 +306,103 @@ export default function SubscriptionsPage() {
         </>
       )}
     </div>
+  );
+}
+
+function SubscriptionCard({
+  account: a,
+  weekTokens,
+  weekLoaded,
+  busy,
+  confirming,
+  onLabel,
+  onAskRemove,
+  onKeep,
+  onRemove,
+}: {
+  account: Account;
+  weekTokens: number | undefined;
+  weekLoaded: boolean;
+  busy: boolean;
+  confirming: boolean;
+  onLabel: () => void;
+  onAskRemove: () => void;
+  onKeep: () => void;
+  onRemove: () => void;
+}) {
+  const key = subscriptionKey(a);
+  const named = a.id !== 'default';
+  return (
+    <Card className="flex flex-col gap-3 p-4 px-5">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[14px] font-medium">{a.label ?? a.id}</div>
+          <div className="mt-0.5 font-mono text-[11.5px] text-muted-foreground">{key}</div>
+        </div>
+        {a.identity?.plan ? <Badge>{a.identity.plan}</Badge> : null}
+        <Badge variant="outline">{KIND_LABEL[a.kind]}</Badge>
+      </div>
+      <dl className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-1 text-[12.5px]">
+        <dt className="text-muted-foreground">Account</dt>
+        <dd className="min-w-0 truncate">
+          {[a.identity?.email, a.identity?.org].filter(Boolean).join(' · ') ||
+            (a.kind === 'api-key' ? `${vendorOf(a.agent)} API key` : '—')}
+          {a.hasSecret ? null : <span className="text-muted-foreground"> · no secret stored</span>}
+        </dd>
+        <dt className="text-muted-foreground">Boxes</dt>
+        <dd className="min-w-0 truncate" title={a.boxes.join(', ')}>
+          {named
+            ? a.boxes.length > 0
+              ? a.boxes.join(', ')
+              : 'none'
+            : 'every box without a named account'}
+        </dd>
+        <dt className="text-muted-foreground">Last 7 days</dt>
+        <dd>
+          {weekLoaded ? (
+            <Link
+              href={`/usage?subscription=${encodeURIComponent(key)}`}
+              className="tabular-nums underline-offset-2 hover:underline"
+              title={`${(weekTokens ?? 0).toLocaleString()} tokens — open in Usage`}
+            >
+              {fmtTokens(weekTokens ?? 0)} tokens
+            </Link>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </dd>
+      </dl>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button size="sm" variant="ghost" disabled={busy} onClick={onLabel}>
+          <Icons.pencil /> Label
+        </Button>
+        {named ? (
+          confirming ? (
+            <>
+              <Button size="sm" variant="destructive" disabled={busy} onClick={onRemove}>
+                Remove {key}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={onKeep}>
+                Keep
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || a.boxes.length > 0}
+              title={
+                a.boxes.length > 0
+                  ? 'Destroy the boxes that use it first'
+                  : 'Remove its stored login and config volume'
+              }
+              onClick={onAskRemove}
+            >
+              <Icons.trash /> Remove
+            </Button>
+          )
+        ) : null}
+      </div>
+    </Card>
   );
 }

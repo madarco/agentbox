@@ -293,3 +293,21 @@ export function accountsInfoOf(
     };
   });
 }
+
+/**
+ * The subscription an agent's usage in a box counts under, as `agent/account`
+ * (hub settings Phase 3a). An agent that borrows another agent's login
+ * (`--model-auth`, `BoxRecord.borrowedCredentials`) spends the lender's plan,
+ * so its sessions count under the lender's account; `env:` sources are API
+ * keys from the host env and name no account. Several lenders: the first. Pure.
+ */
+export function subscriptionOf(
+  box: Pick<BoxRecord, 'accounts' | 'borrowedCredentials'>,
+  agent: string,
+): string {
+  const lender = (box.borrowedCredentials ?? []).find(
+    (id) => !id.startsWith('env:') && id !== agent,
+  );
+  const owner = lender ?? agent;
+  return `${owner}/${box.accounts?.[owner] ?? 'default'}`;
+}
