@@ -697,9 +697,11 @@ function SkillTableRow({
   const moves = cmp && online && !skipped ? rowMoves(cmp) : [];
   const blocked = cmp ? pullBlocker(cmp) : null;
   const description = s?.description ?? cmp?.description ?? '';
+  // Just unskipped: the comparison still says `skipped` until it reloads.
+  const stale = !skipped && cmp?.status === 'skipped';
   const status = skipped
     ? 'Skipped, not synced'
-    : comparing
+    : comparing || stale
       ? 'Checking…'
       : cmp
         ? statusLabel(cmp, machine, online)

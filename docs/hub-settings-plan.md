@@ -221,6 +221,14 @@ ticked by default; unticking means "never sync this skill", and the hub remember
   (`agentbox skills --download`) answers 409 too. Adding a skipped name from git or a marketplace, or
   editing it on the hub, is not blocked: those are explicit hub-side acts, and delivery still skips it.
 
+**Live check** (in an agentbox, its own hub on 8787, the box's relay as the PC): `skip-probe` only in
+`~/.agents/skills`, skipped before the first seed: the seed imported the other 20 and not it, the
+page showed "Skipped, not synced", pull answered 409; after `hub restart` and a cleared `.seeded`
+marker a fresh seed again left it out; ticking Sync on the page turned it into "Only on <machine>".
+A hub skill (`unslop`) skipped: a nested docker claude box from `examples/express-ready` got every
+other library skill and not it; unskip reached that running box in ~9 s, a re-skip removed it in ~9 s,
+and a new box after the unskip had it.
+
 ### Phase 3 — subscriptions: page, limits, switching
 
 **3a — the page, with data we have.** `/settings/subscriptions` regrouped like the design:
@@ -336,5 +344,10 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
   with only a "different copies" note. A per-dir view of the PC side would make this visible.
 - **Pull of a differing skill overwrites the hub's current version** without showing the diff first
   (the TUI does the same). A "compare" view of PC vs hub content would help before *Sync all*.
+- **Skill uploads over ~10 MB are stored truncated** (found in the skip live check, not caused by it):
+  the first seed stored `ux-writing` (17.8 MB tree) as a 10,483,944-byte tarball that fails `gzip -t`,
+  with that truncated size in its meta, so every box sync fails on it (`not a gzip tarball: unexpected
+  end of file`). The likely cause is a ~10 MB request-body cap in front of the upload route; the import
+  should fail loudly instead of storing a cut blob. Not reproduced in isolation yet.
 - **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin
   token there (the API key is refused).
