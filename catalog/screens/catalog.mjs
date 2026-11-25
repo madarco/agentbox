@@ -164,9 +164,18 @@ export const SCREENS = [
     id: "hub/subscriptions",
     topic: "Web hub: skills and accounts",
     title: "Subscriptions: plans and keys",
-    what: "Logins and setup tokens grouped by Anthropic and OpenAI, plus API keys: each card with its tier, email, boxes and last 7 days of tokens.",
-    files: [{ shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions" }],
-    social: { title: "Several Claude and Codex accounts, one per box" },
+    what: "Logins and setup tokens grouped by Anthropic and OpenAI Codex, plus API keys: each card with its tier, account, boxes, one meter per limit window the plan reports, and an amber note at the limit.",
+    files: [{ shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions --full" }],
+    social: { title: "Several Claude and Codex accounts, with their plan limits", crop: [0, 0, 2880, 1800] },
+  }),
+  hub({
+    id: "hub/quota-meter",
+    topic: "Web hub: skills and accounts",
+    title: "Quota meter in the top bar",
+    what: "The two subscriptions in use closest to a limit, one bar per window; the card lists every in-use subscription's windows and resets.",
+    via: "Hover or click the meter at the right of the top bar.",
+    files: [{ shoot: "pnpm shoot hub/quota-meter.png / --click button[aria-haspopup=dialog] --wait 300" }],
+    social: { title: "Every plan limit, one glance from any page" },
   }),
 
   /* ======== macOS tray ======== */

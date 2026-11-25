@@ -58,7 +58,7 @@ export function SubMeters({ account: a, compact }: { account: Account; compact?:
   if (a.kind === 'api-key') {
     return (
       <div className="font-mono text-[11px] text-muted-foreground">
-        pay as you go · no plan limits
+        no plan limits
       </div>
     );
   }
