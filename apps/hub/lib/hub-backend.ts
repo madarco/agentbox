@@ -2220,6 +2220,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
       maxTarballBytes: () => globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES,
       skillsChanged: (names) => skills.skillsChanged(names),
+      skillsRepaired: (names) => skills.skillsRepaired(names),
     }),
   );
   // A box records its account in state.json AND in its relay registration;

@@ -195,7 +195,9 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   tar + tree hash against the named version (400 otherwise, 413 over the cap). A current version
   stored before this is checked once on the next listing and marked `verified` or `broken`; a
   broken one shows as "broken copy" on the page, compares `differs` (PC newer) so a Pull replaces
-  it, and Send refuses it. Box sync already fails only that skill.
+  it, and Send refuses it. A repair (same current version, rewritten tarball) re-syncs every box
+  holding the skill, since a box whose install failed is not `behind`. Content over 100 MiB unpacked
+  (what a box installs) is its own 413. Box sync already fails only that skill.
 
 ### Phase 3 — subscriptions: page, limits, switching
 
@@ -312,5 +314,9 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
   with only a "different copies" note. A per-dir view of the PC side would make this visible.
 - **Pull of a differing skill overwrites the hub's current version** without showing the diff first
   (the TUI does the same). A "compare" view of PC vs hub content would help before *Sync all*.
+- **Pre-auth body buffer (known trade-off).** `experimental.proxyClientMaxBodySize: '110mb'` lets Next
+  buffer up to 110 MB of a request body before `proxy.ts` checks auth, on every proxied route. On an
+  exposed hub or a control box, a few concurrent unauthenticated large bodies cost that much memory
+  each. The alternative is a skill upload route outside the proxy matcher with its own auth.
 - **Tray**: the skills redesign can use `/api/v1/skill-machines` unchanged; pull/send need the admin
   token there (the API key is refused).

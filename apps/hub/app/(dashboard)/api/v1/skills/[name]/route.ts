@@ -59,6 +59,7 @@ export async function PUT(
         : {}),
     });
     if (result.currentChanged) backendOrNull()?.skillsChanged([name]);
+    else if (result.blobReplaced) backendOrNull()?.skillsRepaired([name]);
     return ok(result);
   } catch (err) {
     return failFromSkills(err, 'skill import failed');

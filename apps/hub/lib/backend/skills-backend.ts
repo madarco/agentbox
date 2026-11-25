@@ -68,6 +68,8 @@ export interface SkillsBackend {
    * Fire-and-forget; the route has already answered.
    */
   skillsChanged(names: string[]): void;
+  /** A current version's tarball was rewritten (repaired): re-sync every box holding it. */
+  skillsRepaired(names: string[]): void;
 }
 
 export interface SkillsBackendDeps extends Omit<SkillBoxesDeps, 'store'> {
@@ -91,14 +93,14 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
     };
   };
   const boxDeps = (): SkillBoxesDeps => ({ ...deps, store: storeOrThrow(deps) });
-  const fanOut = (names: string[]): void => {
+  const fanOut = (names: string[], how: 'changed' | 'repaired' = 'changed'): void => {
     if (names.length === 0) return;
-    void syncSkillBoxes(boxDeps(), { names })
+    void syncSkillBoxes(boxDeps(), how === 'repaired' ? { holding: names } : { names })
       .then((r) => {
         const synced = r.filter((o) => o.status === 'synced').length;
         if (r.length > 0) {
           deps.log(
-            `skills: ${names.join(', ')} changed; synced ${String(synced)}/${String(r.length)} box(es)`,
+            `skills: ${names.join(', ')} ${how}; synced ${String(synced)}/${String(r.length)} box(es)`,
           );
         }
       })
@@ -210,6 +212,7 @@ export function createSkillsBackend(deps: SkillsBackendDeps): SkillsBackend {
       return res;
     },
 
-    skillsChanged: fanOut,
+    skillsChanged: (names) => fanOut(names),
+    skillsRepaired: (names) => fanOut(names, 'repaired'),
   };
 }

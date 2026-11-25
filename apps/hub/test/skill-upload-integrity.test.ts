@@ -9,6 +9,7 @@ import { executePcSkillsAction, isPcSkillsMethod } from '@agentbox/relay';
 import { treeHash, writeTar, type AgentSkillDirs } from '@agentbox/sandbox-core';
 import { importSkill, listSkills, readSkillMeta } from '../lib/backend/skills';
 import { createPcSkillsBackend, type PcReach } from '../lib/backend/skills-pc';
+import { syncSkillBoxes } from '../lib/backend/skill-boxes';
 import { memStore } from './_skills-mem-store';
 
 const AGENTS: AgentSkillDirs[] = [{ id: 'codex', dirs: ['.agents/skills'] }];
@@ -112,6 +113,37 @@ describe('skill upload integrity', () => {
     expect(r.changed).toBe(true);
   });
 
+  it('refuses a body longer than declared', async () => {
+    const store = memStore();
+    const s = bigSkill('long', 1024);
+    await expect(
+      importSkill(store, {
+        name: 'long',
+        meta: meta(s.sha),
+        body: Readable.from([s.tar, Buffer.from('extra')]),
+        expectedBytes: s.tar.length,
+      }),
+    ).rejects.toThrow(/longer than declared/);
+    expect(store.paths()).toEqual([]);
+  });
+
+  it('a skill over 100 MiB unpacked is refused as too large, not as the wrong version', async () => {
+    const store = memStore();
+    const files = [
+      { path: 'SKILL.md', mode: 0o644, data: Buffer.from(md('huge')) },
+      { path: 'ref.md', mode: 0o644, data: Buffer.alloc(101 * 1024 * 1024, 'a') },
+    ];
+    const tar = writeTar(files);
+    const err = await importSkill(store, {
+      name: 'huge',
+      meta: meta(treeHash(files)),
+      body: Readable.from([tar]),
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'payload_too_large' });
+    expect(String((err as Error).message)).toMatch(/larger than 100 MiB unpacked/);
+    expect(String((err as Error).message)).not.toMatch(/not the version/);
+  });
+
   it('refuses a body over the cap with payload_too_large', async () => {
     const store = memStore();
     const s = bigSkill('big', 64 * 1024);
@@ -192,6 +224,64 @@ describe('a library entry stored truncated', () => {
     expect(pulled).toMatchObject({ status: 'imported' });
     expect((await listSkills(store)).skills[0]!.broken).toBeUndefined();
     expect((await backend.compareMachineSkills('self-id')).rows[0]!.status).toBe('same');
+  });
+
+  it('a Pull that repairs the current version re-syncs every box holding it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hub-repair-'));
+    const store = memStore();
+    const repaired: string[][] = [];
+    const changed: string[][] = [];
+    const backend = createPcSkillsBackend({
+      store: () => store,
+      self: () => ({ id: 'self-id', label: 'devbox' }),
+      devices: () => [],
+      present: () => [],
+      runSelf: async (method: string, params: unknown): Promise<PcReach> => {
+        if (!isPcSkillsMethod(method)) throw new Error(method);
+        return { kind: 'result', ...(await executePcSkillsAction(method, params, { home })) };
+      },
+      skillsChanged: (n) => changed.push(n),
+      skillsRepaired: (n) => repaired.push(n),
+      agentDirs: () => AGENTS,
+    });
+    mkdirSync(join(home, '.agents/skills/fix-me'), { recursive: true });
+    writeFileSync(join(home, '.agents/skills/fix-me/SKILL.md'), md('fix-me'));
+    await backend.pullSkills('self-id', ['fix-me']);
+    expect(changed).toEqual([['fix-me']]);
+    const version = (await readSkillMeta(store, 'fix-me'))!.current;
+    await breakStored(store, 'fix-me');
+
+    // b1 was served the version (its install failed on the cut blob): not behind.
+    await store.put(
+      'boxes/b1/skills.json',
+      Buffer.from(JSON.stringify({ at: 't', skills: { 'fix-me': version } })),
+    );
+    await store.put(
+      'boxes/b2/skills.json',
+      Buffer.from(JSON.stringify({ at: 't', skills: { other: version } })),
+    );
+
+    const [r] = await backend.pullSkills('self-id', ['fix-me']);
+    expect(r).toMatchObject({ status: 'imported' });
+    expect(changed).toEqual([['fix-me']]);
+    expect(repaired).toEqual([['fix-me']]);
+
+    const deps = {
+      store,
+      boxIds: () => Promise.resolve(['b1', 'b2']),
+      probeState: () => Promise.resolve('running'),
+      exec: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+      log: () => undefined,
+    };
+    // The plain "changed" fan-out would miss b1; the repair fan-out reaches it.
+    expect(await syncSkillBoxes(deps, { names: ['fix-me'] })).toEqual([]);
+    const out = await syncSkillBoxes(deps, { holding: ['fix-me'] });
+    expect(out.map((o) => o.boxId)).toEqual(['b1']);
+
+    // Re-uploading identical bytes is no repair.
+    const again = await backend.pullSkills('self-id', ['fix-me']);
+    expect(again[0]).toMatchObject({ status: 'unchanged' });
+    expect(repaired).toHaveLength(1);
   });
 
   it('a missing blob shows as broken but is not recorded', async () => {

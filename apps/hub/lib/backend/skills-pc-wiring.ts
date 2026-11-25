@@ -25,7 +25,7 @@ async function maxSkillBytes(): Promise<number | undefined> {
 
 export function pcSkillsDeps(
   handle: RelayServerHandle,
-  base: Pick<PcSkillsBackendDeps, 'store' | 'maxTarballBytes' | 'skillsChanged'>,
+  base: Pick<PcSkillsBackendDeps, 'store' | 'maxTarballBytes' | 'skillsChanged' | 'skillsRepaired'>,
 ): PcSkillsBackendDeps {
   const hostReach = handle.hostReach;
   return {

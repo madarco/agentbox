@@ -59,6 +59,7 @@ export interface PcSkillsBackendDeps {
   runDevice?(deviceId: string, label: string, method: string, params: unknown): Promise<PcReach>;
   /** `current` moved for these skills: running boxes sync. */
   skillsChanged(names: string[]): void;
+  skillsRepaired?(names: string[]): void;
   /** Registry agents and their PC skill dirs (tests). */
   agentDirs?(): AgentSkillDirs[];
   /** Override {@link COMPARE_TIMEOUT_MS} (tests). */
@@ -362,6 +363,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
       const max = deps.maxTarballBytes?.();
       const out: PullResult[] = [];
       const changed: string[] = [];
+      const repaired: string[] = [];
       let stalled = false;
       for (const name of names) {
         if (!SKILL_NAME_RE.test(name)) {
@@ -399,6 +401,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
             ...(max !== undefined ? { maxBytes: max } : {}),
           });
           if (res.currentChanged) changed.push(name);
+          else if (res.blobReplaced) repaired.push(name);
           out.push({
             name,
             status: res.held ? 'held' : res.changed ? 'imported' : 'unchanged',
@@ -413,6 +416,7 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
         }
       }
       if (changed.length > 0) deps.skillsChanged(changed);
+      if (repaired.length > 0) deps.skillsRepaired?.(repaired);
       return out;
     },
 
@@ -437,7 +441,9 @@ export function createPcSkillsBackend(deps: PcSkillsBackendDeps): PcSkillsBacken
           const broken = tarballProblem(tarball, version);
           if (broken) {
             throw new Error(
-              `the hub's copy is broken (${broken}); Pull it to the hub again from a PC that has it`,
+              broken.tooBig
+                ? `${broken.message}, so it isn't sent`
+                : `the hub's copy is broken (${broken.message}); Pull it to the hub again from a PC that has it`,
             );
           }
         } catch (err) {

@@ -106,7 +106,11 @@ export interface SkillSyncOutcome {
  */
 export async function syncSkillBoxes(
   deps: SkillBoxesDeps,
-  opts: { boxIds?: string[]; names?: string[] } = {},
+  /**
+   * `holding`: every box that was served one of these skills, behind or not
+   * (a repaired tarball of the version it already names).
+   */
+  opts: { boxIds?: string[]; names?: string[]; holding?: string[] } = {},
 ): Promise<SkillSyncOutcome[]> {
   let targets: string[];
   const explicit = opts.boxIds !== undefined;
@@ -115,10 +119,14 @@ export async function syncSkillBoxes(
   } else {
     const ids = await deps.boxIds().catch(() => [] as string[]);
     const want = opts.names ? new Set(opts.names) : null;
+    const holding = opts.holding ? new Set(opts.holding) : null;
     targets = [];
     for (const id of ids) {
       const st = await boxSkillsStatus(deps.store, id).catch(() => null);
-      if (st?.skills.some((s) => s.behind && (!want || want.has(s.name)))) targets.push(id);
+      const hit = holding
+        ? st?.skills.some((s) => holding.has(s.name))
+        : st?.skills.some((s) => s.behind && (!want || want.has(s.name)));
+      if (hit) targets.push(id);
     }
   }
   const out: SkillSyncOutcome[] = [];

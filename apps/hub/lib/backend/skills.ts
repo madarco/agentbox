@@ -354,7 +354,7 @@ async function checkStoredCurrent(
     const problem =
       blob.data.length !== v.tarballBytes && v.tarballBytes > 0
         ? `its tarball is ${String(blob.data.length)} bytes, not ${String(v.tarballBytes)}`
-        : tarballProblem(blob.data, v.sha256);
+        : tarballProblem(blob.data, v.sha256)?.message;
     const next = withVersion(fresh, v, problem ? { broken: problem } : { verified: true });
     await writeMeta(store, next);
     return next;
@@ -403,6 +403,12 @@ export interface ImportResult {
   held: boolean;
   /** True when `current` moved: running boxes that have the skill are now behind. */
   currentChanged: boolean;
+  /**
+   * True when the current version stayed but its stored tarball was rewritten
+   * (a re-upload over a copy stored cut short). A box that failed to install it
+   * is not `behind` (it was served this version), so it needs its own fan-out.
+   */
+  blobReplaced: boolean;
   skill: SkillSummary;
 }
 
@@ -418,38 +424,70 @@ export interface ImportResult {
  * it must gunzip, parse as tar and hash to that tree. The CLI and the box check
  * the same thing before installing; this keeps a bad blob out of the library.
  */
-export function tarballProblem(data: Buffer, sha256: string): string | null {
+export function tarballProblem(
+  data: Buffer,
+  sha256: string,
+): { tooBig: boolean; message: string } | null {
   let files;
   try {
     files = readTar(data, { maxBytes: SKILL_CONTENT_CAP });
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
+    // Over the content bound (or its gunzip guard): a whole, valid skill that
+    // is just too big, not a damaged one.
+    if (
+      /holds more than \d+ bytes/.test(message) ||
+      (err instanceof Error && /larger than|maxOutputLength/i.test(message))
+    ) {
+      return { tooBig: true, message: TOO_BIG };
+    }
+    return { tooBig: false, message };
   }
   const got = treeHash(files);
   return got === sha256
     ? null
-    : `its files hash to ${got.slice(0, 12)}, not ${sha256.slice(0, 12)}`;
+    : {
+        tooBig: false,
+        message: `its files hash to ${got.slice(0, 12)}, not ${sha256.slice(0, 12)}`,
+      };
 }
+
+const TOO_BIG = `the skill is larger than ${String(SKILL_CONTENT_CAP / 1024 / 1024)} MiB unpacked, more than a box installs`;
 
 async function readBody(
   body: NodeJS.ReadableStream,
   name: string,
   maxBytes: number | undefined,
-): Promise<Buffer> {
+  expectedBytes?: number,
+): Promise<{ data: Buffer; received: number }> {
+  const tooBig = () =>
+    new SkillsError(
+      'payload_too_large',
+      `skill '${name}' is bigger than this hub stores (${String(maxBytes)} bytes compressed). Raise AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the hub to store it.`,
+    );
+  if (maxBytes !== undefined && expectedBytes !== undefined && expectedBytes > maxBytes) {
+    throw tooBig();
+  }
+  // With a declared length, fill one buffer of that size: one copy of a large
+  // upload in memory, not the chunks plus their concat. Bytes past it are only
+  // counted; the caller refuses any length other than the declared one.
+  const into = expectedBytes !== undefined ? Buffer.allocUnsafe(expectedBytes) : null;
   const chunks: Buffer[] = [];
-  let size = 0;
+  let received = 0;
   for await (const c of body as AsyncIterable<Buffer | Uint8Array>) {
     const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
-    size += buf.length;
-    if (maxBytes !== undefined && size > maxBytes) {
-      throw new SkillsError(
-        'payload_too_large',
-        `skill '${name}' is bigger than this hub stores (${String(maxBytes)} bytes compressed). Raise AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the hub to store it.`,
-      );
+    if (maxBytes !== undefined && received + buf.length > maxBytes) throw tooBig();
+    if (into) {
+      if (received < into.length) buf.copy(into, received, 0, into.length - received);
+    } else {
+      chunks.push(buf);
     }
-    chunks.push(buf);
+    received += buf.length;
   }
-  return Buffer.concat(chunks);
+  const data = into
+    ? into.subarray(0, Math.min(received, into.length))
+    : Buffer.concat(chunks, received);
+  return { data, received };
 }
 
 export async function importSkill(
@@ -483,18 +521,24 @@ export async function importSkill(
   // skill's lock (a slow upload must not block approve or discard): a body cut
   // short on the way in (a proxy cap, a dropped connection) never becomes a version.
   const name = input.name;
-  const data = await readBody(input.body, name, input.maxBytes);
-  if (input.expectedBytes !== undefined && data.length !== input.expectedBytes) {
+  const { data, received } = await readBody(input.body, name, input.maxBytes, input.expectedBytes);
+  if (input.expectedBytes !== undefined && received !== input.expectedBytes) {
     throw new SkillsError(
       'invalid_request',
-      `skill '${name}': the upload arrived cut short (${String(data.length)} of ${String(input.expectedBytes)} bytes); nothing was stored`,
+      `skill '${name}': the upload arrived ${received < input.expectedBytes ? 'cut short' : 'longer than declared'} (${String(received)} of ${String(input.expectedBytes)} bytes); nothing was stored`,
     );
   }
   const broken = tarballProblem(data, input.meta.sha256);
+  if (broken?.tooBig) {
+    throw new SkillsError(
+      'payload_too_large',
+      `skill '${name}': ${broken.message}; nothing was stored`,
+    );
+  }
   if (broken) {
     throw new SkillsError(
       'invalid_request',
-      `skill '${name}': the upload is not the version it names (${broken}, ${String(data.length)} bytes received); nothing was stored`,
+      `skill '${name}': the upload is not the version it names (${broken.message}, ${String(data.length)} bytes received); nothing was stored`,
     );
   }
   return withSkillLock(name, () => importLocked(store, input, data));
@@ -592,6 +636,7 @@ async function importLocked(
     changed: stored.changed || currentChanged || prev?.pending !== pending,
     held,
     currentChanged,
+    blobReplaced: stored.changed && !currentChanged && current === meta.sha256,
     skill: summarize(next)!,
   };
 }
