@@ -38,12 +38,14 @@ export function BoxTable({ boxes }: { boxes: Box[] }) {
               className="cursor-pointer"
               onClick={() => router.push('/boxes/' + box.id)}
             >
-              <TableCell>
+              {/* max-w-0 keeps a long live line from widening the column (auto
+                  table layout sizes a cell by its content); it truncates instead. */}
+              <TableCell className="max-w-0">
                 <div className="flex min-w-0 items-center gap-1.5 text-[13.5px] font-medium">
                   <span className="truncate">{box.task}</span>
                   {box.persistent ? <PersistentMark /> : null}
                 </div>
-                <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
+                <div className="mt-0.5 truncate font-mono text-[11px] text-[#a4a9b0]">
                   {box.name || box.id} · {box.host}
                 </div>
                 <AgentLiveLine box={box} />
