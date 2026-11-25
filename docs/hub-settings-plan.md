@@ -1,8 +1,8 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
-**Status:** Phases 1, 2, 3a and 4 done (2026-11-25, `feat/hub-settings-nav`,
-`feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-files`). Phases 3b-3c not
-started.
+**Status:** Phases 1, 2, 3a, 3b and 4 done (2026-11-25, `feat/hub-settings-nav`,
+`feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-limits`,
+`feat/hub-settings-files`). Phase 3c not started (its Phase 0 first).
 
 The hub web UI grew one top-level page per feature: Approvals, Custody, Skills, Accounts, Usage,
 Devices, Settings, System. The design in `../agentbox-design` (`AgentBox Control Plane (shadcn).html`,
@@ -234,6 +234,60 @@ account), claude's per the PoC. "N at limit" on the Subscriptions nav item and t
 indicator (one ring per account in use, popover with the meters and "Manage"). Absent = no data,
 never 0%.
 
+**Design scope for 3b (owner-approved, `../agentbox-design` control-shadcn `views-env.jsx`
+`SubscriptionsPane` / `SubsIndicator`):**
+
+1. **The page:** cards grouped by provider (Anthropic, OpenAI Codex, then API keys), each with its
+   mark, label, plan badge, provider + account line, box count, an *ok* / *at limit* badge, and
+   remove. One meter per window the account reports (`Account.limits`), never a fixed 5-hour +
+   weekly pair; at the limit, an amber note naming the boxes on it. Left out: the API-key monthly
+   budget (not in this plan) and a key's spend (usage has no cost per key yet); the "When a box hits
+   its limit" card comes with 3c.
+2. **The header meter** in the top bar: the two in-use subscriptions closest to a limit, one thin
+   bar per window (at most two), the highest % or "limit" in red, "+n" for the rest. Hover, focus or
+   click opens a card: each in-use subscription's windows with % and reset, box count, an at-limit
+   line, the updated time, and *Manage* to `/settings/subscriptions`. "Quota" when no box uses a
+   subscription.
+
+**Phase 0 findings (2026-11-25, this box's own logins; tokens never printed, values redacted):**
+
+- **Claude:** `GET https://api.anthropic.com/api/oauth/usage` with the login's OAuth access token and
+  `anthropic-beta: oauth-2025-04-20` answers 200 with no turn and no quota, and does not refresh the
+  login. Besides fixed fields (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`: each
+  `{utilization, resets_at}` or null when the plan has no such window) it carries a generic
+  `limits[]`: `{kind, group, percent, severity, resets_at, scope: {model: {display_name}} | null,
+  is_active}`. A **Max 20x** login (`rateLimitTier: default_claude_max_20x`) reported
+  `five_hour: null` and two weekly windows, `weekly_all` and a `weekly_scoped` one for **Fable**: so
+  this Max account has no 5-hour window either, and the windows must come from the data. The
+  rate-limit headers of a real request (`anthropic-ratelimit-unified-7d-*`, `...-status`,
+  `...-representative-claim`) cost quota and report only the binding window, not the Fable one. A
+  **setup-token** account was not measured (minting one needs an interactive browser login): its
+  scope is `user:inference`, so the endpoint may refuse it; the hub then shows no data. An Ultra
+  account was not available.
+- **Codex:** the transcript's `token_count.rate_limits` (`primary` / `secondary`: `used_percent`,
+  `window_minutes`, `resets_at`; `plan_type`; `rate_limit_reached_type`) carries each window's length.
+  A Pro login has one window, `window_minutes: 10080`, `secondary: null`. The same values come from
+  `GET https://chatgpt.com/backend-api/wham/usage` (access token + `ChatGPT-Account-Id`) with no turn:
+  `primary_window.limit_window_seconds: 604800`, `secondary_window: null`. Not checked: codex's own
+  `/status` side by side, and two boxes on one login (no codex box was run: the only codex login here
+  is a copy whose refresh would log out its other holders).
+
+**Built (3b):**
+
+- **Codex** (`packages/agent-codex/src/history.ts`, parser v3): `token_count.rate_limits` becomes a
+  `limits` history record; the hub keeps the newest per session on its live row and answers an
+  account's limits from the newest session on that subscription (`HistoryRepo.accountLimits`). No
+  network call.
+- **Claude** (`apps/hub/lib/backend/account-limits.ts`): the usage endpoint, called with the stored
+  login's access token while it is valid (a setup token as is), at most every 5 minutes per account
+  and only while a box on it runs (a cloud box's `lastState`; a docker record counts as running). The
+  hub never refreshes the token. An API key, an expired login or a refusal is no data.
+- `GET /accounts`: `Account.limits?: {windows: [{id, label, pct, resetsAt?, windowMinutes?}],
+  atLimit, updatedAt, source}`, and `boxes` now lists a default account's boxes too (every box whose
+  usage counts under it, borrowers included), which is what "in use" means for the header meter.
+- The page and the header meter as in the design scope above; the sidebar's Subscriptions item shows
+  "N at limit". The web polls `GET /accounts` once a minute, shared by the three.
+
 **3c — switching.**
 
 - **By hand:** the box page's subscription card gets a selector of the accounts its agent can use;
@@ -349,5 +403,11 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
 - **Pre-3a sessions of a destroyed borrowing box** (3a): the migration clears a borrowing agent's
   bare account id for the backfill to restamp from the box record; a box this hub no longer records
   leaves it null (not counted under any subscription) rather than guessed.
-- **Default account's boxes** (3a): `GET /accounts` lists no boxes for a `default` account (it would be
-  every box without a named one); the card says so instead of listing them.
+- **Docker box state for the claude refresh** (3b): a docker box record carries no running state, so
+  a stopped docker box still lets the hub read its account's usage (at most every 5 minutes).
+- **Claude limits need a running box** (3b): after a hub restart, a claude account shows no meters
+  until a box on it runs. Persisting the last read would keep them.
+- **Setup-token and Ultra accounts on the usage endpoint** (3b): not measured; check with a real one.
+- **Codex limits without a session** (3b): `wham/usage` would give a codex login's limits before its
+  first session; the transcript is the only source today.
+- **Key spend** (3b): the design's "this month" for an API key needs a cost per account in usage.

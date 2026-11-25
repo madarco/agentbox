@@ -183,11 +183,27 @@ to its sub-pages: **General** (providers, remote docker hosts, GitHub),
 **Subscriptions**, **Skills**, **Files**, **Devices** and **System**.
 
 The **Settings → Subscriptions** page (`/settings/subscriptions`) lists the machine's named LLM accounts (logins, setup
-tokens, API keys per agent) as cards grouped by **Anthropic**, **OpenAI** and
-**API keys**. Each card shows the plan tier, the account's email, the boxes on it
-and its tokens over the last 7 days, which link to the Usage page filtered to
-that subscription. A box that borrows another agent's login (`--model-auth`)
-counts under the lender's card. Add a setup token or
+tokens, API keys per agent) as cards grouped by **Anthropic**, **OpenAI Codex** and
+**API keys**. Each card shows the plan tier, the account's email, how many boxes
+run on it, whether it is at its limit, and its tokens over the last 7 days, which
+link to the Usage page filtered to that subscription. A box that borrows another
+agent's login (`--model-auth`) counts under the lender's card.
+
+Under each plan, one meter per limit window the account actually has: a 5-hour
+and a weekly window, weekly only, or a separate weekly window for one model,
+depending on the plan. A Claude login's limits are read from Anthropic's usage
+endpoint with the stored login, at most every 5 minutes and only while a box on
+it runs, so they appear once a box is running; a Codex login's come from the last
+session transcript on it. An API key has no plan limits. At the limit, the card
+turns amber and names its boxes.
+
+The top bar's quota meter shows the two subscriptions in use that are closest to
+a limit, one thin bar per window. Hover or click it for every in-use
+subscription's windows, their resets and a **Manage** link; it reads **Quota**
+when no box uses one. The sidebar's **Subscriptions** item says how many are at
+their limit.
+
+Add a setup token or
 an API key there, relabel or remove an account; a login runs on the machine
 with `agentbox <agent> login --account <name>`. The create dialog offers an
 **Account** picker for an agent that has named accounts, and the box table and
