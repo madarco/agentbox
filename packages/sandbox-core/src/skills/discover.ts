@@ -11,6 +11,7 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
+import { agentSkillDirs } from './compare.js';
 import { parseSkillFrontmatter } from './frontmatter.js';
 import { scanSkillFiles, type SecretFinding } from './scan.js';
 import { readSkillTree, SkillTooLargeError, treeHash, type SkillFile } from './tree.js';
@@ -33,7 +34,8 @@ const CLAUDE_SYNCED_DIR = '.claude/skills/synced';
 function isReserved(name: string): boolean {
   return name === 'agentbox' || name.startsWith('agentbox-');
 }
-const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** The Agent Skills name rule: lowercase letters, digits and hyphens, up to 64. */
+export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export interface LocalSkill {
   name: string;
@@ -158,7 +160,10 @@ export async function discoverLocalSkills(
 ): Promise<LocalSkill[]> {
   const home = opts.home ?? homedir();
   const byName = new Map<string, LocalSkill>();
-  for (const rel of LOCAL_SKILL_DIRS) {
+  // The built-in dirs first (their order decides which copy is read), then any
+  // dir a plugin agent declares on the registry.
+  const dirs = [...new Set([...LOCAL_SKILL_DIRS, ...agentSkillDirs().flatMap((a) => a.dirs)])];
+  for (const rel of dirs) {
     const root = join(home, rel);
     let names: string[];
     try {

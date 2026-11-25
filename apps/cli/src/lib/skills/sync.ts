@@ -5,19 +5,23 @@
  * Everything goes through the hub's `/api/v1/skills` (the CLI never touches
  * custody directly), so a local hub and a remote control box behave the same.
  */
-import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
 import { getMachineLabel, tryGetMachineId } from '@agentbox/config';
 import type { HubApiClient, HubApiSkill } from '../../control-plane/hub-api-client.js';
 import {
+  compareSkills as compareShared,
   discoverLocalSkills,
-  readSkillTree,
+  installSkillFiles,
   readTar,
-  treeHash,
   writeTar,
+  type CompareRow,
+  type InstallOutcome,
   type LocalSkill,
+  type SkillRowStatus,
+  uploadBlocker,
 } from '@agentbox/sandbox-core';
+
+export { agentsSkillDir, uploadBlocker } from '@agentbox/sandbox-core';
+export type { SkillRowStatus };
 
 export interface SkillsContext {
   home: string;
@@ -27,61 +31,19 @@ export interface SkillsContext {
   adminToken?: string;
 }
 
-export type SkillRowStatus = 'same' | 'differs' | 'local-only' | 'hub-only';
+export type SkillRow = CompareRow<LocalSkill, HubApiSkill>;
 
-export interface SkillRow {
-  name: string;
-  local?: LocalSkill;
-  hub?: HubApiSkill;
-  status: SkillRowStatus;
-  /** For `differs`: which side changed last (local file mtime vs hub upload time). */
-  newer?: 'local' | 'hub';
-}
-
-/** Local and hub skills side by side, matched by name. */
+/** Local and hub skills side by side, matched by name (the shared comparison). */
 export function compareSkills(
   local: readonly LocalSkill[],
   hub: readonly HubApiSkill[],
 ): SkillRow[] {
-  const rows = new Map<string, SkillRow>();
-  for (const l of local) rows.set(l.name, { name: l.name, local: l, status: 'local-only' });
-  for (const h of hub) {
-    const row = rows.get(h.name);
-    if (!row) {
-      rows.set(h.name, { name: h.name, hub: h, status: 'hub-only' });
-      continue;
-    }
-    row.hub = h;
-    if (row.local!.treeSha === h.current) {
-      row.status = 'same';
-    } else {
-      row.status = 'differs';
-      row.newer = row.local!.newestMtimeMs > Date.parse(h.updatedAt) ? 'local' : 'hub';
-    }
-  }
-  return [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return compareShared(local, hub);
 }
 
 export type UploadOutcome =
   | { name: string; status: 'uploaded' | 'unchanged'; version: string }
   | { name: string; status: 'skipped'; reason: string };
-
-/** Why a local skill can't be uploaded without an override, or null. */
-export function uploadBlocker(
-  skill: LocalSkill,
-  opts: { allowFindings?: boolean } = {},
-): string | null {
-  if (skill.problems.length > 0) return skill.problems.join('; ');
-  if (skill.findings.length > 0 && !opts.allowFindings) {
-    const where = skill.findings
-      .slice(0, 3)
-      .map((f) => `${f.rule} in ${f.path}:${String(f.line)}`)
-      .join(', ');
-    const more = skill.findings.length > 3 ? ` (+${String(skill.findings.length - 3)} more)` : '';
-    return `secret scan: ${where}${more}`;
-  }
-  return null;
-}
 
 export async function uploadLocalSkill(
   client: HubApiClient,
@@ -156,80 +118,14 @@ export function describeSeed(o: SeedOutcome): string {
   return parts.join('; ');
 }
 
-export type DownloadOutcome =
-  | {
-      name: string;
-      status: 'installed' | 'replaced' | 'unchanged';
-      dir: string;
-      claudeLink?: string;
-      /** A separate, different `~/.claude/skills/<name>` left in place (claude still reads it). */
-      claudeKept?: string;
-    }
-  | { name: string; status: 'skipped'; reason: string };
-
-/** Where downloads land (plan decision 10). */
-export function agentsSkillDir(home: string, name: string): string {
-  return join(home, '.agents', 'skills', name);
-}
-
-async function lstatOrNull(p: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
-  try {
-    return await lstat(p);
-  } catch {
-    return null;
-  }
-}
+export type DownloadOutcome = InstallOutcome;
 
 /**
- * Point `~/.claude/skills/<name>` at the downloaded copy — claude is the one
- * measured agent that doesn't read `~/.agents/skills`. Only when claude is set up
- * here (`~/.claude` exists).
- *
- * Never deletes a real directory: a separate claude copy with different content
- * is the user's, and the download prompt only ever named `~/.agents/skills`. It is
- * reported back (`kept`) so the caller can say claude still reads the old one.
- * A stale symlink is re-pointed with `overwrite` (removing a link loses nothing).
- * The link is absolute, so it resolves even when `~/.claude` is itself a link.
- */
-async function linkForClaude(
-  home: string,
-  name: string,
-  target: string,
-  overwrite: boolean,
-): Promise<{ link?: string; kept?: string }> {
-  // `stat`, not `lstat`: a dotfile manager often makes `~/.claude` itself a link.
-  const claudeHome = await stat(join(home, '.claude')).catch(() => null);
-  if (!claudeHome?.isDirectory()) return {};
-  const link = join(home, '.claude', 'skills', name);
-  const st = await lstatOrNull(link);
-  if (st?.isSymbolicLink()) {
-    if (resolve(dirname(link), await readlink(link)) === target) return { link };
-    if (!overwrite) return { kept: link };
-    await rm(link, { force: true });
-  } else if (st) {
-    const existing = await readSkillTree(link).catch(() => null);
-    const same =
-      existing !== null &&
-      treeHash(existing.files) === treeHash((await readSkillTree(target)).files);
-    return same ? { link } : { kept: link };
-  }
-  await mkdir(dirname(link), { recursive: true });
-  await symlink(target, link);
-  return { link };
-}
-
-function claudeFields(c: { link?: string; kept?: string }): {
-  claudeLink?: string;
-  claudeKept?: string;
-} {
-  return { ...(c.link ? { claudeLink: c.link } : {}), ...(c.kept ? { claudeKept: c.kept } : {}) };
-}
-
-/**
- * Install a hub skill on this PC at `~/.agents/skills/<name>`. The tarball's
- * tree hash is re-derived and must match the version the hub named, so what
- * lands is exactly what was uploaded. An existing local skill with different
- * content is replaced only with `overwrite`.
+ * Install a hub skill on this PC at `~/.agents/skills/<name>` (plus a link for
+ * agents that don't read it). The tarball's tree hash is re-derived and must
+ * match the version the hub named, so what lands is exactly what was uploaded.
+ * An existing local skill with different content is replaced only with
+ * `overwrite`.
  */
 export async function downloadHubSkill(
   client: HubApiClient,
@@ -241,60 +137,11 @@ export async function downloadHubSkill(
     ...(ctx.adminToken ? { adminToken: ctx.adminToken } : {}),
   });
   const files = readTar(got.data, { maxBytes: ctx.maxBytes });
-  const sha = treeHash(files);
   if (!/^[0-9a-f]{64}$/.test(got.version)) {
     throw new Error(`skill '${name}': the hub did not name the version it sent`);
   }
-  if (sha !== got.version) {
-    throw new Error(
-      `skill '${name}': downloaded files hash to ${sha.slice(0, 12)}, hub says ${got.version.slice(0, 12)}`,
-    );
-  }
-  const target = agentsSkillDir(ctx.home, name);
-  const existing = await lstatOrNull(target);
-  if (existing) {
-    const local = await readSkillTree(target).catch(() => null);
-    if (local && treeHash(local.files) === sha) {
-      const claude = await linkForClaude(ctx.home, name, target, opts.overwrite === true);
-      return { name, status: 'unchanged', dir: target, ...claudeFields(claude) };
-    }
-    if (!opts.overwrite) {
-      return { name, status: 'skipped', reason: `a different local copy exists at ${target}` };
-    }
-  }
-
-  // Write next to the target under a dot-name (discovery skips those), then swap
-  // it in, so a failed download never leaves a half-written skill.
-  const parent = dirname(target);
-  await mkdir(parent, { recursive: true });
-  const tag = randomBytes(4).toString('hex');
-  const staging = join(parent, `.agentbox-dl-${name}-${tag}`);
-  const old = join(parent, `.agentbox-old-${name}-${tag}`);
-  let movedAside = false;
-  try {
-    for (const f of files) {
-      const p = join(staging, ...f.path.split('/'));
-      await mkdir(dirname(p), { recursive: true });
-      await writeFile(p, f.data, { mode: f.mode });
-    }
-    if (existing) {
-      await rename(target, old);
-      movedAside = true;
-    }
-    await rename(staging, target);
-  } catch (err) {
-    await rm(staging, { recursive: true, force: true });
-    // Put the user's copy back if it was moved aside and the swap didn't finish.
-    if (movedAside && !(await lstatOrNull(target)))
-      await rename(old, target).catch(() => undefined);
-    throw err;
-  }
-  if (movedAside) await rm(old, { recursive: true, force: true });
-  const claude = await linkForClaude(ctx.home, name, target, opts.overwrite === true);
-  return {
-    name,
-    status: existing ? 'replaced' : 'installed',
-    dir: target,
-    ...claudeFields(claude),
-  };
+  return installSkillFiles(name, files, got.version, {
+    home: ctx.home,
+    ...(opts.overwrite ? { overwrite: true } : {}),
+  });
 }

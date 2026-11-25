@@ -33,6 +33,8 @@ export interface CloudSizingFlags {
  * - **digitalocean**: `project` — the DO Project the box is placed in (name or
  *   UUID), from `box.digitaloceanProject`. Config-only, no flag. Absent = the
  *   account's default project.
+ * - **hetzner, digitalocean**: `swap` — `box.swap` (`auto` | `off` | a size),
+ *   config-only, emitted only when not `auto`.
  * - **any provider declaring `capabilities.inbound`** (hetzner + digitalocean
  *   today): `inbound` — per-box firewall access policy (`locked`/`open`/CIDR
  *   list), `--inbound` flag first, else `box.inbound`.
@@ -77,6 +79,12 @@ export function cloudSizingProviderOptions(
     // emits nothing.
     const project = (cfg.box.digitaloceanProject || '').trim();
     if (project.length > 0) out.project = project;
+  }
+  // Swap (`box.swap`), for the VPS providers that make it at boot. Only emitted
+  // when not the default; the backend treats absent as `auto`.
+  if (providerName === 'hetzner' || providerName === 'digitalocean') {
+    const swap = (cfg.box.swap || '').trim();
+    if (swap.length > 0 && swap.toLowerCase() !== 'auto') out.swap = swap;
   }
   // An explicit `--location` for a provider with no per-provider region config
   // key of its own — i.e. a community provider that declares `regions`. The

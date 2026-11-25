@@ -56,6 +56,8 @@ import { createCheckoutBackend } from './backend/checkouts';
 import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
 import { createSkillsBackend } from './backend/skills-backend';
+import { createPcSkillsBackend } from './backend/skills-pc';
+import { pcSkillsDeps } from './backend/skills-pc-wiring';
 import type { BackendDeps } from './backend/deps';
 import {
   configureBoxPushStat,
@@ -2213,6 +2215,13 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     },
     log: (m) => console.warn(`[hub] ${m}`),
   });
+  const pcSkills = createPcSkillsBackend(
+    pcSkillsDeps(handle, {
+      store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
+      maxTarballBytes: () => globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES,
+      skillsChanged: (names) => skills.skillsChanged(names),
+    }),
+  );
   // A box records its account in state.json AND in its relay registration;
   // a Store-only box has only the latter, and must still block `accounts rm`.
   const accounts = createAccountBackend({
@@ -2320,6 +2329,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   const hub: HubBackend = {
     ...checkouts,
     ...skills,
+    ...pcSkills,
     ...createHostSessionsBackend(),
     ...accounts,
     ...workspaces,

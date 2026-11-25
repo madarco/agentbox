@@ -15,3 +15,18 @@ export function skillContentReadAuthorized(
   if (args.actor.kind === 'session') return true;
   return custodyByteReadAuthorized(args);
 }
+
+/**
+ * Who may compare, pull or send skills with a machine (`/api/v1/skill-machines`).
+ * Stricter than reading content: these act ON a PC (read its skill dirs, write
+ * into `~/.agents/skills`), and the hub's own machine runs them with no confirm.
+ * So only the owner — a signed-in session, the admin token, or loopback on a
+ * token hub. An enrolled device's own token is refused: it identifies one PC,
+ * not the owner, and must not act on the owner's machine or the library.
+ */
+export function skillMachineActAuthorized(
+  args: Parameters<typeof custodyByteReadAuthorized>[0] & { actor: RequestActor },
+): boolean {
+  if (args.actor.kind === 'session') return true;
+  return custodyByteReadAuthorized({ ...args, providedTokenIsDevice: false });
+}

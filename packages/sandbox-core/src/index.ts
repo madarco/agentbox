@@ -40,6 +40,7 @@ export {
   type SshTarget,
 } from './ssh-config.js';
 export {
+  EXPOSED_HUB_ENV,
   EXPOSED_HUB_PROFILE,
   buildExposedHubEnv,
   parseEnvFileBody,
@@ -405,7 +406,12 @@ export type {
 } from './llm-accounts.js';
 // The skills library's PC-side modules (discovery, normalization, secret scan)
 // and the skills digest cloud bases fold into their fingerprint.
-export { LOCAL_SKILL_DIRS, discoverLocalSkills, readLocalSkill } from './skills/discover.js';
+export {
+  LOCAL_SKILL_DIRS,
+  SKILL_NAME_RE,
+  discoverLocalSkills,
+  readLocalSkill,
+} from './skills/discover.js';
 export type { LocalSkill } from './skills/discover.js';
 export { parseSkillFrontmatter } from './skills/frontmatter.js';
 export type { SkillFrontmatter } from './skills/frontmatter.js';
@@ -414,6 +420,31 @@ export type { SecretFinding } from './skills/scan.js';
 export { readSkillTree, SkillTooLargeError, treeHash } from './skills/tree.js';
 export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.js';
 export { SKILL_PROPOSAL_LIMITS } from './skills/proposal-limits.js';
+export {
+  agentSkillDirs,
+  agentsForSkillDirs,
+  compareSkills,
+  skillDirOfPath,
+} from './skills/compare.js';
+export type {
+  AgentSkillDirs,
+  CompareHub,
+  CompareLocal,
+  CompareRow,
+  SkillRowStatus,
+} from './skills/compare.js';
+export {
+  AGENTS_SKILLS_DIR,
+  agentsSkillDir,
+  installCheck,
+  installSkillFiles,
+  linkDirsForAgents,
+  pcSkillsInventory,
+  readPcSkill,
+  toPcSkill,
+  uploadBlocker,
+} from './skills/pc.js';
+export type { InstallCheck, InstallOutcome, PcSkill, PcSkillsInventory } from './skills/pc.js';
 export type { TarFile } from './skills/tar.js';
 export type { SkillFile, SkillTree } from './skills/tree.js';
 export {

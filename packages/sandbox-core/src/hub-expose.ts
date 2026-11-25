@@ -15,6 +15,14 @@ import type { ControlPlaneDeployRecord } from './ssh-config.js';
 export const EXPOSED_HUB_PROFILE = 'hetzner';
 
 /**
+ * Set on an exposed hub's env: this password-profile hub runs on a PC (the
+ * owner's machine), not on a deployed server. The profile alone can't tell them
+ * apart (both are `hetzner`), and the deploy record lives on the PC that RAN
+ * `hub deploy`, not on the server, so the hub reads this from its own env.
+ */
+export const EXPOSED_HUB_ENV = 'AGENTBOX_HUB_EXPOSED';
+
+/**
  * Parse an `.env`-style file body into a map. Same shape as the CLI's env-file
  * reader; duplicated here (one tiny regex) so sandbox-core needs no CLI import.
  */
@@ -46,6 +54,7 @@ export function buildExposedHubEnv(
     AGENTBOX_HUB_PROFILE: EXPOSED_HUB_PROFILE,
     AGENTBOX_HUB_AUTH: 'on',
     AGENTBOX_HUB_WORKER: 'on',
+    [EXPOSED_HUB_ENV]: '1',
   };
   if (record.port) out.AGENTBOX_HUB_PORT = String(record.port);
   if (record.publicUrl) out.AGENTBOX_HUB_PUBLIC_URL = record.publicUrl;
@@ -80,6 +89,7 @@ export function buildExposedHubEnv(
  */
 const CONTROL_PLANE_HUB_IDENTITY_ENV = [
   'AGENTBOX_HUB_PROFILE',
+  EXPOSED_HUB_ENV,
   'AGENTBOX_HUB_AUTH',
   'AGENTBOX_HUB_API_KEY',
   'AGENTBOX_HUB_PUBLIC_URL',

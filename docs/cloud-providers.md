@@ -33,6 +33,7 @@ build images from a Dockerfile). Three things differ from Hetzner:
   server-create; DO can't, so the per-box firewall is created *first* with a
   unique tag and the droplet is created with that same tag — DO auto-applies it
   at boot, leaving no unprotected window.
+- **Swap** is identical to Hetzner's (same cloud-init fragment); see §3.5.1.
 - **Egress must be explicitly allowed.** A DO firewall with only inbound rules
   blocks *all* outbound traffic, so the per-box firewall ships allow-all
   outbound rules (tcp/udp/icmp → `0.0.0.0/0` + `::/0`) alongside the SSH-only
@@ -1010,6 +1011,55 @@ script the docker provider ships), and the in-box bootstrap
 `reEnsureCloudBox()` at provision + resume) launches it before the ctl daemon.
 `docker run --rm hello-world` works inside the box without any
 hetzner-specific code (verified live in Phase-7 smoke).
+
+### 3.5.1 Swap (hetzner + digitalocean)
+
+The stock Ubuntu images both VPS providers boot carry **no swap**, and the
+default `cx23` (3.8 GB) OOM-killed Claude 5-17 minutes into a run (once 5 minutes
+after boot, before it did any work) while `agentbox list` kept saying
+`claude:working`. Every VPS box and every `hub deploy hetzner|digitalocean`
+control box now gets a `/swapfile` **at boot**, from cloud-init:
+
+- **What:** `packages/sandbox-cloud/src/swap.ts` generates a POSIX sh script
+  (`/usr/local/sbin/agentbox-swap`) that both providers' `generateBoxCloudInit`
+  and `controlPlaneCloudInit` install via `write_files` and run from `runcmd`
+  (first in the control box's `runcmd`, so the swap is there before the docker
+  install and a `--ref` hub build). `auto` = min(RAM, 8 GiB), at least 2 GiB,
+  capped at a quarter of the free disk; `vm.swappiness=10`; an `/etc/fstab` line.
+- **Why boot, not the bake:** a swapfile baked into the base snapshot would add
+  its size to every base snapshot and checkpoint, could not be sized to the
+  server type it lands on, and boxes from a snapshot baked before the change would
+  never get it. cloud-init user-data is per create, so every box gets it,
+  whatever snapshot it boots from. The bake VPS (`prepare`) deliberately gets
+  none, so nothing lands in the snapshot.
+- **Lifecycle:** `runcmd` runs once per instance: every create, including a
+  checkpoint restore (a new server from the checkpoint image). Stop/start and
+  reboots keep it through the fstab line. The script is idempotent: a restored
+  checkpoint already holds `/swapfile` and its fstab line, and the script only
+  re-activates it. Swap that is not ours (a provider image that ships some) is
+  left alone and suppresses ours.
+- **Cost on checkpoints:** a checkpoint taken from a running box includes the
+  swapfile's written pages (a disk snapshot can't skip a file). Only pages that
+  were actually swapped out cost anything; a box that never swapped holds only
+  unwritten (zero) extents, which the image compresses away.
+- **Config:** `box.swap` = `auto` (default) | `off` | a size (`4G`, `2048M`;
+  the unit is required). Global or project config, carried to the backend as
+  `providerOptions.swap` by `cloudSizingProviderOptions` (only when not `auto`)
+  and validated by `parseSwapSpec` before any billable resource exists. `off`
+  still runs the script, which removes a swapfile a checkpoint carried. Control
+  boxes always use `auto`. Applies to boxes created after the change; an
+  existing box keeps what it booted with (run `sudo agentbox-swap <spec>` in it,
+  or, on a box older than this change, the manual `fallocate` recipe).
+
+**Other providers (checked, no change):**
+
+| Provider | Swap | Why |
+| --- | --- | --- |
+| daytona | none | A `container`-class sandbox is a container: `swapon` would act on the shared runner kernel (if the runtime allows it at all), and the memory limit is a cgroup the sandbox can't extend. `linux-vm` has a 10 GB disk cap (fixed at bake). Size the box instead (`box.sizeDaytona`). |
+| vercel | none | Managed Firecracker microVM, RAM coupled to vCPUs (2 GB/vCPU). Not attempted: fighting the platform for a few GB of disk-backed RAM; use `box.sizeVercel`. |
+| e2b | none | Managed Firecracker microVM, size fixed at bake (`cpu-memory`). Same reasoning; size the template. |
+| remote-docker | untouched | The user's own machine. Its swap is the user's business; AgentBox never changes it. |
+| docker | untouched | Docker Desktop / OrbStack's VM (or the Linux host): not ours. |
 
 ### 3.6 Known shape differences vs Daytona
 

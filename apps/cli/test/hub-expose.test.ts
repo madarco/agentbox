@@ -29,6 +29,7 @@ describe('buildExposedHubEnv', () => {
     expect(env.AGENTBOX_HUB_PROFILE).toBe('hetzner');
     expect(env.AGENTBOX_HUB_AUTH).toBe('on');
     expect(env.AGENTBOX_HUB_WORKER).toBe('on');
+    expect(env.AGENTBOX_HUB_EXPOSED).toBe('1');
     expect(env.AGENTBOX_HUB_HOST).toBe('0.0.0.0');
     expect(env.AGENTBOX_HUB_PUBLIC_URL).toBe('https://x.trycloudflare.com');
   });

@@ -156,3 +156,54 @@ export function originLabel(o: SkillOrigin | undefined): string {
 /** Git and marketplace skills have an upstream a refresh can fetch. */
 export const refreshable = (o: SkillOrigin | undefined): boolean =>
   o?.kind === 'git' || o?.kind === 'marketplace';
+
+/** `GET /api/v1/skill-machines`. */
+export interface SkillMachine {
+  id: string;
+  label: string;
+  self: boolean;
+  online: boolean;
+}
+
+export type CompareStatus = 'same' | 'differs' | 'local-only' | 'hub-only' | 'unknown';
+
+export interface CompareRow {
+  name: string;
+  description: string;
+  status: CompareStatus;
+  newer?: 'local' | 'hub';
+  agents: string[];
+  hub?: { current: string; updatedAt: string; pending: boolean };
+  pc?: {
+    treeSha: string;
+    dirs: string[];
+    path: string;
+    size: number;
+    files: number;
+    problems: string[];
+    findings: Finding[];
+    conflicting?: boolean;
+  };
+}
+
+/** `GET /api/v1/skill-machines/{id}/compare`. */
+export interface SkillCompare {
+  machine: SkillMachine;
+  error?: string;
+  rows: CompareRow[];
+  outOfSync: number;
+}
+
+export type PullResult =
+  | { name: string; status: 'imported' | 'unchanged' | 'held'; version: string }
+  | { name: string; status: 'failed'; reason: string };
+
+export type SendResult =
+  | {
+      name: string;
+      status: 'installed' | 'replaced' | 'unchanged';
+      dir: string;
+      links?: string[];
+      kept?: string[];
+    }
+  | { name: string; status: 'skipped' | 'failed'; reason: string };

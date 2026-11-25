@@ -269,6 +269,9 @@ async function main(): Promise<void> {
     console.warn(`agent package "${f.packageName}" not loaded — ${f.reason}`);
   }
 
+  const pcSkillsMaxBytes = await loadEffectiveConfig(homedir())
+    .then((c) => c.effective.skills.maxSkillBytes)
+    .catch(() => undefined);
   const hostReachTimeoutFromConfig = await loadEffectiveConfig(homedir())
     .then((c) => c.effective.relay.hostReachTimeoutMs)
     .catch(() => undefined);
@@ -370,6 +373,7 @@ async function main(): Promise<void> {
     // The streaming blob surface's own cap (`relay.custodyMaxBlobBytes`), which
     // governs `carry:` payloads rather than seed tars.
     custodyMaxBlobBytes: positiveIntFromEnv(process.env.AGENTBOX_CUSTODY_MAX_BLOB_BYTES),
+    ...(pcSkillsMaxBytes !== undefined ? { pcSkillsMaxBytes } : {}),
     // A password profile IS the control box: it brokers host actions that need
     // the user's own files (`cp`) out to that machine's relay over
     // `/admin/hostreach/*` instead of running them here, where the box's
