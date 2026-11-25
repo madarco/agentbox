@@ -692,6 +692,14 @@ function SkillTableRow({
                 update waiting · {short(s.pending.version)}
               </button>
             ) : null}
+            {s?.broken ? (
+              <span
+                className="rounded-md border border-red-500/40 bg-red-500/10 px-1.5 py-0 font-mono text-[10px] text-red-400"
+                title={`${s.broken}. Pull it to the hub again (or re-upload it) to fix it; boxes can't install it until then.`}
+              >
+                broken copy · upload again
+              </span>
+            ) : null}
           </div>
           <div className="mt-0.5 line-clamp-2 text-[12.5px] text-muted-foreground">
             {description}

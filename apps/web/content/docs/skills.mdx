@@ -102,7 +102,7 @@ The table compares each skill by content: `same`, `differs` (with which side cha
   value.
 </Callout>
 
-A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. A skill that holds a symlink pointing **outside its own folder** (for example `refs -> ~/Projects/app`) is skipped too, with the link named: following it would upload that whole folder, `.env` files included.
+A skill must have a `SKILL.md` whose frontmatter `name` matches its folder and carries a `description`; a skill with a broken symlink, or bigger than [`skills.maxSkillBytes`](/docs/configuration#skills) (50 MB), is listed and skipped. The hub stores a skill only once it has received the whole tarball and checked that it unpacks to the version the PC named; anything else (a cut-short upload, a tarball over the hub's blob cap, `AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, 100 MiB compressed by default) is refused with the reason and nothing is stored. A skill stored cut short by an older hub shows as **broken copy** on Settings > Skills; boxes can't install it until you Pull it to the hub again or re-upload it. A skill that holds a symlink pointing **outside its own folder** (for example `refs -> ~/Projects/app`) is skipped too, with the link named: following it would upload that whole folder, `.env` files included.
 
 **In the hub web UI**, the **Settings → Skills** page (`/settings/skills`) shows the same comparison against a computer you pick, and moves skills both ways from there: **Pull to Hub** and **Send to** that computer. See [The Skills page](#the-skills-page).
 

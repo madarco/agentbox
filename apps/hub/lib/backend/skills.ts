@@ -15,6 +15,7 @@
 // Pure over a structural slice of the custody store, so it runs against an
 // in-memory fake in tests and against `globalThis.__AGENTBOX_HUB_CUSTODY` in the
 // routes (which keeps @agentbox/relay out of Next's bundle).
+import { readTar, treeHash } from '@agentbox/sandbox-core';
 
 export interface SkillsStoreEntry {
   path: string;
@@ -62,6 +63,14 @@ export interface SkillVersionMeta {
   commit?: string;
   /** This version's SKILL.md description (absent on versions stored before Phase 5). */
   description?: string;
+  /** The stored tarball unpacked whole and hashed to `sha256` (set at import). */
+  verified?: true;
+  /**
+   * Why the stored tarball is unusable (cut short, not gzip, hashes to another
+   * tree). Found by the one-time check of a version stored before imports were
+   * verified; a re-upload of the same version replaces it.
+   */
+  broken?: string;
 }
 
 /**
@@ -125,6 +134,8 @@ export interface SkillSummary {
   policy: SkillUpdatePolicy;
   /** A newer version waiting for approval: the skill is `behind`. */
   pending?: { version: string; uploadedAt: string; size: number; files: number; commit?: string };
+  /** The current version's stored tarball is unusable: re-upload it (see `SkillVersionMeta.broken`). */
+  broken?: string;
 }
 
 export interface SkillsListing {
@@ -159,7 +170,7 @@ export const RESERVED_SKILL_PREFIX = 'agentbox-';
 
 export class SkillsError extends Error {
   constructor(
-    readonly code: 'invalid_request' | 'not_found' | 'conflict',
+    readonly code: 'invalid_request' | 'not_found' | 'conflict' | 'payload_too_large',
     message: string,
   ) {
     super(message);
@@ -282,6 +293,7 @@ function summarize(meta: SkillMeta): SkillSummary | null {
     origin: originOf(meta),
     policy: policyOf(meta),
     ...pendingSummary(meta),
+    ...(cur.broken ? { broken: cur.broken } : {}),
   };
 }
 
@@ -317,6 +329,54 @@ function retain(
   return { kept, dropped };
 }
 
+/**
+ * Before imports were verified, a body cut short on the way in (Next's 10 MB
+ * proxy buffer) was stored as a version. Check a current version that was
+ * never verified once, and record the outcome on its meta: `verified`, or
+ * `broken` with the reason, which the listing and the comparison show so a
+ * re-upload replaces it.
+ */
+async function checkStoredCurrent(
+  store: SkillsStore,
+  name: string,
+  meta: SkillMeta | null,
+): Promise<SkillMeta | null> {
+  const cur = meta?.versions.find((v) => v.sha256 === meta.current);
+  if (!meta || !cur || cur.verified || cur.broken) return meta;
+  return withSkillLock(name, async () => {
+    const fresh = await readSkillMeta(store, name);
+    const v = fresh?.versions.find((x) => x.sha256 === fresh.current);
+    if (!fresh || !v || v.verified || v.broken) return fresh;
+    const blob = await store.get(tarballPath(name, v.sha256));
+    // A missing blob may be a passing read problem: show it, but don't record
+    // it, or the skill would stay "broken" after the read recovers.
+    if (!blob) return withVersion(fresh, v, { broken: 'its tarball is missing' });
+    const problem =
+      blob.data.length !== v.tarballBytes && v.tarballBytes > 0
+        ? `its tarball is ${String(blob.data.length)} bytes, not ${String(v.tarballBytes)}`
+        : tarballProblem(blob.data, v.sha256);
+    const next = withVersion(fresh, v, problem ? { broken: problem } : { verified: true });
+    await writeMeta(store, next);
+    return next;
+  });
+}
+
+function withVersion(
+  meta: SkillMeta,
+  v: SkillVersionMeta,
+  patch: Partial<SkillVersionMeta>,
+): SkillMeta {
+  return { ...meta, versions: meta.versions.map((x) => (x === v ? { ...x, ...patch } : x)) };
+}
+
+/**
+ * The unpacked-content bound for the integrity check: a box refuses a bigger
+ * skill anyway (ctl's MAX_SKILL_BYTES), and it bounds the gunzip of a hostile
+ * body. Not the compressed blob cap, which a text-heavy skill can be far over
+ * when unpacked.
+ */
+const SKILL_CONTENT_CAP = 100 * 1024 * 1024;
+
 export async function listSkills(store: SkillsStore): Promise<SkillsListing> {
   const entries = await store.list(SKILLS_SCOPE);
   const seeded = entries.some((e) => e.path === SEEDED_MARKER);
@@ -327,7 +387,7 @@ export async function listSkills(store: SkillsStore): Promise<SkillsListing> {
   }
   const skills: SkillSummary[] = [];
   for (const name of [...names].sort()) {
-    const meta = await readSkillMeta(store, name);
+    const meta = await checkStoredCurrent(store, name, await readSkillMeta(store, name));
     const row = meta ? summarize(meta) : null;
     if (row) skills.push(row);
   }
@@ -353,6 +413,45 @@ export interface ImportResult {
  * `pending` until {@link approveSkillUpdate}. The first version of a skill is
  * always current: adding a skill is itself the approval.
  */
+/**
+ * Why a stored or received tarball is not version `sha256`, or null when it is:
+ * it must gunzip, parse as tar and hash to that tree. The CLI and the box check
+ * the same thing before installing; this keeps a bad blob out of the library.
+ */
+export function tarballProblem(data: Buffer, sha256: string): string | null {
+  let files;
+  try {
+    files = readTar(data, { maxBytes: SKILL_CONTENT_CAP });
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+  const got = treeHash(files);
+  return got === sha256
+    ? null
+    : `its files hash to ${got.slice(0, 12)}, not ${sha256.slice(0, 12)}`;
+}
+
+async function readBody(
+  body: NodeJS.ReadableStream,
+  name: string,
+  maxBytes: number | undefined,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of body as AsyncIterable<Buffer | Uint8Array>) {
+    const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
+    size += buf.length;
+    if (maxBytes !== undefined && size > maxBytes) {
+      throw new SkillsError(
+        'payload_too_large',
+        `skill '${name}' is bigger than this hub stores (${String(maxBytes)} bytes compressed). Raise AGENTBOX_CUSTODY_MAX_BLOB_BYTES on the hub to store it.`,
+      );
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function importSkill(
   store: SkillsStore,
   input: {
@@ -369,6 +468,8 @@ export async function importSkill(
     commit?: string;
     /** Make it current even under `manual` (an explicit add is its own approval). */
     apply?: boolean;
+    /** The byte count the sender declared (Content-Length); a body of any other length is refused. */
+    expectedBytes?: number;
     /**
      * Refuse (`conflict`) unless the skill's current version is this one, checked
      * under the skill's lock; `null` = the skill must not exist yet. The web
@@ -378,12 +479,31 @@ export async function importSkill(
   },
 ): Promise<ImportResult> {
   assertName(input.name);
-  return withSkillLock(input.name, () => importLocked(store, input));
+  // Received whole and checked BEFORE anything is stored, and before taking the
+  // skill's lock (a slow upload must not block approve or discard): a body cut
+  // short on the way in (a proxy cap, a dropped connection) never becomes a version.
+  const name = input.name;
+  const data = await readBody(input.body, name, input.maxBytes);
+  if (input.expectedBytes !== undefined && data.length !== input.expectedBytes) {
+    throw new SkillsError(
+      'invalid_request',
+      `skill '${name}': the upload arrived cut short (${String(data.length)} of ${String(input.expectedBytes)} bytes); nothing was stored`,
+    );
+  }
+  const broken = tarballProblem(data, input.meta.sha256);
+  if (broken) {
+    throw new SkillsError(
+      'invalid_request',
+      `skill '${name}': the upload is not the version it names (${broken}, ${String(data.length)} bytes received); nothing was stored`,
+    );
+  }
+  return withSkillLock(name, () => importLocked(store, input, data));
 }
 
 async function importLocked(
   store: SkillsStore,
   input: Parameters<typeof importSkill>[1],
+  data: Buffer,
 ): Promise<ImportResult> {
   const { name, meta } = input;
   const now = (input.now ?? new Date()).toISOString();
@@ -400,9 +520,7 @@ async function importLocked(
       );
     }
   }
-  const stored = await store.putStream(tarballPath(name, meta.sha256), input.body, {
-    ...(input.maxBytes !== undefined ? { maxBytes: input.maxBytes } : {}),
-  });
+  const stored = await store.put(tarballPath(name, meta.sha256), data);
 
   const prev = await readSkillMeta(store, name);
   const known = prev?.versions.find((v) => v.sha256 === meta.sha256);
@@ -417,6 +535,7 @@ async function importLocked(
     source: meta.source ?? {},
     description: meta.description,
     ...(input.commit ? { commit: input.commit } : {}),
+    verified: true,
   };
   const origin: SkillOrigin =
     input.origin ??

@@ -15,6 +15,7 @@ import {
   type SkillsStore,
   type SkillsStoreEntry,
 } from '../lib/backend/skills';
+import { skillTar } from './_skill-tar';
 
 function memStore(): SkillsStore {
   const m = new Map<string, Buffer>();
@@ -52,8 +53,8 @@ async function seed(store: SkillsStore, ...names: string[]) {
   for (const name of names) {
     await importSkill(store, {
       name,
-      meta: { sha256: name[0]!.repeat(64), description: `${name} skill`, size: 1, files: 1 },
-      body: Readable.from(Buffer.from(name)),
+      meta: { sha256: skillTar(name).sha, description: `${name} skill`, size: 1, files: 1 },
+      body: Readable.from([skillTar(name).tar]),
     });
   }
 }

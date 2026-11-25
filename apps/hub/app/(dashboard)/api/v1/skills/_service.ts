@@ -58,7 +58,12 @@ export function failFromSkills(err: unknown, fallback: string): Response {
   // errors below), or every refusal from it answers 500.
   if (err instanceof Error && err.name === 'SkillsError') {
     const code = (err as { code?: unknown }).code;
-    if (code === 'invalid_request' || code === 'not_found' || code === 'conflict') {
+    if (
+      code === 'invalid_request' ||
+      code === 'not_found' ||
+      code === 'conflict' ||
+      code === 'payload_too_large'
+    ) {
       return fail(code, err.message);
     }
   }
@@ -66,7 +71,7 @@ export function failFromSkills(err: unknown, fallback: string): Response {
   // Matched by name so the store's error class never has to be imported here.
   if (err instanceof Error && err.name === 'CustodyTooLargeError') {
     return fail(
-      'invalid_request',
+      'payload_too_large',
       `${msg}. Raise AGENTBOX_CUSTODY_MAX_BLOB_BYTES on this hub to store a bigger skill.`,
     );
   }

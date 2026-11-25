@@ -187,6 +187,15 @@ Hub* imports it; a hub-only skill *Send to MacBook* lands it on disk; the same a
   Send (landed on disk), and a nested docker claude box from `examples/express-ready` received every
   library skill in `/etc/claude-code/.claude/skills`. The remote-hub half of "Done" was not run (see
   Backlog).
+- **Fix: uploads over 10 MB were stored truncated.** `proxy.ts` gates `/api/v1`, so Next buffers
+  every request body for it and kept only the first 10 MB (`experimental.proxyClientMaxBodySize`);
+  a 17.8 MB skill was stored as a 10,483,944-byte tarball that failed gzip and every box sync. The
+  cap is now 110 MB (just above the route's 100 MiB custody blob cap; it is held before auth), and `importSkill` buffers
+  the whole body and checks it before storing: the length against `Content-Length`, then gunzip +
+  tar + tree hash against the named version (400 otherwise, 413 over the cap). A current version
+  stored before this is checked once on the next listing and marked `verified` or `broken`; a
+  broken one shows as "broken copy" on the page, compares `differs` (PC newer) so a Pull replaces
+  it, and Send refuses it. Box sync already fails only that skill.
 
 ### Phase 3 — subscriptions: page, limits, switching
 

@@ -45,10 +45,15 @@ export async function PUT(
     const meta = parseImportMeta(decoded);
     // DOM ReadableStream → node stream; the same bridge the custody blob route uses.
     const webBody = req.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>;
+    // The declared length: a body that arrives shorter (or longer) is refused
+    // rather than stored as a version, whatever cut it on the way.
+    const cl = req.headers.get('content-length')?.trim();
+    const declared = cl ? Number(cl) : NaN;
     const result = await importSkill(store, {
       name,
       meta,
       body: Readable.fromWeb(webBody),
+      ...(Number.isSafeInteger(declared) && declared >= 0 ? { expectedBytes: declared } : {}),
       ...(globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES !== undefined
         ? { maxBytes: globalThis.__AGENTBOX_HUB_CUSTODY_MAX_BLOB_BYTES }
         : {}),
