@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseUsageBy, shortRepo, usageKeyCell, usageTable } from '../src/lib/usage-format.js';
+import { usageFixture } from '@agentbox/usage-view';
+import {
+  parseUsageBy,
+  shortRepo,
+  usageHeroLines,
+  usageKeyCell,
+  usageTable,
+} from '../src/lib/usage-format.js';
 import type { HubApiUsageGroup } from '../src/control-plane/hub-api-client.js';
 
 const totals = {
@@ -42,5 +49,28 @@ describe('usage format', () => {
       ['total', '1.2k', '30', '50k', '0', '51k', '3', '2'],
     ]);
     expect(usageTable([], [], totals).rows).toHaveLength(1);
+  });
+});
+
+describe('usageHeroLines', () => {
+  it('prints the window and the hero numbers', () => {
+    const lines = usageHeroLines(usageFixture());
+    expect(lines[0]).toBe('2026-11-01 to 2026-11-26 (Europe/Rome)');
+    const text = lines.join('\n');
+    for (const k of [
+      'Agent-hours',
+      'Wall hours',
+      'Speed-up',
+      'Peak at once',
+      'PRs merged',
+      'Commits',
+      'Lines',
+    ]) {
+      expect(text).toContain(k);
+    }
+    expect(text).toMatch(/Agent-hours\s+612\.0 h/);
+    expect(text).toMatch(
+      /Hours saved\s+401\.0 h vs\. one agent at a time \(\+132\.0 h vs\. the previous window\)/,
+    );
   });
 });

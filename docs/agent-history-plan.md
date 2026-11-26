@@ -289,7 +289,8 @@ per-project opt-out (`history.capture`), retention 90 days (`history.retentionDa
 - **Final flush on destroy.** Before `provider.destroy`, the hub backend flushes:
   docker through the relay shipper, other providers with
   `agentbox-ctl history flush` over `provider.exec`. It is time-boxed and only
-  warns on failure.
+  warns on failure. Since usage-dashboard Phase 4a the same flush runs before
+  `stop` and `pause` (30 s bound) and before docker autopause.
 - **Retention.** An hourly sweep in the history service deletes sessions idle
   past `history.retentionDays` and garbage-collects unreferenced blobs.
 

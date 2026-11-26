@@ -1069,7 +1069,8 @@ describe('push rows', () => {
     git('init', '-q', '-b', 'main');
     await commit('base.txt', 2);
     git('checkout', '-q', '-b', 'agentbox/box-one');
-    git('update-ref', 'refs/remotes/origin/agentbox/box-one', await commit('a.txt', 5));
+    const prev = await commit('a.txt', 5);
+    git('update-ref', 'refs/remotes/origin/agentbox/box-one', prev);
     const next = await commit('b.txt', 3);
     const d = await managers.detectManager({
       agent: 'claude',
@@ -1095,11 +1096,16 @@ describe('push rows', () => {
         destroy: okResult,
         gitPush: async () => {
           git('update-ref', 'refs/remotes/origin/agentbox/box-one', next);
-          return { ok: true as const };
+          // What git prints: the remote's old and new tip, abbreviated.
+          const moved = `${prev.slice(0, 7)}..${next.slice(0, 7)}`;
+          return {
+            ok: true as const,
+            stderr: `   ${moved}  agentbox/box-one -> agentbox/box-one\n`,
+          };
         },
         gitPushHost: async () => {
           git('branch', 'landed', next);
-          return { ok: true as const };
+          return { ok: true as const, stderr: ' * [new branch]      agentbox/box-one -> landed\n' };
         },
         gitCheckout: okResult,
         gitNewBranch: okResult,
@@ -1140,7 +1146,7 @@ describe('push rows', () => {
     const asked: string[] = [];
     h.deps.boxPushStat = async (boxId) => {
       asked.push(boxId);
-      return { additions: 21, deletions: 4 };
+      return { additions: 21, deletions: 4, commits: 1, filesChanged: 2 };
     };
     const ok = async () => ({ ok: true as const });
     const hub = withBoxTimeline(
@@ -1149,7 +1155,10 @@ describe('push rows', () => {
         start: ok,
         stop: ok,
         destroy: ok,
-        gitPush: ok,
+        gitPush: async () => ({
+          ok: true as const,
+          stderr: ' * [new branch]      agentbox/checkout-copy -> agentbox/checkout-copy\n',
+        }),
         gitPushHost: ok,
         gitCheckout: ok,
         gitNewBranch: ok,

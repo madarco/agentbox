@@ -1,13 +1,16 @@
 /**
- * `agentbox usage` — tokens the recorded sessions spent, from the hub
- * (docs/agent-history-plan.md, Phase 7). A `/api/v1/usage` client; the CLI
- * reads no store of its own.
+ * `agentbox usage` — what the boxes did in a window: agent-hours, parallelism and
+ * what shipped (docs/usage-dashboard-plan.md, Phase 2), from `/api/v1/usage/stats`.
+ * `agentbox usage tokens` — tokens the recorded sessions spent, grouped
+ * (docs/agent-history-plan.md, Phase 7), from `/api/v1/usage`. Both are hub
+ * clients; the CLI reads no store of its own.
  */
-import { log } from '@agentbox/cli-kit';
+import { confirm, isCancel, log } from '@agentbox/cli-kit';
+import { SHARE_NAME_RE } from '@agentbox/usage-view';
 import { Command } from 'commander';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
-import { parseUsageBy, usageTable } from '../lib/usage-format.js';
+import { parseUsageBy, usageHeroLines, usageTable } from '../lib/usage-format.js';
 
 function positiveInt(raw: string): number {
   const n = Number(raw);
@@ -16,7 +19,7 @@ function positiveInt(raw: string): number {
   return n;
 }
 
-export const usageCommand = new Command('usage')
+const tokensCommand = new Command('tokens')
   .description(
     'Tokens spent by recorded agent sessions (every box, provider and PC that ships to the hub), grouped and filtered',
   )
@@ -92,3 +95,167 @@ export const usageCommand = new Command('usage')
       });
     },
   );
+
+const shareListCommand = new Command('list')
+  .alias('ls')
+  .description('The usage shares this hub published, newest first (never their delete secrets)')
+  .option('--json', 'print them as JSON')
+  .option('--local', "use this machine's hub instead of the configured one")
+  .action(async (opts: { json?: boolean; local?: boolean }) => {
+    await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
+      const { shares } = await client.usageShareSettings();
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify(shares, null, 2)}\n`);
+        return;
+      }
+      if (shares.length === 0) {
+        log.info('No shares yet: `agentbox usage share` publishes one.');
+        return;
+      }
+      renderTable(
+        ['ID', 'SHARED', 'URL'],
+        shares.map((s) => [s.id, s.createdAt.slice(0, 10), s.url || `(on ${s.origin})`]),
+      );
+    });
+  });
+
+const shareRmCommand = new Command('rm')
+  .alias('delete')
+  .description(
+    "Delete one of this hub's usage shares on the site that holds it; the page then 404s",
+  )
+  .argument('<id>', 'share id, as `agentbox usage share list` prints it')
+  .option('--local', "use this machine's hub instead of the configured one")
+  .action(async (id: string, opts: { local?: boolean }) => {
+    await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
+      const r = await client.usageShareDelete(id);
+      log.success(
+        r.deleted ? `Deleted share ${r.id}.` : `Share ${r.id} was already gone; forgotten here.`,
+      );
+    });
+  });
+
+const shareCommand = new Command('share')
+  // `list` / `rm` take their own --local; without this the parent would consume it.
+  .enablePositionalOptions()
+  .description(
+    "Publish the window's usage on agent-box.sh (share.endpoint) at a new random link and print it. Only metrics leave the hub, with the optional --name: no box, project, branch, PR or session name",
+  )
+  .option(
+    '--name <text>',
+    'a name to show on the page ("shared by ..."): lowercase letters, digits and dashes. Plain text, not an account',
+  )
+  .option(
+    '--since <when>',
+    'first day: YYYY-MM-DD, or a number of days or weeks ending at --until (30d, 2w, 365d)',
+    '30d',
+  )
+  .option('--until <day>', 'last day, YYYY-MM-DD (default today)')
+  .option('--tz <zone>', "IANA time zone the days are in (default this machine's)")
+  .option('--subscription <agent/account>', 'only sessions and boxes on this subscription')
+  .option('--dry-run', 'print the JSON that would be sent and post nothing')
+  .option('-y, --yes', 'do not ask before publishing')
+  .option('--local', "use this machine's hub instead of the configured one")
+  .action(
+    async (opts: {
+      name?: string;
+      since: string;
+      until?: string;
+      tz?: string;
+      subscription?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+      local?: boolean;
+    }) => {
+      const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      const name = opts.name?.trim() || undefined;
+      if (name !== undefined && !SHARE_NAME_RE.test(name)) {
+        throw new Error(`invalid --name "${name}": lowercase letters, digits and dashes, up to 39`);
+      }
+      await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
+        const window = {
+          since: opts.since,
+          until: opts.until,
+          tz: opts.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+          subscription: opts.subscription,
+          ...(name ? { name } : {}),
+        };
+        if (opts.dryRun) {
+          const p = await client.usageSharePreview(window);
+          process.stdout.write(`${JSON.stringify(p.share, null, 2)}\n`);
+          log.info(`${String(p.bytes)} bytes would be posted to ${p.endpoint}`);
+          return;
+        }
+        if (interactive && !opts.yes) {
+          const { endpoint, endpointError } = await client.usageShareSettings();
+          if (!endpoint) throw new Error(endpointError ?? 'share.endpoint is not usable');
+          const ok = await confirm({
+            message: `Publish this window's usage on ${new URL(endpoint).host} at a new public link? (--dry-run shows exactly what is sent)`,
+          });
+          if (isCancel(ok) || !ok) return;
+        }
+        const posted = await client.usageShare(window);
+        process.stdout.write(`${posted.url}\n`);
+        log.info(`Remove it with: agentbox usage share rm ${posted.id}`);
+      });
+    },
+  )
+  .addCommand(shareListCommand)
+  .addCommand(shareRmCommand);
+
+export const usageCommand = new Command('usage')
+  .description(
+    'Agent-hours, how many agents ran at once, and what they shipped (PRs, commits, lines), from the hub',
+  )
+  .enablePositionalOptions()
+  .option(
+    '--since <when>',
+    'first day: YYYY-MM-DD, or a number of days or weeks ending at --until (30d, 2w, 365d)',
+    '30d',
+  )
+  .option('--until <day>', 'last day, YYYY-MM-DD (default today)')
+  .option(
+    '--tz <zone>',
+    "IANA time zone the days are in (default this machine's, e.g. Europe/Rome)",
+  )
+  .option('--subscription <agent/account>', 'only sessions and boxes on this subscription')
+  .option('--local', "read this machine's hub instead of the configured one")
+  .option('--json', 'print the whole UsageStats as JSON')
+  .action(
+    async (opts: {
+      since: string;
+      until?: string;
+      tz?: string;
+      subscription?: string;
+      local?: boolean;
+      json?: boolean;
+    }) => {
+      // With a remote hub configured, this PC's local boxes and sessions reach it as
+      // a usage contribution (metrics only): push the recent weeks first (skipped
+      // when unchanged) so the numbers are current.
+      // No-op without a remote hub; never auto-starts the local one.
+      if (!opts.local) {
+        const r = await withHubClientQuiet({ preferLocal: true }, (c) => c.syncUsageContribution());
+        // Only a refused or failed push is worth a word: a stopped local hub, an older
+        // one without the route, or no remote hub at all just means nothing to send.
+        if (!r.ok && r.error.includes('usage contribution not pushed')) {
+          log.warn(`This PC's usage was not sent to the remote hub: ${r.error}`);
+        }
+      }
+      await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
+        const stats = await client.usageStats({
+          since: opts.since,
+          until: opts.until,
+          tz: opts.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+          subscription: opts.subscription,
+        });
+        if (opts.json) {
+          process.stdout.write(`${JSON.stringify(stats, null, 2)}\n`);
+          return;
+        }
+        process.stdout.write(`${usageHeroLines(stats).join('\n')}\n`);
+      });
+    },
+  )
+  .addCommand(tokensCommand)
+  .addCommand(shareCommand);

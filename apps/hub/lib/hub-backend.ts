@@ -51,8 +51,10 @@ import { createLiveStatus } from './backend/live-status';
 import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
+import { installActivityBoxContext, withBoxActivity } from './backend/activity';
 import { createWorkspaceBackend } from './backend/workspaces';
-import { flushBoxHistory } from './backend/history-flush';
+import { lifecycleHistoryFlush } from './backend/history-flush';
+import { refreshUsageAfterFlush } from './backend/usage-stats';
 import { createCheckoutBackend } from './backend/checkouts';
 import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
@@ -2167,6 +2169,13 @@ async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
 }
 
 export function createHubBackend(handle: RelayServerHandle): HubBackend {
+  // Ship a box's last turns before it stops, pauses or goes away (usage
+  // dashboard Phase 4a), then bring the usage stats up to date with them.
+  const flushHistoryBefore = lifecycleHistoryFlush({
+    ...(handle.history ? { relayHistory: handle.history } : {}),
+    afterFlush: refreshUsageAfterFlush,
+    log: (line) => console.warn(`[hub] ${line}`),
+  });
   // Reverse-adoption: drive a box the control box knows only from its Store
   // registration (PC-created / independent) by reconstructing its local record on
   // demand. Threaded into every provider-driven path below.
@@ -2222,6 +2231,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // `direct` push), and has no provider modules to measure it with — it never
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
+  installActivityBoxContext(backendDeps, handle.store);
   const checkouts = createCheckoutBackend(backendDeps);
   const skills = createSkillsBackend({
     store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
@@ -2572,7 +2582,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         },
         hydrate,
       ),
-    pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box), hydrate),
+    pause: (id) =>
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          await flushHistoryBefore(box, provider, 'pause');
+          await provider.pause(box);
+        },
+        hydrate,
+      ),
     resume: (id) =>
       runLifecycle(
         id,
@@ -2583,7 +2601,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         },
         hydrate,
       ),
-    stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box), hydrate),
+    stop: (id) =>
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          await flushHistoryBefore(box, provider, 'stop');
+          await provider.stop(box);
+        },
+        hydrate,
+      ),
     screen: (id) =>
       runLifecycle(
         id,
@@ -2641,12 +2667,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
       try {
         const provider = await providerForBox(box);
-        await flushBoxHistory(box, {
-          ...(handle.history ? { relayHistory: handle.history } : {}),
-          exec: (b, argv, o) => provider.exec(b, argv, o),
-          probeState: (b) => provider.probeState(b),
-          log: (line) => console.warn(`[hub] ${line}`),
-        });
+        await flushHistoryBefore(box, provider, 'destroy');
         await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});
@@ -3293,7 +3314,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     gitPull: (id, input = {}) =>
       gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id)), hydrate),
     gitPushHost: (id, input = {}) =>
-      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input), hydrate),
+      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input, hubGitDeps(id)), hydrate),
     async getGit(id): Promise<GitInfo> {
       try {
         const rp = await resolveBoxProvider(id, hydrate);
@@ -4230,7 +4251,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     }
     return res;
   };
-  return withBoxTimeline(hub, {
+  return withBoxTimeline(withBoxActivity(hub, backendDeps), {
     deps: backendDeps,
     stampFor: (ref, wsId) => managers.timelineStamp(ref, wsId),
     boxGone: (boxId) => workspaces.boxGone(boxId),

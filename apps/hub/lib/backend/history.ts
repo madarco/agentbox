@@ -8,6 +8,7 @@
 // here, object storage later). This file holds no SQL and no paths.
 import { zstdCompressSync, zstdDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
 import { repoKey } from '@agentbox/config';
+import type { ZoneSegment } from '@agentbox/usage-view';
 import {
   agentHistoryModule,
   agentHistoryModules,
@@ -273,6 +274,44 @@ export interface HistoryLiveRow {
   updatedAt: number;
 }
 
+/** The usage dashboard's reads (usage dashboard Phase 2): timestamps and sums, never turn text. */
+export interface UsageWindow {
+  /** Inclusive, epoch ms. */
+  sinceMs: number;
+  /** Exclusive, epoch ms. */
+  untilMs: number;
+  /** Only sessions on this subscription (`agent/account`). */
+  account?: string;
+}
+
+/** One active interval of a session: its first and last turn, no tail added. */
+export interface UsageSpanRow {
+  sessionKey: string;
+  start: number;
+  last: number;
+}
+
+export interface UsageSessionMeta {
+  key: string;
+  agent: string;
+  sessionId: string;
+  boxId: string | null;
+  boxName: string | null;
+  provider: string | null;
+  hostId: string | null;
+  projectKey: string | null;
+  account: string | null;
+}
+
+/** Tokens of one session on one local day. */
+export interface UsageTokenDay {
+  sessionKey: string;
+  /** The local date, as days since 1970-01-01. */
+  day: number;
+  tokens: number;
+  costUsd: number | null;
+}
+
 /** Rows. Async so a postgres implementation fits the same seam. */
 export interface HistoryRepo {
   getFile(originKey: string, agent: string, path: string): Promise<HistoryFileRow | null>;
@@ -320,6 +359,20 @@ export interface HistoryRepo {
   /** Replace a session's usage rows with `rows`, atomically. */
   replaceUsage(key: string, rows: StoredUsageRow[]): Promise<void>;
   usage(q: UsageQuery): Promise<UsageReport>;
+  /**
+   * The stored active intervals (turns no more than `idleGapMs` apart) overlapping
+   * the window. Reads only: sessions whose turns changed since are brought up to
+   * date by `refreshSpans`, off the request path.
+   */
+  usageSpans(q: UsageWindow & { idleGapMs: number }): Promise<UsageSpanRow[]>;
+  /**
+   * Tokens per session per local day in the window; `zone` is the zone's offsets
+   * over the window (`zoneSegments`), so the store needs no zone support.
+   */
+  usageTokens(q: UsageWindow & { zone: readonly ZoneSegment[] }): Promise<UsageTokenDay[]>;
+  usageSessions(keys: readonly string[]): Promise<UsageSessionMeta[]>;
+  /** Recompute the intervals of up to `limit` sessions whose turns changed; returns how many. */
+  refreshSpans(limit: number): Promise<number>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
   /** Keys of `agent`'s sessions projected by a parser older than `version`. */
@@ -414,9 +467,12 @@ export type ResolvedSession =
 export interface HistoryService extends HistoryIngestSink {
   /** Reassemble a file's current generation byte for byte. */
   readRaw(fileId: number): Promise<Buffer>;
-  /** The same bytes, chunk by chunk, for a streamed download. */
-  /** The same bytes, chunk by chunk, up to `endOffset` (default: what is ingested now). */
-  rawStream(fileId: number, endOffset?: number): AsyncGenerator<Buffer>;
+  /**
+   * The same bytes, chunk by chunk, from `startOffset` (default 0) up to
+   * `endOffset` (default: what is ingested now). Starts at the chunk holding
+   * `startOffset`, so a tail read does not decompress the whole file.
+   */
+  rawStream(fileId: number, endOffset?: number, startOffset?: number): AsyncGenerator<Buffer>;
   listSessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
   resolveSession(ref: string): Promise<ResolvedSession>;
   sessionDetail(key: string): Promise<HistorySessionDetail | null>;
@@ -444,6 +500,12 @@ export interface HistoryService extends HistoryIngestSink {
    * the box it ran in (null for a host session). Returns an unsubscribe fn.
    */
   onSessionUpdated(fn: (sessionKey: string, boxId: string | null) => void): () => void;
+  /**
+   * Bring the usage dashboard's stored intervals up to date (sessions that took turns
+   * since, or every session after the migration), in batches. Run at start and with
+   * the minute sweep; returns how many sessions it redid.
+   */
+  refreshUsageSpans(): Promise<number>;
   /** Seal idle files and apply retention. */
   sweep(opts?: {
     retention?: boolean;
@@ -453,8 +515,12 @@ export interface HistoryService extends HistoryIngestSink {
   repo: HistoryRepo;
 }
 
+const SPAN_BATCH = 50;
+
 export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   const { repo, archive } = deps;
+  let spansRun: Promise<number> | null = null;
+  let spansAgain = false;
   const now = deps.now ?? Date.now;
   const log = deps.log ?? (() => {});
   // One writer: frames for one file must apply in order, and sqlite is
@@ -766,14 +832,14 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return Buffer.concat(parts);
     },
 
-    async *rawStream(fileId, endOffset) {
+    async *rawStream(fileId, endOffset, startOffset) {
       const file = await repo.getFileById(fileId);
       if (!file) throw new Error(`history file ${String(fileId)} not found`);
       // A fixed end: a file still being appended to would otherwise stream
       // past the length the caller announced (content-length).
       const end = Math.min(endOffset ?? file.offset, file.offset);
       let chunks = await repo.listChunks(fileId, file.generation);
-      let pos = 0;
+      let pos = Math.max(0, Math.min(startOffset ?? 0, end));
       let retries = 0;
       while (pos < end) {
         const c = chunks.find((x) => x.start <= pos && pos < x.end);
@@ -920,6 +986,36 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return reparsing;
     },
 
+    refreshUsageSpans() {
+      // A caller arriving mid-run (a box's final flush) may hold turns the run
+      // already went past: it waits for one more round, which picks them up.
+      if (spansRun) {
+        spansAgain = true;
+        return spansRun;
+      }
+      const run = (async () => {
+        let done = 0;
+        try {
+          do {
+            spansAgain = false;
+            // Small batches with a turn of the event loop between them: the hub's relay
+            // and web server share this process, and sqlite blocks while it works.
+            for (;;) {
+              const n = await repo.refreshSpans(SPAN_BATCH);
+              done += n;
+              if (n < SPAN_BATCH) break;
+              await new Promise((r) => setTimeout(r, 0));
+            }
+          } while (spansAgain);
+          return done;
+        } finally {
+          spansRun = null;
+        }
+      })();
+      spansRun = run;
+      return run;
+    },
+
     onSessionUpdated(fn) {
       updateListeners.add(fn);
       return () => updateListeners.delete(fn);
@@ -949,6 +1045,17 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       }),
 
     start() {
+      const spans = (): void => {
+        service.refreshUsageSpans().then(
+          (n) => {
+            if (n > 50)
+              log(`history: usage intervals of ${String(n)} session(s) brought up to date`);
+          },
+          (e: unknown) =>
+            log(`history: usage intervals failed: ${e instanceof Error ? e.message : String(e)}`),
+        );
+      };
+      spans();
       const run = (retention: boolean): void => {
         void service.sweep({ retention }).then(
           (r) => {
@@ -979,7 +1086,10 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         .catch((e: unknown) =>
           log(`history: account backfill failed: ${e instanceof Error ? e.message : String(e)}`),
         );
-      const a = setInterval(() => run(false), 60_000);
+      const a = setInterval(() => {
+        run(false);
+        spans();
+      }, 60_000);
       const b = setInterval(() => {
         run(true);
         redo();

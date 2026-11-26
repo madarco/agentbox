@@ -47,7 +47,12 @@ import {
   configureManagerStoreFromConfig,
   configureTimelineSinkFromConfig,
   type RelayServerHandle,
+  ensureActivityBackfill,
+  openActivityLedger,
+  resolveControlBox,
 } from '@agentbox/relay';
+import { startActivityPrSweep } from './lib/backend/activity';
+import { defaultGhExec } from './lib/backend/github-prs';
 import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
@@ -63,10 +68,16 @@ import { createDeviceService, type DeviceService } from './lib/backend/devices';
 import { borrowingAgentIds, subscriptionOf } from './lib/backend/accounts';
 import { createHistoryService, type HistoryService } from './lib/backend/history';
 import { createMemoryService, type MemoryService } from './lib/backend/history-memory';
+import { createSessionMaterializer } from './lib/backend/history-materialize';
 import { createMcpServer, MCP_INSTRUCTIONS, type McpHubScope } from './lib/backend/mcp';
 import { historyMcpTools } from './lib/backend/mcp-history';
 import { skillsMcpTools } from './lib/backend/mcp-skills';
 import { createSkillProposals } from './lib/backend/skill-proposals';
+import {
+  buildContribution,
+  ContributionStore,
+  createContributionPusher,
+} from './lib/backend/usage-contrib';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -304,6 +315,65 @@ async function main(): Promise<void> {
   );
   globalThis.__AGENTBOX_HUB_HISTORY = history;
   history?.start();
+  // Box claude sessions written into this PC's `~/.claude/projects` (usage
+  // dashboard Phase 4a). `history.materialize` is read per project on every write.
+  const materializer = history
+    ? createSessionMaterializer({
+        history,
+        log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+      })
+    : undefined;
+  materializer?.start();
+  // The activity ledger (usage dashboard Phase 1). Opened before the relay,
+  // whose push and create-job hooks and autopause loop write to it. Like
+  // history, a failure costs the hub its ledger, never its boot.
+  const activity = await openActivityLedger().catch((e: unknown) => {
+    process.stdout.write(
+      `agentbox-hub: activity ledger disabled — ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    return undefined;
+  });
+  globalThis.__AGENTBOX_HUB_ACTIVITY = activity;
+  if (activity) {
+    void ensureActivityBackfill(activity)
+      .then((r) => {
+        if (r) {
+          process.stdout.write(
+            `agentbox-hub: activity ledger backfilled ${String(r.inserted)} event(s) from ${String(r.workspaces)} workspace timeline(s)\n`,
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        process.stdout.write(
+          `agentbox-hub: activity backfill failed — ${e instanceof Error ? e.message : String(e)}\n`,
+        );
+      });
+  }
+  // Usage contributions (usage dashboard Phase 4b). Every hub takes them (a PC
+  // pushes to the control box it is configured with); every hub with a configured
+  // control box pushes its own, every 5 minutes when they changed. A control box
+  // resolves no control box of its own, so it never pushes.
+  globalThis.__AGENTBOX_HUB_USAGE_CONTRIBUTIONS = new ContributionStore(
+    path.join(path.dirname(HISTORY_DB_PATH), 'usage-contributions'),
+  );
+  if (history || activity) {
+    const pusher = createContributionPusher({
+      enabled: () =>
+        loadEffectiveConfig(homedir())
+          .then((c) => c.effective.history.contributeUsage)
+          .catch(() => true),
+      target: () => resolveControlBox(),
+      machineId: () => tryGetMachineId(),
+      build: (o) =>
+        buildContribution({ history: history?.repo ?? null, ledger: activity ?? null }, o),
+      log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+    });
+    globalThis.__AGENTBOX_HUB_USAGE_PUSHER = pusher;
+    const first = setTimeout(() => void pusher.tick(), 30_000);
+    first.unref();
+    const t = setInterval(() => void pusher.tick(), 5 * 60_000);
+    t.unref();
+  }
   // Agent memory (Phase 4), same db file, own connection.
   const memory = history
     ? await openMemoryService(HISTORY_DB_PATH).catch((e: unknown) => {
@@ -447,6 +517,9 @@ async function main(): Promise<void> {
   const sink = await configureTimelineSinkFromConfig({ warn });
   const managerRecords = await configureManagerStoreFromConfig({ warn });
   globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
+  if (activity) {
+    startActivityPrSweep({ gh: defaultGhExec, log: warn });
+  }
   if (sink.kind === 'remote') {
     process.stdout.write('agentbox-hub: timeline events forward to the control box\n');
   }
@@ -638,6 +711,7 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     process.stdout.write(`agentbox-hub: ${signal} — shutting down\n`);
     history?.stop();
+    materializer?.stop();
     void (worker?.stop() ?? Promise.resolve()).finally(() =>
       daemon.stop().finally(() => process.exit(0)),
     );

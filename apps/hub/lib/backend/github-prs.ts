@@ -21,10 +21,14 @@ import {
   prTimelineEvents,
   readTasks,
   readTimeline,
+  activityLedger,
+  recordActivity,
   TIMELINE_RETENTION_MS,
   workspaceForBox,
+  type ActivityType,
   type GhPrJson,
   type TimelineEvent,
+  type TimelineEventInput,
   type WorkspaceProject,
   type WorkspaceRecord,
 } from '@agentbox/relay';
@@ -69,7 +73,7 @@ export const GITHUB_SYNC_INTERVAL_MS = 60_000;
 const GH_TIMEOUT_MS = 30_000;
 const PR_LIST_LIMIT = 50;
 
-const defaultGhExec: GhExec = async (args, opts) => {
+export const defaultGhExec: GhExec = async (args, opts) => {
   const r = await execa('gh', args, {
     ...(opts?.cwd ? { cwd: opts.cwd } : {}),
     reject: false,
@@ -96,6 +100,39 @@ interface RepoRef {
   arg: string;
   /** `https://<host>/owner/name`. */
   webUrl: string;
+}
+
+/**
+ * The PR states a sync saw, into the activity ledger: every one the ledger does
+ * not hold yet, not only the ones new to the timeline, so a write the ledger
+ * missed once is retried on the next sync. Keyed like the timeline.
+ */
+async function recordPrActivity(
+  wsId: string,
+  events: readonly TimelineEventInput[],
+  repoUrlOf: ReadonlyMap<string, string>,
+): Promise<void> {
+  const ledger = activityLedger();
+  if (!ledger || events.length === 0) return;
+  const held = await ledger.has(events.map((ev) => ev.key!)).catch(() => null);
+  if (!held) return;
+  for (const ev of events) {
+    if (held.has(ev.key!)) continue;
+    const repoUrl = ev.pr ? repoUrlOf.get(ev.pr.repo) : undefined;
+    await recordActivity({
+      id: ev.key!,
+      type: ev.type as ActivityType,
+      actor: 'github',
+      ...(ev.at ? { at: ev.at } : {}),
+      ...(ev.boxId ? { boxId: ev.boxId } : {}),
+      ...(ev.boxName ? { boxName: ev.boxName } : {}),
+      ...(ev.managerId ? { managerId: ev.managerId } : {}),
+      ...(ev.branch ? { branch: ev.branch } : {}),
+      ...(repoUrl ? { repoUrl } : {}),
+      workspaceId: wsId,
+      ...(ev.pr ? { pr: { repo: ev.pr.repo, number: ev.pr.number, url: ev.pr.url } } : {}),
+    });
+  }
 }
 
 export function createGithubPrSync(
@@ -164,10 +201,13 @@ export function createGithubPrSync(
     // nowhere. A project with no remote contributes none.
     const folders = hostEntryOf(ws.hosts, host())?.projectRoots ?? {};
     const repos = new Map<string, RepoRef>();
+    const repoUrlOf = new Map<string, string>();
+    const ledgerRows: TimelineEventInput[] = [];
     for (const project of ws.projects) {
       const ref = await repoOf(project);
       if (!ref) continue;
       repos.set(ref.nameWithOwner, ref);
+      repoUrlOf.set(ref.nameWithOwner, project.repoUrl || ref.webUrl);
       refByProjectId.set(project.id, ref);
       // A box's fact keys its project by the folder's hash, so a hub that HAS
       // the folder indexes the repo under that id too, for the branch links.
@@ -254,9 +294,11 @@ export function createGithubPrSync(
           // anyway; appending it would only re-add what was compacted away.
           if (ev.at && Date.parse(ev.at) < floor) continue;
           if (await appendTimelineEvent(ws.id, ev).catch(() => null)) appended += 1;
+          if (ev.key) ledgerRows.push(ev);
         }
       }
     }
+    await recordPrActivity(ws.id, ledgerRows, repoUrlOf);
     if (appended > 0) deps.notify();
     return 'ok';
   }

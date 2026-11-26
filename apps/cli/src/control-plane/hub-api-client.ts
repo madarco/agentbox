@@ -14,6 +14,7 @@ import { parseAgentStatusEntry } from '@agentbox/core';
 import { openOnHost } from '@agentbox/sandbox-core';
 import type { AgentId, AgentLiveUsageView, AgentMode, AgentStatusMap } from '@agentbox/core';
 import type { CreateJobRequestOpts } from '@agentbox/relay';
+import type { UsageShare, UsageStats } from '@agentbox/usage-view';
 
 /**
  * A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields).
@@ -1059,6 +1060,51 @@ export interface HubApiHistoryFilter {
 
 // ── usage (/api/v1/usage) ──
 
+/** `POST /api/v1/usage/contributions/sync`'s answer (a failure is an error envelope). */
+export type HubApiUsageSyncResult =
+  | { status: 'pushed'; target: string; days: number; intervals: number; bytes: number }
+  | { status: 'unchanged'; target: string }
+  | { status: 'disabled' | 'no-remote' | 'no-machine-id' };
+
+export interface HubApiUsageStatsQuery {
+  /** A local day, or `<n>d`. */
+  since?: string;
+  until?: string;
+  /** IANA zone. */
+  tz?: string;
+  subscription?: string;
+  range?: '7d' | '30d' | 'month' | '90d' | 'year';
+}
+
+export interface HubApiUsageShareListing {
+  id: string;
+  url: string;
+  endpoint: string;
+  origin: string;
+  createdAt: string;
+}
+
+export interface HubApiUsageShareSettings {
+  /** Null when the hub's share.endpoint is invalid; `endpointError` says why. */
+  endpoint: string | null;
+  endpointError?: string;
+  /** The shares this hub made, newest first (never their delete secrets). */
+  shares: HubApiUsageShareListing[];
+  lastName: string | null;
+}
+
+export interface HubApiUsageSharePreview {
+  share: UsageShare;
+  endpoint: string;
+  bytes: number;
+}
+
+export interface HubApiUsageSharePosted {
+  url: string;
+  id: string;
+  createdAt: string;
+}
+
 export type HubApiUsageDimension =
   | 'day'
   | 'agent'
@@ -1812,6 +1858,41 @@ export class HubApiClient {
   }
 
   // ── usage ──
+
+  /**
+   * Push this hub's usage contribution to its configured remote hub now
+   * (usage dashboard Phase 4b). Called on the LOCAL hub.
+   */
+  syncUsageContribution(): Promise<HubApiUsageSyncResult> {
+    return this.request<HubApiUsageSyncResult>('POST', '/usage/contributions/sync');
+  }
+
+  usageStats(q: HubApiUsageStatsQuery = {}): Promise<UsageStats> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') qs.set(k, v);
+    const s = qs.toString();
+    return this.request<UsageStats>('GET', `/usage/stats${s ? `?${s}` : ''}`);
+  }
+
+  usageShareSettings(): Promise<HubApiUsageShareSettings> {
+    return this.request<HubApiUsageShareSettings>('GET', '/usage/share');
+  }
+
+  usageSharePreview(
+    q: HubApiUsageStatsQuery & { name?: string },
+  ): Promise<HubApiUsageSharePreview> {
+    return this.request<HubApiUsageSharePreview>('POST', '/usage/share', { ...q, preview: true });
+  }
+
+  /** Posts the window's public share to the hub's `share.endpoint`; returns the URL. */
+  usageShare(q: HubApiUsageStatsQuery & { name?: string }): Promise<HubApiUsageSharePosted> {
+    return this.request<HubApiUsageSharePosted>('POST', '/usage/share', q);
+  }
+
+  /** Deletes one of the hub's shares on the site that holds it. */
+  usageShareDelete(id: string): Promise<{ id: string; deleted: boolean }> {
+    return this.request('DELETE', `/usage/share/${encodeURIComponent(id)}`);
+  }
 
   usage(q: HubApiUsageQuery = {}): Promise<HubApiUsageReport> {
     const qs = new URLSearchParams();

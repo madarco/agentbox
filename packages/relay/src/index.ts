@@ -354,6 +354,8 @@ export {
 // slice is the only consumer and it needs all three together.
 export * from './workspaces/index.js';
 export * from './checkouts/index.js';
+// The activity ledger (usage dashboard Phase 1): every box's lifecycle, pushes and PRs.
+export * from './activity/index.js';
 export { mergeRegistrationOrigin } from './registration-origin.js';
 export {
   prMergeRepo,
@@ -369,11 +371,19 @@ export {
   type GitPushOrigin,
 } from './timeline-hooks.js';
 export {
+  BOX_PROJECT_KEY,
   HistoryRelay,
   projectCaptureEnabled,
   shippedAgents,
   type HistoryRelayDeps,
 } from './history/history-relay.js';
+export {
+  MATERIALIZED_FILE,
+  readMaterialized,
+  writeMaterialized,
+  type MaterializedEntry,
+  type MaterializedManifest,
+} from './history/materialized.js';
 export { dockerHistorySource, untarSingleFile } from './history/docker-source.js';
 export { collectHostSecrets } from './history/host-secrets.js';
 export { runHistoryRpc } from './history/rpc.js';

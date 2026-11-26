@@ -3,6 +3,23 @@
 // verification checklist asserts every route appears here. Served verbatim at
 // GET /api/v1/openapi.json; GET /api/v1/docs renders it with Scalar.
 
+/** `ACTIVITY_TYPES` from `@agentbox/relay`, spelled out: this file imports nothing (a test pins the two equal). */
+export const ACTIVITY_EVENT_TYPES = [
+  'box.created',
+  'box.ready',
+  'box.failed',
+  'box.started',
+  'box.stopped',
+  'box.paused',
+  'box.resumed',
+  'box.destroyed',
+  'git.push',
+  'pr.opened',
+  'pr.ready',
+  'pr.merged',
+  'pr.closed',
+];
+
 /** The token sums of `GET /usage` (totals and each group). */
 const USAGE_TOTALS = {
   inputTokens: { type: 'integer' },
@@ -1987,6 +2004,378 @@ export function buildOpenApi(): Record<string, unknown> {
             '401': errorResponse,
             '404': errorResponse,
             '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/activity': {
+        get: {
+          tags: ['History'],
+          summary: 'Activity ledger',
+          description:
+            'Box lifecycle (created, ready, failed, started, stopped, paused, resumed, destroyed), pushes (commits, files changed, lines added and removed) and PR states for every box this hub owns, in a workspace or not, oldest first. Rows imported from workspace timelines carry `source: backfill` and no provider or account.',
+          parameters: [
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'ISO-8601, or a duration back from now (`30m`, `24h`, `7d`, `2w`).',
+            },
+            {
+              name: 'until',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Exclusive end, same forms as `since`.',
+            },
+            {
+              name: 'type',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Comma-separated event types, e.g. `box.paused,box.resumed`.',
+            },
+            { name: 'box', in: 'query', schema: { type: 'string' }, description: 'Box id.' },
+            {
+              name: 'order',
+              in: 'query',
+              schema: { type: 'string', enum: ['asc', 'desc'] },
+              description:
+                '`asc` (default) keeps the oldest `limit` events of the window, `desc` the newest. Either way they are returned oldest first.',
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Rows returned; default 1000, max 50000.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Events in the window',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      since: { type: 'string', nullable: true },
+                      until: { type: 'string', nullable: true },
+                      truncated: {
+                        type: 'boolean',
+                        description: 'The window held at least `limit` events.',
+                      },
+                      events: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            type: { type: 'string', enum: ACTIVITY_EVENT_TYPES },
+                            at: { type: 'string' },
+                            actor: { type: 'string' },
+                            boxId: { type: 'string' },
+                            boxName: { type: 'string' },
+                            provider: { type: 'string' },
+                            agent: { type: 'string' },
+                            account: { type: 'string' },
+                            repoUrl: { type: 'string' },
+                            projectKey: { type: 'string' },
+                            workspaceId: { type: 'string' },
+                            managerId: { type: 'string' },
+                            jobId: { type: 'string' },
+                            branch: { type: 'string' },
+                            commits: { type: 'integer' },
+                            filesChanged: { type: 'integer' },
+                            additions: { type: 'integer' },
+                            deletions: { type: 'integer' },
+                            hostOnly: { type: 'boolean' },
+                            pr: {
+                              type: 'object',
+                              properties: {
+                                repo: { type: 'string' },
+                                number: { type: 'integer' },
+                                url: { type: 'string' },
+                              },
+                            },
+                            source: { type: 'string', enum: ['live', 'backfill'] },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/usage/contributions': {
+        post: {
+          tags: ['History'],
+          summary: "Store a PC's usage contribution",
+          description:
+            "A PC's usage metrics for this hub's `/usage/stats` (usage dashboard Phase 4b), sent by a PC's hub configured with this hub as its control box. Body: `UsageContribution` from `@agentbox/usage-view` (`v`, `machineId`, `window`, `tz`, `intervals`, `tokens`, `shipped`, `boxes`, `boxRuns`): ids, enums, dates and numbers only, parsed strict. It replaces what that machine sent for the same days. `/usage/stats` merges it with this hub's rows (intervals unioned; a box this hub holds itself counted once), except under `subscription`.",
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object' } } },
+          },
+          responses: {
+            '200': {
+              description: 'What is now stored for that machine (counts).',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': {
+              description:
+                'Not a valid contribution (unknown key, free text, bad id, window over 400 days).',
+            },
+            '409': { description: 'This hub already holds contributions from 64 machines.' },
+            '413': { description: 'Body over 8 MB.' },
+          },
+        },
+        get: {
+          tags: ['History'],
+          summary: 'Machines that sent usage contributions',
+          description:
+            '`{ machines: [{ machineId, receivedAt, window, tz, intervals, tokenRows, shippedRows, boxes, boxRuns }] }`, counts only.',
+          responses: {
+            '200': {
+              description: 'The machines.',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+          },
+        },
+      },
+      '/usage/contributions/sync': {
+        post: {
+          tags: ['History'],
+          summary: "Push this PC's usage contribution now",
+          description:
+            "On a PC's hub: send this PC's contribution to its configured control box now: the last 35 days (the year on a first push, or after a time-zone change), skipped when unchanged; `?full=1` sends the year whatever changed. A device token may only send its own machine id. `agentbox usage` calls it before reading a remote hub. `status`: `pushed` (with `target`, `days`, `intervals`, `bytes`), `unchanged`, `disabled` (`history.contributeUsage` is false), `no-remote` or `no-machine-id`.",
+          responses: {
+            '200': {
+              description: 'What happened.',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '503': { description: 'The control box refused the push or could not be reached.' },
+          },
+        },
+      },
+      '/usage/stats': {
+        get: {
+          tags: ['History'],
+          summary: 'Usage dashboard stats',
+          description:
+            "The usage dashboard's `UsageStats` for a window (the shape `@agentbox/usage-view` defines). Agent-hours, wall hours, speed-up and peak at once come from the recorded sessions' active intervals: turns at most 10 minutes apart make one interval, which ends one minute after its last turn; a session with no box counts as provider `host`. Commits, lines, files, merged PRs and box-hours come from the activity ledger; a host-only landing counts only when no published push of the same box follows it. Intervals outlive transcript retention. Cached for a minute per window, zone and subscription.",
+          parameters: [
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'First local day (`YYYY-MM-DD`), or a number of days or weeks ending at `until` (`7d`, `2w`, `365d`). Default `30d`.',
+            },
+            {
+              name: 'until',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Last local day, inclusive (`YYYY-MM-DD`). Default today.',
+            },
+            {
+              name: 'tz',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'IANA time zone the days are bucketed in (`Europe/Rome`), correct across DST. Default `UTC`.',
+            },
+            {
+              name: 'range',
+              in: 'query',
+              schema: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
+              description: "The page's range label. Default from the window's length.",
+            },
+            {
+              name: 'subscription',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only sessions and boxes on this subscription, `<agent>/<account>`.',
+            },
+          ],
+          responses: {
+            '200': {
+              description:
+                'The UsageStats: `range`, `hero`, `kpis`, `daily`, `wall`, `streaks`, `gantt`, `sessions`, `punchcard`, `providers`, `feed`, `boxes`, `projects`, `subscriptions`.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      version: { type: 'integer' },
+                      generatedAt: { type: 'string' },
+                      range: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
+                          since: { type: 'string' },
+                          until: { type: 'string' },
+                          today: { type: 'string' },
+                          tz: { type: 'string' },
+                        },
+                      },
+                      hero: {
+                        type: 'object',
+                        properties: {
+                          agentHours: { type: 'number' },
+                          wallHours: { type: 'number' },
+                          speedup: { type: 'number' },
+                          peakAtOnce: { type: 'integer' },
+                          peakDate: { type: 'string', nullable: true },
+                          prsMerged: { type: 'integer' },
+                          commits: { type: 'integer' },
+                          additions: { type: 'integer' },
+                          deletions: { type: 'integer' },
+                          files: { type: 'integer' },
+                          boxes: { type: 'integer' },
+                        },
+                      },
+                      kpis: { type: 'object' },
+                      daily: { type: 'array', items: { type: 'object' } },
+                      wall: { type: 'array', items: { type: 'object' } },
+                      streaks: { type: 'object' },
+                      gantt: { type: 'array', items: { type: 'object' } },
+                      sessions: { type: 'array', items: { type: 'object' } },
+                      punchcard: {
+                        type: 'array',
+                        items: { type: 'array', items: { type: 'number' } },
+                      },
+                      providers: { type: 'array', items: { type: 'object' } },
+                      feed: { type: 'array', items: { type: 'object' } },
+                      boxes: { type: 'array', items: { type: 'object' } },
+                      projects: { type: 'array', items: { type: 'object' } },
+                      subscriptions: { type: 'array', items: { type: 'object' } },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/usage/share': {
+        get: {
+          tags: ['History'],
+          summary: 'Usage shares',
+          description:
+            'The site a usage share is posted to (`share.endpoint`), the shares this hub made (newest first, on any site) and the display name of the last one. An invalid `share.endpoint` gives `endpoint: null` and `endpointError`, and the shares are still listed. Delete secrets are never returned.',
+          responses: {
+            '200': {
+              description: 'Endpoint, past shares and the last name',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      endpoint: { type: 'string', nullable: true },
+                      endpointError: { type: 'string' },
+                      shares: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            url: { type: 'string' },
+                            endpoint: { type: 'string' },
+                            origin: { type: 'string' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                      lastName: { type: 'string', nullable: true },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        post: {
+          tags: ['History'],
+          summary: 'Share usage publicly',
+          description:
+            'Builds the public `UsageShare` of a window (metrics, dates and agent/provider ids plus an optional display name; no box, project, branch, PR or session names) and posts it to `share.endpoint` (default `https://agent-box.sh/api/share`) from the hub. The site answers with a random id (the page is `/s/<id>`) and a delete secret, which the hub keeps in `~/.agentbox/hub/share.json` (0600) and never returns. The name is plain text on the page, not an identity: never in the URL, never unique. With `preview: true` nothing is posted and the share is returned.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string', pattern: '^[a-z0-9-]{1,39}$' },
+                    preview: { type: 'boolean' },
+                    since: { type: 'string' },
+                    until: { type: 'string' },
+                    tz: { type: 'string' },
+                    range: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
+                    subscription: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Preview: `{ share, endpoint, bytes }`, nothing posted',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '201': {
+              description: 'Posted: `{ url, id, createdAt }`',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      url: { type: 'string' },
+                      id: { type: 'string' },
+                      createdAt: { type: 'string', format: 'date-time' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '413': errorResponse,
+            '429': errorResponse,
+            '502': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/usage/share/{id}': {
+        delete: {
+          tags: ['History'],
+          summary: 'Delete a usage share',
+          description:
+            "Deletes one of this hub's shares on the site that holds it, with the delete secret kept in `share.json`, then forgets it. `deleted: false` when the site no longer had it (it is forgotten too). A share the site refuses to delete (wrong secret) or a site that cannot be reached leaves the record in place.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': {
+              description: '`{ id, deleted }`',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { id: { type: 'string' }, deleted: { type: 'boolean' } },
+                  },
+                },
+              },
+            },
+            '404': errorResponse,
+            '409': errorResponse,
+            '429': errorResponse,
+            '502': errorResponse,
             '503': errorResponse,
           },
         },

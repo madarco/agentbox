@@ -363,6 +363,18 @@ export interface UserConfig {
      * over the global value.
      */
     hostSessions?: boolean;
+    /**
+     * Write box claude sessions from the hub into this PC's
+     * `~/.claude/projects/<project>/` (default true), so `claude --resume`
+     * finds them. Global, or per project.
+     */
+    materialize?: boolean;
+    /**
+     * With a remote control box configured, push this PC's usage metrics (active
+     * intervals, token and shipped totals, ids only, never transcripts) to it so its
+     * Usage page counts this PC's local boxes and sessions (default true).
+     */
+    contributeUsage?: boolean;
   };
   update?: {
     /**
@@ -399,6 +411,10 @@ export interface UserConfig {
      * automatic first seed will upload to the hub's library.
      */
     maxSkillBytes?: number;
+  };
+  share?: {
+    /** Where the hub posts a usage share (`agentbox usage share`, the Usage page's Share). */
+    endpoint?: string;
   };
 }
 
@@ -572,6 +588,8 @@ export interface EffectiveConfig {
     capture: boolean;
     retentionDays: number;
     hostSessions: boolean;
+    materialize: boolean;
+    contributeUsage: boolean;
   };
   update: {
     check: boolean;
@@ -588,6 +606,9 @@ export interface EffectiveConfig {
   };
   skills: {
     maxSkillBytes: number;
+  };
+  share: {
+    endpoint: string;
   };
 }
 
@@ -788,6 +809,8 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     capture: true,
     retentionDays: 90,
     hostSessions: false,
+    materialize: true,
+    contributeUsage: true,
   },
   update: {
     check: true,
@@ -801,6 +824,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   skills: {
     // 50 MB: the largest real skill measured in Phase 0 is 23 MB.
     maxSkillBytes: 50 * 1024 * 1024,
+  },
+  share: {
+    endpoint: 'https://agent-box.sh/api/share',
   },
 };
 
@@ -1541,6 +1567,18 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
       "Ship the agent sessions run directly on this PC (not in a box) to the hub's session history (default false). Set globally, it turns the relay's host-session watcher on for every project agentbox knows on this PC; set in a project's config, true allows and false denies that project whatever the global value. Only registered project folders are read. Sessions go to the configured hub (relay.controlPlaneUrl, with this PC's device token) or the local one. `agentbox sessions host` toggles it and shows the watcher's status.",
   },
   {
+    key: 'history.materialize',
+    type: 'bool',
+    description:
+      "Write the claude sessions of this project's boxes from the hub's session history into this PC's `~/.claude/projects/<project folder key>/` (default true), so `claude --resume` in the project lists them next to your own. The copy is the redacted one the hub stores. It is rewritten when the session changes and written again when it is missing, including after claude's own `cleanupPeriodDays` removed it. A file claude wrote on this PC is never overwritten. Needs the hub to know the project's folder on this machine (a box created from it, a registered project, or the checkouts registry). Set false globally or in a project's config to stop it; files already written stay.",
+  },
+  {
+    key: 'history.contributeUsage',
+    type: 'bool',
+    description:
+      "With a remote control box configured (relay.controlPlaneUrl), push this PC's usage metrics to it every few minutes so its Usage page counts this PC's local docker boxes and sessions (default true). Only metrics leave the PC: active intervals, token totals per day, push/commit/PR counts per day and box running time, keyed by box and session ids, agent and provider. No transcripts, box names, projects or branches. Set false to keep them on this PC; read by this PC's hub.",
+  },
+  {
     key: 'update.check',
     type: 'bool',
     description:
@@ -1576,6 +1614,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       "Largest skill (total bytes of its files, default 52428800 = 50 MB) that `agentbox skills` and the automatic first seed upload to the hub's skills library. A bigger skill is listed and skipped. The hub's own bound is its custody blob cap (AGENTBOX_CUSTODY_MAX_BLOB_BYTES, 100 MiB).",
+  },
+  {
+    key: 'share.endpoint',
+    type: 'string',
+    description:
+      "Where the hub posts a public usage share (`agentbox usage share`, the Usage page's Share button). Default `https://agent-box.sh/api/share`; point it at a preview deployment's `/api/share` to test. Must be https (http only for localhost). Read by the hub from the GLOBAL config of the machine it runs on.",
   },
 ];
 
