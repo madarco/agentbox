@@ -250,6 +250,40 @@ describe('postUsageShare', () => {
     expect((await claims.known('https://agent-box.sh')).lastHandle).toBeNull();
   });
 
+  it('keeps a minted secret even when the returned URL is on another site', async () => {
+    const f = fakeFetch(() =>
+      Response.json(
+        { url: 'https://evil.example/u/marco/1', n: 1, claimSecret: 'minted' },
+        { status: 201 },
+      ),
+    );
+    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toThrow(
+      /claimed and its secret kept/,
+    );
+    expect(await claims.secret('https://agent-box.sh', 'marco')).toBe('minted');
+  });
+
+  it('says a lost answer may still have claimed the handle', async () => {
+    const timeout = (() =>
+      Promise.reject(Object.assign(new Error('t'), { name: 'TimeoutError' }))) as typeof fetch;
+    await expect(postUsageShare(deps({ fetch: timeout }), 'marco')).rejects.toThrow(
+      /may have been published and "marco" claimed anyway/,
+    );
+    await claims.save('https://agent-box.sh', 'marco', 's');
+    await expect(postUsageShare(deps({ fetch: timeout }), 'marco')).rejects.toThrow(
+      /check https:\/\/agent-box.sh\/u\/marco before retrying/,
+    );
+  });
+
+  it('never quotes a corrupt claim file in the error', async () => {
+    await claims.save('https://agent-box.sh', 'x', 's');
+    await writeFile(path, '{"claims": {"k": {"secret": "abcdef-leak');
+    const err = (await claims.known('https://agent-box.sh').catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(ShareError);
+    expect(err.message).not.toContain('abcdef');
+    expect(err.message).toContain('not valid JSON');
+  });
+
   it('does not overwrite a corrupt claim file', async () => {
     await claims.save('https://agent-box.sh', 'x', 's');
     await writeFile(path, '{ not json');

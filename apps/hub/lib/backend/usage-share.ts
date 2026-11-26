@@ -4,7 +4,7 @@
 // `POST /api/v1/usage/share`. The first post for a handle returns a claim secret;
 // it stays in `~/.agentbox/hub/share.json` (0600) and goes out only as the Bearer
 // of later posts for that handle to the same site. It is never returned or logged.
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { HANDLE_RE, toShare, type UsageShare, type UsageStats } from '@agentbox/usage-view';
 
@@ -103,9 +103,11 @@ export function fileClaimStore(path: string): ClaimStore {
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, claims: {} };
       // A corrupt file must not be overwritten: it may hold a secret worth recovering.
+      // No parse message: JSON.parse quotes the file, which may be part of a secret.
+      const code = (e as NodeJS.ErrnoException).code;
       throw new ShareError(
         'backend_unavailable',
-        `${path} could not be read (${(e as Error).message}); fix or move it`,
+        `${path} could not be read${code ? ` (${code})` : ' (not valid JSON)'}; fix or move it`,
       );
     }
   };
@@ -115,9 +117,14 @@ export function fileClaimStore(path: string): ClaimStore {
       fn(f);
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       const tmp = `${path}.${String(process.pid)}.tmp`;
-      await writeFile(tmp, `${JSON.stringify(f, null, 2)}\n`, { mode: 0o600 });
-      await chmod(tmp, 0o600);
-      await rename(tmp, path);
+      try {
+        await writeFile(tmp, `${JSON.stringify(f, null, 2)}\n`, { mode: 0o600 });
+        await chmod(tmp, 0o600);
+        await rename(tmp, path);
+      } catch (e) {
+        await rm(tmp, { force: true }).catch(() => undefined);
+        throw e;
+      }
     });
     chain = next.catch(() => undefined);
     return next;
@@ -230,11 +237,17 @@ export async function postUsageShare(
     });
   } catch (e) {
     const timedOut = e instanceof Error && e.name === 'TimeoutError';
+    // The site may have stored the share before the answer was lost, and a post has
+    // no idempotency key: a first share may have claimed the handle without the
+    // secret ever reaching the hub.
+    const maybe = secret
+      ? `the share may have been published anyway; check ${endpoint.origin}/u/${handle} before retrying`
+      : `the share may have been published and "${handle}" claimed anyway: if a retry says the handle is already claimed, that is why, and its secret is lost`;
     throw new ShareError(
       'upstream_error',
       timedOut
-        ? `${site} did not answer within ${String(POST_TIMEOUT_MS / 1000)}s`
-        : `${site} could not be reached: ${e instanceof Error ? e.message : String(e)}`,
+        ? `${site} did not answer within ${String(POST_TIMEOUT_MS / 1000)}s; ${maybe}`
+        : `${site} could not be reached (${e instanceof Error ? e.message : String(e)}); ${maybe}`,
     );
   }
 
@@ -279,6 +292,8 @@ export async function postUsageShare(
   } catch {
     throw new ShareError('upstream_error', `${site} answered with something other than JSON`);
   }
+  const n = typeof body.n === 'number' && Number.isSafeInteger(body.n) ? body.n : 0;
+  const claimSecret = typeof body.claimSecret === 'string' ? body.claimSecret : '';
   const url = typeof body.url === 'string' ? body.url : '';
   let parsed: URL | null = null;
   try {
@@ -286,24 +301,26 @@ export async function postUsageShare(
   } catch {
     parsed = null;
   }
-  if (!parsed || parsed.origin !== endpoint.origin) {
-    throw new ShareError('upstream_error', `${site} did not return a share URL on ${site}`);
-  }
-  const n = typeof body.n === 'number' && Number.isSafeInteger(body.n) ? body.n : 0;
-  const claimSecret = typeof body.claimSecret === 'string' ? body.claimSecret : '';
+  const where = parsed && parsed.origin === endpoint.origin ? parsed.href : null;
+  // Keep a secret the site minted before anything else can fail: the site has
+  // claimed the handle, and without the secret every later share of it is refused.
   if (claimSecret) {
     try {
       await deps.claims.save(endpoint.origin, handle, claimSecret);
     } catch (e) {
-      // The share is public and the handle is claimed: say so, so a retry does not
-      // read as "someone else has this handle".
       const kept = await deps.claims.salvage?.(endpoint.origin, handle, claimSecret);
       throw new ShareError(
         'backend_unavailable',
-        `shared at ${parsed.href}, but the handle's claim secret could not be saved (${e instanceof Error ? e.message : String(e)})${kept ? `; it was written to ${kept}: move it into share.json, or later shares of "${handle}" will be refused` : `; later shares of "${handle}" will be refused`}`,
+        `${where ? `shared at ${where}` : `${site} stored the share`}, but the handle's claim secret could not be saved (${e instanceof Error ? e.message : String(e)})${kept ? `; it was written to ${kept}: move it into share.json, or later shares of "${handle}" will be refused` : `; later shares of "${handle}" will be refused`}`,
       );
     }
   }
+  if (!where) {
+    throw new ShareError(
+      'upstream_error',
+      `${site} did not return a share URL on ${site}${claimSecret ? ` (the handle "${handle}" is claimed and its secret kept)` : ''}`,
+    );
+  }
   await deps.claims.remember(endpoint.origin, handle).catch(() => undefined);
-  return { url: parsed.href, handle, n, claimedNow: claimSecret !== '' };
+  return { url: where, handle, n, claimedNow: claimSecret !== '' };
 }
