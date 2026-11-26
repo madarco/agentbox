@@ -27,6 +27,10 @@ Open items found while building the phases of
 - **A purged session that is shipped again** recomputes its spans from the first
   remaining turn on; a purged span that overlaps the new turns loses its purged
   part. Rare (a transcript has to come back after 90 days).
+- **Ledger rows of one millisecond come back in id order.** `list` orders by
+  `at, id`, and ids are random for rows with no source key, so a pause and a
+  resume in the same millisecond can read reversed (box-hours then miss a
+  zero-length run; harmless). An insertion sequence column would fix it.
 - **Spans are cut at one idle gap.** `history_spans` is computed at the 10-minute
   default; `usageSpans` refuses another gap. A configurable gap would need a
   recompute of every session.
