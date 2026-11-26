@@ -296,7 +296,10 @@ Decided 2026-11-26 with the owner.
     each load their own copy of the module. `POST /api/v1/usage/contributions` (size-checked
     while reading), `GET` lists counts per machine. `/usage/stats` merges every
     machine's rows except its own machine id's, and none under `?subscription=`.
-    A device token may only post its own machine id.
+    A device token may only post its own machine id. `/usage/share` (Phase 6)
+    builds from the same inputs (`hubUsageStatsDeps`), so a share from the control
+    box carries the PCs' numbers too, and the two routes never cache different
+    answers for one window.
     Double counting is avoided per kind: a box whose sessions the control box
     holds drops the PC's intervals and tokens for it, a box with `git.push` rows
     there drops the PC's push counts, the same for merged PRs and lifecycle rows,
