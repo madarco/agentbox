@@ -1300,7 +1300,7 @@ export function buildOpenApi(): Record<string, unknown> {
                             auth: {
                               type: 'object',
                               description:
-                                "Whether the credential works, from what the boxes saw. `revoked`: a session on this account had its credential refused (claude's `authentication_failed` transcript line, for a login, setup token or API key alike) and no real reply or new stored secret since; renew it. `expiring`: a setup token in the last 30 days of its one-year life. `ok`: no evidence against it.",
+                                "Whether the credential works, from what the boxes saw. `revoked`: a box on this account had its credential refused (claude's `authentication_failed` transcript line, for a login, setup token or API key alike) and neither a real reply in that same box nor a new stored secret since; another box's reply does not clear it. Renew it. `expiring`: a setup token in the last 30 days of its one-year life. `ok`: no evidence against it.",
                               properties: {
                                 state: { type: 'string', enum: ['ok', 'expiring', 'revoked'] },
                                 since: {
@@ -1310,7 +1310,8 @@ export function buildOpenApi(): Record<string, unknown> {
                                 },
                                 box: {
                                   type: 'string',
-                                  description: 'The box whose agent saw the refusal.',
+                                  description:
+                                    'The box still failing (the newest, when several are).',
                                 },
                                 detail: {
                                   type: 'string',
@@ -1351,8 +1352,13 @@ export function buildOpenApi(): Record<string, unknown> {
                           "This hub machine's id. Custody holds a named account's login under `agents/<agent>/accounts/<machine>/<id>/`, so a client joins those entries to these accounts only when the machine matches.",
                       },
                       defaults: ACCOUNT_DEFAULTS_SCHEMA,
+                      defaultsError: {
+                        type: 'string',
+                        description:
+                          'Set instead of `defaults` (and no account carries `default`) when the hub cannot read the config.',
+                      },
                     },
-                    required: ['accounts', 'agents', 'defaults'],
+                    required: ['accounts', 'agents'],
                   },
                 },
               },
@@ -1364,7 +1370,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Accounts'],
           summary: 'Add a setup token or API key account',
           description:
-            'Store a pasteable account (`api-key` / `setup-token`). A `login` is interactive and runs on the machine (`agentbox credentials add <agent>/<id> --login`), so it is refused here. The token is never echoed back.',
+            'Store a pasteable account (`api-key` / `setup-token`). A `login` is interactive and runs on the machine (`agentbox credentials add <agent>/<id> --login`), so it is refused here. With `replace: true` the token goes over an existing account of the same kind (a rotated or expiring setup token), keeping its label; the boxes on it stay on it. `409` when the id exists and `replace` is not set, or the existing account is of another kind; `404` for `replace` on no account. The token is never echoed back.',
           requestBody: {
             required: true,
             content: {
@@ -1377,6 +1383,11 @@ export function buildOpenApi(): Record<string, unknown> {
                     kind: { type: 'string', enum: ['api-key', 'setup-token'] },
                     token: { type: 'string', writeOnly: true },
                     label: { type: 'string' },
+                    replace: {
+                      type: 'boolean',
+                      description:
+                        'A new token for an existing account of the same kind (backs `credentials add --replace` and renewing a pasted kind)',
+                    },
                   },
                   required: ['agent', 'id', 'kind', 'token'],
                 },
@@ -1387,6 +1398,7 @@ export function buildOpenApi(): Record<string, unknown> {
             '200': { description: 'The stored account (no secret)' },
             '400': errorResponse,
             '401': errorResponse,
+            '404': errorResponse,
             '409': errorResponse,
           },
         },

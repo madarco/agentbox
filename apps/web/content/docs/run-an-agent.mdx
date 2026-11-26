@@ -159,7 +159,10 @@ agentbox credentials rm claude/work   # its stored login and config volume (not 
 
 The STATUS column reads `revoked` when a box's agent had the account's login
 refused (Claude's "Login expired · Please run /login" after another box's
-renewal signed it out, or a revoked setup token or API key), `at limit` when a
+renewal signed it out, or a revoked setup token or API key) and has not had a
+real reply since, nor has the stored login been renewed. Each box counts on its
+own: another box working on the same account does not clear it, and the status
+names the box that is still failing. It reads `at limit` when a
 plan window is full, and `expiring` for a setup token in the last 30 days of its
 year. A revoked login comes back with one command:
 

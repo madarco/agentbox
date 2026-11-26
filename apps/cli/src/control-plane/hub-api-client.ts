@@ -599,8 +599,9 @@ export interface HubApiAccountDefault {
 export interface HubApiAccountList {
   accounts: HubApiAccount[];
   agents: Array<{ id: string; kinds: Array<'login' | 'setup-token' | 'api-key'> }>;
-  /** Absent from an older hub. */
+  /** Absent from an older hub, or when the config can't be read (`defaultsError`). */
   defaults?: Record<string, HubApiAccountDefault>;
+  defaultsError?: string;
 }
 
 export interface HubApiCheckoutReport {
@@ -2168,13 +2169,20 @@ export class HubApiClient {
   async removeAccount(
     agent: string,
     id: string,
-  ): Promise<{ volumeRemoved: boolean; volumeError?: string; defaultsCleared?: string[] }> {
+  ): Promise<{
+    volumeRemoved: boolean;
+    volumeError?: string;
+    defaultsCleared?: string[];
+    defaultsError?: string;
+  }> {
     return this.request<{
       ok: true;
       volumeRemoved: boolean;
       volumeError?: string;
       /** The `<agent>.account` settings that named it: `global` or a project folder. */
       defaultsCleared?: string[];
+      /** Those it could not check (an unreadable config). */
+      defaultsError?: string;
     }>('DELETE', `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`);
   }
 

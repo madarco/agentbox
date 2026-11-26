@@ -1,7 +1,7 @@
 // The default account per agent (credentials-tui Phase 1): `GET/PUT
 // /api/v1/accounts/default` and the `default`/`defaults` marks on the list.
 // Config paths are fixed from $HOME at import, so HOME is moved first.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,7 +46,7 @@ afterAll(() => rmSync(HOME, { recursive: true, force: true }));
 describe('account defaults', () => {
   it('is the default login with nothing set; no named account is marked', async () => {
     const r = await backend().listAccounts();
-    expect(r.defaults.claude).toEqual({ account: 'default', source: 'default' });
+    expect(r.defaults?.claude).toEqual({ account: 'default', source: 'default' });
     expect(r.accounts.filter((a) => a.default)).toEqual([]);
   });
 
@@ -69,7 +69,7 @@ describe('account defaults', () => {
     expect(mark('home')).toEqual({ global: true });
     expect(mark('default')).toBeUndefined();
     // Without the project, only the global setting counts.
-    expect((await b.listAccounts()).defaults.claude?.account).toBe('home');
+    expect((await b.listAccounts()).defaults?.claude?.account).toBe('home');
 
     const cleared = await b.setAccountDefault({
       agent: 'claude',
@@ -79,7 +79,7 @@ describe('account defaults', () => {
     });
     expect(cleared.ok && cleared.value.claude).toMatchObject({ account: 'home', source: 'global' });
     await b.setAccountDefault({ agent: 'claude', account: null, scope: 'global' });
-    expect((await b.listAccounts()).defaults.claude?.source).toBe('default');
+    expect((await b.listAccounts()).defaults?.claude?.source).toBe('default');
   });
 
   it('drops the settings that name an account when it is removed', async () => {
@@ -90,6 +90,21 @@ describe('account defaults', () => {
     expect(r.ok && r.value.defaultsCleared).toHaveLength(2);
     const d = await b.getAccountDefaults({ project });
     expect(d.ok && d.value.claude).toEqual({ account: 'default', source: 'default' });
+  });
+
+  it('an unreadable config is an error, never every agent on `default`', async () => {
+    const b = backend();
+    await b.setAccountDefault({ agent: 'claude', account: 'work', scope: 'global' });
+    writeFileSync(join(HOME, '.agentbox', 'config.yaml'), 'claude: [unclosed\n');
+    const list = await b.listAccounts();
+    expect(list.defaults).toBeUndefined();
+    expect(list.defaultsError).toMatch(/cannot read the config/);
+    expect(list.accounts.filter((a) => a.default)).toEqual([]);
+    const d = await b.getAccountDefaults();
+    expect(d.ok).toBe(false);
+    // Removing still removes, and the settings it could not check are a warning.
+    const r = await b.removeAccount('claude', 'work');
+    expect(r.ok && r.value.defaultsError).toMatch(/could not check/);
   });
 
   it('refuses an unknown account, agent, scope or project', async () => {

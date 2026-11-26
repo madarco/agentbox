@@ -216,12 +216,29 @@ export interface HistoryAccountLimits {
  * (docs/credentials-tui-plan.md): the newest refused credential and the newest
  * real reply. ISO times; null when no session reported one.
  */
+/**
+ * A subscription's credential evidence, per box: the box's newest refused
+ * credential and its newest real reply, each recorded under the account the
+ * box ran on when the transcript line shipped.
+ */
 export interface HistoryAccountAuth {
-  failedAt: string | null;
-  error: string | null;
-  /** The box whose session reported the newest failure. */
-  failedBox: string | null;
-  okAt: string | null;
+  boxes: Array<{
+    box: string;
+    failedAt: string | null;
+    error: string | null;
+    okAt: string | null;
+  }>;
+}
+
+/** One auth event, as ingest records it. */
+export interface HistoryAuthEvent {
+  /** `<agent>/<account>`. */
+  account: string;
+  /** The box's name (its id when it has none). */
+  box: string;
+  kind: 'fail' | 'ok';
+  ts: string;
+  error?: string;
 }
 
 /**
@@ -319,6 +336,7 @@ export interface HistoryRepo {
   accountLimits(account: string): Promise<HistoryAccountLimits | null>;
   /** Credential evidence for subscription `account` (`agent/account`). */
   accountAuth(account: string): Promise<HistoryAccountAuth>;
+  recordAuth(e: HistoryAuthEvent): Promise<void>;
   /** A session's live-status inputs, or null when it has none. */
   liveRow(key: string): Promise<HistoryLiveRow | null>;
   /** The most recent session `agent` ran in box `boxId`, by its own last activity. */
@@ -465,6 +483,36 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return await deps.accountOf(boxId, agent);
     } catch {
       return null;
+    }
+  };
+
+  /**
+   * Credential evidence off freshly shipped records: a refusal, or a real reply
+   * (output tokens). Keyed by the account the box runs on now, which is the
+   * one it ran on when the line was written (lines ship as they land). A
+   * re-parse never comes here: its lines are old, the box's account may not be.
+   */
+  const recordAuthOf = async (
+    records: readonly HistoryRecord[],
+    origin: { boxId?: string; boxName?: string },
+    agent: string,
+  ): Promise<void> => {
+    const events = records.filter(
+      (r) => r.kind === 'auth' || (r.kind === 'usage' && r.outputTokens > 0),
+    );
+    if (events.length === 0 || !origin.boxId) return;
+    const account = await accountFor(origin.boxId, agent);
+    if (!account) return;
+    const box = origin.boxName ?? origin.boxId;
+    // A line without its own time is dated by its arrival, so it still orders
+    // against the stored secret's write time.
+    const at = (ts: string | undefined): string => ts ?? new Date(now()).toISOString();
+    for (const r of events) {
+      if (r.kind === 'auth') {
+        await repo.recordAuth({ account, box, kind: 'fail', ts: at(r.ts), error: r.error });
+      } else if (r.kind === 'usage') {
+        await repo.recordAuth({ account, box, kind: 'ok', ts: at(r.ts) });
+      }
     }
   };
 
@@ -644,6 +692,7 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         );
         parseState = r.state;
         if (r.records.length > 0) await repo.insertRecords(file.sessionKey, file.id, r.records);
+        if (!host) await recordAuthOf(r.records, frame.origin, frame.agent);
         await repo.refreshSessionTotals(file.sessionKey, now());
         if (r.records.length > 0) sessionUpdated(file.sessionKey, host ? null : boxId);
       } catch (e) {

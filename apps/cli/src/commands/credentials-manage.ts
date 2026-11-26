@@ -53,8 +53,13 @@ function agentId(name: string): string {
  * The hub's list, or undefined when the hub could not answer (already
  * reported). `project` marks this folder's defaults too.
  */
+/** The list; a config the hub can't read is a warning (no default marks then). */
 async function loadList(project?: string): Promise<HubApiAccountList | undefined> {
-  return withHubClient(LOCAL, (client) => client.listAccounts(project ? { project } : {}));
+  const list = await withHubClient(LOCAL, (client) =>
+    client.listAccounts(project ? { project } : {}),
+  );
+  if (list?.defaultsError) log.warn(`${list.defaultsError}; defaults are not shown`);
+  return list;
 }
 
 // ---- list ------------------------------------------------------------------
@@ -64,7 +69,14 @@ export async function listCommand(opts: { json?: boolean }): Promise<void> {
   if (!list) return;
   if (opts.json) {
     process.stdout.write(
-      JSON.stringify({ accounts: list.accounts, defaults: list.defaults ?? {} }, null, 2) + '\n',
+      JSON.stringify(
+        {
+          accounts: list.accounts,
+          ...(list.defaults ? { defaults: list.defaults } : { defaultsError: list.defaultsError }),
+        },
+        null,
+        2,
+      ) + '\n',
     );
     return;
   }
@@ -183,6 +195,15 @@ export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
   const label = opts.label?.trim() || undefined;
   if (kind === 'login') {
     if (opts.replace) throw new Error('--replace is for a setup token or API key; renew a login');
+    // Signing an existing login in again here would skip the push to its boxes.
+    const existing = (await loadList())?.accounts.find((a) => a.agent === agent && a.id === id);
+    if (existing) {
+      throw new Error(
+        existing.kind === 'login'
+          ? `${agent}/${id} already exists; sign it in again with \`agentbox credentials renew ${agent}/${id}\``
+          : `${agent}/${id} already exists as a ${KIND_TEXT[existing.kind]}; remove it first`,
+      );
+    }
     await addLogin(agent, id, label, opts);
   } else if (!(await addPasted(agent, id, kind, label, opts.replace === true))) {
     process.exitCode = 1;
@@ -304,6 +325,7 @@ export async function removeCommand(ref: string, opts: { yes?: boolean }): Promi
         : `removed ${agent}/${id}`,
     );
     if (r.volumeError) log.warn(r.volumeError);
+    if (r.defaultsError) log.warn(r.defaultsError);
     if (r.defaultsCleared?.length) {
       log.info(
         `new ${agent} boxes there now use ${agent}/default: ${r.defaultsCleared.map((d) => (d === 'global' ? 'the global setting' : d)).join(', ')}`,
@@ -362,7 +384,11 @@ export async function useCommand(ref: string | undefined, opts: UseOpts): Promis
       throw new Error('name the agent to clear, e.g. `credentials use claude --clear`');
     const list = await loadList(project);
     if (!list) return;
-    const defaults = list.defaults ?? {};
+    if (!list.defaults) {
+      process.exitCode = 1;
+      return;
+    }
+    const defaults = list.defaults;
     if (opts.json) {
       process.stdout.write(JSON.stringify({ defaults }, null, 2) + '\n');
       return;

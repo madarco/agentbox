@@ -107,6 +107,14 @@ CREATE TABLE IF NOT EXISTS history_usage (
   ts TEXT,
   PRIMARY KEY (session_key, message_id)
 );
+CREATE TABLE IF NOT EXISTS history_auth (
+  account TEXT NOT NULL,
+  box TEXT NOT NULL,
+  fail_ts TEXT,
+  fail_error TEXT,
+  ok_ts TEXT,
+  PRIMARY KEY (account, box)
+);
 CREATE TABLE IF NOT EXISTS history_live (
   session_key TEXT PRIMARY KEY,
   activity TEXT,
@@ -135,10 +143,7 @@ type Row = Record<string, unknown>;
 const n = (v: unknown): number => Number(v ?? 0);
 const nowMs = (): number => Date.now();
 
-type LiveRecord = Extract<
-  HistoryRecord,
-  { kind: 'activity' | 'totals' | 'context' | 'limits' | 'auth' }
->;
+type LiveRecord = Extract<HistoryRecord, { kind: 'activity' | 'totals' | 'context' | 'limits' }>;
 
 /**
  * Upserts of the live row. The newest activity and context win by the record's
@@ -147,8 +152,6 @@ type LiveRecord = Extract<
  */
 function liveStatements(db: Db): {
   apply(key: string, r: LiveRecord, now: number): void;
-  /** A real reply landed (a usage record with output): the credential works. */
-  authOk(key: string, ts: string | undefined, now: number): void;
 } {
   const ensure = db.prepare(
     'INSERT OR IGNORE INTO history_live (session_key, updated_at) VALUES (?, ?)',
@@ -171,27 +174,10 @@ function liveStatements(db: Db): {
     `UPDATE history_live SET limits = ?2, limits_ts = ?3, updated_at = ?4
      WHERE session_key = ?1 AND (?3 IS NULL OR limits_ts IS NULL OR limits_ts <= ?3)`,
   );
-  const auth = db.prepare(
-    `UPDATE history_live SET auth_error = ?2, auth_ts = ?3, updated_at = ?4
-     WHERE session_key = ?1 AND (auth_ts IS NULL OR auth_ts <= ?3)`,
-  );
-  const authOk = db.prepare(
-    `UPDATE history_live SET auth_ok_ts = ?2, updated_at = ?3
-     WHERE session_key = ?1 AND (auth_ok_ts IS NULL OR auth_ok_ts <= ?2)`,
-  );
-  // A record without its own time is dated by its arrival, so it still orders
-  // against the stored secret's write time.
-  const iso = (ts: string | undefined, now: number): string => ts ?? new Date(now).toISOString();
   return {
-    authOk(key, ts, now) {
-      ensure.run(key, now);
-      authOk.run(key, iso(ts, now), now);
-    },
     apply(key, r, now) {
       ensure.run(key, now);
-      if (r.kind === 'auth') {
-        auth.run(key, r.error, iso(r.ts, now), now);
-      } else if (r.kind === 'activity') {
+      if (r.kind === 'activity') {
         if (r.plan) plan.run(key, r.text || null, now);
         else if (r.text) activity.run(key, r.text, r.ts ?? null, now);
       } else if (r.kind === 'context') {
@@ -349,9 +335,6 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   const live = columns(db, 'history_live');
   if (!live.has('limits')) db.exec('ALTER TABLE history_live ADD COLUMN limits TEXT');
   if (!live.has('limits_ts')) db.exec('ALTER TABLE history_live ADD COLUMN limits_ts TEXT');
-  for (const col of ['auth_error', 'auth_ts', 'auth_ok_ts']) {
-    if (!live.has(col)) db.exec(`ALTER TABLE history_live ADD COLUMN ${col} TEXT`);
-  }
   // Per-account reads (limits, auth) filter on it on every accounts listing.
   db.exec('CREATE INDEX IF NOT EXISTS history_sessions_account ON history_sessions(account)');
   // Hub settings 3a: an account is stamped as its subscription, `agent/account`.
@@ -582,16 +565,21 @@ export async function openSqliteHistoryRepo(
      WHERE s.account = ? AND l.limits IS NOT NULL
      ORDER BY COALESCE(l.limits_ts, '') DESC, l.updated_at DESC LIMIT 1`,
   );
-  const authFailGet = db.prepare(
-    `SELECT l.auth_ts, l.auth_error, s.box_name FROM history_live l
-       JOIN history_sessions s ON s.key = l.session_key
-     WHERE s.account = ? AND l.auth_ts IS NOT NULL
-     ORDER BY l.auth_ts DESC LIMIT 1`,
+  // Auth evidence is per (account, box), stamped at ingest with the account
+  // the box ran on then: a session resumed on another account after a switch
+  // keeps its first `history_sessions.account`, its new events do not.
+  const authFail = db.prepare(
+    `INSERT INTO history_auth (account, box, fail_ts, fail_error) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(account, box) DO UPDATE SET fail_ts = ?3, fail_error = ?4
+     WHERE history_auth.fail_ts IS NULL OR history_auth.fail_ts <= ?3`,
   );
-  const authOkGet = db.prepare(
-    `SELECT MAX(l.auth_ok_ts) AS ok FROM history_live l
-       JOIN history_sessions s ON s.key = l.session_key
-     WHERE s.account = ?`,
+  const authOk = db.prepare(
+    `INSERT INTO history_auth (account, box, ok_ts) VALUES (?1, ?2, ?3)
+     ON CONFLICT(account, box) DO UPDATE SET ok_ts = ?3
+     WHERE history_auth.ok_ts IS NULL OR history_auth.ok_ts <= ?3`,
+  );
+  const authGet = db.prepare(
+    'SELECT box, fail_ts, fail_error, ok_ts FROM history_auth WHERE account = ? ORDER BY box',
   );
   const liveSums = db.prepare(
     `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
@@ -843,19 +831,19 @@ export async function openSqliteHistoryRepo(
               epochMs(r.ts),
               r.costUsd ?? null,
             );
-            if (r.outputTokens > 0) live.authOk(sessionKey, r.ts, nowMs());
             continue;
           }
           if (
             r.kind === 'activity' ||
             r.kind === 'totals' ||
             r.kind === 'context' ||
-            r.kind === 'limits' ||
-            r.kind === 'auth'
+            r.kind === 'limits'
           ) {
             live.apply(sessionKey, r, nowMs());
             continue;
           }
+          // Auth evidence goes through `recordAuth`, keyed by the box's account.
+          if (r.kind === 'auth') continue;
           if (r.kind === 'meta') {
             if (r.title) meta.run(r.title, sessionKey);
             continue;
@@ -987,14 +975,18 @@ export async function openSqliteHistoryRepo(
         return null;
       }
     },
+    async recordAuth(e) {
+      if (e.kind === 'fail') authFail.run(e.account, e.box, e.ts, e.error ?? null);
+      else authOk.run(e.account, e.box, e.ts);
+    },
     async accountAuth(account) {
-      const f = authFailGet.get(account) as Row | undefined;
-      const o = authOkGet.get(account) as Row | undefined;
       return {
-        failedAt: f ? s(f.auth_ts) : null,
-        error: f ? s(f.auth_error) : null,
-        failedBox: f ? s(f.box_name) : null,
-        okAt: o ? s(o.ok) : null,
+        boxes: (authGet.all(account) as Row[]).map((r) => ({
+          box: String(r.box),
+          failedAt: s(r.fail_ts),
+          error: s(r.fail_error),
+          okAt: s(r.ok_ts),
+        })),
       };
     },
     async liveRow(key) {

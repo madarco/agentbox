@@ -175,6 +175,21 @@ describe('claude refused credential (credentials-tui Phase 1)', () => {
     ]);
   });
 
+  it("no auth record for another session's refusal copied in (/branch, fork)", () => {
+    const { records } = m.parse(
+      {
+        bytes: enc([
+          { ...refused, sessionId: 'old' },
+          { ...refused, forkedFrom: { sessionId: 'old' } },
+        ]),
+        offset: 0,
+        path: `${S}.jsonl`,
+      } as never,
+      {},
+    );
+    expect(records.some((r) => r.kind === 'auth')).toBe(false);
+  });
+
   it('no auth record for another API error or a normal reply', () => {
     const other = { ...refused, error: 'rate_limit' };
     const normal = { ...refused, error: undefined, isApiErrorMessage: undefined };

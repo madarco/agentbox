@@ -134,8 +134,8 @@ const EXPIRING_WINDOW_MS = 30 * 24 * 60 * 60_000;
 
 /**
  * Whether an account's credential works, from the evidence (pure):
- * `revoked` while the newest refusal is newer than both the newest real reply
- * and the stored secret's last write; `expiring` for a setup token in its last
+ * `revoked` while any box's newest refusal is newer than both that box's
+ * newest real reply and the stored secret's last write; `expiring` for a setup token in its last
  * 30 days; otherwise `ok`.
  */
 export function accountAuthState(
@@ -144,17 +144,28 @@ export function accountAuthState(
   secretWrittenAt: number | null,
   nowMs: number,
 ): AccountAuthView {
-  const failed = ev?.failedAt ? Date.parse(ev.failedAt) : NaN;
-  if (Number.isFinite(failed)) {
-    const ok = ev?.okAt ? Date.parse(ev.okAt) : NaN;
-    if (failed > (Number.isFinite(ok) ? ok : 0) && failed > (secretWrittenAt ?? 0)) {
-      return {
-        state: 'revoked',
-        since: ev!.failedAt!,
-        ...(ev?.failedBox ? { box: ev.failedBox } : {}),
-        ...(ev?.error ? { detail: ev.error } : {}),
-      };
+  // Per box: one box's working login says nothing about another's (a refresh
+  // in one box can rotate the token out from under the rest). The newest
+  // still-dead box is the one reported.
+  let dead: HistoryAccountAuth['boxes'][number] | undefined;
+  let deadAt = -Infinity;
+  for (const b of ev?.boxes ?? []) {
+    const failed = b.failedAt ? Date.parse(b.failedAt) : NaN;
+    if (!Number.isFinite(failed)) continue;
+    const ok = b.okAt ? Date.parse(b.okAt) : NaN;
+    if (failed <= (Number.isFinite(ok) ? ok : 0) || failed <= (secretWrittenAt ?? 0)) continue;
+    if (failed > deadAt) {
+      dead = b;
+      deadAt = failed;
     }
+  }
+  if (dead) {
+    return {
+      state: 'revoked',
+      since: dead.failedAt!,
+      box: dead.box,
+      ...(dead.error ? { detail: dead.error } : {}),
+    };
   }
   if (account.kind === 'setup-token') {
     const created = Date.parse(account.createdAt);
@@ -348,20 +359,25 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     return `not a project (no git checkout or agentbox.yaml): ${project}`;
   }
 
+  /**
+   * Throws on an unreadable config: reporting every agent as `default` then
+   * would badge the wrong account.
+   */
   async function defaultsFor(project?: string): Promise<Record<string, AccountDefaultView>> {
     // Without a project, only the global layer counts: the hub's own cwd is no
     // project of the user's.
-    const cfg = await loadEffectiveConfig(project ?? configHome).catch(() => null);
-    const layers = cfg
-      ? project
-        ? cfg.layers
-        : { ...cfg.layers, project: { ...cfg.layers.project, values: {} } }
-      : undefined;
+    const cfg = await loadEffectiveConfig(project ?? configHome);
+    const layers = project
+      ? cfg.layers
+      : { ...cfg.layers, project: { ...cfg.layers.project, values: {} } };
     return accountDefaults(
       accountAgents().map((s) => s.id),
-      layers ? { layers } : undefined,
+      { layers },
     );
   }
+
+  const configError = (err: unknown): string =>
+    `cannot read the config: ${err instanceof Error ? err.message : String(err)}`;
 
   /**
    * Drop every `<agent>.account` setting that names a removed account: the
@@ -369,20 +385,41 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
    * would fail on an account that no longer exists. Returns what it cleared
    * (`global`, or the project folder).
    */
-  async function clearDefaultsNaming(agent: string, id: string): Promise<string[]> {
+  async function clearDefaultsNaming(
+    agent: string,
+    id: string,
+  ): Promise<{ cleared: string[]; errors: string[] }> {
     const key = `${agent}.account`;
     const cleared: string[] = [];
-    if ((await defaultsFor())[agent]?.global === id) {
-      await unsetConfigValue('global', key, configHome);
-      cleared.push('global');
+    const errors: string[] = [];
+    // Each layer on its own: one unreadable config must not stop the rest, and
+    // never fails the removal that already happened.
+    const clear = async (
+      where: string,
+      scope: 'global' | 'project',
+      dir: string,
+      project?: string,
+    ) => {
+      try {
+        const d = (await defaultsFor(project))[agent];
+        if ((scope === 'global' ? d?.global : d?.project) !== id) return;
+        await unsetConfigValue(scope, key, dir);
+        cleared.push(where);
+      } catch (err) {
+        errors.push(`${where}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    await clear('global', 'global', configHome);
+    let projects: Awaited<ReturnType<typeof listProjectsConfigured>> = [];
+    try {
+      projects = await listProjectsConfigured();
+    } catch (err) {
+      errors.push(`projects: ${err instanceof Error ? err.message : String(err)}`);
     }
-    for (const p of await listProjectsConfigured().catch(() => [])) {
-      if (!p.hasConfigFile) continue;
-      if ((await defaultsFor(p.originalPath))[agent]?.project !== id) continue;
-      await unsetConfigValue('project', key, p.originalPath).catch(() => {});
-      cleared.push(p.originalPath);
+    for (const p of projects) {
+      if (p.hasConfigFile) await clear(p.originalPath, 'project', p.originalPath, p.originalPath);
     }
-    return cleared;
+    return { cleared, errors };
   }
 
   function specOf(agent: unknown): AgentSyncSpec | null {
@@ -410,12 +447,24 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       const all = await boxes().catch(() => []);
       const project =
         opts.project && !(await projectProblem(opts.project)) ? opts.project : undefined;
-      const defaults = await defaultsFor(project);
+      // An unreadable config lists the accounts without default marks, and says so.
+      let defaults: Record<string, AccountDefaultView> | undefined;
+      let defaultsError: string | undefined;
+      try {
+        defaults = await defaultsFor(project);
+      } catch (err) {
+        defaultsError = configError(err);
+      }
       const views = await Promise.all(accounts.map((a) => view(a, all, defaults)));
       const agents = accountAgents().map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
       // A machine with no id yet (unwritable HOME) lists its accounts without one.
       const machine = deps.machineId ? deps.machineId() : tryGetMachineId();
-      return { accounts: views, agents, defaults, ...(machine ? { machine } : {}) };
+      return {
+        accounts: views,
+        agents,
+        ...(defaults ? { defaults } : { defaultsError: defaultsError! }),
+        ...(machine ? { machine } : {}),
+      };
     },
 
     async getAccountDefaults(opts = {}) {
@@ -423,7 +472,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         const problem = await projectProblem(opts.project);
         if (problem) return { ok: false, code: 'invalid_request', error: problem };
       }
-      return { ok: true, value: await defaultsFor(opts.project) };
+      try {
+        return { ok: true, value: await defaultsFor(opts.project) };
+      } catch (err) {
+        return { ok: false, code: 'conflict', error: configError(err) };
+      }
     },
 
     async setAccountDefault(input) {
@@ -467,7 +520,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         }
         await setConfigValue(scope, key, id, cwd);
       }
-      return { ok: true, value: await defaultsFor(project) };
+      try {
+        return { ok: true, value: await defaultsFor(project) };
+      } catch (err) {
+        return { ok: false, code: 'conflict', error: configError(err) };
+      }
     },
 
     async renewAccount(agent, id) {
@@ -610,15 +667,18 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       }
       await removeStoredAccount(spec.id, id, store);
       deps.limits?.forget(spec.id, id);
-      const defaultsCleared = await clearDefaultsNaming(spec.id, id);
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);
+      const { cleared: defaultsCleared, errors } = await clearDefaultsNaming(spec.id, id);
       return {
         ok: true,
         value: {
           volumeRemoved: r.removed,
           ...(r.error ? { volumeError: `could not remove ${volume}: ${r.error}` } : {}),
           ...(defaultsCleared.length > 0 ? { defaultsCleared } : {}),
+          ...(errors.length > 0
+            ? { defaultsError: `could not check the settings naming it: ${errors.join('; ')}` }
+            : {}),
         },
       };
     },

@@ -1570,7 +1570,9 @@ export interface AccountBackend {
     accounts: AccountView[];
     agents: AccountAgentView[];
     /** Per agent, the account a new box gets and where that comes from. */
-    defaults: Record<string, AccountDefaultView>;
+    defaults?: Record<string, AccountDefaultView>;
+    /** Set instead of `defaults` when the config can't be read. */
+    defaultsError?: string;
     /** The machine id these accounts belong to (custody keys named accounts by it). */
     machine?: string;
   }>;
@@ -1590,7 +1592,12 @@ export interface AccountBackend {
     agent: string,
     id: string,
   ): Promise<
-    AccountResult<{ volumeRemoved: boolean; volumeError?: string; defaultsCleared?: string[] }>
+    AccountResult<{
+      volumeRemoved: boolean;
+      volumeError?: string;
+      defaultsCleared?: string[];
+      defaultsError?: string;
+    }>
   >;
 }
 

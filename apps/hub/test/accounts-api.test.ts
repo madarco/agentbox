@@ -1,7 +1,21 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// removeAccount reads the global config and walks ~/.agentbox/projects, and
+// config paths are fixed from $HOME at import: move HOME before any import.
+const HOME = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { mkdtempSync: mk } = require('node:fs') as typeof import('node:fs');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { tmpdir: td } = require('node:os') as typeof import('node:os');
+  const home = mk(`${td()}/agentbox-acct-api-`);
+  process.env.HOME = home;
+  return home;
+});
+afterAll(() => rmSync(HOME, { recursive: true, force: true }));
+
 import { AGENT_SYNC_SPECS, upsertAccount, writeAccountSecret } from '@agentbox/sandbox-core';
 import {
   accountAuthState,
@@ -174,12 +188,13 @@ describe('removing an account whose volume docker cannot remove (review)', () =>
 describe('account auth state (credentials-tui Phase 1)', () => {
   const NOW = Date.parse('2026-11-26T12:00:00Z');
   const login = { kind: 'login' as const, createdAt: '2026-01-01T00:00:00Z' };
-  const ev = (o: { failedAt?: string; okAt?: string }) => ({
+  const box = (o: { box?: string; failedAt?: string; okAt?: string }) => ({
+    box: o.box ?? 'web',
     failedAt: o.failedAt ?? null,
     error: o.failedAt ? 'authentication_failed' : null,
-    failedBox: o.failedAt ? 'web' : null,
     okAt: o.okAt ?? null,
   });
+  const ev = (o: { failedAt?: string; okAt?: string }) => ({ boxes: [box(o)] });
 
   it('is revoked while the refusal is newer than every real reply and the stored secret', () => {
     expect(
@@ -214,6 +229,21 @@ describe('account auth state (credentials-tui Phase 1)', () => {
       ).state,
     ).toBe('ok');
     expect(accountAuthState(login, null, null, NOW).state).toBe('ok');
+  });
+  it("one box's real reply does not hide another box's refusal", () => {
+    const r = accountAuthState(
+      login,
+      {
+        boxes: [
+          box({ box: 'a', okAt: '2026-11-26T11:00:00Z' }),
+          box({ box: 'b', failedAt: '2026-11-26T10:00:00Z', okAt: '2026-11-26T09:00:00Z' }),
+          box({ box: 'c', failedAt: '2026-11-26T08:00:00Z', okAt: '2026-11-26T08:30:00Z' }),
+        ],
+      },
+      null,
+      NOW,
+    );
+    expect(r).toMatchObject({ state: 'revoked', box: 'b', since: '2026-11-26T10:00:00Z' });
   });
   it('a setup token is expiring in the last 30 days of its year', () => {
     const tok = (createdAt: string) =>

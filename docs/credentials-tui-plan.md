@@ -37,14 +37,19 @@ What this means for the hub:
 1. **The transcript is the signal.** Every dead credential kind writes the
    same `error: "authentication_failed"` assistant line, and the hub already
    receives every box's transcripts (agent history, relay docker shipper / ctl
-   shipper). The claude parser emits an `auth` history record on that line;
-   the hub keeps the newest failure per session in `history_live`, and the
-   newest successful reply (a `usage` record with output tokens) too.
-2. **An account is `revoked`** when its newest auth failure (over all
-   sessions stamped with that subscription) is newer than both its newest
-   successful reply and the last write of its stored secret. So a renew
-   (new secret) or any box getting a real answer again clears it. Nothing is
-   pushed per tool call and nothing new runs in the box.
+   shipper). The claude parser emits an `auth` history record on that line
+   (never on a line copied from another session: a `/branch`, a fork). At
+   ingest the hub records it in `history_auth`, keyed by **(account, box)**
+   with the account the box runs on at that moment (not the session's first
+   account stamp, which a `credentials switch` + `--resume` keeps), next to
+   the newest successful reply (a `usage` record with output tokens).
+2. **An account is `revoked`** when **any box** on it has its newest auth
+   failure newer than both that same box's newest successful reply and the
+   last write of the stored secret; `auth.box` names that box. So a renew
+   (new secret) clears it, and so does that box getting a real answer
+   again, but not another box's healthy reply (one box's refresh can rotate
+   the token out from under the others). Nothing is pushed per tool call and
+   nothing new runs in the box.
 3. The signal needs a turn: a box nobody talks to never fails. That is when
    the user would see "Please run /login" anyway, and it is enough to badge
    the account everywhere and offer Renew.
@@ -145,12 +150,6 @@ and a "Make default" action on every other account card (the `PUT` route).
 
 ## Known gaps (from the Phase 1 review)
 
-- **A switched session keeps its first account.** Auth evidence is read per
-  subscription through `history_sessions.account`, which is stamped once. A
-  conversation resumed on another account after `credentials switch` keeps
-  counting its replies and refusals under the old one, the same limit usage
-  attribution already has. Fix with the per-turn attribution item in the hub
-  settings backlog.
 - **The TUI exits on a failed or cancelled sign-in.** `runAgentLogin` (and
   claude's own login) end the process on a cancel or a rejected code instead
   of throwing, so the menu closes rather than coming back. Fine for the
