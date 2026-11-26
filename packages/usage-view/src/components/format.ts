@@ -115,6 +115,7 @@ export function rangeLabel(id: RangeId, since: string, until: string, today: str
 export function previousLabel(id: RangeId, since: string): string {
   if (id === 'month') return MONTHS_LONG[(monthIdx(since) + 11) % 12]!;
   if (id === '7d') return 'the week before';
+  if (id === '30d') return 'the 30 days before';
   if (id === '90d') return 'the 90 days before';
   return 'the year before';
 }
@@ -125,9 +126,11 @@ export function rangeNoun(id: RangeId): string {
     ? 'this month'
     : id === '7d'
       ? 'this week'
-      : id === '90d'
-        ? 'in the last 90 days'
-        : 'this year';
+      : id === '30d'
+        ? 'in the last 30 days'
+        : id === '90d'
+          ? 'in the last 90 days'
+          : 'this year';
 }
 
 export const AGENT_LABEL: Record<AgentId, string> = {

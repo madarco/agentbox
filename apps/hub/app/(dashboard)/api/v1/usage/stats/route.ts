@@ -4,7 +4,8 @@
 //   since:        a local day (YYYY-MM-DD) or a number of days or weeks back (`30d`, the default, `2w`)
 //   until:        a local day, inclusive (default today)
 //   tz:           IANA time zone the days are in (default UTC)
-//   range:        7d | month | 90d | year, the page's label (default from the length)
+//   range:        7d | 30d | month | 90d | year, the page's label (default from the length
+//                 and start: from the 1st inside one month is month, else up to 31 days 30d)
 //   subscription: only sessions and boxes on this `<agent>/<account>`
 // The window is checked against the schema's bounds (2020-2100, at most a year)
 // before any day is walked. Other PCs' usage contributions (Phase 4b) are merged

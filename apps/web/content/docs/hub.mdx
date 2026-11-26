@@ -186,7 +186,7 @@ The **Settings → Subscriptions** page (`/settings/subscriptions`) lists the ma
 tokens, API keys per agent) as cards grouped by **Anthropic**, **OpenAI Codex** and
 **API keys**. Each card shows the plan tier, the account's email, how many boxes
 run on it, whether it is at its limit, and its tokens over the last 7 days, which
-link to the Usage page filtered to that subscription. A box that borrows another
+link to the Usage page's token view filtered to that subscription. A box that borrows another
 agent's login (`--model-auth`) counts under the lender's card.
 
 Under each plan, one meter per limit window the account actually has: a 5-hour
@@ -216,11 +216,24 @@ conversation there; the box's recent switches are listed under it.
 (an approval offering the next account) or switch on its own. See
 [several accounts per agent](/docs/run-an-agent#several-accounts-per-agent).
 
-The **Usage** page shows the tokens your boxes' agents spent: totals for a
-window (24 hours to all time), tokens per day stacked by agent, and breakdowns
-by agent, model, subscription, project, box, PC and session. Clicking a row
-filters the page to it. The **Subscription** selector narrows the page to one
-subscription and keeps it in the URL (`/usage?subscription=claude/personal`). It reads the same numbers as
+The **Usage** page shows what your agents did side by side and what they
+shipped: agent-hours against wall-clock hours (the speed-up over one agent), the
+most boxes running at once, merged pull requests, commits, lines and files, a
+Gantt of the busiest days, the biggest sessions, a year-long activity wall, when
+your agents work, the providers they ran on and the top boxes and projects. Pick
+a window with **7 days**, **30 days** (the default, the window the tray's header
+pill shows), **This month**, **90 days** or **Year**; days are in your browser's
+time zone. The **Subscription** selector narrows the page to one subscription.
+Both stay in the URL (`/usage?range=90d&subscription=claude/personal`), so a
+link keeps the view it shows. **Export CSV** downloads one
+row per day of the window (hours, peak, tokens, commits, PRs, lines, files, and
+agent-hours per agent and per provider). The page reads the same numbers as
+[`agentbox usage`](/docs/cli#usage).
+
+**Tokens** (`/usage?view=tokens`) keeps the token breakdown: totals for a window
+(24 hours to all time), tokens per day stacked by agent, and breakdowns by agent,
+model, subscription, project, box, PC and session. Clicking a row filters the
+page to it. It reads the same numbers as
 [`agentbox usage tokens`](/docs/cli#usage-tokens).
 
 ### Sharing your usage on agent-box.sh
@@ -229,6 +242,15 @@ A usage share is a public page at `agent-box.sh/u/<handle>/<n>` that renders
 the same Usage layout from a snapshot of your numbers, with a link preview image
 built from them. `agent-box.sh/u/<handle>` lists a handle's shares, and
 [`/u/example`](https://agent-box.sh/u/example) shows one made from sample data.
+
+To share, click **Share** on the Usage page. The dialog shows a preview of
+exactly what will be sent (the window and subscription the page shows, drawn by
+the same layout, without any name), and asks for a handle. **Share** then posts
+it and shows the public URL with a **Copy link** button. From a terminal,
+[`agentbox usage share`](/docs/cli#usage-share) does the same. The hub itself
+posts to agent-box.sh: your browser and the CLI only talk to the hub. To test
+against another deployment, set [`share.endpoint`](/docs/configuration#share)
+on the hub's machine.
 
 - **What is sent**: numbers, dates, and agent and provider ids (`claude`,
   `hetzner`, …): agents at once, agent-hours and wall hours (the card's hours saved is one minus the other), PRs merged, commits,
@@ -243,9 +265,11 @@ built from them. `agent-box.sh/u/<handle>` lists a handle's shares, and
 - **The handle**: a few names that would read as official (`agentbox`,
   `anthropic`, `admin`, …) are reserved. The first share for a handle claims it and returns a claim
   secret, once. Every later share for that handle must send the secret
-  (`Authorization: Bearer <secret>`), or it is refused. There is no account: keep
-  the secret, a lost one can't be recovered. A share can't be edited after it is
-  posted.
+  (`Authorization: Bearer <secret>`), or it is refused. The hub keeps the secret
+  in `~/.agentbox/hub/share.json` (readable only by you) and sends it for you; it
+  never reaches the browser, the CLI or a log. There is no account: back up that
+  file, a lost secret can't be recovered, and another hub can't share under a
+  handle this one claimed. A share can't be edited after it is posted.
 
 A password-profile hub also has a **Settings → Devices** page (`/settings/devices`): the computers enrolled with
 `agentbox hub login`, each with its own token, plus the codes waiting for your

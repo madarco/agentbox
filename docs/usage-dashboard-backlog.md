@@ -3,10 +3,58 @@
 Open items found while building the phases of
 [`usage-dashboard-plan.md`](./usage-dashboard-plan.md). Newest phase first.
 
+## From Phase 6 (share from the hub)
+
+- **A stale claim secret has no UI.** If a site's shares are reset (a preview
+  deployment's database), the hub keeps sending the old secret and every share of
+  that handle is refused; the error says to remove the `<origin> <handle>` entry
+  from `~/.agentbox/hub/share.json`. A "forget this handle" action (API + dialog)
+  would replace the hand edit.
+- **No delete or update of a posted share.** The hub keeps the secret so a later
+  `DELETE`/`PUT` on agent-box.sh can prove ownership, but the site has neither yet.
+- **The preview is built once.** The dialog renders the share of the window at the
+  moment it opens; the post rebuilds it, so a turn finished in between can move a
+  number by a minute's work. Posting the previewed share instead would make them
+  identical but let the browser send any schema-valid body.
+- **The dialog follows the hub's light-only theme** (see Phase 3: the hub has no
+  dark tokens yet). It uses the hub's own tokens, so it needs nothing when they land.
+- **Live check was against a local `next dev`**, not a Vercel preview: previews sit
+  behind Vercel login and the box has no bypass token. Repeat it once against the
+  preview (`share.endpoint=https://<preview>/api/share`) or production after the
+  Neon setup.
+
+## From Phase 3 (the hub Usage page)
+
+- **The default window is the last 30 days**, to match the tray's header pill
+  (hours saved over `since=30d`). The mockup's ranges have no 30-day option and
+  select "This month"; the page adds **30 days** (`RangeId` `30d`) and opens on it.
+  The stats endpoint names a window with no `range` by its length and start: a
+  window from the 1st is `month`, any other up to 31 days `30d` (so `agentbox usage`'s
+  default reads "Last 30 days", not "November so far").
+- **The hub has no dark theme.** `ThemeProvider` is light-only and the hub defines
+  no `.dark` tokens, so the view's dark styles (checked by forcing `.dark`) show on a
+  light shell. When the hub gets a dark theme, the page needs nothing more.
+- **Instrument Serif is not loaded in the hub.** The view's italic accents fall back
+  to Georgia; the hub self-hosts only IBM Plex. Add the font file under `app/fonts`
+  if the serif matters.
+- **The Recently merged feed and session titles are still empty / generic** (the
+  Phase 2 items): the page passes nothing extra yet.
+- **Agent logos are still duplicated** between the hub and `usage-view`.
+- **"This month" is computed from the browser's clock.** The page sends the month's
+  first and last day; a browser clock past midnight on the last day of a month, ahead
+  of the hub's, asks for a `since` in the hub's future and gets a 400 until the hub's
+  day turns. The rolling ranges send no `until` and are safe. A `since=month` form on
+  the endpoint would remove it.
+- **`range.id` gained `30d`.** A client that decodes `range.id` with a closed enum
+  (the tray, an older agent-box.sh share endpoint) must accept it; deploy apps/web
+  before hubs share a `30d` window.
+- **CSV is per day only.** Sessions, boxes and projects are not exported; the token
+  breakdown has its own view but no export.
+
 ## From Phase 4b (usage contributions to a remote hub)
 
-- **"Sync this PC" button**: the Usage page (feat/usage-page, Phase 3) is in a
-  parallel PR. Once it is merged, add a button on the local hub's page that calls
+- **"Sync this PC" button**: the Usage page (Phase 3, #494) is merged but has no
+  button yet. Add one on the local hub's page that calls
   `POST /api/v1/usage/contributions/sync` and shows its `status`, shown only when a
   remote hub is configured (`no-remote` hides it).
 - **The shared API key may post under any machine id.** A device token can only

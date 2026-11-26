@@ -139,12 +139,12 @@ const window = q.query;
 beforeEach(() => clearUsageStatsCache());
 
 describe('parseUsageStatsQuery', () => {
-  it('defaults to the last 30 days in UTC, and names the range by its length', () => {
+  it('defaults to the last 30 days in UTC, and names the range by its length and start', () => {
     const r = parseUsageStatsQuery({}, NOW);
     expect(r).toEqual({
       ok: true,
       query: {
-        id: 'month',
+        id: '30d',
         since: '2026-10-23',
         until: '2026-11-21',
         today: '2026-11-21',
@@ -174,6 +174,18 @@ describe('parseUsageStatsQuery', () => {
     ];
     for (const raw of bad)
       expect(parseUsageStatsQuery(raw, NOW).ok, JSON.stringify(raw)).toBe(false);
+  });
+
+  it('names a window from the 1st a month only while it stays in that month', () => {
+    const id = (since: string, until: string) => {
+      const r = parseUsageStatsQuery({ since, until }, NOW);
+      return r.ok ? r.query.id : r.message;
+    };
+    expect(id('2026-11-01', '2026-11-21')).toBe('month');
+    expect(id('2026-10-01', '2026-10-31')).toBe('month');
+    // 30 days from 1 February runs into March.
+    expect(id('2026-02-01', '2026-03-02')).toBe('30d');
+    expect(id('2026-10-23', '2026-11-21')).toBe('30d');
   });
 
   it('keeps today inside a past window', () => {

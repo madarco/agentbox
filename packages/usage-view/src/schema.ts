@@ -12,7 +12,7 @@ export const PROVIDER_IDS = [
   'host',
   'other',
 ] as const;
-export const RANGE_IDS = ['7d', 'month', '90d', 'year'] as const;
+export const RANGE_IDS = ['7d', '30d', 'month', '90d', 'year'] as const;
 
 export const AgentId = z.enum(AGENT_IDS);
 export const ProviderId = z.enum(PROVIDER_IDS);

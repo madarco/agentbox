@@ -14,6 +14,8 @@ export type ApiErrorCode =
   | 'forbidden'
   | 'rate_limited'
   | 'payload_too_large'
+  // A site the hub calls on the caller's behalf (agent-box.sh for a usage share) failed.
+  | 'upstream_error'
   // Device enrollment (RFC 8628 vocabulary): the CLI's poll keeps going on the
   // first, and stops on the other two.
   | 'authorization_pending'
@@ -37,6 +39,7 @@ const STATUS_HINT: Record<ApiErrorCode, number> = {
   // the one that runs the manager, and the client retries there.
   wrong_host: 409,
   backend_unavailable: 503,
+  upstream_error: 502,
   internal: 500,
 };
 
