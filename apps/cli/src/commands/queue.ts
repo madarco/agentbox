@@ -29,6 +29,9 @@ export const queueCommand = new Command('queue').description(
 
 const queueListCommand = new Command('list')
   .description('List queued, running, and (with --all) terminal background jobs')
+  // It is the default subcommand: without this, a typo (`queue cancle <id>`)
+  // would land here as excess args and list instead of failing.
+  .allowExcessArguments(false)
   .option('--all', 'include done/failed/cancelled jobs (default: hide terminal)')
   .option(
     '--json',

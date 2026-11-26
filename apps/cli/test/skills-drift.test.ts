@@ -10,7 +10,7 @@ vi.hoisted(() => {
 });
 
 const LOCAL = { url: 'http://127.0.0.1:8787', apiKey: 'local-token' };
-const resolveHubApiTarget = vi.fn((_url: string | undefined) => Promise.resolve(LOCAL));
+const resolveHubApiTarget = vi.fn(() => Promise.resolve(LOCAL));
 vi.mock('../src/commands/control-plane.js', () => ({ resolveHubApiTarget }));
 
 import { discoverLocalSkills } from '@agentbox/sandbox-core';
@@ -74,7 +74,7 @@ describe('describeDrift', () => {
     expect(d.outOfSync).toBe(4);
     expect(d.names).toEqual(['bar', 'baz', 'foo', 'qux']);
     expect(describeDrift(d)).toBe(
-      'skills: 4 not in sync with the hub (on this PC only: foo, bar; changed: baz; on the hub only: qux). ' +
+      'skills: 4 not in sync with the hub (on this PC only: bar, foo; changed: baz; on the hub only: qux). ' +
         "Boxes get the hub's copy. Run `agentbox skills` to sync.",
     );
   });
@@ -107,7 +107,8 @@ describe('checkSkillsDrift', () => {
       ],
       skipped: ['ignored'],
     });
-    const d = await checkSkillsDrift({ cwd: HOME });
+    // Generous: the first call pays the cold import of the hub resolver.
+    const d = await checkSkillsDrift({ cwd: HOME, timeoutMs: 15_000 });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(d).toMatchObject({
       outOfSync: 3,
@@ -152,7 +153,7 @@ describe('checkSkillsDrift', () => {
       await checkSkillsDrift({ cwd: HOME, timeoutMs: 200, debug: (l) => logged.push(l) }),
     ).toBeNull();
     expect(Date.now() - t0).toBeLessThan(1500);
-    expect(logged).toEqual([expect.stringContaining('no answer within 200ms')]);
+    expect(logged).toEqual([expect.stringContaining('within 200ms')]);
   });
 
   it('is off with skills.notice: false', async () => {

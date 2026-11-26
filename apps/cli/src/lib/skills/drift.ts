@@ -14,7 +14,7 @@ import { homedir } from 'node:os';
 import { log } from '@clack/prompts';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { discoverLocalSkills, isOutOfSync, type LocalSkill } from '@agentbox/sandbox-core';
-import { HubApiClient } from '../../control-plane/hub-api-client.js';
+import { HubApiClient, type HubApiSkillsListing } from '../../control-plane/hub-api-client.js';
 import { compareSkills } from './sync.js';
 
 export interface SkillsDrift {
@@ -49,57 +49,68 @@ export async function checkSkillsDrift(
     local?: LocalSkill[];
     /** Why there is no answer (a log file, never the terminal). */
     debug?: (line: string) => void;
+    /** Budget for the hub leg (resolve + one request); the local scan is outside it. */
     timeoutMs?: number;
     cwd?: string;
   } = {},
 ): Promise<SkillsDrift | null> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  let timer: NodeJS.Timeout | undefined;
-  const deadline = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), timeoutMs);
-    timer.unref();
-  });
   try {
-    const res = await Promise.race([runCheck(opts, timeoutMs), deadline]);
-    if (res === 'timeout') {
-      opts.debug?.(`skills notice skipped: no answer within ${String(timeoutMs)}ms`);
+    const cfg = await loadEffectiveConfig(opts.cwd ?? process.cwd()).catch(() => null);
+    if (cfg && !cfg.effective.skills.notice) return null;
+    const maxBytes = cfg?.effective.skills.maxSkillBytes ?? 50 * 1024 * 1024;
+    // Scanned first, so a PC with no skills costs no round trip.
+    const local = opts.local ?? (await discoverLocalSkills({ home: homedir(), maxBytes }));
+    if (local.length === 0) {
+      opts.debug?.('skills notice skipped: no skills on this PC');
       return null;
     }
-    return res;
+    const listing = await withDeadline(fetchListing(opts.url, timeoutMs), timeoutMs);
+    if (listing === 'timeout') {
+      opts.debug?.(`skills notice skipped: no answer from the hub within ${String(timeoutMs)}ms`);
+      return null;
+    }
+    if (!listing) {
+      opts.debug?.('skills notice skipped: no hub could be resolved');
+      return null;
+    }
+    return driftFromRows(compareSkills(local, listing.skills, listing.skipped ?? []));
   } catch (err) {
     opts.debug?.(`skills notice skipped: ${err instanceof Error ? err.message : String(err)}`);
     return null;
+  }
+}
+
+async function fetchListing(
+  url: string | undefined,
+  timeoutMs: number,
+): Promise<HubApiSkillsListing | null> {
+  // Lazy, like autoSeedSkills: control-plane.ts sits in a module cycle with hub.ts.
+  const { resolveHubApiTarget } = await import('../../commands/control-plane.js');
+  const target = await resolveHubApiTarget(url, { quiet: true });
+  if (!target) return null;
+  return new HubApiClient(target).listSkills({ timeoutMs });
+}
+
+async function withDeadline<T>(p: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([p, deadline]);
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function runCheck(
-  opts: { url?: string; local?: LocalSkill[]; debug?: (line: string) => void; cwd?: string },
-  timeoutMs: number,
-): Promise<SkillsDrift | null> {
-  const cfg = await loadEffectiveConfig(opts.cwd ?? process.cwd()).catch(() => null);
-  if (cfg && !cfg.effective.skills.notice) return null;
-  const maxBytes = cfg?.effective.skills.maxSkillBytes ?? 50 * 1024 * 1024;
-  const local = opts.local ?? (await discoverLocalSkills({ home: homedir(), maxBytes }));
-  if (local.length === 0) {
-    opts.debug?.('skills notice skipped: no skills on this PC');
-    return null;
-  }
-  // Lazy, like autoSeedSkills: control-plane.ts sits in a module cycle with hub.ts.
-  const { resolveHubApiTarget } = await import('../../commands/control-plane.js');
-  const target = await resolveHubApiTarget(opts.url, { quiet: true });
-  if (!target) {
-    opts.debug?.('skills notice skipped: no hub could be resolved');
-    return null;
-  }
-  const listing = await new HubApiClient(target).listSkills({ timeoutMs });
-  return driftFromRows(compareSkills(local, listing.skills, listing.skipped ?? []));
-}
-
 export function driftFromRows(rows: readonly { name: string; status: string }[]): SkillsDrift {
   const pick = (status: string): string[] =>
-    rows.filter((r) => r.status === status).map((r) => r.name);
+    rows
+      .filter((r) => r.status === status)
+      .map((r) => r.name)
+      .sort();
   const names = rows
     .filter((r) => isOutOfSync(r.status))
     .map((r) => r.name)
