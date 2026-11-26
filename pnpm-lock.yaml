@@ -223,6 +223,9 @@ importers:
       '@agentbox/sandbox-vercel':
         specifier: workspace:*
         version: link:../../packages/sandbox-vercel
+      '@agentbox/usage-view':
+        specifier: workspace:*
+        version: link:../../packages/usage-view
       '@daytona/sdk':
         specifier: ^0.196.0
         version: 0.196.0(ws@8.21.0)

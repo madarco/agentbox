@@ -243,6 +243,45 @@ export interface HistoryLiveRow {
   updatedAt: number;
 }
 
+/** The usage dashboard's reads (usage dashboard Phase 2): timestamps and sums, never turn text. */
+export interface UsageWindow {
+  /** Inclusive, epoch ms. */
+  sinceMs: number;
+  /** Exclusive, epoch ms. */
+  untilMs: number;
+  /** Only sessions on this subscription (`agent/account`). */
+  account?: string;
+}
+
+/** One active interval of a session: its first and last turn, no tail added. */
+export interface UsageSpanRow {
+  sessionKey: string;
+  start: number;
+  last: number;
+}
+
+export interface UsageSessionMeta {
+  key: string;
+  agent: string;
+  sessionId: string;
+  boxId: string | null;
+  boxName: string | null;
+  provider: string | null;
+  hostId: string | null;
+  projectKey: string | null;
+  account: string | null;
+}
+
+/** Tokens of one session in one time bucket. */
+export interface UsageTokenBucket {
+  sessionKey: string;
+  /** Start of the bucket, epoch ms. */
+  at: number;
+  tokens: number;
+  /** Null when no response in the bucket recorded a cost. */
+  costUsd: number | null;
+}
+
 /** Rows. Async so a postgres implementation fits the same seam. */
 export interface HistoryRepo {
   getFile(originKey: string, agent: string, path: string): Promise<HistoryFileRow | null>;
@@ -290,6 +329,15 @@ export interface HistoryRepo {
   /** Replace a session's usage rows with `rows`, atomically. */
   replaceUsage(key: string, rows: StoredUsageRow[]): Promise<void>;
   usage(q: UsageQuery): Promise<UsageReport>;
+  /**
+   * The active intervals (turns no more than `idleGapMs` apart) of every session
+   * with a turn in the window, cut in the store; a purged session's come from the
+   * intervals it kept when its turns were dropped.
+   */
+  usageSpans(q: UsageWindow & { idleGapMs: number }): Promise<UsageSpanRow[]>;
+  /** Tokens per session per `bucketMs` bucket (aligned to the epoch) in the window. */
+  usageTokens(q: UsageWindow & { bucketMs: number }): Promise<UsageTokenBucket[]>;
+  usageSessions(keys: readonly string[]): Promise<UsageSessionMeta[]>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
   /** Keys of `agent`'s sessions projected by a parser older than `version`. */

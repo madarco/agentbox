@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { repoKey } from '@agentbox/config';
+import { DEFAULT_IDLE_GAP_MS } from '@agentbox/usage-view';
 import type {
   HistoryAccountLimits,
   HistorySearchHit,
@@ -18,6 +19,7 @@ import type {
   UsageDimension,
   UsageQuery,
   UsageReport,
+  UsageSessionMeta,
   UsageTotals,
 } from './backend/history';
 import type { MemoryRepo, MemoryVersionRow } from './backend/history-memory';
@@ -107,6 +109,13 @@ CREATE TABLE IF NOT EXISTS history_usage (
   ts TEXT,
   PRIMARY KEY (session_key, message_id)
 );
+CREATE TABLE IF NOT EXISTS history_spans (
+  session_key TEXT NOT NULL,
+  start_ms INTEGER NOT NULL,
+  last_ms INTEGER NOT NULL,
+  PRIMARY KEY (session_key, start_ms)
+);
+CREATE INDEX IF NOT EXISTS history_spans_start ON history_spans(start_ms);
 CREATE TABLE IF NOT EXISTS history_live (
   session_key TEXT PRIMARY KEY,
   activity TEXT,
@@ -366,6 +375,17 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
     );
   }
   db.exec('CREATE INDEX IF NOT EXISTS history_usage_ts ON history_usage(ts_ms)');
+  // Usage dashboard Phase 2: active intervals are read by time, not by session.
+  if (!columns(db, 'history_turns').has('ts_ms')) {
+    db.exec('ALTER TABLE history_turns ADD COLUMN ts_ms INTEGER');
+    db.exec(
+      `UPDATE history_turns SET ts_ms = CAST(ROUND((julianday(ts) - 2440587.5) * 86400000) AS INTEGER)
+       WHERE ts IS NOT NULL`,
+    );
+  }
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS history_turns_ts ON history_turns(ts_ms, session_key) WHERE ts_ms IS NOT NULL',
+  );
   // Live status (docs/agent-live-status-plan.md, Phase 3): a cost where the
   // agent records one. Old rows stay NULL until the re-parse job redoes them.
   if (!columns(db, 'history_usage').has('cost_usd')) {
@@ -428,6 +448,28 @@ function totalsOf(r: Row): UsageTotals {
 }
 
 /** `GET /api/v1/usage`: totals plus groups, over the usage rows joined to their session. */
+/**
+ * Turns into active intervals in SQL: a turn more than `?gap` ms after the one before
+ * it starts a new interval, and a running sum of those breaks numbers the intervals.
+ * Only `ts_ms` and `session_key` are read, from one covering index. Plain window
+ * functions, so a postgres store can run the same statement.
+ */
+function spansSql(scope: string): string {
+  return `WITH t AS (
+      SELECT session_key, ts_ms,
+        CASE WHEN ts_ms - LAG(ts_ms) OVER (PARTITION BY session_key ORDER BY ts_ms) <= ?
+          THEN 0 ELSE 1 END AS brk
+      FROM history_turns WHERE ts_ms IS NOT NULL ${scope}
+    ), g AS (
+      SELECT session_key, ts_ms,
+        SUM(brk) OVER (PARTITION BY session_key ORDER BY ts_ms ROWS UNBOUNDED PRECEDING) AS grp
+      FROM t
+    )
+    SELECT session_key, MIN(ts_ms) AS s, MAX(ts_ms) AS e FROM g GROUP BY session_key, grp`;
+}
+
+const ACCOUNT_SCOPE = 'AND session_key IN (SELECT key FROM history_sessions WHERE account = ?)';
+
 function usageReport(db: Db, q: UsageQuery): UsageReport {
   const where: string[] = [];
   const args: unknown[] = [];
@@ -776,8 +818,8 @@ export async function openSqliteHistoryRepo(
     async insertRecords(sessionKey, fileId, records) {
       tx(() => {
         const turn = db.prepare(
-          `INSERT OR IGNORE INTO history_turns (session_key, file_id, at, seq, kind, role, name, text, ts)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO history_turns (session_key, file_id, at, seq, kind, role, name, text, ts, ts_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const ftsIns = fts
           ? db.prepare('INSERT INTO history_turns_fts (rowid, text) VALUES (?, ?)')
@@ -830,6 +872,7 @@ export async function openSqliteHistoryRepo(
             r.kind === 'tool' ? r.name : null,
             r.kind === 'turn' ? r.text : null,
             r.ts ?? null,
+            epochMs(r.ts),
           ) as { changes?: number | bigint; lastInsertRowid: number | bigint };
           if (ftsIns && r.kind === 'turn' && Number(res.changes ?? 0) > 0) {
             ftsIns.run(Number(res.lastInsertRowid), r.text);
@@ -871,6 +914,11 @@ export async function openSqliteHistoryRepo(
     },
     async purgeSession(key, nowMs) {
       return tx(() => {
+        // The intervals outlive the turns, so the usage dashboard's hours do too.
+        db.prepare(
+          `INSERT OR IGNORE INTO history_spans (session_key, start_ms, last_ms)
+           SELECT session_key, s, e FROM (${spansSql('AND session_key = ?')})`,
+        ).run(DEFAULT_IDLE_GAP_MS, key);
         const keys = dropFilesOf(key);
         db.prepare('DELETE FROM history_turns WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
@@ -910,12 +958,78 @@ export async function openSqliteHistoryRepo(
     async usage(q) {
       return usageReport(db, q);
     },
+    async usageSpans(q) {
+      const acct = q.account !== undefined;
+      const live = db
+        .prepare(spansSql(`AND ts_ms >= ? AND ts_ms < ? ${acct ? ACCOUNT_SCOPE : ''}`))
+        .all(q.idleGapMs, q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[];
+      const kept = db
+        .prepare(
+          `SELECT session_key, start_ms AS s, last_ms AS e FROM history_spans
+           WHERE last_ms >= ? AND start_ms < ? ${acct ? ACCOUNT_SCOPE : ''}`,
+        )
+        .all(q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[];
+      return [...live, ...kept].map((r) => ({
+        sessionKey: String(r.session_key),
+        start: n(r.s),
+        last: n(r.e),
+      }));
+    },
+    async usageTokens(q) {
+      const acct = q.account !== undefined;
+      const bucket = Math.max(60_000, Math.trunc(q.bucketMs));
+      return (
+        db
+          .prepare(
+            `SELECT session_key, (ts_ms / ${String(bucket)}) * ${String(bucket)} AS b,
+               SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS tok,
+               SUM(cost_usd) AS cost
+             FROM history_usage WHERE ts_ms >= ? AND ts_ms < ? ${acct ? ACCOUNT_SCOPE : ''}
+             GROUP BY session_key, b`,
+          )
+          .all(q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[]
+      ).map((r) => ({
+        sessionKey: String(r.session_key),
+        at: n(r.b),
+        tokens: n(r.tok),
+        costUsd: r.cost === null || r.cost === undefined ? null : n(r.cost),
+      }));
+    },
+    async usageSessions(keys) {
+      const out: UsageSessionMeta[] = [];
+      const str = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
+      for (let i = 0; i < keys.length; i += 500) {
+        const part = keys.slice(i, i + 500);
+        const rows = db
+          .prepare(
+            `SELECT key, agent, session_id, box_id, box_name, provider, host_id,
+               COALESCE(project_key, project_repo_url) AS project, account
+             FROM history_sessions WHERE key IN (${part.map(() => '?').join(', ')})`,
+          )
+          .all(...part) as Row[];
+        for (const r of rows) {
+          out.push({
+            key: String(r.key),
+            agent: String(r.agent),
+            sessionId: String(r.session_id),
+            boxId: str(r.box_id),
+            boxName: str(r.box_name),
+            provider: str(r.provider),
+            hostId: str(r.host_id),
+            projectKey: str(r.project),
+            account: str(r.account),
+          });
+        }
+      }
+      return out;
+    },
     async deleteSession(key) {
       return tx(() => {
         const keys = dropFilesOf(key);
         db.prepare('DELETE FROM history_turns WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_usage WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
+        db.prepare('DELETE FROM history_spans WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_sessions WHERE key = ?').run(key);
         return keys;
       });
