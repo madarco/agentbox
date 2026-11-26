@@ -69,15 +69,20 @@ interface ClaimFile {
   version: 1;
   /** Keyed `<endpoint origin> <handle>`: a claim belongs to one site's database. */
   claims: Record<string, { secret: string; claimedAt: string }>;
-  /** The handle of the last share, to fill the form with next time. */
-  lastHandle?: string;
+  /** The handle of the last share to each site (by origin), to fill the form with next time. */
+  lastHandles?: Record<string, string>;
 }
 
 export interface ClaimStore {
   secret(origin: string, handle: string): Promise<string | null>;
   save(origin: string, handle: string, secret: string): Promise<void>;
-  remember(handle: string): Promise<void>;
-  /** Handles this hub holds a claim for on `origin`, and the last one shared. */
+  remember(origin: string, handle: string): Promise<void>;
+  /**
+   * Last resort when `save` failed after the site stored a share: write the secret
+   * to a file of its own (0600) and return its path, or null.
+   */
+  salvage?(origin: string, handle: string, secret: string): Promise<string | null>;
+  /** Handles this hub holds a claim for on `origin`, and the last one shared there. */
   known(origin: string): Promise<{ handles: string[]; lastHandle: string | null }>;
 }
 
@@ -92,7 +97,8 @@ export function fileClaimStore(path: string): ClaimStore {
       return {
         version: 1,
         claims: parsed.claims && typeof parsed.claims === 'object' ? parsed.claims : {},
-        ...(typeof parsed.lastHandle === 'string' ? { lastHandle: parsed.lastHandle } : {}),
+        lastHandles:
+          parsed.lastHandles && typeof parsed.lastHandles === 'object' ? parsed.lastHandles : {},
       };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, claims: {} };
@@ -124,10 +130,23 @@ export function fileClaimStore(path: string): ClaimStore {
       update((f) => {
         f.claims[claimKey(origin, handle)] = { secret, claimedAt: new Date().toISOString() };
       }),
-    remember: (handle) =>
+    remember: (origin, handle) =>
       update((f) => {
-        f.lastHandle = handle;
+        f.lastHandles = { ...f.lastHandles, [origin]: handle };
       }),
+    async salvage(origin, handle, secret) {
+      const file = `${path}.claim-${handle}-${String(Date.now())}.json`;
+      try {
+        await writeFile(
+          file,
+          `${JSON.stringify({ key: claimKey(origin, handle), secret }, null, 2)}\n`,
+          { mode: 0o600, flag: 'wx' },
+        );
+        return file;
+      } catch {
+        return null;
+      }
+    },
     async known(origin) {
       const f = await read();
       const prefix = `${origin} `;
@@ -135,7 +154,7 @@ export function fileClaimStore(path: string): ClaimStore {
         .filter((k) => k.startsWith(prefix))
         .map((k) => k.slice(prefix.length))
         .sort();
-      return { handles, lastHandle: f.lastHandle ?? null };
+      return { handles, lastHandle: f.lastHandles?.[origin] ?? null };
     },
   };
 }
@@ -155,8 +174,6 @@ export interface UsageSharePreview {
   endpoint: string;
   /** Bytes of the JSON body that will be posted. */
   bytes: number;
-  /** True when this hub already holds the handle's claim on that site. */
-  claimed: boolean;
 }
 
 export interface UsageSharePosted {
@@ -179,7 +196,6 @@ export async function previewUsageShare(
     share,
     endpoint: endpoint.href,
     bytes: Buffer.byteLength(JSON.stringify(share)),
-    claimed: (await deps.claims.secret(endpoint.origin, handle)) !== null,
   };
 }
 
@@ -237,7 +253,7 @@ export async function postUsageShare(
         throw new ShareError(
           'conflict',
           secret
-            ? `${site} refused the claim secret this hub holds for "${handle}"`
+            ? `${site} refused the claim secret this hub holds for "${handle}" (if that site's shares were reset, remove the "${endpoint.origin} ${handle}" entry from ~/.agentbox/hub/share.json and share again)`
             : `the handle "${handle}" is already claimed on ${site}: pick another one`,
         );
       case 413:
@@ -270,13 +286,24 @@ export async function postUsageShare(
   } catch {
     parsed = null;
   }
-  if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
-    throw new ShareError('upstream_error', `${site} did not return the share's URL`);
+  if (!parsed || parsed.origin !== endpoint.origin) {
+    throw new ShareError('upstream_error', `${site} did not return a share URL on ${site}`);
   }
   const n = typeof body.n === 'number' && Number.isSafeInteger(body.n) ? body.n : 0;
   const claimSecret = typeof body.claimSecret === 'string' ? body.claimSecret : '';
-  // Keep the secret before anything else can fail: without it the handle is lost.
-  if (claimSecret) await deps.claims.save(endpoint.origin, handle, claimSecret);
-  await deps.claims.remember(handle).catch(() => undefined);
+  if (claimSecret) {
+    try {
+      await deps.claims.save(endpoint.origin, handle, claimSecret);
+    } catch (e) {
+      // The share is public and the handle is claimed: say so, so a retry does not
+      // read as "someone else has this handle".
+      const kept = await deps.claims.salvage?.(endpoint.origin, handle, claimSecret);
+      throw new ShareError(
+        'backend_unavailable',
+        `shared at ${parsed.href}, but the handle's claim secret could not be saved (${e instanceof Error ? e.message : String(e)})${kept ? `; it was written to ${kept}: move it into share.json, or later shares of "${handle}" will be refused` : `; later shares of "${handle}" will be refused`}`,
+      );
+    }
+  }
+  await deps.claims.remember(endpoint.origin, handle).catch(() => undefined);
   return { url: parsed.href, handle, n, claimedNow: claimSecret !== '' };
 }

@@ -2098,7 +2098,7 @@ export function buildOpenApi(): Record<string, unknown> {
           },
           responses: {
             '200': {
-              description: 'Preview: `{ share, endpoint, bytes, claimed }`, nothing posted',
+              description: 'Preview: `{ share, endpoint, bytes }`, nothing posted',
               content: { 'application/json': { schema: { type: 'object' } } },
             },
             '201': {

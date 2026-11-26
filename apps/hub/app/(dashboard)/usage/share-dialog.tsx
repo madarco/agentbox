@@ -18,7 +18,6 @@ interface Preview {
   share: UsageShare;
   endpoint: string;
   bytes: number;
-  claimed: boolean;
 }
 interface Posted {
   url: string;

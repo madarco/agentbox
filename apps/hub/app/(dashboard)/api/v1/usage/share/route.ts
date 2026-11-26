@@ -26,20 +26,29 @@ export const dynamic = 'force-dynamic';
 
 const claims = fileClaimStore(join(STATE_DIR, 'hub', 'share.json'));
 
-/** The hub machine's own `share.endpoint` (global config; a project's does not apply). */
+/**
+ * The hub machine's own `share.endpoint`, from its global config only: an
+ * agentbox.yaml found above $HOME must not redirect a share. A config that
+ * can't be read is an error, never a silent fall back to the public site.
+ */
 async function endpoint(): Promise<string | undefined> {
-  return loadEffectiveConfig(homedir())
-    .then((c) => c.effective.share.endpoint)
-    .catch(() => undefined);
+  try {
+    const c = await loadEffectiveConfig(homedir());
+    return c.layers.global.values.share?.endpoint;
+  } catch (e) {
+    throw new ShareError(
+      'backend_unavailable',
+      `the hub's config could not be read, so share.endpoint is unknown: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 function failShare(e: unknown): Response {
   if (e instanceof ShareError) {
-    return fail(
-      e.code,
-      e.message,
-      e.retryAfter !== undefined ? { retryAfter: e.retryAfter } : undefined,
-    );
+    if (e.retryAfter === undefined) return fail(e.code, e.message);
+    const res = fail(e.code, e.message, { retryAfter: e.retryAfter });
+    res.headers.set('Retry-After', String(e.retryAfter));
+    return res;
   }
   return fail('internal', `usage share failed: ${e instanceof Error ? e.message : String(e)}`);
 }

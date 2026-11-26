@@ -129,7 +129,7 @@ const shareCommand = new Command('share')
       const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
       await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
         const settings = await client.usageShareSettings();
-        let handle = opts.handle?.trim() ?? settings.lastHandle ?? '';
+        let handle = opts.handle?.trim() || settings.lastHandle || '';
         if (!handle && interactive && !opts.dryRun) {
           const answer = await text({
             message: 'Public handle',

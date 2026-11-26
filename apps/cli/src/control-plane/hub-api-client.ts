@@ -1057,7 +1057,6 @@ export interface HubApiUsageSharePreview {
   share: UsageShare;
   endpoint: string;
   bytes: number;
-  claimed: boolean;
 }
 
 export interface HubApiUsageSharePosted {

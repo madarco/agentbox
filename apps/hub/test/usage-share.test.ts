@@ -50,10 +50,10 @@ function fakeFetch(respond: (call: Call, i: number) => Response | Promise<Respon
   return { fetch: f, calls };
 }
 
-const created = (n: number, secret?: string): Response =>
+const created = (n: number, secret?: string, origin = 'https://agent-box.sh'): Response =>
   Response.json(
     {
-      url: `https://agent-box.sh/u/marco/${String(n)}`,
+      url: `${origin}/u/marco/${String(n)}`,
       handle: 'marco',
       n,
       ...(secret ? { claimSecret: secret } : {}),
@@ -92,7 +92,6 @@ describe('previewUsageShare', () => {
     expect(f.calls).toHaveLength(0);
     expect(UsageShare.parse(p.share).handle).toBe('marco');
     expect(p.bytes).toBe(Buffer.byteLength(JSON.stringify(p.share)));
-    expect(p.claimed).toBe(false);
     // Nothing named survives: no box, project, PR or session titles.
     const text = JSON.stringify(p.share);
     for (const b of usageFixture().boxes) expect(text).not.toContain(`"${b.name}"`);
@@ -142,7 +141,7 @@ describe('postUsageShare', () => {
 
   it('keeps claims per site: a preview deployment gets no production secret', async () => {
     await claims.save('https://agent-box.sh', 'marco', 'prod-secret');
-    const f = fakeFetch(() => created(1, 'preview-secret'));
+    const f = fakeFetch(() => created(1, 'preview-secret', 'https://preview.vercel.app'));
     await postUsageShare(
       deps({
         fetch: f.fetch,
@@ -199,6 +198,56 @@ describe('postUsageShare', () => {
     await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toMatchObject({
       code: 'upstream_error',
     });
+  });
+
+  it('refuses a share URL on another site', async () => {
+    const f = fakeFetch(() =>
+      Response.json({ url: 'https://evil.example/u/marco/1', n: 1 }, { status: 201 }),
+    );
+    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toMatchObject({
+      code: 'upstream_error',
+    });
+  });
+
+  it('names the public URL and keeps the secret aside when it cannot be saved', async () => {
+    const salvaged: string[] = [];
+    const broken: ClaimStore = {
+      ...claims,
+      save: () => Promise.reject(new Error('EACCES')),
+      salvage: (_o, _h, secret) => {
+        salvaged.push(secret);
+        return Promise.resolve('/x/share.json.claim-marco.json');
+      },
+    };
+    const f = fakeFetch(() => created(1, 'sekrit'));
+    const err = (await postUsageShare(deps({ fetch: f.fetch, claims: broken }), 'marco').catch(
+      (e: unknown) => e,
+    )) as ShareError;
+    expect(err.message).toContain('https://agent-box.sh/u/marco/1');
+    expect(err.message).toContain('/x/share.json.claim-marco.json');
+    expect(err.message).not.toContain('sekrit');
+    expect(salvaged).toEqual(['sekrit']);
+  });
+
+  it('salvage writes a 0600 file of its own', async () => {
+    await claims.save('https://agent-box.sh', 'x', 's');
+    const file = await claims.salvage!('https://agent-box.sh', 'marco', 'sekrit');
+    expect(file).toBeTruthy();
+    expect((await stat(file!)).mode & 0o777).toBe(0o600);
+    expect(await readFile(file!, 'utf8')).toContain('sekrit');
+  });
+
+  it('remembers the last handle per site', async () => {
+    const f = fakeFetch(() => created(1, 's', 'https://preview.vercel.app'));
+    await postUsageShare(
+      deps({
+        fetch: f.fetch,
+        endpoint: () => Promise.resolve('https://preview.vercel.app/api/share'),
+      }),
+      'test-x',
+    );
+    expect((await claims.known('https://preview.vercel.app')).lastHandle).toBe('test-x');
+    expect((await claims.known('https://agent-box.sh')).lastHandle).toBeNull();
   });
 
   it('does not overwrite a corrupt claim file', async () => {
