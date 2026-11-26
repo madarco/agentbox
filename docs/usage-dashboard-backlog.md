@@ -3,6 +3,29 @@
 Open items found while building the phases of
 [`usage-dashboard-plan.md`](./usage-dashboard-plan.md). Newest phase first.
 
+## From Phase 4a (flush on stop/pause, materialize)
+
+- **Codex, opencode and pi sessions are not materialized.** Claude only
+  (`MATERIALIZED_AGENTS`). Codex keeps date folders with no project key, pi a
+  `--<path>--` key, opencode a sqlite store; each needs its own host layout.
+- **A box session resumed on the PC keeps its new turns local.** The copy is left
+  alone once claude appends to it, and the host-session watcher skips it, so the
+  PC-side turns never reach the hub. Shipping them would need the watcher to send
+  only the bytes past the materialized offset under the box session.
+- **A re-created copy gets a fresh mtime**, so the resume picker shows an old box
+  session as recent, and claude's cleanup deletes it again 30 days later (the
+  daily pass writes it back). Setting the mtime to the session's last turn would
+  make the cleanup delete it at once.
+- **A box whose project folder the hub does not know is not materialized** (a
+  control box's box, a destroyed box from a repo with no checkout reported). The
+  remote-hub case is Phase 4b's.
+- **The cloud keepalive's idle pause does not flush.** ctl ships every 30 s and
+  the pause comes after minutes of idle, so only a memory write in the last 30 s
+  of an idle box could be missed.
+- **Autopause flushes transcripts, not the in-box pass.** The relay's read covers
+  claude/codex/pi transcripts; opencode's row cursor and memory run in the box's
+  own 30 s loop, which the pause freezes until the box resumes.
+
 ## From Phase 5 (agent-box.sh share endpoint and page)
 
 - **Owner setup before it works in production**: add Neon to the Vercel project

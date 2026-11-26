@@ -284,6 +284,40 @@ hours on the control box's page with no transcript on the control box.
 This phase is large enough to split into 4a (flush on stop/pause, materialize)
 and 4b (contributions to a remote hub).
 
+**4a done (2026-11-26, feat/usage-sync):**
+- `flushBoxHistory` (`apps/hub/lib/backend/history-flush.ts`) takes a reason:
+  the hub's `stop` and `pause` routes run it before the provider call, on every
+  provider (docker: the in-box flush, then the relay's host-side read while the
+  box still runs; cloud: `agentbox-ctl history flush` when the box is running).
+  Bounded at 30 s (10 s in-box head start) for stop/pause, 90 s for destroy;
+  only a destroy settles the relay's docker reads. The relay skips a paused or
+  stopped docker box on its 30 s tick, so before this a stop/pause left the tail
+  unshipped until the destroy.
+- Docker autopause flushes through the relay (`beforePause`, 30 s bound) before
+  `docker pause`. The cloud keepalive's idle pause needs none: it acts after
+  minutes of idle, and ctl ships every 30 s.
+- After a flush the hub refreshes `history_spans` (a call that arrives mid-run
+  waits for one more round) and clears the 60 s stats cache, which now lives on
+  `globalThis` so the lifecycle code (server.ts) and the route (Next bundle)
+  share it.
+- Materialize: `apps/hub/lib/backend/history-materialize.ts`, claude only. The
+  project folder is the box record's `projectRoot`, else this machine's checkouts
+  of the session's repo, else a registered project with that origin. Key:
+  `hostProjectKey('dashed-path', folder)`, the same as claude's (checked against
+  a real `~/.claude/projects` entry). Runs 15 s after a session ships (debounced),
+  60 s after the hub starts and daily. Writes complete lines only, atomically.
+  `~/.agentbox/hub/history-materialized.json` records each copy (hub file row,
+  offset, size, mtime): an unchanged copy is skipped, a missing one written back,
+  a file the hub did not write (a session id collision) or one changed since it
+  was written (resumed on the PC) left alone and logged once. The host-session
+  watcher skips the files in that manifest. Box transcripts record `cwd:
+  /workspace`, and `claude --resume` lists them anyway (checked).
+  `history.materialize` (default true, global or per project) turns it off.
+- Live check (docker, in a box): stop and pause right after a turn shipped the
+  tail within the call, and `/usage/stats` read 13 s earlier showed it straight
+  after; the copy appeared under `-home-vscode-mtproj`, was listed by
+  `claude --resume`, came back after a delete, and stopped with the key off.
+
 ### Phase 5 — agent-box.sh share endpoint and page
 
 - `POST https://agent-box.sh/api/share`: read the body as raw text and pass it to
