@@ -235,8 +235,12 @@ from Phase 1 on.
   unfurls show one image, so use the paper background with the green accent.
 
 Built (2026-11-26): `apps/web` with the `postgres` driver (`prepare: false` for
-Neon's pooler); the tables are created on first use and by
-`pnpm --filter @agentbox/web db:migrate`. The pages are ISR-cached forever and
+Neon's pooler). Run `pnpm --filter @agentbox/web db:migrate` once at setup (with
+the production `DATABASE_URL`): the first POST also creates the tables, but two
+cold functions doing it at once can race. Handles that would read as official
+(`agentbox`, `madarco`, `anthropic`, …) are reserved, and the rate limit counts
+an IPv6 client by its /64. `proxy.ts` 404s a malformed `/u/` path before
+anything renders or is cached. The pages are ISR-cached forever and
 revalidated by the POST; `/u/example` renders the fixture without a database.
 The handle `example` is reserved. Env on the Vercel project: `DATABASE_URL`
 (from the Neon integration) and `SHARE_IP_SALT` (a random secret); without them

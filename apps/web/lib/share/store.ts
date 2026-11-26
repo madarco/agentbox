@@ -11,8 +11,35 @@ export const SHARE_RATE = {
   newHandlesPerDay: 3,
 } as const;
 
-/** Handles the site itself uses: `/u/example` is the fixture demo. */
-export const RESERVED_HANDLES = new Set(['example']);
+/**
+ * Handles nobody can claim: the site's own (`/u/example` is the fixture demo), and names
+ * that would read as official numbers. A claim cannot be recovered, so these stay free.
+ */
+export const RESERVED_HANDLES = new Set([
+  'agentbox',
+  'agent-box',
+  'madarco',
+  'admin',
+  'root',
+  'api',
+  'www',
+  'support',
+  'help',
+  'official',
+  'anthropic',
+  'claude',
+  'openai',
+  'codex',
+  'vercel',
+  'github',
+  'example',
+  'test',
+  'demo',
+  'u',
+  'share',
+  'null',
+  'undefined',
+]);
 
 let client: Sql | null = null;
 let ready: Promise<void> | null = null;

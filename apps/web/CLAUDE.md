@@ -39,7 +39,9 @@ documentation. Deployed on Vercel as a single Next.js app.
 - `app/u/**` + `app/api/share` + `lib/share/` — public usage shares
   (`/u/<handle>/<n>`, `/u/<handle>`, `/u/example`, `POST /api/share`, the OG image
   in `lib/share/og.tsx`), rendered by `@agentbox/usage-view`. Stored in Neon
-  Postgres (`DATABASE_URL`, `SHARE_IP_SALT`; schema in `db/schema.mjs`). Tests:
+  Postgres (`DATABASE_URL`, `SHARE_IP_SALT`; schema in `db/schema.mjs`, applied
+  once at setup with `pnpm db:migrate`). `proxy.ts` 404s malformed `/u/` paths
+  before ISR caches them. Tests:
   `SHARE_TEST_DATABASE_URL=postgres://… pnpm test` against a `postgres:16` container
   (skipped without it). See `docs/usage-dashboard-plan.md` Phase 5.
 - `scripts/copy-schema.mjs` — prebuild step (see Build).

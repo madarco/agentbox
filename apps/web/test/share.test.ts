@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SHARE_MAX_BYTES, toShare, usageFixture } from '@agentbox/usage-view';
-import { handleSharePost } from '@/lib/share/post';
+import { handleSharePost, ipBucket } from '@/lib/share/post';
 import { SHARE_RATE, getShare, listShares } from '@/lib/share/store';
 import type { Sql } from '@/lib/share/store';
 
@@ -123,8 +123,23 @@ describe.skipIf(!URL_)('POST /api/share', () => {
     expect((await sql`SELECT 1 FROM handles WHERE handle = ${handle}`).length).toBe(0);
   });
 
-  it('refuses the reserved example handle', async () => {
-    expect((await post(sql, fixture('example'))).status).toBe(403);
+  it('refuses reserved handles', async () => {
+    for (const h of ['example', 'agentbox', 'admin', 'anthropic']) {
+      expect((await post(sql, fixture(h))).status).toBe(403);
+    }
+    expect((await sql`SELECT 1 FROM handles WHERE handle = 'agentbox'`).length).toBe(0);
+  });
+
+  it('limits a whole IPv6 /64 as one client', async () => {
+    const prefix = `2001:db8:${(++ipSeq).toString(16)}:1`;
+    for (let i = 0; i < SHARE_RATE.newHandlesPerDay; i++) {
+      expect(
+        (await post(sql, fixture(`${handle}-${i}`), { ip: `${prefix}::${i + 1}` })).status,
+      ).toBe(201);
+    }
+    expect((await post(sql, fixture(`${handle}-x`), { ip: `${prefix}:ab:cd:ef:99` })).status).toBe(
+      429,
+    );
   });
 
   it('assigns distinct n to concurrent posts for one handle', async () => {
@@ -170,5 +185,24 @@ describe.skipIf(!URL_)('POST /api/share', () => {
     expect((await sql`SELECT 1 FROM handles WHERE handle = ${handle + '-x'}`).length).toBe(0);
     // The refused handle is still free for someone else.
     expect((await post(sql, fixture(`${handle}-x`))).status).toBe(201);
+  });
+});
+
+describe('ipBucket', () => {
+  it('keeps an IPv4 address whole', () => {
+    expect(ipBucket('203.0.113.7')).toBe('203.0.113.7');
+    expect(ipBucket('::ffff:203.0.113.7')).toBe('203.0.113.7');
+  });
+
+  it('counts an IPv6 address by its /64', () => {
+    const a = ipBucket('2001:db8:85a3:12:8a2e:370:7334:1');
+    expect(a).toBe('2001:db8:85a3:12::/64');
+    expect(ipBucket('2001:0db8:85a3:0012:ffff:ffff:ffff:ffff')).toBe(a);
+    expect(ipBucket('2001:db8:85a3:12::9')).toBe(a);
+    expect(ipBucket('[2001:DB8:85A3:12::1]')).toBe(a);
+    expect(ipBucket('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(ipBucket('::1')).toBe('0:0:0:0::/64');
+    expect(ipBucket('fe80::1%eth0')).toBe('fe80:0:0:0::/64');
+    expect(ipBucket('2001:db8:85a3:13::1')).not.toBe(a);
   });
 });

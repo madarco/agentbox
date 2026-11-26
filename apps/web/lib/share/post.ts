@@ -42,6 +42,30 @@ export function clientIp(req: Request): string {
   return fwd || 'unknown';
 }
 
+/**
+ * The unit the rate limit counts: an IPv4 address, or an IPv6 address's /64 (one
+ * subscriber gets a whole /64, so per-address limits would be 2^64 times too loose).
+ */
+export function ipBucket(ip: string): string {
+  const addr = ip
+    .replace(/^\[|\]$/g, '')
+    .split('%')[0]!
+    .toLowerCase();
+  if (!addr.includes(':')) return addr;
+  const mapped = /^(?:0*:)*:?ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(addr);
+  if (mapped) return mapped[1]!;
+  const [head, tail] = addr.split('::') as [string, string | undefined];
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups =
+    tail === undefined
+      ? left
+      : [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right];
+  const prefix = groups.slice(0, 4).map((g) => (parseInt(g || '0', 16) || 0).toString(16));
+  while (prefix.length < 4) prefix.push('0');
+  return `${prefix.join(':')}::/64`;
+}
+
 function bearer(req: Request): string | null {
   const m = /^Bearer\s+(\S+)$/i.exec(req.headers.get('authorization') ?? '');
   return m ? m[1]! : null;
@@ -68,7 +92,7 @@ export async function handleSharePost(req: Request, deps: SharePostDeps): Promis
 
   const result = await createShare(deps.sql, {
     share,
-    ipHash: hashIp(clientIp(req), deps.ipSalt),
+    ipHash: hashIp(ipBucket(clientIp(req)), deps.ipSalt),
     secret: bearer(req),
   });
   if (!result.ok) {

@@ -240,7 +240,8 @@ built from them. `agent-box.sh/u/<handle>` lists a handle's shares, and
   only that schema (at most 64 KB, unknown fields refused) and stores the parsed
   numbers, never the request as sent. It keeps a salted hash of your IP for rate
   limiting, not the address.
-- **The handle**: the first share for a handle claims it and returns a claim
+- **The handle**: a few names that would read as official (`agentbox`,
+  `anthropic`, `admin`, …) are reserved. The first share for a handle claims it and returns a claim
   secret, once. Every later share for that handle must send the secret
   (`Authorization: Bearer <secret>`), or it is refused. There is no account: keep
   the secret, a lost one can't be recovered. A share can't be edited after it is

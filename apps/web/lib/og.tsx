@@ -34,7 +34,8 @@ export interface OgFont {
 
 async function fetchFont(url: string): Promise<ArrayBuffer | null> {
   try {
-    const res = await fetch(url);
+    // A hanging CDN must not stall every render that shares this promise.
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
     return await res.arrayBuffer();
   } catch {
@@ -77,7 +78,9 @@ export function simpleIcon(slug: string): Promise<string | null> {
       key,
       (async () => {
         try {
-          const res = await fetch(`https://cdn.simpleicons.org/${slug}/16181c`);
+          const res = await fetch(`https://cdn.simpleicons.org/${slug}/16181c`, {
+            signal: AbortSignal.timeout(3000),
+          });
           if (!res.ok) return null;
           const svg = await res.text();
           return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
