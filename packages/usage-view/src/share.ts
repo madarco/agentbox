@@ -1,5 +1,5 @@
 import { encodeDaily, encodeWall } from './columns.js';
-import { HANDLE_RE, SHARE_LIMITS, SHARE_MAX_BYTES, UsageShare } from './schema.js';
+import { SHARE_LIMITS, SHARE_NAME_RE, SHARE_MAX_BYTES, UsageShare } from './schema.js';
 import type { DailyColumns, LaneStats, UsageStats, WallColumns } from './schema.js';
 
 /** Clamp into [0, max] and round to one decimal: the share's precision for hours. */
@@ -73,11 +73,11 @@ const laneHours = (l: LaneStats): number => l.intervals.reduce((a, [s, e]) => a 
  * Numbers are rounded and clamped to the share's bounds and arrays cut to its limits,
  * so the result always parses and stays under SHARE_MAX_BYTES.
  */
-export function toShare(stats: UsageStats, handle: string): UsageShare {
-  if (!HANDLE_RE.test(handle)) throw new Error(`invalid handle: ${handle}`);
+export function toShare(stats: UsageStats, name?: string): UsageShare {
+  if (name !== undefined && !SHARE_NAME_RE.test(name)) throw new Error(`invalid name: ${name}`);
   return UsageShare.parse({
     version: stats.version,
-    handle,
+    ...(name !== undefined ? { name } : {}),
     range: stats.range,
     hero: stats.hero,
     // Boxes running and PRs waiting at publish time are live state, not a result.
@@ -129,7 +129,7 @@ const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
  * and any `__proto__` / `constructor` / `prototype` key (zod would drop it from the
  * output but it is still in the raw text). Store the returned value re-serialized,
  * never the raw body: only the parsed output is known to hold nothing but numbers,
- * dates, enum ids and the handle.
+ * dates, enum ids and the optional display name.
  */
 export function parseShareBody(rawText: string): UsageShare {
   if (new TextEncoder().encode(rawText).length > SHARE_MAX_BYTES) {

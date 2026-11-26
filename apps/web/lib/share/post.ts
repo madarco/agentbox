@@ -1,13 +1,14 @@
 import { SHARE_MAX_BYTES, parseShareBody } from '@agentbox/usage-view';
 import type { UsageShare } from '@agentbox/usage-view';
-import { createShare, hashIp } from './store';
+import { validShareId } from './params';
+import { createShare, deleteShare, hashIp } from './store';
 import type { Sql } from './store';
 
 export interface SharePostDeps {
   sql: Sql | null;
   ipSalt: string | undefined;
-  /** Called after a share is stored (the route revalidates its pages). */
-  onStored?: (handle: string, n: number) => void;
+  /** Called after a share is stored or deleted (the route revalidates its pages). */
+  onChanged?: (id: string) => void;
 }
 
 const json = (body: unknown, status: number, headers: Record<string, string> = {}): Response =>
@@ -93,26 +94,31 @@ export async function handleSharePost(req: Request, deps: SharePostDeps): Promis
   const result = await createShare(deps.sql, {
     share,
     ipHash: hashIp(ipBucket(clientIp(req)), deps.ipSalt),
-    secret: bearer(req),
   });
   if (!result.ok) {
-    if (result.status === 429) {
-      return json({ error: 'too many shares, try later' }, 429, {
-        'Retry-After': String(result.retryAfter),
-      });
-    }
-    return json({ error: 'this handle is claimed: send its claim secret' }, 403);
+    return json({ error: 'too many shares, try later' }, 429, {
+      'Retry-After': String(result.retryAfter),
+    });
   }
 
-  deps.onStored?.(share.handle, result.n);
-  const url = `${new URL(req.url).origin}/u/${share.handle}/${result.n}`;
-  return json(
-    {
-      url,
-      handle: share.handle,
-      n: result.n,
-      ...(result.claimSecret ? { claimSecret: result.claimSecret } : {}),
-    },
-    201,
-  );
+  deps.onChanged?.(result.id);
+  const url = `${new URL(req.url).origin}/s/${result.id}`;
+  return json({ url, id: result.id, deleteSecret: result.deleteSecret }, 201);
+}
+
+/** DELETE /api/share/<id> with `Authorization: Bearer <deleteSecret>`. */
+export async function handleShareDelete(
+  req: Request,
+  id: string,
+  deps: Pick<SharePostDeps, 'sql' | 'onChanged'>,
+): Promise<Response> {
+  if (!deps.sql) return json({ error: 'sharing is not configured' }, 503);
+  const secret = bearer(req);
+  if (!secret) return json({ error: "send the share's delete secret as a Bearer token" }, 401);
+  if (!validShareId(id)) return json({ error: 'no such share' }, 404);
+  const result = await deleteShare(deps.sql, id, secret);
+  if (result === 'not_found') return json({ error: 'no such share' }, 404);
+  if (result === 'forbidden') return json({ error: 'wrong delete secret' }, 403);
+  deps.onChanged?.(id);
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
 }

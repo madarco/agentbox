@@ -62,9 +62,9 @@ export function periodText(share: UsageShare): string {
   return rangeText(share);
 }
 
-/** "@madarco's coding agents · November 2026" */
+/** "madarco's coding agents · November 2026", or "Coding agents · November 2026" without a name. */
 export const shareTitle = (share: UsageShare): string =>
-  `@${share.handle}'s coding agents · ${periodText(share)}`;
+  `${share.name ? `${share.name}'s coding agents` : 'Coding agents'} · ${periodText(share)}`;
 
 export const hasSpeedup = (share: UsageShare): boolean => share.hero.speedup >= MIN_SPEEDUP;
 
@@ -76,7 +76,7 @@ export const savedText = (share: UsageShare): string =>
 
 /**
  * Title and description for the page metadata and the link preview. The title names
- * whose agents and when; the description carries the numbers. No free text but the handle.
+ * whose agents and when; the description carries the numbers. No free text but the optional display name.
  */
 export function shareMeta(share: UsageShare): { title: string; description: string } {
   const h = share.hero;

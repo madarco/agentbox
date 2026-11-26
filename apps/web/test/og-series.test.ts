@@ -158,7 +158,10 @@ describe('share wording', () => {
 
   it('labels the numbers in the metadata', () => {
     const m = shareMeta(share);
-    expect(m.title).toBe("@example's coding agents · 1 Nov - 26 Nov 2026");
+    expect(m.title).toBe("example's coding agents · 1 Nov - 26 Nov 2026");
+    expect(shareMeta({ ...share, name: undefined }).title).toBe(
+      'Coding agents · 1 Nov - 26 Nov 2026',
+    );
     expect(m.description).toContain('9 agents running at the same time (peak).');
     expect(m.description).toContain(
       '612 hours of agent work in 211 hours, 2.9x faster than one agent.',
