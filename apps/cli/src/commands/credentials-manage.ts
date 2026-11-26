@@ -319,7 +319,9 @@ export async function labelCommand(
   await withHubClient(LOCAL, async (client) => {
     const next = await client.labelAccount(agent, id, opts.clear ? null : (value ?? null));
     log.success(
-      next.label ? `labelled ${agent}/${id} '${next.label}'` : `cleared the label of ${agent}/${id}`,
+      next.label
+        ? `labelled ${agent}/${id} '${next.label}'`
+        : `cleared the label of ${agent}/${id}`,
     );
   });
 }
@@ -351,7 +353,8 @@ export interface UseOpts {
 export async function useCommand(ref: string | undefined, opts: UseOpts): Promise<void> {
   const project = process.cwd();
   if (!ref) {
-    if (opts.clear) throw new Error('name the agent to clear, e.g. `credentials use claude --clear`');
+    if (opts.clear)
+      throw new Error('name the agent to clear, e.g. `credentials use claude --clear`');
     const list = await loadList(project);
     if (!list) return;
     const defaults = list.defaults ?? {};
@@ -366,7 +369,8 @@ export async function useCommand(ref: string | undefined, opts: UseOpts): Promis
   let agent: string;
   let account: string | null;
   if (opts.clear) {
-    if (ref.includes('/')) throw new Error('--clear takes the agent alone, e.g. `use claude --clear`');
+    if (ref.includes('/'))
+      throw new Error('--clear takes the agent alone, e.g. `use claude --clear`');
     agent = agentId(ref);
     account = null;
   } else {
@@ -462,7 +466,9 @@ async function tuiAdd(list: HubApiAccountList): Promise<void> {
     message: 'Name (lowercase letters, digits, dashes)',
     placeholder: 'work',
     validate: (v) =>
-      isDefaultAccount(v ?? '') ? 'default is the agent\'s own login' : (accountIdProblem(v ?? '') ?? undefined),
+      isDefaultAccount(v ?? '')
+        ? "default is the agent's own login"
+        : (accountIdProblem(v ?? '') ?? undefined),
   });
   if (isCancel(id)) return;
   const label = await text({ message: 'Label (optional)', placeholder: 'Work Max' });
@@ -507,7 +513,8 @@ async function tuiAccount(client: HubApiClient, a: HubApiAccount): Promise<void>
       : { value: 'renew', label: 'Replace its token', hint: `paste a new ${KIND_TEXT[a.kind]}` },
   );
   if (!a.default?.project) options.push({ value: 'project', label: 'Use for this project' });
-  if (!a.default?.global) options.push({ value: 'global', label: 'Use everywhere', hint: 'the global default' });
+  if (!a.default?.global)
+    options.push({ value: 'global', label: 'Use everywhere', hint: 'the global default' });
   options.push({ value: 'move', label: 'Move a box to this account' });
   options.push({ value: 'label', label: a.label ? 'Relabel' : 'Add a label' });
   if (named) {

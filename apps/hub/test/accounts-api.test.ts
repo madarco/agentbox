@@ -278,7 +278,10 @@ describe('POST /api/v1/accounts/:agent/:id/renew (backend)', () => {
   });
   it('reads the counts off the JSON summary line', () => {
     expect(
-      parsePropagateOutput('a: boom\npropagated claude credential to 2 target(s), 1 failed\n{"pushed":2,"failed":1}\n', 1),
+      parsePropagateOutput(
+        'a: boom\npropagated claude credential to 2 target(s), 1 failed\n{"pushed":2,"failed":1}\n',
+        1,
+      ),
     ).toEqual({
       pushed: 2,
       failed: 1,

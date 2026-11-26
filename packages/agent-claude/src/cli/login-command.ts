@@ -65,9 +65,7 @@ function printAwaitingCode(st: LoginState, account: LoginAccount | undefined): v
     `To finish signing in ${describeSessionAccount(account)}, open this URL in a browser and approve access:`,
   );
   process.stdout.write(`\n  ${url}\n\n`);
-  log.info(
-    `Then run:  ${finishCommand(account)}`,
-  );
+  log.info(`Then run:  ${finishCommand(account)}`);
   // Stable, greppable marker so an orchestrating agent can grab the URL
   // deterministically regardless of how the prose above is worded.
   process.stdout.write(`AGENTBOX_LOGIN_URL=${url}\n`);
@@ -224,9 +222,7 @@ async function deliverLoginCode(code: string, account: LoginAccount | undefined)
     // the session stays valid so a corrected `--code` can retry it.
     if (st?.phase === 'awaiting-code' && st.lastError && Date.parse(st.updatedAt) >= submittedAt) {
       s.stop('code rejected');
-      log.error(
-        `${st.lastError}. Run \`${finishCommand(account)}\` again with a fresh code.`,
-      );
+      log.error(`${st.lastError}. Run \`${finishCommand(account)}\` again with a fresh code.`);
       process.exit(1);
     }
     if (Date.now() > deadline) {

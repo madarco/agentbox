@@ -294,9 +294,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     const on = boxesOnSubscription(list, account.agent, account.id);
     const key = `${account.agent}/${account.id}`;
     const [limits, ev, written] = await Promise.all([
-      deps.limits
-        ?.limitsFor(account.agent, account.id, on.some(isRunning))
-        .catch(() => undefined),
+      deps.limits?.limitsFor(account.agent, account.id, on.some(isRunning)).catch(() => undefined),
       deps.authEvidence?.(key).catch(() => null),
       secretWrittenAt(account.agent, account.id).catch(() => null),
     ]);
@@ -387,7 +385,8 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     async listAccounts(opts = {}) {
       const { accounts } = await readAccounts(store);
       const all = await boxes().catch(() => []);
-      const project = opts.project && !(await projectProblem(opts.project)) ? opts.project : undefined;
+      const project =
+        opts.project && !(await projectProblem(opts.project)) ? opts.project : undefined;
       const defaults = await defaultsFor(project);
       const views = await Promise.all(accounts.map((a) => view(a, all, defaults)));
       const agents = accountAgents().map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
@@ -408,7 +407,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       const b = (input ?? {}) as Record<string, unknown>;
       const spec = specOf(b.agent);
       if (!spec || agentAccountKinds(spec).length === 0) {
-        return { ok: false, code: 'invalid_request', error: 'unknown agent, or one without accounts' };
+        return {
+          ok: false,
+          code: 'invalid_request',
+          error: 'unknown agent, or one without accounts',
+        };
       }
       const scope = b.scope ?? 'global';
       if (scope !== 'global' && scope !== 'project') {
@@ -459,7 +462,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       const r = await runPropagate(spec.id, row.id);
       const value = parsePropagateOutput(r.output, r.exitCode);
       if (r.exitCode !== 0 && value.pushed === 0 && value.failed === 0) {
-        return { ok: false, code: 'conflict', error: value.output.slice(-3).join('\n') || 'fan-out failed' };
+        return {
+          ok: false,
+          code: 'conflict',
+          error: value.output.slice(-3).join('\n') || 'fan-out failed',
+        };
       }
       return { ok: true, value };
     },
@@ -506,7 +513,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         };
       }
       if (replace && !existing) {
-        return { ok: false, code: 'not_found', error: `no ${spec.id} account '${req.id}' to replace` };
+        return {
+          ok: false,
+          code: 'not_found',
+          error: `no ${spec.id} account '${req.id}' to replace`,
+        };
       }
       // From here a failure is the hub's (disk, permissions), not the input's:
       // it propagates and the route answers 500. A new token restarts the

@@ -36,9 +36,9 @@ describe('statusText', () => {
   });
   it('then no secret, at limit, expiring, ok', () => {
     expect(statusText(acct({ hasSecret: false }), NOW)).toBe('no secret');
-    expect(
-      statusText(acct({ limits: { windows: [], atLimit: true, updatedAt: '' } }), NOW),
-    ).toBe('at limit');
+    expect(statusText(acct({ limits: { windows: [], atLimit: true, updatedAt: '' } }), NOW)).toBe(
+      'at limit',
+    );
     expect(
       statusText(acct({ auth: { state: 'expiring', since: '2026-12-10T00:00:00Z' } }), NOW),
     ).toBe('expiring 2026-12-10');

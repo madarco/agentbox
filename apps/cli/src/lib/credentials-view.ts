@@ -3,10 +3,7 @@
  * the list table, the status cell and the `use` table. Pure, plain text, so
  * the TUI's `note` and a pipe render the same thing.
  */
-import type {
-  HubApiAccount,
-  HubApiAccountDefault,
-} from '../control-plane/hub-api-client.js';
+import type { HubApiAccount, HubApiAccountDefault } from '../control-plane/hub-api-client.js';
 
 export const KIND_TEXT: Record<HubApiAccount['kind'], string> = {
   login: 'login',

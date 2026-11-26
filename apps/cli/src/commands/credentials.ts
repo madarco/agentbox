@@ -294,10 +294,16 @@ export const credentialsCommand = new Command('credentials')
       )
       .argument('<agent/name>', 'e.g. claude/work')
       .option('--login', 'sign in with the browser (the OAuth login)')
-      .option('--setup-token', 'store a long-lived setup token (never refreshes; fine for many boxes at once)')
+      .option(
+        '--setup-token',
+        'store a long-lived setup token (never refreshes; fine for many boxes at once)',
+      )
       .option('--api-key', 'store an API key')
       .option('--label <text>', 'display label')
-      .option('--replace', "paste a new token over an existing setup token or API key (boxes on it keep it)")
+      .option(
+        '--replace',
+        'paste a new token over an existing setup token or API key (boxes on it keep it)',
+      )
       .option('--headless', 'login without a terminal: print the URL, then finish with --code')
       .option('--code <code>', 'finish a --headless login with the OAuth code')
       .action(withRef((ref: string, opts: AddOpts) => addCommand(ref, opts))),
