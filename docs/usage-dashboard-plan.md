@@ -362,8 +362,9 @@ and 4b (contributions to a remote hub).
   - a strip of the activity wall (last ~20 weeks) drawn as flexbox squares,
   - the top-3 provider marks as round avatars, the display name, and the agent-box.sh
     mark.
-  The image is immutable per share, so it is generated once and cached
-  (`Cache-Control: public, max-age=31536000, immutable`). The page sets
+  A share can be deleted, and nothing purges a browser, proxy or CDN copy on
+  delete, so the image is cached by the client only and briefly
+  (`Cache-Control: public, max-age=300`, no `s-maxage`). The page sets
   `og:title`, `og:description` (numbers only), `twitter:card=summary_large_image`.
   Check it with real unfurls (X card validator, LinkedIn post inspector, a Slack
   paste) and with the shortest and largest plausible numbers (1 box, 6-digit
@@ -375,14 +376,17 @@ and 4b (contributions to a remote hub).
 account behind it, anyone could take a name (`/u/torvalds/1`) and post numbers
 under it, so the handle namespace is gone: a share's URL is an unguessable id,
 and the optional display name is plain text on the page ("shared by …"), never
-in the URL, never unique, never claimed. `db/schema.mjs` drops the old
-`handles`/`shares` tables when it finds them empty (it refuses if they hold
-rows) and creates the id-keyed one; it stays idempotent.
+in the URL, never unique, never claimed. `pnpm db:migrate` (`SHARE_MIGRATION`
+in `db/schema.mjs`) drops the old `handles`/`shares` tables when they are empty,
+under an `ACCESS EXCLUSIVE` lock taken before the check (it refuses if they hold
+rows), and creates the id-keyed one; it is idempotent. The app's lazy
+`SHARE_DDL` only ever creates, so a cold function never drops anything.
 
 Built (2026-11-26): `apps/web` with the `postgres` driver (`prepare: false` for
 Neon's pooler). Run `pnpm --filter @agentbox/web db:migrate` once at setup (with
-the production `DATABASE_URL`): the first POST also creates the tables, but two
-cold functions doing it at once can race. The rate limit counts an IPv6 client
+the production `DATABASE_URL`): the first POST creates a missing table, but only
+the migration replaces the old handle-keyed one, and until it runs on such a
+database shares fail. The rate limit counts an IPv6 client
 by its /64. `proxy.ts` 404s a malformed `/s/` path before anything renders or is
 cached. The pages are ISR-cached forever and revalidated by the POST and the
 DELETE; `/s/example` renders the fixture without a database. Env on the Vercel

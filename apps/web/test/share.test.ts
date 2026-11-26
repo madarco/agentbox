@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SHARE_MAX_BYTES, toShare, usageFixture } from '@agentbox/usage-view';
-import { SHARE_DDL } from '@/db/schema.mjs';
+import { SHARE_DDL, SHARE_MIGRATION } from '@/db/schema.mjs';
 import { SHARE_ID_RE } from '@/lib/share/params';
 import { handleShareDelete, handleSharePost, ipBucket } from '@/lib/share/post';
 import { SHARE_RATE, getShare, newShareId } from '@/lib/share/store';
@@ -85,17 +85,24 @@ describe.skipIf(!URL_)('the share API', () => {
     expect(t!.t).toBeNull();
   });
 
-  it('replaces the empty handle-keyed tables, and the DDL stays idempotent', async () => {
+  it('db:migrate replaces the empty handle-keyed tables, idempotently; the lazy DDL never does', async () => {
     const s = `share_old_${randomBytes(4).toString('hex')}`;
     const old = postgres(URL_!, { max: 1, onnotice: () => {}, connection: { search_path: s } });
     try {
       await admin.unsafe(`CREATE SCHEMA ${s}`);
       await old.unsafe(`
-        CREATE TABLE handles (handle text PRIMARY KEY, claim_hash text NOT NULL);
+        CREATE TABLE handles (handle text PRIMARY KEY, claim_hash text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE shares (handle text NOT NULL REFERENCES handles (handle), n integer NOT NULL,
-          snapshot jsonb NOT NULL, ip_hash text NOT NULL, PRIMARY KEY (handle, n));`);
+          snapshot jsonb NOT NULL, ip_hash text NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (handle, n));
+        CREATE INDEX shares_ip_created ON shares (ip_hash, created_at);`);
+      // The app's lazy DDL never touches the old tables.
       await old.unsafe(SHARE_DDL);
-      await old.unsafe(SHARE_DDL);
+      const [kept] = await old`SELECT to_regclass('handles') AS t`;
+      expect(kept!.t).not.toBeNull();
+      await old.unsafe(SHARE_MIGRATION);
+      await old.unsafe(SHARE_MIGRATION);
       const cols = await old<{ column_name: string }[]>`
         SELECT column_name FROM information_schema.columns
         WHERE table_schema = ${s} AND table_name = 'shares' ORDER BY column_name`;
@@ -123,7 +130,7 @@ describe.skipIf(!URL_)('the share API', () => {
       await old.unsafe(`
         CREATE TABLE shares (handle text NOT NULL, n integer NOT NULL, snapshot jsonb NOT NULL);
         INSERT INTO shares VALUES ('me', 1, '{}');`);
-      await expect(old.unsafe(SHARE_DDL)).rejects.toThrow(/handle-keyed rows/);
+      await expect(old.unsafe(SHARE_MIGRATION)).rejects.toThrow(/handle-keyed rows/);
       expect((await old`SELECT count(*)::int AS c FROM shares`)[0]!.c).toBe(1);
     } finally {
       await old.end();
