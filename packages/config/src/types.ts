@@ -369,6 +369,7 @@ export interface UserConfig {
      * finds them. Global, or per project.
      */
     materialize?: boolean;
+    /**
      * With a remote control box configured, push this PC's usage metrics (active
      * intervals, token and shipped totals, ids only, never transcripts) to it so its
      * Usage page counts this PC's local boxes and sessions (default true).
@@ -1570,6 +1571,8 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       "Write the claude sessions of this project's boxes from the hub's session history into this PC's `~/.claude/projects/<project folder key>/` (default true), so `claude --resume` in the project lists them next to your own. The copy is the redacted one the hub stores. It is rewritten when the session changes and written again when it is missing, including after claude's own `cleanupPeriodDays` removed it. A file claude wrote on this PC is never overwritten. Needs the hub to know the project's folder on this machine (a box created from it, a registered project, or the checkouts registry). Set false globally or in a project's config to stop it; files already written stay.",
+  },
+  {
     key: 'history.contributeUsage',
     type: 'bool',
     description:
