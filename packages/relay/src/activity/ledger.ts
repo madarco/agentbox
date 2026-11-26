@@ -4,6 +4,7 @@
 // written after the real work has answered, and a miss must not change it.
 import { randomBytes } from 'node:crypto';
 import { repoKey } from '@agentbox/config';
+import { execa } from 'execa';
 import { readState } from '@agentbox/sandbox-core';
 import { managerIdForTarget } from '../workspaces/manager.js';
 import { activityStoreFromSpec, activityStoreSpec } from './store.js';
@@ -43,15 +44,27 @@ export type ActivityBoxContext = Pick<
 
 export type ActivityBoxContextFn = (boxId: string) => Promise<ActivityBoxContext | undefined>;
 
+/** The checkout's `origin`; undefined when the folder is gone (a worker's temp clone) or git is slow. */
+async function originOf(root: string | undefined): Promise<string | undefined> {
+  if (!root) return undefined;
+  const r = await execa('git', ['-C', root, 'remote', 'get-url', 'origin'], {
+    reject: false,
+    timeout: 2000,
+  }).catch(() => null);
+  return r && r.exitCode === 0 ? r.stdout.trim() || undefined : undefined;
+}
+
 /**
  * The relay's own answer, from this machine's box records: no account (that is
  * the hub's rule, installed over this one) and no origin without a checkout.
+ * The queue worker, a separate process, writes with this one.
  */
 const recordContext: ActivityBoxContextFn = async (boxId) => {
   const box = (await readState().catch(() => null))?.boxes.find((b) => b.id === boxId);
   const managerId = await managerIdForTarget({ boxId }).catch(() => undefined);
   if (!box) return managerId ? { managerId } : undefined;
   const agent = box.lastAgent === 'claude-code' ? 'claude' : box.lastAgent;
+  const repoUrl = await originOf(box.projectRoot);
   const branch =
     box.gitWorktrees?.[0]?.sanctionedBranch ??
     box.gitWorktrees?.[0]?.branch ??
@@ -61,6 +74,7 @@ const recordContext: ActivityBoxContextFn = async (boxId) => {
     boxName: box.name,
     provider: box.provider ?? 'docker',
     ...(agent ? { agent } : {}),
+    ...(repoUrl ? { repoUrl } : {}),
     ...(branch ? { branch } : {}),
     ...(managerId ? { managerId } : {}),
   };
