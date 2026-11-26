@@ -28,6 +28,7 @@ function backend() {
     boxes: () => Promise.resolve([]),
     configHome: HOME,
     machineId: () => 'm-test',
+    removeVolume: () => Promise.resolve({ removed: false }),
   });
 }
 
@@ -79,6 +80,16 @@ describe('account defaults', () => {
     expect(cleared.ok && cleared.value.claude).toMatchObject({ account: 'home', source: 'global' });
     await b.setAccountDefault({ agent: 'claude', account: null, scope: 'global' });
     expect((await b.listAccounts()).defaults.claude?.source).toBe('default');
+  });
+
+  it('drops the settings that name an account when it is removed', async () => {
+    const b = backend();
+    await b.setAccountDefault({ agent: 'claude', account: 'work', scope: 'global' });
+    await b.setAccountDefault({ agent: 'claude', account: 'work', scope: 'project', project });
+    const r = await b.removeAccount('claude', 'work');
+    expect(r.ok && r.value.defaultsCleared).toHaveLength(2);
+    const d = await b.getAccountDefaults({ project });
+    expect(d.ok && d.value.claude).toEqual({ account: 'default', source: 'default' });
   });
 
   it('refuses an unknown account, agent, scope or project', async () => {

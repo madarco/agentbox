@@ -304,6 +304,11 @@ export async function removeCommand(ref: string, opts: { yes?: boolean }): Promi
         : `removed ${agent}/${id}`,
     );
     if (r.volumeError) log.warn(r.volumeError);
+    if (r.defaultsCleared?.length) {
+      log.info(
+        `new ${agent} boxes there now use ${agent}/default: ${r.defaultsCleared.map((d) => (d === 'global' ? 'the global setting' : d)).join(', ')}`,
+      );
+    }
   });
 }
 
@@ -503,7 +508,12 @@ async function tuiMoveBox(client: HubApiClient, a: HubApiAccount): Promise<void>
   await switchCommand(box, `${a.agent}/${a.id}`);
 }
 
-async function tuiAccount(client: HubApiClient, a: HubApiAccount): Promise<void> {
+/** `canDefault`: the agent has an `<agent>.account` setting (opencode has none). */
+async function tuiAccount(
+  client: HubApiClient,
+  a: HubApiAccount,
+  canDefault: boolean,
+): Promise<void> {
   note(detailNote(a), `${a.agent}/${a.id}`);
   const named = !isDefaultAccount(a.id);
   const options: Array<{ value: string; label: string; hint?: string }> = [];
@@ -512,10 +522,12 @@ async function tuiAccount(client: HubApiClient, a: HubApiAccount): Promise<void>
       ? { value: 'renew', label: 'Renew', hint: 'sign in again, then push the login to its boxes' }
       : { value: 'renew', label: 'Replace its token', hint: `paste a new ${KIND_TEXT[a.kind]}` },
   );
-  if (!a.default?.project) options.push({ value: 'project', label: 'Use for this project' });
-  if (!a.default?.global)
+  if (canDefault && !a.default?.project) {
+    options.push({ value: 'project', label: 'Use for this project' });
+  }
+  if (canDefault && !a.default?.global)
     options.push({ value: 'global', label: 'Use everywhere', hint: 'the global default' });
-  options.push({ value: 'move', label: 'Move a box to this account' });
+  if (canDefault) options.push({ value: 'move', label: 'Move a box to this account' });
   options.push({ value: 'label', label: a.label ? 'Relabel' : 'Add a label' });
   if (named) {
     options.push({
@@ -601,7 +613,12 @@ export async function runCredentialsTui(): Promise<void> {
           continue;
         }
         const a = list.accounts.find((x) => `${x.agent}/${x.id}` === choice);
-        if (a) await tuiAccount(client, a);
+        if (a)
+          await tuiAccount(
+            client,
+            a,
+            list.agents.some((g) => g.id === a.agent),
+          );
       }
     } catch (err) {
       cancel(err instanceof Error ? err.message : String(err));

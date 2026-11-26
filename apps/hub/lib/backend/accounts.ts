@@ -11,6 +11,7 @@ import {
   loadEffectiveConfig,
   setConfigValue,
   tryGetMachineId,
+  listProjectsConfigured,
   unsetConfigValue,
 } from '@agentbox/config';
 import { homedir } from 'node:os';
@@ -362,6 +363,28 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     );
   }
 
+  /**
+   * Drop every `<agent>.account` setting that names a removed account: the
+   * global one and each known project's. Left in place, the next create there
+   * would fail on an account that no longer exists. Returns what it cleared
+   * (`global`, or the project folder).
+   */
+  async function clearDefaultsNaming(agent: string, id: string): Promise<string[]> {
+    const key = `${agent}.account`;
+    const cleared: string[] = [];
+    if ((await defaultsFor())[agent]?.global === id) {
+      await unsetConfigValue('global', key, configHome);
+      cleared.push('global');
+    }
+    for (const p of await listProjectsConfigured().catch(() => [])) {
+      if (!p.hasConfigFile) continue;
+      if ((await defaultsFor(p.originalPath))[agent]?.project !== id) continue;
+      await unsetConfigValue('project', key, p.originalPath).catch(() => {});
+      cleared.push(p.originalPath);
+    }
+    return cleared;
+  }
+
   function specOf(agent: unknown): AgentSyncSpec | null {
     return typeof agent === 'string' ? (findAgentSpec(agent) ?? null) : null;
   }
@@ -587,6 +610,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       }
       await removeStoredAccount(spec.id, id, store);
       deps.limits?.forget(spec.id, id);
+      const defaultsCleared = await clearDefaultsNaming(spec.id, id);
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);
       return {
@@ -594,6 +618,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         value: {
           volumeRemoved: r.removed,
           ...(r.error ? { volumeError: `could not remove ${volume}: ${r.error}` } : {}),
+          ...(defaultsCleared.length > 0 ? { defaultsCleared } : {}),
         },
       };
     },

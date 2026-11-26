@@ -1589,7 +1589,9 @@ export interface AccountBackend {
   removeAccount(
     agent: string,
     id: string,
-  ): Promise<AccountResult<{ volumeRemoved: boolean; volumeError?: string }>>;
+  ): Promise<
+    AccountResult<{ volumeRemoved: boolean; volumeError?: string; defaultsCleared?: string[] }>
+  >;
 }
 
 export type AccountKind = 'login' | 'setup-token' | 'api-key';

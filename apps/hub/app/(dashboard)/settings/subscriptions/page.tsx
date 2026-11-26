@@ -207,7 +207,9 @@ export default function SubscriptionsPage() {
                       busy={busy !== null}
                       confirming={confirmRemove === subscriptionKey(a)}
                       onLabel={() => relabel(a)}
-                      onMakeDefault={() => void makeDefault(a)}
+                      onMakeDefault={
+                        agents.some((x) => x.id === a.agent) ? () => void makeDefault(a) : undefined
+                      }
                       onAskRemove={() => setConfirmRemove(subscriptionKey(a))}
                       onKeep={() => setConfirmRemove(null)}
                       onRemove={() => void remove(a)}
@@ -320,7 +322,8 @@ function SubscriptionCard({
   busy: boolean;
   confirming: boolean;
   onLabel: () => void;
-  onMakeDefault: () => void;
+  /** Absent for an agent with no `<agent>.account` setting. */
+  onMakeDefault: (() => void) | undefined;
   onAskRemove: () => void;
   onKeep: () => void;
   onRemove: () => void;
@@ -371,7 +374,7 @@ function SubscriptionCard({
               {atLimit ? 'at limit' : 'ok'}
             </Badge>
           ) : null}
-          {a.default?.global ? null : (
+          {a.default?.global || !onMakeDefault ? null : (
             <Button
               size="sm"
               variant="ghost"

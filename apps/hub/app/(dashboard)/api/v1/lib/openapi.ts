@@ -1508,7 +1508,10 @@ export function buildOpenApi(): Record<string, unknown> {
           description:
             "Removes the stored secret and the account's docker config volume. Refused (409) while a box records the account; the `default` account cannot be removed.",
           responses: {
-            '200': { description: '`{ ok: true, volumeRemoved }`' },
+            '200': {
+              description:
+                '`{ ok: true, volumeRemoved, volumeError?, defaultsCleared? }`: `defaultsCleared` lists the `<agent>.account` settings that named the account and were dropped (`global`, or a project folder).',
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,

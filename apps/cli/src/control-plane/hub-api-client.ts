@@ -2168,11 +2168,14 @@ export class HubApiClient {
   async removeAccount(
     agent: string,
     id: string,
-  ): Promise<{ volumeRemoved: boolean; volumeError?: string }> {
-    return this.request<{ ok: true; volumeRemoved: boolean; volumeError?: string }>(
-      'DELETE',
-      `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`,
-    );
+  ): Promise<{ volumeRemoved: boolean; volumeError?: string; defaultsCleared?: string[] }> {
+    return this.request<{
+      ok: true;
+      volumeRemoved: boolean;
+      volumeError?: string;
+      /** The `<agent>.account` settings that named it: `global` or a project folder. */
+      defaultsCleared?: string[];
+    }>('DELETE', `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`);
   }
 
   async reportCheckouts(report: HubApiCheckoutReport): Promise<HubApiCheckout[]> {
