@@ -5,6 +5,8 @@ import { loadEffectiveConfig } from '@agentbox/config';
 import {
   ensureHub,
   getHubStatus,
+  readHubToken,
+  relayPort,
   stopHub,
   controlPlaneDeployPath,
   hostOpenCommand,
@@ -136,11 +138,13 @@ export async function resolveHubTarget(
       onThisMachine: false,
     };
   }
-  const s = await getHubStatus();
+  // Only the port and the token: the full getHubStatus() also probes /healthz,
+  // asks Portless for its alias and stats the bundle, which cost every hub call
+  // a quarter of a second for fields this target never reads.
   return {
     mode: 'local',
-    url: `http://127.0.0.1:${String(s.port)}`,
-    token: s.token ?? '',
+    url: `http://127.0.0.1:${String(relayPort())}`,
+    token: (await readHubToken()) ?? '',
     onThisMachine: true,
   };
 }

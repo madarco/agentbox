@@ -193,8 +193,8 @@ export default function SkillsPage() {
     run(`skip:${name}`, async () => {
       await api(`/skill-skips/${encodeURIComponent(name)}`, { method: skip ? 'PUT' : 'DELETE' });
       return skip
-        ? `${name} is skipped: never pulled, sent or put in boxes.`
-        : `${name} syncs again.`;
+        ? `${name} is skipped: boxes don't get it, and running boxes drop it now. Nothing is deleted.`
+        : `${name} syncs again: running boxes get it back now.`;
     });
 
   const discard = (s: SkillRow) => {
@@ -577,7 +577,7 @@ export default function SkillsPage() {
                 <span>Agents</span>
                 <span>Status</span>
                 <span className="text-right">Action</span>
-                <span className="text-center" title="Untick to never sync it">
+                <span className="text-center" title="Untick to skip: boxes don't get it">
                   Sync
                 </span>
               </div>
@@ -614,9 +614,9 @@ export default function SkillsPage() {
           )}
           {rows.length > 0 ? (
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-              Unticked ones are skipped for good: the Hub remembers it, so later syncs, the first
-              seed from a PC, restarts and new boxes never pull, send or install them. Skipping
-              deletes nothing.
+              Untick any skill, synced or not, to skip it: boxes don&apos;t get it (running boxes
+              drop it right away, new boxes never install it), and later syncs and the first seed
+              from a PC leave it out. Skipping deletes nothing; tick it again to bring it back.
             </p>
           ) : null}
         </>
@@ -700,7 +700,7 @@ function SkillTableRow({
   // Just unskipped: the comparison still says `skipped` until it reloads.
   const stale = !skipped && cmp?.status === 'skipped';
   const status = skipped
-    ? 'Skipped, not synced'
+    ? 'Skipped'
     : comparing || stale
       ? 'Checking…'
       : cmp
@@ -796,7 +796,10 @@ function SkillTableRow({
         className={`flex items-center gap-1.5 pt-0.5 text-[12.5px] ${statusTone(skipped ? 'skipped' : cmp?.status)}`}
       >
         {skipped ? <Icons.pause className="size-3.5 flex-none" /> : null}
-        {status}
+        <span>
+          {status}
+          {skipped ? <span className="block text-[11.5px]">Boxes don&apos;t get it</span> : null}
+        </span>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-1.5 max-lg:justify-start">
         {moves.includes('pull') ? (
@@ -883,8 +886,8 @@ function SkillTableRow({
           aria-label={(skipped ? 'Sync ' : 'Skip ') + name}
           title={
             skipped
-              ? 'Skipped: never pulled, sent or put in boxes'
-              : 'Untick to skip this one for good'
+              ? "Skipped: boxes don't get it, and it is never pulled or sent. Tick to sync it again."
+              : "Untick to skip: boxes don't get it (running ones drop it now). Deletes nothing."
           }
         />
       </div>

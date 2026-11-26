@@ -47,7 +47,6 @@ export interface LlmAccount {
   agent: string;
   /** `default` or a user-chosen slug — see {@link accountIdProblem}. */
   id: string;
-  label?: string;
   kind: LlmAccountKind;
   identity?: LlmAccountIdentity;
   /** ISO timestamp. For a migrated `default`, the legacy backup's mtime. */
@@ -68,7 +67,10 @@ export interface AccountsFile {
  * Daytona subpath. With no `.` or `/` it is always exactly one path segment
  * and can never traverse out of the directory it is joined under.
  */
-const ACCOUNT_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+const ACCOUNT_ID_RE = /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/;
+
+/** What a NEW name may be: `_` separates words; `-` stays readable only on older ids. */
+const NEW_ACCOUNT_NAME_RE = /^[a-z0-9](?:[a-z0-9_]{0,30}[a-z0-9])?$/;
 
 /**
  * Agent ids are spliced into host paths (`credentials/<agent>/`), custody paths
@@ -87,9 +89,30 @@ export function agentIdProblem(id: string): string | null {
 /** Why `id` is not a usable account id, or null when it is. */
 export function accountIdProblem(id: string): string | null {
   if (!ACCOUNT_ID_RE.test(id)) {
-    return `account name '${id}' must be 1-32 lowercase letters, digits or inner dashes`;
+    return `account name '${id}' must be 1-32 lowercase letters, digits or '_'`;
   }
   return null;
+}
+
+/**
+ * A typed name made into an account name: lowercased, runs of spaces or `-`
+ * turned into `_` ("Work Max" -> `work_max`). Anything else that is not a
+ * letter, digit or `_` is refused, not dropped, so the name the user sees is
+ * the one stored.
+ */
+export function normalizeAccountName(
+  input: string,
+): { name: string; problem?: undefined } | { name?: undefined; problem: string } {
+  const name = input
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!NEW_ACCOUNT_NAME_RE.test(name)) {
+    return {
+      problem: `'${input.trim()}' is not a usable name: use 1-32 letters, digits, spaces or '_' (got '${name}')`,
+    };
+  }
+  return { name };
 }
 
 export function isDefaultAccount(id: string): boolean {
@@ -231,7 +254,6 @@ function parseAccount(raw: unknown): LlmAccount | null {
     kind: r.kind as LlmAccountKind,
     createdAt: r.createdAt,
   };
-  if (typeof r.label === 'string' && r.label.length > 0) account.label = r.label;
   const identity = parseIdentity(r.identity);
   if (identity) account.identity = identity;
   return account;
@@ -247,7 +269,7 @@ function parseAccount(raw: unknown): LlmAccount | null {
  *   only — the store never writes it back, so a row this process cannot
  *   validate (a newer kind, a plugin it has not loaded) survives on disk.
  * - `default` is listed iff its legacy login is real (`legacy` names it). A
- *   stored `default` row only contributes its metadata (a label); a logout
+ *   stored `default` row only contributes its metadata (its identity); a logout
  *   hides it, and a `default` with no row yet is synthesized as a `login` —
  *   the one-slot model only ever stored login files there.
  *

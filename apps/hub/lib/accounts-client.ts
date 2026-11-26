@@ -16,7 +16,6 @@ export type { AccountLimits, AccountLimitWindow as LimitWindow };
 export interface Account {
   agent: string;
   id: string;
-  label?: string;
   kind: AccountKind;
   identity?: { email?: string; org?: string; plan?: string };
   hasSecret: boolean;
@@ -52,7 +51,7 @@ function emit(next: AccountsSnapshot): void {
 }
 
 /**
- * Fetch now (after an add, a label or a remove). A call made while a request
+ * Fetch now (after an add or a remove). A call made while a request
  * is in flight queues one more after it: the running one may have started
  * before the change and would answer with the old list.
  */

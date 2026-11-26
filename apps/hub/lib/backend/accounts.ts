@@ -24,6 +24,7 @@ import {
   findAccount,
   isDefaultAccount,
   namedAccounts,
+  normalizeAccountName,
   type AgentSyncSpec,
   type BoxRecord,
   type BoxRuntimeState,
@@ -320,7 +321,6 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     return {
       agent: account.agent,
       id: account.id,
-      ...(account.label ? { label: account.label } : {}),
       kind: account.kind,
       ...(account.identity ? { identity: account.identity } : {}),
       hasSecret: (await readAccountSecret(account.agent, account.id, store)) !== null,
@@ -563,13 +563,21 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         };
       }
       const token = typeof b.token === 'string' ? b.token.trim() : '';
-      const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim() : undefined;
+      // An existing id is taken as is (older ones may hold '-'); a new name is
+      // normalized ("Work Max" -> work_max) or refused.
+      const rawId = typeof b.id === 'string' ? b.id.trim() : '';
+      let id = rawId;
+      if (rawId && !findAccount(await readAccounts(store), spec.id, rawId)) {
+        const n = normalizeAccountName(rawId);
+        if (n.problem !== undefined)
+          return { ok: false, code: 'invalid_request', error: n.problem };
+        id = n.name;
+      }
       let req: ReturnType<typeof resolveLoginAccount>;
       try {
         req = resolveLoginAccount(spec, {
-          account: typeof b.id === 'string' ? b.id : '',
+          account: id,
           ...(b.kind === 'api-key' ? { apiKey: true } : { setupToken: true }),
-          ...(label ? { label } : {}),
         });
       } catch (err) {
         return { ok: false, code: 'invalid_request', error: (err as Error).message };
@@ -607,7 +615,6 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         id: req.id,
         kind: req.kind,
         createdAt: new Date(now()).toISOString(),
-        ...((label ?? existing?.label) ? { label: label ?? existing!.label! } : {}),
       };
       await upsertAccount(row, store);
       try {
@@ -623,23 +630,6 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         throw err;
       }
       return { ok: true, value: await view(row) };
-    },
-
-    async labelAccount(agent, id, label) {
-      const spec = specOf(agent);
-      if (!spec) return { ok: false, code: 'not_found', error: 'unknown agent' };
-      const existing = findAccount(await readAccounts(store), spec.id, id);
-      if (!existing)
-        return { ok: false, code: 'not_found', error: `no ${spec.id} account '${id}'` };
-      if (label !== null && typeof label !== 'string') {
-        return { ok: false, code: 'invalid_request', error: 'label must be a string or null' };
-      }
-      const next: LlmAccount = { ...existing };
-      const text = typeof label === 'string' ? label.trim() : '';
-      if (text) next.label = text;
-      else delete next.label;
-      await upsertAccount(next, store);
-      return { ok: true, value: await view(next) };
     },
 
     async removeAccount(agent, id) {
@@ -689,12 +679,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
 export interface BoxAccountInfo {
   agent: string;
   account: string;
-  label?: string;
   kind?: LlmAccount['kind'];
 }
 
 /**
- * Label and kind for each of a box's named accounts, from the hub machine's
+ * The kind of each of a box's named accounts, from the hub machine's
  * store. An account the store no longer has (removed, or a box adopted from
  * another machine) keeps just its id. Pure.
  */
@@ -709,7 +698,6 @@ export function accountsInfoOf(
     return {
       agent,
       account,
-      ...(row?.label ? { label: row.label } : {}),
       ...(row ? { kind: row.kind } : {}),
     };
   });

@@ -54,6 +54,7 @@
     "publish:minor": "npm version minor && git push --follow-tags"
   },
   "dependencies": {
+    "@clack/core": "^0.4.1",
     "@clack/prompts": "^0.9.0",
     "@daytona/sdk": "^0.196.0",
     "@vercel/sandbox": "^2.0.1",
@@ -65,6 +66,7 @@
     "kysely": "^0.29.2",
     "next": "16.2.7",
     "pg": "^8.13.1",
+    "picocolors": "^1.1.1",
     "react": "^19",
     "react-dom": "^19",
     "smol-toml": "^1.7.0",

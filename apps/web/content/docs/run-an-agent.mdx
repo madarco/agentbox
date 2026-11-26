@@ -127,13 +127,14 @@ Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_
 Claude and Codex can keep more than one login: a personal and a work
 subscription, a long-lived token for CI, or an API key. The plain
 `agentbox <agent> login` signs in the **default** account. Everything else lives
-under `agentbox credentials`. Run it bare in a terminal for a menu that lists
-every account with its status, plan meters and boxes, and lets you add, renew,
-relabel or remove one, make it the default, or move a box onto it. Each action
-is also a subcommand:
+under `agentbox credentials`. Run it bare in a terminal for a table of every
+account with its status, plan meters and boxes, under two actions (**Add an
+account…**, **What do new boxes here use?**). Move with the arrow keys (or
+`j`/`k`) and press Enter on an account to renew it, make it the default, move a
+box onto it or remove it; Esc or `q` quits. Each action is also a subcommand:
 
 ```bash
-agentbox credentials add claude/work --login --label "Work"   # a second subscription login
+agentbox credentials add claude/work --login                  # a second subscription login
 agentbox credentials add codex/work --login
 agentbox credentials add claude/ci --setup-token              # paste a `claude setup-token` token
 agentbox credentials add claude/overflow --api-key            # paste an API key
@@ -144,7 +145,13 @@ one. Your host's login and its cached profile are never copied into it, so each
 account shows its own email and plan. A setup token or API key is read from a
 hidden prompt, or from stdin without a terminal (`… --setup-token < token.txt`).
 It is never read from the command line, which would leave it in your shell
-history. Account names are lowercase letters, digits and dashes.
+history.
+
+An account has one **name**, which is also how you refer to it (`claude/work`).
+A new name is lowercased and runs of spaces or `-` become `_`: `credentials add
+"claude/Work Max"` (or typing "Work Max" in the menu) stores `claude/work_max`,
+and says so before it saves. Anything else outside letters, digits and `_` is
+refused (`claude/bad.name`). Older names with a `-` keep working.
 
 Prefer a **setup token** for an account that several boxes use at the same time.
 A subscription login renews itself, and each renewal signs out every other copy
@@ -152,8 +159,7 @@ of that login until AgentBox hands them the new one. A setup token never renews.
 
 ```bash
 agentbox credentials                  # the menu (on a terminal), else the list
-agentbox credentials list --json      # account, kind, label, email/plan, status, limits, default, boxes
-agentbox credentials label claude/work "Work laptop"
+agentbox credentials list --json      # name, kind, email/plan, status, limits, default, boxes
 agentbox credentials rm claude/work   # its stored login and config volume (not while a box uses it)
 ```
 
@@ -177,8 +183,8 @@ the login out.
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
 secret 0600 under `~/.agentbox/credentials/`. The hub's **Settings → Subscriptions** page shows
-the same list, and lets you add a setup token or API key, relabel or remove one,
-and pick the default. `agentbox credentials` always asks this machine's own hub,
+the same list, each card named by the account with its login's email and plan,
+and lets you add a setup token or API key, remove one, and pick the default. `agentbox credentials` always asks this machine's own hub,
 even when a remote control box is configured. Named logins are copied to your
 control box keyed by this machine, so two computers' `work` accounts never mix;
 setup tokens and API keys stay on the machine.

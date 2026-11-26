@@ -29,7 +29,6 @@ export interface LoginOptions {
 /** A named login account to sign in instead of the default one. */
 export interface LoginAccountTarget {
   id: string;
-  label?: string;
 }
 
 /** Every agent's CLI descriptor, registered as its `login` is wired. */
@@ -159,7 +158,7 @@ export async function runAgentLogin(
   }
   if (account) {
     await captureAccountLogin(a, {
-      account: { id: account.id, ...(account.label ? { label: account.label } : {}) },
+      account: { id: account.id },
       volume,
       image,
     });

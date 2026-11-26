@@ -31,8 +31,8 @@ export interface HubApiBox {
   accounts?: Record<string, string>;
   /** Each agent's subscription, `<agent>/<account>` (a borrower under its lender). */
   subscriptions?: Record<string, string>;
-  /** Label + kind for each entry of `accounts`, from the hub machine's store. */
-  accountsInfo?: Array<{ agent: string; account: string; label?: string; kind?: string }>;
+  /** The kind of each entry of `accounts`, from the hub machine's store. */
+  accountsInfo?: Array<{ agent: string; account: string; kind?: string }>;
   /** The hub egress proxy the box was created with (llm-accounts Phase 7). */
   llmProxy?: { mode: 'forward'; upstream: string };
   name?: string;
@@ -571,7 +571,6 @@ export interface HubApiCheckout {
 export interface HubApiAccount {
   agent: string;
   id: string;
-  label?: string;
   kind: 'login' | 'setup-token' | 'api-key';
   identity?: { email?: string; org?: string; plan?: string };
   hasSecret: boolean;
@@ -1237,7 +1236,7 @@ export class HubApiClient {
     method: string,
     path: string,
     body?: unknown,
-    opts: { timeoutMs?: number } = {},
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<T> {
     const session = await this.sessionHeader();
     // Only with a session: a turn on its own names nobody.
@@ -1254,7 +1253,11 @@ export class HubApiClient {
       // Opt-in per call: a half-open socket (a killed hub still holding the
       // connection, a laptop that slept) otherwise hangs a caller forever. A
       // poll loop that must re-check its own wall clock passes one.
-      ...(opts.timeoutMs !== undefined ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
+      ...(opts.signal
+        ? { signal: opts.signal }
+        : opts.timeoutMs !== undefined
+          ? { signal: AbortSignal.timeout(opts.timeoutMs) }
+          : {}),
     });
     if (res.status === 204) return undefined as T;
     const text = await res.text();
@@ -1622,8 +1625,10 @@ export class HubApiClient {
 
   // ── skills library (custody `skills` scope) ──
 
-  listSkills(): Promise<HubApiSkillsListing> {
-    return this.request<HubApiSkillsListing>('GET', '/skills');
+  listSkills(
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<HubApiSkillsListing> {
+    return this.request<HubApiSkillsListing>('GET', '/skills', undefined, opts);
   }
 
   /** Store one version of a skill: a gzip tarball body, metadata in a header. */
@@ -2204,7 +2209,6 @@ export class HubApiClient {
     id: string;
     kind: 'setup-token' | 'api-key';
     token: string;
-    label?: string;
     /** A new token for an existing account of the same kind. */
     replace?: boolean;
   }): Promise<HubApiAccount> {
@@ -2236,15 +2240,6 @@ export class HubApiClient {
       'POST',
       `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}/renew`,
     );
-  }
-
-  async labelAccount(agent: string, id: string, label: string | null): Promise<HubApiAccount> {
-    const res = await this.request<{ account: HubApiAccount }>(
-      'PATCH',
-      `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`,
-      { label },
-    );
-    return res.account;
   }
 
   async removeAccount(

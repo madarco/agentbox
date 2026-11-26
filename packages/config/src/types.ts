@@ -411,6 +411,11 @@ export interface UserConfig {
      * automatic first seed will upload to the hub's library.
      */
     maxSkillBytes?: number;
+    /**
+     * Whether create (without attach), a queued `-i` run and `agentbox queue
+     * list` print one line naming the skills not in sync with the hub.
+     */
+    notice?: boolean;
   };
   share?: {
     /** Where the hub posts a usage share (`agentbox usage share`, the Usage page's Share). */
@@ -606,6 +611,7 @@ export interface EffectiveConfig {
   };
   skills: {
     maxSkillBytes: number;
+    notice: boolean;
   };
   share: {
     endpoint: string;
@@ -824,6 +830,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   skills: {
     // 50 MB: the largest real skill measured in Phase 0 is 23 MB.
     maxSkillBytes: 50 * 1024 * 1024,
+    notice: true,
   },
   share: {
     endpoint: 'https://agent-box.sh/api/share',
@@ -1614,6 +1621,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       "Largest skill (total bytes of its files, default 52428800 = 50 MB) that `agentbox skills` and the automatic first seed upload to the hub's skills library. A bigger skill is listed and skipped. The hub's own bound is its custody blob cap (AGENTBOX_CUSTODY_MAX_BLOB_BYTES, 100 MiB).",
+  },
+  {
+    key: 'skills.notice',
+    type: 'bool',
+    description:
+      "Whether `agentbox create` (without `--attach`), a queued `agentbox <agent> -i` run and `agentbox queue list` print one line naming this PC's skills that are not in sync with the hub's library (boxes only get the hub's copy). Default true; silent anyway when everything is in sync or the hub can't be reached.",
   },
   {
     key: 'share.endpoint',
