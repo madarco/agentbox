@@ -1047,10 +1047,19 @@ export interface HubApiUsageStatsQuery {
   range?: '7d' | '30d' | 'month' | '90d' | 'year';
 }
 
+export interface HubApiUsageShareListing {
+  id: string;
+  url: string;
+  endpoint: string;
+  origin: string;
+  createdAt: string;
+}
+
 export interface HubApiUsageShareSettings {
   endpoint: string;
-  handles: string[];
-  lastHandle: string | null;
+  /** The shares this hub made, newest first (never their delete secrets). */
+  shares: HubApiUsageShareListing[];
+  lastName: string | null;
 }
 
 export interface HubApiUsageSharePreview {
@@ -1061,9 +1070,8 @@ export interface HubApiUsageSharePreview {
 
 export interface HubApiUsageSharePosted {
   url: string;
-  handle: string;
-  n: number;
-  claimedNow: boolean;
+  id: string;
+  createdAt: string;
 }
 
 export type HubApiUsageDimension =
@@ -1832,14 +1840,19 @@ export class HubApiClient {
   }
 
   usageSharePreview(
-    q: HubApiUsageStatsQuery & { handle: string },
+    q: HubApiUsageStatsQuery & { name?: string },
   ): Promise<HubApiUsageSharePreview> {
     return this.request<HubApiUsageSharePreview>('POST', '/usage/share', { ...q, preview: true });
   }
 
   /** Posts the window's public share to the hub's `share.endpoint`; returns the URL. */
-  usageShare(q: HubApiUsageStatsQuery & { handle: string }): Promise<HubApiUsageSharePosted> {
+  usageShare(q: HubApiUsageStatsQuery & { name?: string }): Promise<HubApiUsageSharePosted> {
     return this.request<HubApiUsageSharePosted>('POST', '/usage/share', q);
+  }
+
+  /** Deletes one of the hub's shares on the site that holds it. */
+  usageShareDelete(id: string): Promise<{ id: string; deleted: boolean }> {
+    return this.request('DELETE', `/usage/share/${encodeURIComponent(id)}`);
   }
 
   usage(q: HubApiUsageQuery = {}): Promise<HubApiUsageReport> {

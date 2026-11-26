@@ -1,30 +1,29 @@
 // /api/v1/usage/share — publish the usage dashboard on agent-box.sh
 // (docs/usage-dashboard-plan.md, Phase 6). The hub builds the public `UsageShare`
 // and posts it to `share.endpoint` itself; the caller never talks to that site.
-//   GET:  { endpoint, handles, lastHandle } — the site and the handles this hub
-//         holds a claim for there (never the secrets).
-//   POST: { handle, preview?, since?, until?, tz?, range?, subscription? } — the
+//   GET:  { endpoint, shares, lastName } — the site, and the shares this hub made
+//         (never their delete secrets).
+//   POST: { name?, preview?, since?, until?, tz?, range?, subscription? } — the
 //         window takes the same values as GET /usage/stats. `preview: true`
 //         returns the share that would be sent and posts nothing; otherwise
-//         returns { url, handle, n, claimedNow }.
+//         returns { url, id, createdAt }.
+// DELETE /usage/share/<id> lives in ./[id]/route.ts.
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { STATE_DIR, loadEffectiveConfig } from '@agentbox/config';
+import { loadEffectiveConfig } from '@agentbox/config';
 import { parseUsageStatsQuery, usageStats } from '@/lib/backend/usage-stats';
 import {
   ShareError,
-  fileClaimStore,
+  listUsageShares,
   parseShareEndpoint,
   postUsageShare,
   previewUsageShare,
 } from '@/lib/backend/usage-share';
+import { failShare, shareStore } from './store';
 import { fail, ok } from '../../lib/envelope';
 import { readJson } from '../../lib/validate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const claims = fileClaimStore(join(STATE_DIR, 'hub', 'share.json'));
 
 /**
  * The hub machine's own `share.endpoint`, from its global config only: an
@@ -43,20 +42,14 @@ async function endpoint(): Promise<string | undefined> {
   }
 }
 
-function failShare(e: unknown): Response {
-  if (e instanceof ShareError) {
-    if (e.retryAfter === undefined) return fail(e.code, e.message);
-    const res = fail(e.code, e.message, { retryAfter: e.retryAfter });
-    res.headers.set('Retry-After', String(e.retryAfter));
-    return res;
-  }
-  return fail('internal', `usage share failed: ${e instanceof Error ? e.message : String(e)}`);
-}
-
 export async function GET(): Promise<Response> {
   try {
     const url = parseShareEndpoint(await endpoint());
-    return ok({ endpoint: url.href, ...(await claims.known(url.origin)) });
+    return ok({
+      endpoint: url.href,
+      shares: await listUsageShares(shareStore),
+      lastName: await shareStore.lastName(),
+    });
   } catch (e) {
     return failShare(e);
   }
@@ -98,11 +91,11 @@ export async function POST(req: Request): Promise<Response> {
     stats: () =>
       usageStats({ history: history?.repo ?? null, ledger: ledger ?? null }, parsed.query),
     endpoint,
-    claims,
+    store: shareStore,
   };
   try {
-    if (b.preview === true) return ok(await previewUsageShare(deps, b.handle));
-    return ok(await postUsageShare(deps, b.handle), 201);
+    if (b.preview === true) return ok(await previewUsageShare(deps, b.name));
+    return ok(await postUsageShare(deps, b.name), 201);
   } catch (e) {
     return failShare(e);
   }

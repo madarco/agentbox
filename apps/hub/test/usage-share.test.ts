@@ -5,22 +5,24 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { UsageShare, parseShareBody, usageFixture } from '@agentbox/usage-view';
 import {
   ShareError,
-  fileClaimStore,
+  deleteUsageShare,
+  fileShareStore,
+  listUsageShares,
   parseShareEndpoint,
   postUsageShare,
   previewUsageShare,
-  type ClaimStore,
+  type ShareStore,
   type UsageShareDeps,
 } from '../lib/backend/usage-share';
 
 let dir: string;
-let claims: ClaimStore;
+let store: ShareStore;
 let path: string;
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'usage-share-'));
   path = join(dir, 'hub', 'share.json');
-  claims = fileClaimStore(path);
+  store = fileShareStore(path);
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -28,6 +30,7 @@ afterEach(async () => {
 
 interface Call {
   url: string;
+  method: string;
   auth: string | null;
   body: string;
 }
@@ -41,6 +44,7 @@ function fakeFetch(respond: (call: Call, i: number) => Response | Promise<Respon
     const headers = new Headers(init?.headers);
     const call = {
       url: String(input),
+      method: init?.method ?? 'GET',
       auth: headers.get('authorization'),
       body: String(init?.body ?? ''),
     };
@@ -50,22 +54,17 @@ function fakeFetch(respond: (call: Call, i: number) => Response | Promise<Respon
   return { fetch: f, calls };
 }
 
-const created = (n: number, secret?: string, origin = 'https://agent-box.sh'): Response =>
-  Response.json(
-    {
-      url: `${origin}/u/marco/${String(n)}`,
-      handle: 'marco',
-      n,
-      ...(secret ? { claimSecret: secret } : {}),
-    },
-    { status: 201 },
-  );
+const ID1 = 'a1b2c3d4e5f6g7h8i9j0k1l2';
+const ID2 = 'zz9yy8xx7ww6vv5uu4tt3ss2';
+
+const created = (id = ID1, secret = `secret-${id}`, origin = 'https://agent-box.sh'): Response =>
+  Response.json({ url: `${origin}/s/${id}`, id, deleteSecret: secret }, { status: 201 });
 
 function deps(over: Partial<UsageShareDeps> = {}): UsageShareDeps {
   return {
     stats: () => Promise.resolve(usageFixture()),
     endpoint: () => Promise.resolve(undefined),
-    claims,
+    store,
     ...over,
   };
 }
@@ -87,16 +86,22 @@ describe('parseShareEndpoint', () => {
 
 describe('previewUsageShare', () => {
   it('returns the exact share that would be posted, posting nothing', async () => {
-    const f = fakeFetch(() => created(1));
+    const f = fakeFetch(() => created());
     const p = await previewUsageShare(deps({ fetch: f.fetch }), 'marco');
     expect(f.calls).toHaveLength(0);
-    expect(UsageShare.parse(p.share).handle).toBe('marco');
+    expect(UsageShare.parse(p.share).name).toBe('marco');
     expect(p.bytes).toBe(Buffer.byteLength(JSON.stringify(p.share)));
     // Nothing named survives: no box, project, PR or session titles.
     const text = JSON.stringify(p.share);
     for (const b of usageFixture().boxes) expect(text).not.toContain(`"${b.name}"`);
   });
-  it('refuses a bad handle before reading stats', async () => {
+  it('builds a share with no name when none is given', async () => {
+    for (const n of [undefined, null, '', '  ']) {
+      const p = await previewUsageShare(deps(), n);
+      expect('name' in p.share).toBe(false);
+    }
+  });
+  it('refuses a bad name before reading stats', async () => {
     let read = false;
     const d = deps({
       stats: () => {
@@ -107,57 +112,61 @@ describe('previewUsageShare', () => {
     await expect(previewUsageShare(d, 'Marco!')).rejects.toMatchObject({
       code: 'invalid_request',
     });
-    await expect(previewUsageShare(d, '')).rejects.toBeInstanceOf(ShareError);
+    await expect(previewUsageShare(d, 42)).rejects.toBeInstanceOf(ShareError);
     expect(read).toBe(false);
   });
 });
 
 describe('postUsageShare', () => {
-  it('posts a body the site parses, keeps the claim secret, sends it next time', async () => {
-    const f = fakeFetch((_c, i) => (i === 0 ? created(1, 'sekrit') : created(2)));
+  it('posts a body the site parses, keeps the delete secret, never returns it', async () => {
+    const f = fakeFetch(() => created());
     const first = await postUsageShare(deps({ fetch: f.fetch }), 'marco');
-    expect(first).toEqual({
-      url: 'https://agent-box.sh/u/marco/1',
-      handle: 'marco',
-      n: 1,
-      claimedNow: true,
-    });
+    expect(first).toMatchObject({ url: `https://agent-box.sh/s/${ID1}`, id: ID1 });
+    expect(Object.keys(first).sort()).toEqual(['createdAt', 'id', 'url']);
     expect(f.calls[0]!.url).toBe('https://agent-box.sh/api/share');
+    expect(f.calls[0]!.method).toBe('POST');
     expect(f.calls[0]!.auth).toBeNull();
-    expect(parseShareBody(f.calls[0]!.body).handle).toBe('marco');
-    // The secret is in the file (0600) and never in the answer.
-    expect(JSON.stringify(first)).not.toContain('sekrit');
+    expect(parseShareBody(f.calls[0]!.body).name).toBe('marco');
+    // The secret is in the file (0600) and never in the answer or the listing.
+    expect(JSON.stringify(first)).not.toContain(`secret-${ID1}`);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
-    expect(await readFile(path, 'utf8')).toContain('sekrit');
-
-    const second = await postUsageShare(deps({ fetch: f.fetch }), 'marco');
-    expect(second.claimedNow).toBe(false);
-    expect(f.calls[1]!.auth).toBe('Bearer sekrit');
-    expect(await claims.known('https://agent-box.sh')).toEqual({
-      handles: ['marco'],
-      lastHandle: 'marco',
-    });
+    expect(await readFile(path, 'utf8')).toContain(`secret-${ID1}`);
+    const listed = await listUsageShares(store);
+    expect(listed).toEqual([
+      {
+        endpoint: 'https://agent-box.sh/api/share',
+        origin: 'https://agent-box.sh',
+        id: ID1,
+        url: `https://agent-box.sh/s/${ID1}`,
+        createdAt: first.createdAt,
+      },
+    ]);
+    expect(await store.lastName()).toBe('marco');
   });
 
-  it('keeps claims per site: a preview deployment gets no production secret', async () => {
-    await claims.save('https://agent-box.sh', 'marco', 'prod-secret');
-    const f = fakeFetch(() => created(1, 'preview-secret', 'https://preview.vercel.app'));
+  it('lists shares newest first, across sites', async () => {
+    const f = fakeFetch((_c, i) =>
+      i === 0 ? created(ID1) : created(ID2, 's2', 'https://preview.vercel.app'),
+    );
+    await postUsageShare(deps({ fetch: f.fetch }), undefined);
+    await new Promise((r) => setTimeout(r, 5));
     await postUsageShare(
       deps({
         fetch: f.fetch,
         endpoint: () => Promise.resolve('https://preview.vercel.app/api/share'),
       }),
-      'marco',
+      undefined,
     );
-    expect(f.calls[0]!.auth).toBeNull();
-    expect(await claims.secret('https://preview.vercel.app', 'marco')).toBe('preview-secret');
-    expect(await claims.secret('https://agent-box.sh', 'marco')).toBe('prod-secret');
+    expect((await listUsageShares(store)).map((s) => [s.id, s.origin])).toEqual([
+      [ID2, 'https://preview.vercel.app'],
+      [ID1, 'https://agent-box.sh'],
+    ]);
+    expect(await store.lastName()).toBeNull();
   });
 
   const errorCases: [number, string, Record<string, string>?][] = [
     [400, 'upstream_error'],
-    [403, 'conflict'],
-    [409, 'conflict'],
+    [403, 'upstream_error'],
     [413, 'payload_too_large'],
     [429, 'rate_limited', { 'retry-after': '1800' }],
     [503, 'backend_unavailable'],
@@ -171,6 +180,7 @@ describe('postUsageShare', () => {
       const err = await postUsageShare(deps({ fetch: f.fetch }), 'marco').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ShareError);
       expect((err as ShareError).code).toBe(code);
+      expect((err as ShareError).message).not.toContain('site text');
       if (status === 429) {
         expect((err as ShareError).retryAfter).toBe(1800);
         expect((err as ShareError).message).toContain('30 min');
@@ -178,120 +188,164 @@ describe('postUsageShare', () => {
     });
   }
 
-  it('says whose claim was refused', async () => {
-    const f = fakeFetch(() => Response.json({}, { status: 403 }));
-    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toThrow(
-      /already claimed/,
-    );
-    await claims.save('https://agent-box.sh', 'marco', 'old');
-    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toThrow(
-      /refused the claim secret/,
-    );
-  });
-
-  it('reports an unreachable site and a reply without a URL', async () => {
+  it('reports an unreachable site, and a lost answer as maybe published', async () => {
     const down = (() => Promise.reject(new TypeError('fetch failed'))) as typeof fetch;
     await expect(postUsageShare(deps({ fetch: down }), 'marco')).rejects.toMatchObject({
       code: 'upstream_error',
     });
-    const f = fakeFetch(() => Response.json({ n: 1 }, { status: 201 }));
-    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toMatchObject({
-      code: 'upstream_error',
-    });
+    const timeout = (() =>
+      Promise.reject(Object.assign(new Error('t'), { name: 'TimeoutError' }))) as typeof fetch;
+    await expect(postUsageShare(deps({ fetch: timeout }), 'marco')).rejects.toThrow(
+      /may have been published anyway/,
+    );
   });
 
-  it('refuses a share URL on another site', async () => {
+  it('refuses a reply without an id or secret, or with a malformed id', async () => {
+    for (const body of [
+      { url: `https://agent-box.sh/s/${ID1}` },
+      { url: `https://agent-box.sh/s/${ID1}`, id: ID1 },
+      { url: 'https://agent-box.sh/s/x', id: '../x', deleteSecret: 's' },
+    ]) {
+      const f = fakeFetch(() => Response.json(body, { status: 201 }));
+      await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toMatchObject({
+        code: 'upstream_error',
+      });
+    }
+    expect(await store.list()).toEqual([]);
+  });
+
+  it('keeps the secret of a share whose URL is on another site, and refuses the URL', async () => {
     const f = fakeFetch(() =>
-      Response.json({ url: 'https://evil.example/u/marco/1', n: 1 }, { status: 201 }),
+      Response.json(
+        { url: `https://evil.example/s/${ID1}`, id: ID1, deleteSecret: 'minted' },
+        { status: 201 },
+      ),
     );
-    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toMatchObject({
-      code: 'upstream_error',
-    });
+    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toThrow(
+      /can be deleted/,
+    );
+    const [kept] = await store.list();
+    expect(kept).toMatchObject({ id: ID1, url: '', deleteSecret: 'minted' });
   });
 
   it('names the public URL and keeps the secret aside when it cannot be saved', async () => {
     const salvaged: string[] = [];
-    const broken: ClaimStore = {
-      ...claims,
-      save: () => Promise.reject(new Error('EACCES')),
-      salvage: (_o, _h, secret) => {
-        salvaged.push(secret);
-        return Promise.resolve('/x/share.json.claim-marco.json');
+    const broken: ShareStore = {
+      ...store,
+      add: () => Promise.reject(new Error('EACCES')),
+      salvage: (r) => {
+        salvaged.push(r.deleteSecret);
+        return Promise.resolve(`/x/share.json.share-${r.id}.json`);
       },
     };
-    const f = fakeFetch(() => created(1, 'sekrit'));
-    const err = (await postUsageShare(deps({ fetch: f.fetch, claims: broken }), 'marco').catch(
+    const f = fakeFetch(() => created(ID1, 'sekrit'));
+    const err = (await postUsageShare(deps({ fetch: f.fetch, store: broken }), 'marco').catch(
       (e: unknown) => e,
     )) as ShareError;
-    expect(err.message).toContain('https://agent-box.sh/u/marco/1');
-    expect(err.message).toContain('/x/share.json.claim-marco.json');
+    expect(err.message).toContain(`https://agent-box.sh/s/${ID1}`);
+    expect(err.message).toContain(`/x/share.json.share-${ID1}.json`);
     expect(err.message).not.toContain('sekrit');
     expect(salvaged).toEqual(['sekrit']);
   });
 
   it('salvage writes a 0600 file of its own', async () => {
-    await claims.save('https://agent-box.sh', 'x', 's');
-    const file = await claims.salvage!('https://agent-box.sh', 'marco', 'sekrit');
+    const file = await store.salvage!({
+      endpoint: 'https://agent-box.sh/api/share',
+      origin: 'https://agent-box.sh',
+      id: ID1,
+      url: '',
+      deleteSecret: 'sekrit',
+      createdAt: new Date().toISOString(),
+    });
     expect(file).toBeTruthy();
     expect((await stat(file!)).mode & 0o777).toBe(0o600);
     expect(await readFile(file!, 'utf8')).toContain('sekrit');
   });
 
-  it('remembers the last handle per site', async () => {
-    const f = fakeFetch(() => created(1, 's', 'https://preview.vercel.app'));
-    await postUsageShare(
-      deps({
-        fetch: f.fetch,
-        endpoint: () => Promise.resolve('https://preview.vercel.app/api/share'),
-      }),
-      'test-x',
-    );
-    expect((await claims.known('https://preview.vercel.app')).lastHandle).toBe('test-x');
-    expect((await claims.known('https://agent-box.sh')).lastHandle).toBeNull();
-  });
-
-  it('keeps a minted secret even when the returned URL is on another site', async () => {
-    const f = fakeFetch(() =>
-      Response.json(
-        { url: 'https://evil.example/u/marco/1', n: 1, claimSecret: 'minted' },
-        { status: 201 },
-      ),
-    );
-    await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toThrow(
-      /claimed and its secret kept/,
-    );
-    expect(await claims.secret('https://agent-box.sh', 'marco')).toBe('minted');
-  });
-
-  it('says a lost answer may still have claimed the handle', async () => {
-    const timeout = (() =>
-      Promise.reject(Object.assign(new Error('t'), { name: 'TimeoutError' }))) as typeof fetch;
-    await expect(postUsageShare(deps({ fetch: timeout }), 'marco')).rejects.toThrow(
-      /may have been published and "marco" claimed anyway/,
-    );
-    await claims.save('https://agent-box.sh', 'marco', 's');
-    await expect(postUsageShare(deps({ fetch: timeout }), 'marco')).rejects.toThrow(
-      /check https:\/\/agent-box.sh\/u\/marco before retrying/,
-    );
-  });
-
-  it('never quotes a corrupt claim file in the error', async () => {
-    await claims.save('https://agent-box.sh', 'x', 's');
-    await writeFile(path, '{"claims": {"k": {"secret": "abcdef-leak');
-    const err = (await claims.known('https://agent-box.sh').catch((e: unknown) => e)) as Error;
+  it('never quotes a corrupt share file in the error', async () => {
+    await store.rememberName('x');
+    await writeFile(path, '{"shares": [{"deleteSecret": "abcdef-leak');
+    const err = (await store.list().catch((e: unknown) => e)) as Error;
     expect(err).toBeInstanceOf(ShareError);
     expect(err.message).not.toContain('abcdef');
     expect(err.message).toContain('not valid JSON');
   });
 
-  it('does not overwrite a corrupt claim file', async () => {
-    await claims.save('https://agent-box.sh', 'x', 's');
+  it('posts nothing and leaves a corrupt share file alone', async () => {
+    await store.rememberName('x');
     await writeFile(path, '{ not json');
-    const f = fakeFetch(() => created(1, 'new'));
+    const f = fakeFetch(() => created());
     await expect(postUsageShare(deps({ fetch: f.fetch }), 'marco')).rejects.toMatchObject({
       code: 'backend_unavailable',
     });
     expect(f.calls).toHaveLength(0);
     expect(await readFile(path, 'utf8')).toBe('{ not json');
+  });
+});
+
+describe('deleteUsageShare', () => {
+  async function shared(endpoint?: string): Promise<void> {
+    const f = fakeFetch(() =>
+      created(ID1, `secret-${ID1}`, endpoint ? new URL(endpoint).origin : undefined),
+    );
+    await postUsageShare(
+      deps({ fetch: f.fetch, ...(endpoint ? { endpoint: () => Promise.resolve(endpoint) } : {}) }),
+      'marco',
+    );
+  }
+
+  it('sends the delete secret to the site that minted it, then forgets the share', async () => {
+    await shared('http://localhost:3000/api/share');
+    const f = fakeFetch(() => new Response(null, { status: 204 }));
+    expect(await deleteUsageShare({ store, fetch: f.fetch }, ID1)).toEqual({
+      id: ID1,
+      deleted: true,
+    });
+    expect(f.calls).toEqual([
+      {
+        url: `http://localhost:3000/api/share/${ID1}`,
+        method: 'DELETE',
+        auth: `Bearer secret-${ID1}`,
+        body: '',
+      },
+    ]);
+    expect(await store.list()).toEqual([]);
+  });
+
+  it('forgets a share the site no longer has', async () => {
+    await shared();
+    const f = fakeFetch(() => Response.json({}, { status: 404 }));
+    expect(await deleteUsageShare({ store, fetch: f.fetch }, ID1)).toEqual({
+      id: ID1,
+      deleted: false,
+    });
+    expect(await store.list()).toEqual([]);
+  });
+
+  it('keeps the share when the site refuses or cannot be reached', async () => {
+    await shared();
+    const refused = fakeFetch(() => Response.json({}, { status: 403 }));
+    await expect(deleteUsageShare({ store, fetch: refused.fetch }, ID1)).rejects.toMatchObject({
+      code: 'conflict',
+    });
+    const down = (() => Promise.reject(new TypeError('fetch failed'))) as typeof fetch;
+    await expect(deleteUsageShare({ store, fetch: down }, ID1)).rejects.toMatchObject({
+      code: 'upstream_error',
+    });
+    const busy = fakeFetch(() => Response.json({}, { status: 503 }));
+    await expect(deleteUsageShare({ store, fetch: busy.fetch }, ID1)).rejects.toMatchObject({
+      code: 'backend_unavailable',
+    });
+    expect((await store.list()).map((s) => s.id)).toEqual([ID1]);
+  });
+
+  it('answers not_found for a share this hub did not make, calling nothing', async () => {
+    const f = fakeFetch(() => new Response(null, { status: 204 }));
+    for (const id of [ID2, '../../etc', '']) {
+      await expect(deleteUsageShare({ store, fetch: f.fetch }, id)).rejects.toMatchObject({
+        code: 'not_found',
+      });
+    }
+    expect(f.calls).toHaveLength(0);
   });
 });

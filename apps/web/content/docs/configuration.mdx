@@ -410,7 +410,7 @@ Public [usage shares](/docs/hub#sharing-your-usage-on-agent-boxsh).
 | ---------------- | ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `share.endpoint` | string | `https://agent-box.sh/api/share` | where the hub posts a usage share. Point it at a preview deployment's `/api/share` to test. https only (http for `localhost`). Read from the hub machine's global config |
 
-Claim secrets are kept per site, so a share to a test deployment never sends your agent-box.sh secret.
+Each share remembers the endpoint it was posted to, so deleting it reaches that site even after `share.endpoint` changes.
 
 ## queue & autopause
 

@@ -238,15 +238,17 @@ page to it. It reads the same numbers as
 
 ### Sharing your usage on agent-box.sh
 
-A usage share is a public page at `agent-box.sh/u/<handle>/<n>` that renders
-the same Usage layout from a snapshot of your numbers, with a link preview image
-built from them. `agent-box.sh/u/<handle>` lists a handle's shares, and
-[`/u/example`](https://agent-box.sh/u/example) shows one made from sample data.
+A usage share is a public page at `agent-box.sh/s/<id>` that renders the same
+Usage layout from a snapshot of your numbers, with a link preview image built
+from them. The id is random (24 letters and digits), so a share is reached only
+by its link. [`/s/example`](https://agent-box.sh/s/example) shows one made from
+sample data.
 
 To share, click **Share** on the Usage page. The dialog shows a preview of
 exactly what will be sent (the window and subscription the page shows, drawn by
-the same layout, without any name), and asks for a handle. **Share** then posts
-it and shows the public URL with a **Copy link** button. From a terminal,
+the same layout), and an optional **Name to show**. **Share** then posts it and
+shows the public URL with a **Copy link** button. Below, the dialog lists the
+shares this hub made, each with **Delete**. From a terminal,
 [`agentbox usage share`](/docs/cli#usage-share) does the same. The hub itself
 posts to agent-box.sh: your browser and the CLI only talk to the hub. To test
 against another deployment, set [`share.endpoint`](/docs/configuration#share)
@@ -256,20 +258,22 @@ on the hub's machine.
   `hetzner`, …): agents at once, agent-hours and wall hours (the card's hours saved is one minus the other), PRs merged, commits,
   lines and files changed, the daily chart, the activity wall, the three Gantt
   days and the biggest sessions, each labeled only "claude on hetzner". The only
-  text is your handle (lowercase letters, digits and `-`, up to 39 characters).
+  text is the name to show, if you type one (lowercase letters, digits and `-`,
+  up to 39 characters).
 - **What is not sent**: project, repo, box, branch, pull request and session
   names, prompts, transcripts, and the subscription view. agent-box.sh accepts
   only that schema (at most 64 KB, unknown fields refused) and stores the parsed
   numbers, never the request as sent. It keeps a salted hash of your IP for rate
   limiting, not the address.
-- **The handle**: a few names that would read as official (`agentbox`,
-  `anthropic`, `admin`, …) are reserved. The first share for a handle claims it and returns a claim
-  secret, once. Every later share for that handle must send the secret
-  (`Authorization: Bearer <secret>`), or it is refused. The hub keeps the secret
-  in `~/.agentbox/hub/share.json` (readable only by you) and sends it for you; it
-  never reaches the browser, the CLI or a log. There is no account: back up that
-  file, a lost secret can't be recovered, and another hub can't share under a
-  handle this one claimed. A share can't be edited after it is posted.
+- **The name to show** is plain text on the page ("shared by marco"). It is not
+  an account: it is not in the URL, not unique and not reserved, so it says
+  nothing about who posted the share.
+- **Deleting**: the site answers each share with a delete secret. The hub keeps
+  it in `~/.agentbox/hub/share.json` (readable only by you) and never hands it to
+  the browser, the CLI or a log. **Delete** in the dialog, or
+  [`agentbox usage share rm <id>`](/docs/cli#usage-share), sends it to the site;
+  the page then answers 404. Without that file a share can't be deleted, so back
+  it up. A share can't be edited after it is posted.
 
 A password-profile hub also has a **Settings → Devices** page (`/settings/devices`): the computers enrolled with
 `agentbox hub login`, each with its own token, plus the codes waiting for your

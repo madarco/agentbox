@@ -2,10 +2,11 @@
 
 // The Usage page's Share (usage dashboard Phase 6): a preview of the exact
 // `UsageShare` the hub will post (rendered by the same `UsageView`, public
-// variant), a handle field, then the public URL. PURE REST CLIENT: the hub posts
-// to agent-box.sh, the browser only calls /api/v1/usage/share.
+// variant), an optional name to show, then the public URL; below, the shares this
+// hub made, each with Delete. PURE REST CLIENT: the hub posts to and deletes on
+// agent-box.sh, the browser only calls /api/v1/usage/share.
 
-import { HANDLE_RE, type RangeId, type UsageShare } from '@agentbox/usage-view';
+import { SHARE_NAME_RE, type RangeId, type UsageShare } from '@agentbox/usage-view';
 import { UsageView } from '@agentbox/usage-view/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -21,18 +22,23 @@ interface Preview {
 }
 interface Posted {
   url: string;
-  handle: string;
-  n: number;
-  claimedNow: boolean;
+  id: string;
+  createdAt: string;
+}
+interface PastShare {
+  id: string;
+  url: string;
+  origin: string;
+  createdAt: string;
 }
 interface Settings {
   endpoint: string;
-  handles: string[];
-  lastHandle: string | null;
+  shares: PastShare[];
+  lastName: string | null;
 }
 
-async function api<T>(method: 'GET' | 'POST', body?: unknown): Promise<T> {
-  const r = await fetch('/api/v1/usage/share', {
+async function api<T>(method: 'GET' | 'POST' | 'DELETE', body?: unknown, id?: string): Promise<T> {
+  const r = await fetch(`/api/v1/usage/share${id ? `/${encodeURIComponent(id)}` : ''}`, {
     method,
     credentials: 'same-origin',
     ...(body !== undefined
@@ -52,8 +58,8 @@ const host = (url: string): string => {
   }
 };
 
-/** The handle the preview is built with until a valid one is typed. */
-const PLACEHOLDER = 'you';
+const day = (iso: string): string =>
+  new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 export function ShareDialog({
   range,
@@ -67,25 +73,32 @@ export function ShareDialog({
   onClose: () => void;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [handle, setHandle] = useState('');
+  const [name, setName] = useState('');
   const [preview, setPreview] = useState<Preview | null>(null);
   const [posting, setPosting] = useState(false);
   const [posted, setPosted] = useState<Posted | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const today = useRef(localDay()).current;
+
+  const refresh = useCallback(async (): Promise<Settings> => {
+    const s = await api<Settings>('GET');
+    setSettings(s);
+    return s;
+  }, []);
 
   useEffect(() => {
     let live = true;
     void (async () => {
       try {
-        const s = await api<Settings>('GET');
+        const s = await refresh();
         if (!live) return;
-        setSettings(s);
-        setHandle((h) => h || s.lastHandle || '');
+        setName((n) => n || s.lastName || '');
+        // The name is the share's only string: the preview swaps in the one typed.
         const p = await api<Preview>(
           'POST',
-          usageShareBody(range, today, tz, subscription, s.lastHandle ?? PLACEHOLDER, true),
+          usageShareBody(range, today, tz, subscription, '', true),
         );
         if (live) setPreview(p);
       } catch (e) {
@@ -95,12 +108,14 @@ export function ShareDialog({
     return () => {
       live = false;
     };
-  }, [range, tz, subscription, today]);
+  }, [range, tz, subscription, today, refresh]);
 
-  const valid = HANDLE_RE.test(handle);
-  // The handle is the share's only string; the preview shows the one typed.
-  const shown = preview ? { ...preview.share, handle: valid ? handle : PLACEHOLDER } : null;
-  const claimed = settings?.handles.includes(handle) ?? false;
+  const valid = name === '' || SHARE_NAME_RE.test(name);
+  const shown: UsageShare | null = preview
+    ? name && valid
+      ? { ...preview.share, name }
+      : preview.share
+    : null;
 
   const submit = useCallback(async () => {
     if (!valid || posting) return;
@@ -108,14 +123,30 @@ export function ShareDialog({
     setError(null);
     try {
       setPosted(
-        await api<Posted>('POST', usageShareBody(range, today, tz, subscription, handle, false)),
+        await api<Posted>('POST', usageShareBody(range, today, tz, subscription, name, false)),
       );
+      await refresh().catch(() => undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setPosting(false);
     }
-  }, [valid, posting, range, today, tz, subscription, handle]);
+  }, [valid, posting, range, today, tz, subscription, name, refresh]);
+
+  const remove = async (id: string): Promise<void> => {
+    if (deleting) return;
+    setDeleting(id);
+    setError(null);
+    try {
+      await api<{ id: string; deleted: boolean }>('DELETE', undefined, id);
+      if (posted?.id === id) setPosted(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const copy = async (): Promise<void> => {
     if (!posted) return;
@@ -129,6 +160,7 @@ export function ShareDialog({
   };
 
   const site = host(preview?.endpoint ?? settings?.endpoint ?? 'https://agent-box.sh');
+  const past = settings?.shares ?? [];
 
   return (
     <Dialog onClose={onClose} className="max-w-[min(1240px,calc(100vw-48px))]">
@@ -138,8 +170,8 @@ export function ShareDialog({
         </div>
         <p className="mt-1 text-[13px] leading-snug text-muted-foreground">
           {posted
-            ? 'Anyone with the link can see this page. It does not change when your usage does.'
-            : 'Only the numbers below leave this hub, with your handle: hours, counts, dates, and agent and provider names. No box, project, branch, pull request or session name, and no code or transcript.'}
+            ? 'Anyone with the link can see this page. It does not change when your usage does; delete it below to take it down.'
+            : 'Only the numbers below leave this hub, with the name you type if any: hours, counts, dates, and agent and provider names. No box, project, branch, pull request or session name, and no code or transcript. The page gets a random link.'}
         </p>
       </div>
 
@@ -165,21 +197,10 @@ export function ShareDialog({
               </Button>
             </div>
           </div>
-          {posted.claimedNow && (
-            <p className="mt-3 text-[13px] text-muted-foreground">
-              This hub now holds the handle <b className="text-foreground">{posted.handle}</b> on{' '}
-              {site}. Later shares from this hub use it; another hub can’t.
-            </p>
-          )}
-          {error && (
-            <p role="alert" className="mt-3 text-[13px] text-destructive">
-              {error}
-            </p>
-          )}
         </div>
       ) : (
         <>
-          <div className="max-h-[min(62vh,760px)] overflow-y-auto border-b border-border/70 bg-background">
+          <div className="max-h-[min(52vh,700px)] overflow-y-auto border-b border-border/70 bg-background">
             {shown ? (
               <div className="pointer-events-none select-none" aria-label="Preview of the share">
                 <UsageView
@@ -203,46 +224,82 @@ export function ShareDialog({
               void submit();
             }}
           >
-            <label htmlFor="share-handle" className="text-[13px] font-medium">
-              Handle
+            <label htmlFor="share-name" className="text-[13px] font-medium">
+              Name to show <span className="font-normal text-muted-foreground">(optional)</span>
             </label>
             <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
-              <div className="flex min-w-0 flex-1 items-center rounded-lg border border-input bg-card pl-3 text-sm text-muted-foreground focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/15">
-                <span className="shrink-0 font-mono">{site}/u/</span>
-                <Input
-                  id="share-handle"
-                  value={handle}
-                  onChange={(e) => setHandle(e.target.value.toLowerCase().trim())}
-                  placeholder="your-name"
-                  maxLength={39}
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-invalid={handle !== '' && !valid}
-                  aria-describedby="share-handle-hint"
-                  className="h-9 border-0 bg-transparent pl-0.5 font-mono text-foreground shadow-none focus-visible:ring-0"
-                />
-              </div>
+              <Input
+                id="share-name"
+                value={name}
+                onChange={(e) => setName(e.target.value.toLowerCase().trim())}
+                placeholder="your-name"
+                maxLength={39}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={!valid}
+                aria-describedby="share-name-hint"
+                className="h-9 min-w-0 flex-1 font-mono"
+              />
               <Button type="submit" disabled={!valid || !preview || posting}>
                 {posting ? 'Sharing…' : 'Share'}
               </Button>
             </div>
             <p
-              id="share-handle-hint"
-              className={`mt-1.5 text-xs ${handle !== '' && !valid ? 'text-destructive' : 'text-muted-foreground'}`}
+              id="share-name-hint"
+              className={`mt-1.5 text-xs ${valid ? 'text-muted-foreground' : 'text-destructive'}`}
             >
-              {handle !== '' && !valid
-                ? 'Lowercase letters, digits and dashes, up to 39.'
-                : claimed
-                  ? 'This hub already holds this handle: the share is added to its page.'
-                  : 'The first share of a handle claims it for this hub.'}
+              {valid
+                ? 'Shown as “shared by …” on the page. Plain text, not an account: anyone can type any name.'
+                : 'Lowercase letters, digits and dashes, up to 39.'}
             </p>
-            {error && (
-              <p role="alert" className="mt-2 text-[13px] text-destructive">
-                {error}
-              </p>
-            )}
           </form>
         </>
+      )}
+
+      {error && (
+        <p role="alert" className="px-5 pb-3 text-[13px] text-destructive">
+          {error}
+        </p>
+      )}
+
+      {past.length > 0 && (
+        <div className="border-t border-border/70 px-5 py-4">
+          <div className="text-[13px] font-medium">Shared from this hub</div>
+          <ul className="mt-2 divide-y divide-border/70">
+            {past.map((s) => (
+              <li key={s.id} className="flex min-w-0 items-center gap-3 py-2 text-sm">
+                <span className="w-24 shrink-0 font-mono text-xs text-muted-foreground">
+                  {day(s.createdAt)}
+                </span>
+                {s.url ? (
+                  <a
+                    href={s.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="min-w-0 flex-1 truncate font-mono text-[13px] hover:underline"
+                  >
+                    {s.url}
+                  </a>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-muted-foreground">
+                    {s.id} on {host(s.origin)}
+                  </span>
+                )}
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={deleting !== null}
+                  onClick={() => void remove(s.id)}
+                  aria-label={`Delete share ${s.id}`}
+                >
+                  <Icons.trash />
+                  {deleting === s.id ? 'Deleting…' : 'Delete'}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <DialogFooter className="sm:hidden">
         <Button type="button" variant="outline" onClick={onClose}>

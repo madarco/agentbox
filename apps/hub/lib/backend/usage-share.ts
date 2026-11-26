@@ -1,18 +1,22 @@
 // Share the usage dashboard on agent-box.sh (docs/usage-dashboard-plan.md, Phase 6).
 // The hub builds the public `UsageShare` with `toShare` and posts it to
-// `share.endpoint` itself: the browser and the CLI only call
-// `POST /api/v1/usage/share`. The first post for a handle returns a claim secret;
-// it stays in `~/.agentbox/hub/share.json` (0600) and goes out only as the Bearer
-// of later posts for that handle to the same site. It is never returned or logged.
+// `share.endpoint` itself: the browser and the CLI only call `/api/v1/usage/share`.
+// The site answers with the share's random id and a delete secret. The secret stays
+// in `~/.agentbox/hub/share.json` (0600) and goes out only to delete that one share
+// on the site that minted it. It is never returned or logged.
+import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { HANDLE_RE, toShare, type UsageShare, type UsageStats } from '@agentbox/usage-view';
+import { SHARE_NAME_RE, toShare, type UsageShare, type UsageStats } from '@agentbox/usage-view';
 
 export const DEFAULT_SHARE_ENDPOINT = 'https://agent-box.sh/api/share';
 const POST_TIMEOUT_MS = 20_000;
+/** What the site mints: lowercase letters and digits, long enough to be unguessable. */
+const SHARE_ID_RE = /^[a-z0-9]{20,64}$/;
 
 export type ShareErrorCode =
   | 'invalid_request'
+  | 'not_found'
   | 'conflict'
   | 'rate_limited'
   | 'payload_too_large'
@@ -52,57 +56,84 @@ export function parseShareEndpoint(raw: string | undefined): URL {
   return url;
 }
 
-export function checkHandle(raw: unknown): string {
-  const handle = typeof raw === 'string' ? raw.trim() : '';
-  if (!HANDLE_RE.test(handle)) {
+/** The optional display name: absent when empty, else the share schema's character rule. */
+export function checkName(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const name = typeof raw === 'string' ? raw.trim() : null;
+  if (name === '') return undefined;
+  if (name === null || !SHARE_NAME_RE.test(name)) {
     throw new ShareError(
       'invalid_request',
-      'handle must be 1-39 characters of lowercase letters, digits and dashes',
+      'name must be 1-39 characters of lowercase letters, digits and dashes',
     );
   }
-  return handle;
+  return name;
 }
 
-// ── claim secrets ──
+// ── the shares this hub made ──
 
-interface ClaimFile {
-  version: 1;
-  /** Keyed `<endpoint origin> <handle>`: a claim belongs to one site's database. */
-  claims: Record<string, { secret: string; claimedAt: string }>;
-  /** The handle of the last share to each site (by origin), to fill the form with next time. */
-  lastHandles?: Record<string, string>;
+export interface ShareRecord {
+  /** The endpoint the share was posted to; its delete goes to `<endpoint>/<id>`. */
+  endpoint: string;
+  /** `endpoint`'s origin, which `url` is on. */
+  origin: string;
+  id: string;
+  /** The public page; empty when the site answered without a usable one. */
+  url: string;
+  deleteSecret: string;
+  createdAt: string;
 }
 
-export interface ClaimStore {
-  secret(origin: string, handle: string): Promise<string | null>;
-  save(origin: string, handle: string, secret: string): Promise<void>;
-  remember(origin: string, handle: string): Promise<void>;
+/** A share as `GET /usage/share` lists it: never the secret. */
+export type ShareListing = Omit<ShareRecord, 'deleteSecret'>;
+
+interface ShareFile {
+  version: 2;
+  shares: ShareRecord[];
+  /** The display name of the last share, to fill the form with next time. */
+  lastName?: string;
+}
+
+export interface ShareStore {
+  list(): Promise<ShareRecord[]>;
+  add(record: ShareRecord): Promise<void>;
+  remove(id: string): Promise<void>;
+  rememberName(name: string | undefined): Promise<void>;
+  lastName(): Promise<string | null>;
   /**
-   * Last resort when `save` failed after the site stored a share: write the secret
+   * Last resort when `add` failed after the site stored a share: write the record
    * to a file of its own (0600) and return its path, or null.
    */
-  salvage?(origin: string, handle: string, secret: string): Promise<string | null>;
-  /** Handles this hub holds a claim for on `origin`, and the last one shared there. */
-  known(origin: string): Promise<{ handles: string[]; lastHandle: string | null }>;
+  salvage?(record: ShareRecord): Promise<string | null>;
 }
 
-const claimKey = (origin: string, handle: string): string => `${origin} ${handle}`;
+const isRecord = (v: unknown): v is ShareRecord => {
+  const r = v as Partial<ShareRecord> | null;
+  return (
+    !!r &&
+    typeof r.endpoint === 'string' &&
+    typeof r.origin === 'string' &&
+    typeof r.id === 'string' &&
+    typeof r.url === 'string' &&
+    typeof r.deleteSecret === 'string' &&
+    typeof r.createdAt === 'string'
+  );
+};
 
-/** The claim secrets in one 0600 JSON file. Writes are serialized and atomic. */
-export function fileClaimStore(path: string): ClaimStore {
+/** The share records in one 0600 JSON file. Writes are serialized and atomic. */
+export function fileShareStore(path: string): ShareStore {
   let chain: Promise<unknown> = Promise.resolve();
-  const read = async (): Promise<ClaimFile> => {
+  const read = async (): Promise<ShareFile> => {
     try {
-      const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<ClaimFile>;
+      const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<ShareFile>;
       return {
-        version: 1,
-        claims: parsed.claims && typeof parsed.claims === 'object' ? parsed.claims : {},
-        lastHandles:
-          parsed.lastHandles && typeof parsed.lastHandles === 'object' ? parsed.lastHandles : {},
+        version: 2,
+        shares: Array.isArray(parsed.shares) ? parsed.shares.filter(isRecord) : [],
+        ...(typeof parsed.lastName === 'string' ? { lastName: parsed.lastName } : {}),
       };
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, claims: {} };
-      // A corrupt file must not be overwritten: it may hold a secret worth recovering.
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { version: 2, shares: [] };
+      // A corrupt file must not be overwritten: it may hold delete secrets worth recovering.
       // No parse message: JSON.parse quotes the file, which may be part of a secret.
       const code = (e as NodeJS.ErrnoException).code;
       throw new ShareError(
@@ -111,12 +142,12 @@ export function fileClaimStore(path: string): ClaimStore {
       );
     }
   };
-  const update = (fn: (f: ClaimFile) => void): Promise<void> => {
+  const update = (fn: (f: ShareFile) => void): Promise<void> => {
     const next = chain.then(async () => {
       const f = await read();
       fn(f);
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      const tmp = `${path}.${String(process.pid)}.tmp`;
+      const tmp = `${path}.${String(process.pid)}.${randomBytes(4).toString('hex')}.tmp`;
       try {
         await writeFile(tmp, `${JSON.stringify(f, null, 2)}\n`, { mode: 0o600 });
         await chmod(tmp, 0o600);
@@ -130,40 +161,51 @@ export function fileClaimStore(path: string): ClaimStore {
     return next;
   };
   return {
-    async secret(origin, handle) {
-      return (await read()).claims[claimKey(origin, handle)]?.secret ?? null;
+    async list() {
+      return (await read()).shares;
     },
-    save: (origin, handle, secret) =>
+    add: (record) =>
       update((f) => {
-        f.claims[claimKey(origin, handle)] = { secret, claimedAt: new Date().toISOString() };
+        f.shares = [...f.shares.filter((s) => s.id !== record.id), record];
       }),
-    remember: (origin, handle) =>
+    remove: (id) =>
       update((f) => {
-        f.lastHandles = { ...f.lastHandles, [origin]: handle };
+        f.shares = f.shares.filter((s) => s.id !== id);
       }),
-    async salvage(origin, handle, secret) {
-      const file = `${path}.claim-${handle}-${String(Date.now())}.json`;
+    rememberName: (name) =>
+      update((f) => {
+        if (name) f.lastName = name;
+        else delete f.lastName;
+      }),
+    async lastName() {
+      return (await read()).lastName ?? null;
+    },
+    async salvage(record) {
+      const file = `${path}.share-${record.id}.json`;
       try {
-        await writeFile(
-          file,
-          `${JSON.stringify({ key: claimKey(origin, handle), secret }, null, 2)}\n`,
-          { mode: 0o600, flag: 'wx' },
-        );
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
         return file;
       } catch {
         return null;
       }
     },
-    async known(origin) {
-      const f = await read();
-      const prefix = `${origin} `;
-      const handles = Object.keys(f.claims)
-        .filter((k) => k.startsWith(prefix))
-        .map((k) => k.slice(prefix.length))
-        .sort();
-      return { handles, lastHandle: f.lastHandles?.[origin] ?? null };
-    },
   };
+}
+
+/** The hub's shares, newest first, without their secrets. */
+export async function listUsageShares(store: ShareStore): Promise<ShareListing[]> {
+  return (await store.list())
+    .map(
+      (r): ShareListing => ({
+        endpoint: r.endpoint,
+        origin: r.origin,
+        id: r.id,
+        url: r.url,
+        createdAt: r.createdAt,
+      }),
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 // ── posting ──
@@ -172,7 +214,7 @@ export interface UsageShareDeps {
   /** The stats of the window the request names (`usageStats` over the parsed query). */
   stats: () => Promise<UsageStats>;
   endpoint: () => Promise<string | undefined>;
-  claims: ClaimStore;
+  store: ShareStore;
   fetch?: typeof fetch;
 }
 
@@ -185,20 +227,18 @@ export interface UsageSharePreview {
 
 export interface UsageSharePosted {
   url: string;
-  handle: string;
-  n: number;
-  /** True when this post claimed the handle (its first share). */
-  claimedNow: boolean;
+  id: string;
+  createdAt: string;
 }
 
 /** What `POST /usage/share` with `preview: true` returns: the exact share, not posted. */
 export async function previewUsageShare(
   deps: UsageShareDeps,
-  handleRaw: unknown,
+  nameRaw: unknown,
 ): Promise<UsageSharePreview> {
-  const handle = checkHandle(handleRaw);
+  const name = checkName(nameRaw);
   const endpoint = parseShareEndpoint(await deps.endpoint());
-  const share = toShare(await deps.stats(), handle);
+  const share = toShare(await deps.stats(), name);
   return {
     share,
     endpoint: endpoint.href,
@@ -211,15 +251,43 @@ function retryAfterOf(res: Response): number | undefined {
   return Number.isFinite(n) && n > 0 ? Math.ceil(n) : undefined;
 }
 
-/** Builds the share, posts it to `share.endpoint`, keeps a new claim secret. */
+function failedStatus(res: Response, site: string, verb: 'share' | 'delete'): never {
+  switch (res.status) {
+    case 400:
+      throw new ShareError(
+        'upstream_error',
+        `${site} refused the share as invalid: its share schema may differ from this hub's (update agentbox, or check share.endpoint)`,
+      );
+    case 413:
+      throw new ShareError('payload_too_large', `${site} refused the share as too large`);
+    case 429: {
+      const retryAfter = retryAfterOf(res);
+      throw new ShareError(
+        'rate_limited',
+        `${site} allows only a few shares an hour from one address: try again${retryAfter ? ` in ${String(Math.ceil(retryAfter / 60))} min` : ' later'}`,
+        retryAfter,
+      );
+    }
+    case 503:
+      throw new ShareError('backend_unavailable', `sharing is not configured on ${site}`);
+    default:
+      throw new ShareError(
+        'upstream_error',
+        `${site} answered ${String(res.status)} to the ${verb}`,
+      );
+  }
+}
+
+/** Builds the share, posts it to `share.endpoint`, keeps the share's delete secret. */
 export async function postUsageShare(
   deps: UsageShareDeps,
-  handleRaw: unknown,
+  nameRaw: unknown,
 ): Promise<UsageSharePosted> {
-  const handle = checkHandle(handleRaw);
+  const name = checkName(nameRaw);
   const endpoint = parseShareEndpoint(await deps.endpoint());
-  const share = toShare(await deps.stats(), handle);
-  const secret = await deps.claims.secret(endpoint.origin, handle);
+  const share = toShare(await deps.stats(), name);
+  // A store that can't be read can't keep the delete secret: fail before publishing.
+  await deps.store.list();
   const doFetch = deps.fetch ?? fetch;
   const site = endpoint.host;
 
@@ -227,22 +295,17 @@ export async function postUsageShare(
   try {
     res = await doFetch(endpoint.href, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(secret ? { authorization: `Bearer ${secret}` } : {}),
-      },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify(share),
       redirect: 'error',
       signal: AbortSignal.timeout(POST_TIMEOUT_MS),
     });
   } catch (e) {
     const timedOut = e instanceof Error && e.name === 'TimeoutError';
-    // The site may have stored the share before the answer was lost, and a post has
-    // no idempotency key: a first share may have claimed the handle without the
-    // secret ever reaching the hub.
-    const maybe = secret
-      ? `the share may have been published anyway; check ${endpoint.origin}/u/${handle} before retrying`
-      : `the share may have been published and "${handle}" claimed anyway: if a retry says the handle is already claimed, that is why, and its secret is lost`;
+    // A post has no idempotency key: the site may have stored the share before the
+    // answer was lost, and then its id and delete secret never reached the hub.
+    const maybe =
+      'the share may have been published anyway, at a link this hub never learned and cannot delete';
     throw new ShareError(
       'upstream_error',
       timedOut
@@ -252,75 +315,107 @@ export async function postUsageShare(
   }
 
   if (res.status !== 201 && res.status !== 200) {
-    // Read the site's error for logs only as a status; its text is not ours to forward.
+    // The site's error text is not ours to forward.
     await res.body?.cancel().catch(() => undefined);
-    switch (res.status) {
-      case 400:
-        throw new ShareError(
-          'upstream_error',
-          `${site} refused the share as invalid: its share schema may differ from this hub's (update agentbox, or check share.endpoint)`,
-        );
-      case 401:
-      case 403:
-      case 409:
-        throw new ShareError(
-          'conflict',
-          secret
-            ? `${site} refused the claim secret this hub holds for "${handle}" (if that site's shares were reset, remove the "${endpoint.origin} ${handle}" entry from ~/.agentbox/hub/share.json and share again)`
-            : `the handle "${handle}" is already claimed on ${site}: pick another one`,
-        );
-      case 413:
-        throw new ShareError('payload_too_large', `${site} refused the share as too large`);
-      case 429: {
-        const retryAfter = retryAfterOf(res);
-        throw new ShareError(
-          'rate_limited',
-          `${site} allows only a few shares an hour from one address: try again${retryAfter ? ` in ${String(Math.ceil(retryAfter / 60))} min` : ' later'}`,
-          retryAfter,
-        );
-      }
-      case 503:
-        throw new ShareError('backend_unavailable', `sharing is not configured on ${site}`);
-      default:
-        throw new ShareError('upstream_error', `${site} answered ${String(res.status)}`);
-    }
+    failedStatus(res, site, 'share');
   }
 
-  let body: { url?: unknown; handle?: unknown; n?: unknown; claimSecret?: unknown };
+  let body: { url?: unknown; id?: unknown; deleteSecret?: unknown };
   try {
     body = (await res.json()) as typeof body;
   } catch {
     throw new ShareError('upstream_error', `${site} answered with something other than JSON`);
   }
-  const n = typeof body.n === 'number' && Number.isSafeInteger(body.n) ? body.n : 0;
-  const claimSecret = typeof body.claimSecret === 'string' ? body.claimSecret : '';
-  const url = typeof body.url === 'string' ? body.url : '';
-  let parsed: URL | null = null;
+  const id = typeof body.id === 'string' && SHARE_ID_RE.test(body.id) ? body.id : '';
+  const deleteSecret = typeof body.deleteSecret === 'string' ? body.deleteSecret : '';
+  let where: string | null = null;
   try {
-    parsed = new URL(url);
+    const parsed = new URL(typeof body.url === 'string' ? body.url : '');
+    if (parsed.origin === endpoint.origin) where = parsed.href;
   } catch {
-    parsed = null;
+    where = null;
   }
-  const where = parsed && parsed.origin === endpoint.origin ? parsed.href : null;
-  // Keep a secret the site minted before anything else can fail: the site has
-  // claimed the handle, and without the secret every later share of it is refused.
-  if (claimSecret) {
-    try {
-      await deps.claims.save(endpoint.origin, handle, claimSecret);
-    } catch (e) {
-      const kept = await deps.claims.salvage?.(endpoint.origin, handle, claimSecret);
-      throw new ShareError(
-        'backend_unavailable',
-        `${where ? `shared at ${where}` : `${site} stored the share`}, but the handle's claim secret could not be saved (${e instanceof Error ? e.message : String(e)})${kept ? `; it was written to ${kept}: move it into share.json, or later shares of "${handle}" will be refused` : `; later shares of "${handle}" will be refused`}`,
-      );
-    }
+  if (!id || !deleteSecret) {
+    throw new ShareError(
+      'upstream_error',
+      `${site} did not return a share id and delete secret${where ? ` (it answered ${where})` : ''}`,
+    );
+  }
+  const record: ShareRecord = {
+    endpoint: endpoint.href,
+    origin: endpoint.origin,
+    id,
+    url: where ?? '',
+    deleteSecret,
+    createdAt: new Date().toISOString(),
+  };
+  // Keep the secret before anything else can fail: without it the share can't be deleted.
+  try {
+    await deps.store.add(record);
+  } catch (e) {
+    const kept = await deps.store.salvage?.(record);
+    throw new ShareError(
+      'backend_unavailable',
+      `${where ? `shared at ${where}` : `${site} stored the share`}, but its delete secret could not be saved (${e instanceof Error ? e.message : String(e)})${kept ? `; it was written to ${kept}` : '; the share cannot be deleted from this hub'}`,
+    );
   }
   if (!where) {
     throw new ShareError(
       'upstream_error',
-      `${site} did not return a share URL on ${site}${claimSecret ? ` (the handle "${handle}" is claimed and its secret kept)` : ''}`,
+      `${site} did not return a share URL on ${site} (share ${id} is kept, and can be deleted)`,
     );
   }
-  await deps.claims.remember(endpoint.origin, handle).catch(() => undefined);
-  return { url: where, handle, n, claimedNow: claimSecret !== '' };
+  await deps.store.rememberName(name).catch(() => undefined);
+  return { url: where, id, createdAt: record.createdAt };
+}
+
+// ── deleting ──
+
+export interface UsageShareDeleteDeps {
+  store: ShareStore;
+  fetch?: typeof fetch;
+}
+
+/**
+ * Deletes one of this hub's shares on the site that holds it, then forgets it.
+ * A share the site no longer has (404) is forgotten too. Returns whether the site
+ * still had it.
+ */
+export async function deleteUsageShare(
+  deps: UsageShareDeleteDeps,
+  idRaw: string,
+): Promise<{ id: string; deleted: boolean }> {
+  const id = idRaw.trim();
+  const record = SHARE_ID_RE.test(id) ? (await deps.store.list()).find((s) => s.id === id) : null;
+  if (!record) throw new ShareError('not_found', `this hub made no share ${id}`);
+  const endpoint = parseShareEndpoint(record.endpoint);
+  const site = endpoint.host;
+  const target = `${endpoint.href.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
+  let res: Response;
+  try {
+    res = await (deps.fetch ?? fetch)(target, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${record.deleteSecret}` },
+      redirect: 'error',
+      signal: AbortSignal.timeout(POST_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timedOut = e instanceof Error && e.name === 'TimeoutError';
+    throw new ShareError(
+      'upstream_error',
+      `${site} ${timedOut ? `did not answer within ${String(POST_TIMEOUT_MS / 1000)}s` : `could not be reached (${e instanceof Error ? e.message : String(e)})`}; the share is kept here, try again`,
+    );
+  }
+  await res.body?.cancel().catch(() => undefined);
+  if (res.status === 401 || res.status === 403) {
+    throw new ShareError(
+      'conflict',
+      `${site} refused this hub's delete secret for share ${id}; it is kept here`,
+    );
+  }
+  if (res.status !== 204 && res.status !== 200 && res.status !== 404) {
+    failedStatus(res, site, 'delete');
+  }
+  await deps.store.remove(id);
+  return { id, deleted: res.status !== 404 };
 }

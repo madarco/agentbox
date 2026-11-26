@@ -4,6 +4,7 @@ import type { DeviceService } from './lib/backend/devices';
 import type { HistoryService } from './lib/backend/history';
 import type { MemoryService } from './lib/backend/history-memory';
 import type { SkillProposals } from './lib/backend/skill-proposals';
+import type { ShareStore } from './lib/backend/usage-share';
 
 declare global {
   // Set by the custom server (server.ts) after the relay daemon is constructed,
@@ -28,6 +29,11 @@ declare global {
   // of `@agentbox/relay` and would not see the server's installed ledger.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_ACTIVITY: ActivityStore | undefined;
+
+  // The usage shares this hub made (share.json). One per process: the share routes
+  // may be bundled with separate copies of the store module.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_SHARE_STORE: ShareStore | undefined;
 
   // Agent memory versions (docs/agent-history-plan.md, Phase 4), in history.db.
   // eslint-disable-next-line no-var
