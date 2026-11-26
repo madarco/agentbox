@@ -1,6 +1,6 @@
 # Usage dashboard and public share — plan
 
-Status: Phase 0 and Phase 1 done (2026-11-26). Design mockup approved: the Usage view in
+Status: Phase 0, Phase 1 and Phase 2 done (2026-11-26). Design mockup approved: the Usage view in
 `../agentbox-design/AgentBox Control Plane (shadcn).html#/usage`
 (`control-shadcn/views-usage.jsx` + `control-shadcn/usage.css`).
 
@@ -142,8 +142,11 @@ from Phase 1 on.
   takes plain arrays (`SessionTurns`, `git.push` / `pr.merged` events, token rows,
   box info, box runs) that the hub adapts its rows to; `toShare(stats, handle)`
   builds the public subset. Decisions made there:
-  - `tzOffset` is local time minus UTC in minutes (CET is `60`, the opposite sign
-    of `Date#getTimezoneOffset`). A fixed offset is wrong across DST; see the backlog.
+  - Days are local days in a named IANA zone (`range.tz`, e.g. `Europe/Rome`),
+    bucketed with `Intl`, so a window across a DST change keeps 23- and 25-hour days
+    whole. The zone is a closed value: `isTimeZone` accepts only a name the
+    runtime's `Intl.supportedValuesOf('timeZone')` lists (plus `UTC`), at most 64
+    characters. (It replaced the first cut's fixed `tzOffset`.)
   - A box's sessions are unioned into one lane, so two sessions in one box count
     once in "boxes at once" and in agent-hours. Host sessions are one lane each.
   - Lines and files come from `git.push` only; a merged PR's lines were already
@@ -156,12 +159,33 @@ from Phase 1 on.
     at its longest is about 55 KB (tested); `toShare` rounds, clamps and cuts to fit.
     Every date is 2020-2100 and the range must hold `since <= today <= until` within
     367 days, so no renderer walks an unbounded run of days.
-- `apps/hub/lib/backend/usage-stats.ts` reads `history.db` + the ledger and
-  returns `UsageStats` for a window, a tz offset and an optional subscription.
-- `GET /api/v1/usage/stats?since=&until=&tzOffset=&subscription=`; the existing
-  `GET /api/v1/usage` stays for the token breakdowns.
-- `agentbox usage` CLI prints the hero numbers (an `/api/v1` client, local or
-  remote hub alike).
+- **Done** (feat/usage-stats): `apps/hub/lib/backend/usage-stats.ts` reads
+  `history.db` + the ledger and returns `UsageStats` for a window, an IANA zone
+  and an optional subscription (`agent/account`).
+  - Active intervals are cut in SQL (window functions over `history_turns.ts_ms`)
+    and kept per session in `history_spans`; a write marks the session dirty, and
+    the history service recomputes dirty sessions in small batches at start and
+    with its minute sweep, never on a request (the relay and the web server share
+    the hub process). A read uses the spans stored, so a turn shows up within a
+    minute. Retention keeps a purged
+    session's spans, so a year view keeps its hours past `history.retentionDays`.
+  - Tokens are summed per session per local day in SQL, from the zone's offset
+    segments over the window (`zoneSegments`), so the store needs no zone support.
+  - Measured on 1M turns and 200k usage rows (2000 sessions over a year): a year
+    view in about 0.4 s, a week in 0.2 s, most of it `buildUsageStats` in JS;  after
+    the migration the hub backfills every session's spans in the background once
+    (2.5 s of sqlite work per 1M turns, in batches of 50 sessions).
+    Answers are cached for a minute per (window, zone, subscription).
+  - Sessions group by the `managerId` the ledger records per box, else by overlap.
+    Commits come from `git.push` counts, never rows; a `hostOnly` landing counts
+    only when no published push of the same box follows it. Box-hours run from
+    `box.created`/`ready`/`started`/`resumed` to `stopped`/`paused`/`destroyed`/`failed`.
+- `GET /api/v1/usage/stats?since=&until=&tz=&range=&subscription=`: `since` is a
+  day or `<n>d`; the window is checked with `UsageRange` (2020-2100, at most a
+  year) before any day is walked. The existing `GET /api/v1/usage` stays for the
+  token breakdowns.
+- `agentbox usage` prints the hero numbers (`--json` the whole `UsageStats`); the
+  token breakdown that was `agentbox usage` is now `agentbox usage tokens`.
 
 ### Phase 3 — the hub Usage page
 

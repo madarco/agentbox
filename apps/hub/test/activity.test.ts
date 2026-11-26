@@ -85,6 +85,10 @@ describe('the box routes, recorded for a box in no workspace', () => {
     const hub = withBoxActivity(fakeHub(), d);
     await hub.pause('box1');
     await backgroundSettled();
+    // Rows of one millisecond tie on `at` and break by id, so start the resume
+    // in a later millisecond than the pause.
+    const pausedAt = Date.parse((await store.list())[0]!.at);
+    while (Date.now() <= pausedAt) await new Promise((r) => setImmediate(r));
     await hub.resume('box1', { stamp: { actor: 'manager', managerId: 'm1' } });
     await backgroundSettled();
     const rows = await store.list();

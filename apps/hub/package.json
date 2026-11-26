@@ -34,6 +34,7 @@
     "@agentbox/sandbox-hetzner": "workspace:*",
     "@agentbox/sandbox-remote-docker": "workspace:*",
     "@agentbox/sandbox-vercel": "workspace:*",
+    "@agentbox/usage-view": "workspace:*",
     "@daytona/sdk": "^0.196.0",
     "@radix-ui/react-tooltip": "^1.2.12",
     "@vercel/sandbox": "^2.0.1",

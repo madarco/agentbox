@@ -14,6 +14,7 @@ import { parseAgentStatusEntry } from '@agentbox/core';
 import { openOnHost } from '@agentbox/sandbox-core';
 import type { AgentId, AgentLiveUsageView, AgentMode, AgentStatusMap } from '@agentbox/core';
 import type { CreateJobRequestOpts } from '@agentbox/relay';
+import type { UsageStats } from '@agentbox/usage-view';
 
 /**
  * A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields).
@@ -1036,6 +1037,16 @@ export interface HubApiHistoryFilter {
 
 // ── usage (/api/v1/usage) ──
 
+export interface HubApiUsageStatsQuery {
+  /** A local day, or `<n>d`. */
+  since?: string;
+  until?: string;
+  /** IANA zone. */
+  tz?: string;
+  subscription?: string;
+  range?: '7d' | 'month' | '90d' | 'year';
+}
+
 export type HubApiUsageDimension =
   | 'day'
   | 'agent'
@@ -1789,6 +1800,13 @@ export class HubApiClient {
   }
 
   // ── usage ──
+
+  usageStats(q: HubApiUsageStatsQuery = {}): Promise<UsageStats> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') qs.set(k, v);
+    const s = qs.toString();
+    return this.request<UsageStats>('GET', `/usage/stats${s ? `?${s}` : ''}`);
+  }
 
   usage(q: HubApiUsageQuery = {}): Promise<HubApiUsageReport> {
     const qs = new URLSearchParams();
