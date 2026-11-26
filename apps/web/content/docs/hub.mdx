@@ -186,7 +186,7 @@ The **Settings → Subscriptions** page (`/settings/subscriptions`) lists the ma
 tokens, API keys per agent) as cards grouped by **Anthropic**, **OpenAI Codex** and
 **API keys**. Each card shows the plan tier, the account's email, how many boxes
 run on it, whether it is at its limit, and its tokens over the last 7 days, which
-link to the Usage page filtered to that subscription. A box that borrows another
+link to the Usage page's token view filtered to that subscription. A box that borrows another
 agent's login (`--model-auth`) counts under the lender's card.
 
 Under each plan, one meter per limit window the account actually has: a 5-hour
@@ -225,7 +225,7 @@ a window with **7 days**, **30 days** (the default, the window the tray's header
 pill shows), **This month**, **90 days** or **Year**; days are in your browser's
 time zone. The **Subscription** selector narrows the page to one subscription.
 Both stay in the URL (`/usage?range=90d&subscription=claude/personal`), so a
-Subscriptions card links straight to its numbers. **Export CSV** downloads one
+link keeps the view it shows. **Export CSV** downloads one
 row per day of the window (hours, peak, tokens, commits, PRs, lines, files, and
 agent-hours per agent and per provider). The page reads the same numbers as
 [`agentbox usage`](/docs/cli#usage).
