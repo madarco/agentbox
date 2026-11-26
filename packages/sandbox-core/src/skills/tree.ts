@@ -51,9 +51,22 @@ export class SkillTooLargeError extends Error {
   }
 }
 
+/**
+ * File hashes remembered across runs, keyed by path + size + mtime. With
+ * one, a read is a summary: every file's `data` is empty and only its `sha256`
+ * is filled (from the cache when the file is unchanged), so the tree hash comes
+ * cheap but the content is not there to upload or scan.
+ */
+export interface SkillHashCache {
+  get(path: string, size: number, mtimeMs: number): string | undefined;
+  set(path: string, size: number, mtimeMs: number, sha256: string): void;
+}
+
+const EMPTY = Buffer.alloc(0);
+
 export async function readSkillTree(
   root: string,
-  opts: { maxBytes?: number } = {},
+  opts: { maxBytes?: number; hashCache?: SkillHashCache } = {},
 ): Promise<SkillTree> {
   const files: SkillFile[] = [];
   const brokenLinks: string[] = [];
@@ -96,6 +109,21 @@ export async function readSkillTree(
           throw new SkillTooLargeError(size, opts.maxBytes);
         }
         newestMtimeMs = Math.max(newestMtimeMs, st.mtimeMs);
+        const mode = (st.mode & 0o111) !== 0 ? 0o755 : 0o644;
+        const cache = opts.hashCache;
+        if (cache) {
+          // The walked path, not its realpath: size + mtime already prove a hit.
+          const key = childAbs;
+          let sha256 = cache.get(key, st.size, st.mtimeMs);
+          if (sha256 === undefined) {
+            sha256 = createHash('sha256')
+              .update(await readFile(childAbs))
+              .digest('hex');
+          }
+          cache.set(key, st.size, st.mtimeMs, sha256);
+          files.push({ path: childRel, mode, data: EMPTY, sha256 });
+          continue;
+        }
         const data = await readFile(childAbs);
         files.push({
           path: childRel,

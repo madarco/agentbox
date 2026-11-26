@@ -125,12 +125,25 @@ describe('checkSkillsDrift', () => {
     expect((await checkSkillsDrift({ cwd: HOME }))?.outOfSync).toBe(0);
   });
 
-  it('costs no request with no skills on this PC', async () => {
-    const fetch = stubHub({ seeded: true, skills: [] });
+  it('is silent with no skills on this PC', async () => {
+    stubHub({ seeded: true, skills: [hubSkill('theirs', 'e'.repeat(64))] });
     const logged: string[] = [];
     expect(await checkSkillsDrift({ cwd: HOME, debug: (l) => logged.push(l) })).toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
     expect(logged).toEqual([expect.stringContaining('no skills on this PC')]);
+  });
+
+  it('hashes from its cache to the same tree hash, and still sees an edit', async () => {
+    writeSkill('cached');
+    const full = await discoverLocalSkills({ home: HOME, maxBytes: 1e9 });
+    const listing = { seeded: true, skills: [hubSkill('cached', full[0]!.treeSha)] };
+    stubHub(listing);
+    expect((await checkSkillsDrift({ cwd: HOME, timeoutMs: 15_000 }))?.outOfSync).toBe(0);
+    // Second run reads hashes from ~/.agentbox/skills-hash-cache.json.
+    stubHub(listing);
+    expect((await checkSkillsDrift({ cwd: HOME }))?.outOfSync).toBe(0);
+    writeSkill('cached', 'Edited, and longer than before.');
+    stubHub(listing);
+    expect((await checkSkillsDrift({ cwd: HOME }))?.changed).toEqual(['cached']);
   });
 
   it('is silent, with a debug line, when the hub errors', async () => {

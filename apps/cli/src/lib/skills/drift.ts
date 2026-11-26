@@ -10,10 +10,17 @@
  * skill marked skipped never counts. Best-effort and bounded: any failure (no
  * hub, an error, a timeout) is one debug line and no notice.
  */
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { log } from '@clack/prompts';
-import { loadEffectiveConfig } from '@agentbox/config';
-import { discoverLocalSkills, isOutOfSync, type LocalSkill } from '@agentbox/sandbox-core';
+import { loadEffectiveConfig, STATE_DIR } from '@agentbox/config';
+import {
+  discoverLocalSkills,
+  isOutOfSync,
+  type LocalSkill,
+  type SkillHashCache,
+} from '@agentbox/sandbox-core';
 import { HubApiClient, type HubApiSkillsListing } from '../../control-plane/hub-api-client.js';
 import { compareSkills } from './sync.js';
 
@@ -49,7 +56,7 @@ export async function checkSkillsDrift(
     local?: LocalSkill[];
     /** Why there is no answer (a log file, never the terminal). */
     debug?: (line: string) => void;
-    /** Budget for the hub leg (resolve + one request); the local scan is outside it. */
+    /** Budget for the hub leg (resolve + one request), which runs alongside the local scan. */
     timeoutMs?: number;
     cwd?: string;
   } = {},
@@ -59,13 +66,16 @@ export async function checkSkillsDrift(
     const cfg = await loadEffectiveConfig(opts.cwd ?? process.cwd()).catch(() => null);
     if (cfg && !cfg.effective.skills.notice) return null;
     const maxBytes = cfg?.effective.skills.maxSkillBytes ?? 50 * 1024 * 1024;
-    // Scanned first, so a PC with no skills costs no round trip.
-    const local = opts.local ?? (await discoverLocalSkills({ home: homedir(), maxBytes }));
+    // The hub leg starts alongside the local scan: the two don't depend on each
+    // other, and on a poll they cost about the same.
+    const hub = withDeadline(fetchListing(opts.url, timeoutMs), timeoutMs);
+    hub.catch(() => undefined);
+    const local = opts.local ?? (await scanWithCache(maxBytes));
     if (local.length === 0) {
       opts.debug?.('skills notice skipped: no skills on this PC');
       return null;
     }
-    const listing = await withDeadline(fetchListing(opts.url, timeoutMs), timeoutMs);
+    const listing = await hub;
     if (listing === 'timeout') {
       opts.debug?.(`skills notice skipped: no answer from the hub within ${String(timeoutMs)}ms`);
       return null;
@@ -79,6 +89,58 @@ export async function checkSkillsDrift(
     opts.debug?.(`skills notice skipped: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
+}
+
+/**
+ * File hashes from the last check, so a poll (`agentbox queue` in a loop) only
+ * stats this PC's skills instead of reading and hashing every file: 120 MB of
+ * skills cost 1.5 s to hash and a few ms to stat. Only the tree hash is read off
+ * the result, which is all the comparison needs.
+ */
+const HASH_CACHE_VERSION = 1;
+type HashEntry = [size: number, mtimeMs: number, sha256: string];
+
+function hashCachePath(): string {
+  return join(STATE_DIR, 'skills-hash-cache.json');
+}
+
+async function scanWithCache(maxBytes: number): Promise<LocalSkill[]> {
+  let prev: Record<string, HashEntry> = {};
+  try {
+    const doc = JSON.parse(await readFile(hashCachePath(), 'utf8')) as {
+      version?: unknown;
+      files?: Record<string, HashEntry>;
+    };
+    if (doc.version === HASH_CACHE_VERSION && doc.files) prev = doc.files;
+  } catch {
+    /* no cache yet, or unreadable: a full scan rebuilds it */
+  }
+  const next: Record<string, HashEntry> = {};
+  let changed = false;
+  const hashCache: SkillHashCache = {
+    get(path, size, mtimeMs) {
+      const e = prev[path];
+      return e && e[0] === size && e[1] === mtimeMs ? e[2] : undefined;
+    },
+    set(path, size, mtimeMs, sha256) {
+      const e = prev[path];
+      if (!e || e[0] !== size || e[1] !== mtimeMs || e[2] !== sha256) changed = true;
+      next[path] = [size, mtimeMs, sha256];
+    },
+  };
+  const local = await discoverLocalSkills({ home: homedir(), maxBytes, hashCache });
+  // Entries for files that are gone are dropped by writing only what was seen.
+  if (changed || Object.keys(prev).length !== Object.keys(next).length) {
+    try {
+      await mkdir(STATE_DIR, { recursive: true });
+      const tmp = `${hashCachePath()}.${String(process.pid)}.tmp`;
+      await writeFile(tmp, JSON.stringify({ version: HASH_CACHE_VERSION, files: next }));
+      await rename(tmp, hashCachePath());
+    } catch {
+      /* best-effort: the next check hashes again */
+    }
+  }
+  return local;
 }
 
 async function fetchListing(
