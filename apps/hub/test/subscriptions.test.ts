@@ -6,11 +6,10 @@ import {
   type SubscriptionAccount,
 } from '../lib/subscriptions';
 
-const acc = (agent: string, id: string, kind: SubscriptionAccount['kind'], label?: string) => ({
+const acc = (agent: string, id: string, kind: SubscriptionAccount['kind']) => ({
   agent,
   id,
   kind,
-  ...(label ? { label } : {}),
 });
 
 describe('subscriptions', () => {
@@ -31,11 +30,11 @@ describe('subscriptions', () => {
     expect(groupSubscriptions([])).toEqual([]);
   });
 
-  it('labels a subscription like the cards, and an unknown usage key as itself', () => {
-    const list = [acc('claude', 'personal', 'login', 'Personal'), acc('codex', 'k', 'api-key')];
-    expect(subscriptionLabel(list[0]!)).toBe('Personal · Anthropic');
+  it('names a subscription like the cards, and an unknown usage key as itself', () => {
+    const list = [acc('claude', 'work_max', 'login'), acc('codex', 'k', 'api-key')];
+    expect(subscriptionLabel(list[0]!)).toBe('work_max · Anthropic');
     expect(subscriptionLabel(list[1]!)).toBe('k · OpenAI API key');
-    expect(usageKeyLabel('claude/personal', list)).toBe('Personal · Anthropic');
+    expect(usageKeyLabel('claude/work_max', list)).toBe('work_max · Anthropic');
     expect(usageKeyLabel('pi/default', list)).toBe('pi/default');
   });
 });

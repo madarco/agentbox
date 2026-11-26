@@ -44,7 +44,7 @@ describe('captureVolumeLogin', () => {
     writeFileSync(legacy, login(999));
     const res = await captureVolumeLogin({
       spec,
-      account: { id: 'work', label: 'Work' },
+      account: { id: 'work' },
       read: reader({ '.credentials.json': login(100), '_claude.json': '{}' }),
       identity: { files: ['.credentials.json', '_claude.json'], parse: () => ({ email: 'b@x' }) },
       store,
@@ -53,13 +53,13 @@ describe('captureVolumeLogin', () => {
     expect(readFileSync(join(dir, 'credentials', 'claude', 'work.json'), 'utf8')).toBe(login(100));
     expect(readFileSync(legacy, 'utf8')).toBe(login(999));
     const acct = (await readAccounts(store)).accounts.find((a) => a.id === 'work');
-    expect(acct).toMatchObject({ kind: 'login', label: 'Work', identity: { email: 'b@x' } });
+    expect(acct).toMatchObject({ kind: 'login', identity: { email: 'b@x' } });
   });
 
   it('a re-login keeps the row and refuses an older blob', async () => {
     await captureVolumeLogin({
       spec,
-      account: { id: 'work', label: 'Work' },
+      account: { id: 'work' },
       read: reader({ '.credentials.json': login(200) }),
       store,
     });
@@ -70,7 +70,7 @@ describe('captureVolumeLogin', () => {
       store,
     });
     expect(older).toMatchObject({ written: false, reason: 'not newer than backup' });
-    expect((await readAccounts(store)).accounts[0]).toMatchObject({ label: 'Work' });
+    expect((await readAccounts(store)).accounts[0]).toMatchObject({ id: 'work', kind: 'login' });
   });
 
   it('a brand-new account whose login is unusable leaves nothing behind', async () => {
