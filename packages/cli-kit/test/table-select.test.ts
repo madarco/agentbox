@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clipLine,
   fitColumns,
+  initialCursor,
   indexOf,
   keyOf,
   moveCursor,
@@ -37,6 +39,11 @@ describe('width helpers', () => {
     expect(textWidth('日本')).toBe(4);
     expect(textWidth('😀')).toBe(2);
     expect(textWidth('\x1b[31mred\x1b[39m')).toBe(3);
+    // Default-presentation emoji outside the CJK/pictograph blocks.
+    expect(textWidth('\u2705\u274c\u2b50')).toBe(6);
+    // Text-default pictographs stay narrow without VS16.
+    expect(textWidth('\u2764')).toBe(1);
+    expect(textWidth('\u2764\ufe0f')).toBe(2);
   });
 
   it('truncates with an ellipsis on a grapheme boundary', () => {
@@ -49,6 +56,76 @@ describe('width helpers', () => {
     expect(fitColumns([10, 30, 5], 35)).toEqual([10, 20, 5]);
     expect(fitColumns([10, 10], 4)).toEqual([4, 4]);
     expect(fitColumns([2, 10], 6)).toEqual([2, 4]);
+  });
+});
+
+const seven: TableSelectSpec<string> = {
+  title: 'Subscriptions',
+  subtitle: '12 account(s)',
+  actions: [
+    { value: '+add', label: 'Add an account…' },
+    { value: '+use', label: 'What do new boxes here use?' },
+  ],
+  headers: ['NAME', 'KIND', 'IDENTITY', 'STATUS', 'LIMITS', 'DEFAULT', 'BOXES'],
+  rows: Array.from({ length: 12 }, (_, i) => ({
+    value: `claude/acct_${String(i)}`,
+    cells: [
+      `claude/acct_${String(i)}`,
+      'setup token',
+      'someone@example.com, max',
+      'ok',
+      '5-hour 40%, Weekly 80%',
+      'global',
+      'box-one, box-two',
+    ],
+  })),
+};
+
+describe('narrow terminals', () => {
+  it.each([40, 50, 56, 80])(
+    'at %i columns every line fits and the frame fits the height',
+    (cols) => {
+      for (const cursor of [0, 2, 13]) {
+        const out = renderTableSelect(
+          seven,
+          { cursor, scroll: 0 },
+          {
+            columns: cols,
+            rows: 20,
+            color: true,
+            state: 'active',
+          },
+        );
+        const lines = out.split('\n');
+        for (const line of lines) expect(textWidth(line)).toBeLessThan(cols);
+        // One screen row per line, and one row of slack for clack's redraw.
+        expect(lines.length).toBeLessThan(20);
+      }
+    },
+  );
+
+  it('drops the rightmost columns first, keeping the first', () => {
+    const out = render(seven, 2, 40, 20);
+    expect(out).toContain('NAME');
+    expect(out).not.toContain('BOXES');
+  });
+
+  it('drops by priority when one is given', () => {
+    const out = render({ ...seven, priority: [0, 3, 1, 5] }, 2, 40, 20);
+    // Headers may be cut with an ellipsis; match their start.
+    expect(out).toContain('STA');
+    expect(out).not.toContain('IDE');
+    // Display order stays left to right.
+    expect(out.indexOf('NAME')).toBeLessThan(out.indexOf('STA'));
+  });
+
+  it('clips a styled line without counting escapes', () => {
+    expect(clipLine('\x1b[2mabcdef\x1b[22m', 3)).toBe('\x1b[2mabc\x1b[0m');
+    expect(clipLine('abc', 3)).toBe('abc');
+  });
+
+  it('survives empty headers', () => {
+    expect(() => render({ ...spec(2), headers: [] })).not.toThrow();
   });
 });
 
@@ -150,6 +227,21 @@ describe('keys and cursor', () => {
   it('sizes the viewport to the terminal', () => {
     expect(visibleRows(spec(3), 40)).toBe(3);
     expect(visibleRows(spec(100), 24)).toBe(24 - 1 - 12);
+  });
+
+  it('a restored cursor deep in the list keeps its view on the first move', () => {
+    const long = spec(40);
+    const start = initialCursor({ ...long, cursorAt: 's25' }, 24);
+    const visible = visibleRows(long, 24);
+    expect(start.cursor).toBe(2 + 25);
+    // The restored row is on screen, at the bottom of the view.
+    expect(start.scroll).toBe(25 - visible + 1);
+    const next = moveCursor(start, 'up', { actions: 2, rows: 40, visible });
+    expect(next).toEqual({ cursor: start.cursor - 1, scroll: start.scroll });
+  });
+
+  it('maps a bare newline to submit like return', () => {
+    expect(keyOf({ name: 'enter' })).toBe('submit');
   });
 
   it('starts on a value', () => {

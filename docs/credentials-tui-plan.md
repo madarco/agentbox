@@ -127,8 +127,9 @@ and a "Make default" action on every other account card (the `PUT` route).
   the CLI (`credentials label`, `add --label`, Relabel), the hub
   (`PATCH /api/v1/accounts/:agent/:id`, the POST body, `AccountView.label`,
   `Box.accountsInfo[].label`) and the web Subscriptions page. A label already in
-  `~/.agentbox/accounts.json` is ignored on read, not migrated. The list's
-  `ACCOUNT` + `LABEL` columns are one `NAME` column. The tray still reads
+  `~/.agentbox/accounts.json` is ignored on read, not migrated. The list
+  drops its `LABEL` column; the piped table keeps the `ACCOUNT` header scripts
+  match on, the TUI's table calls the same column `NAME`. The tray still reads
   `label` (it was optional, so it just stops showing).
 - **Table TUI.** Bare `agentbox credentials` (and `agentbox skills`) is one
   cli-kit `tableSelect` screen: action rows above a bordered table whose rows

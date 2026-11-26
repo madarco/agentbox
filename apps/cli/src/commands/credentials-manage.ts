@@ -210,7 +210,11 @@ export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
       `the default account is the agent's own login: \`agentbox ${agent} login\` signs it in`,
     );
   }
-  if (id !== typed.trim()) log.info(`name: ${agent}/${id}`);
+  if (id !== typed.trim()) {
+    // Off a terminal stdout is for results a script reads; the notice goes to stderr.
+    if (interactive()) log.info(`name: ${agent}/${id}`);
+    else process.stderr.write(`name: ${agent}/${id}\n`);
+  }
   let kind = kindOf(opts);
   if (!kind) {
     if (!interactive()) throw new Error('pick a kind: --login, --setup-token or --api-key');
@@ -618,6 +622,8 @@ export async function runCredentialsTui(): Promise<void> {
             { value: '+use', label: 'What do new boxes here use?' },
           ],
           headers: ACCOUNT_HEADERS,
+          // NAME, STATUS, KIND, DEFAULT, BOXES, LIMITS, IDENTITY: what a narrow terminal keeps.
+          priority: [0, 3, 1, 5, 6, 4, 2],
           rows: accounts.map((a) => ({
             value: `${a.agent}/${a.id}`,
             cells: accountCells(a, now),

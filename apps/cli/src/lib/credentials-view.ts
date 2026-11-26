@@ -122,10 +122,10 @@ export function statusTone(a: HubApiAccount): 'red' | 'yellow' | 'green' {
   return 'green';
 }
 
-/** The `credentials list` table. */
+/** The `credentials list` table. Scripts match its `ACCOUNT` header; the TUI says NAME. */
 export function renderAccountsTable(accounts: readonly HubApiAccount[], now = Date.now()): string {
   return formatTable(
-    ACCOUNT_HEADERS,
+    ['ACCOUNT', ...ACCOUNT_HEADERS.slice(1)],
     sortAccounts(accounts).map((a) => accountCells(a, now)),
   );
 }

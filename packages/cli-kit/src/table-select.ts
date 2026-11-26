@@ -36,6 +36,11 @@ export interface TableSelectSpec<V extends string> {
   rows: readonly TableRow<V>[];
   /** Shown in place of the rows when there are none. */
   emptyText?: string;
+  /**
+   * Column indexes, most important first: the order a narrow terminal drops
+   * them in reverse. Unset is left to right. The first column is always kept.
+   */
+  priority?: readonly number[];
   /** The action or row value to start on (the last pick, after a refresh). */
   cursorAt?: V;
 }
@@ -76,6 +81,8 @@ function graphemeWidth(g: string): number {
   if (/^\p{M}+$/u.test(g)) return 0;
   const cp = g.codePointAt(0) ?? 0;
   if (isWide(cp)) return 2;
+  // Emoji drawn as emoji by default (U+2705, U+274C, U+2B50, ...) are wide.
+  if (/\p{Emoji_Presentation}/u.test(g)) return 2;
   // A text-default pictograph turned into an emoji by VS16 (e.g. U+2764 U+FE0F).
   if (g.includes('️') && /\p{Extended_Pictographic}/u.test(g)) return 2;
   return 1;
@@ -115,13 +122,73 @@ export function fit(s: string, width: number): string {
 }
 
 /**
+ * `line` cut to `width` columns, ANSI escapes kept (they take no room), with
+ * the styles reset after a cut. The frame's last guard: clack hard-wraps any
+ * line wider than the terminal, and a wrapped frame can't be redrawn in place.
+ */
+export function clipLine(line: string, width: number): string {
+  if (textWidth(line) <= width) return line;
+  let out = '';
+  let w = 0;
+  const parts = line.split(/(\x1b\[[0-9;]*[A-Za-z])/);
+  for (const part of parts) {
+    if (part.startsWith('\x1b[')) {
+      out += part;
+      continue;
+    }
+    for (const { segment } of segmenter.segment(part)) {
+      const gw = graphemeWidth(segment);
+      if (w + gw > width) return `${out}\x1b[0m`;
+      out += segment;
+      w += gw;
+    }
+  }
+  return `${out}\x1b[0m`;
+}
+
+/**
+ * The narrowest each column may get: the first (the row's name) stays readable
+ * up to 20 columns, the rest go down to 4.
+ */
+export function columnFloors(natural: readonly number[]): number[] {
+  return natural.map((n, i) => Math.min(n, i === 0 ? 20 : 4));
+}
+
+/**
+ * The column indexes that fit a line `room` wide, in display order: the least
+ * important (last in `priority`, by default the rightmost) dropped first while
+ * even the floor widths plus borders don't fit. The first column always stays.
+ */
+export function keptColumns(
+  natural: readonly number[],
+  room: number,
+  priority?: readonly number[],
+): number[] {
+  const floors = columnFloors(natural);
+  const all = natural.map((_, i) => i);
+  const ranked = [
+    0,
+    ...(priority ?? all).filter((i) => i > 0 && i < natural.length),
+    ...all.filter((i) => i > 0 && !(priority ?? all).includes(i)),
+  ];
+  let k = ranked.length;
+  const need = (n: number): number =>
+    ranked.slice(0, n).reduce((a, i) => a + floors[i]!, 0) + 3 * n + 3;
+  while (k > 1 && need(k) > room) k--;
+  return ranked.slice(0, k).sort((a, b) => a - b);
+}
+
+/**
  * Column widths that fit `budget`: the natural (widest cell) width each, then
  * the widest column shrunk one column at a time until the table fits, never
- * below `min` (or its natural width when that is smaller).
+ * below its `floor` (by default 4, or its natural width when smaller).
  */
-export function fitColumns(natural: readonly number[], budget: number, min = 4): number[] {
+export function fitColumns(
+  natural: readonly number[],
+  budget: number,
+  floor: readonly number[] = natural.map((n) => Math.min(n, 4)),
+): number[] {
   const widths = [...natural];
-  const floor = natural.map((n) => Math.min(n, min));
   let total = widths.reduce((a, b) => a + b, 0);
   while (total > budget) {
     let widest = -1;
@@ -297,14 +364,19 @@ export function renderTableSelect<V extends string>(
     return `${bar}\n${pc.red('■')}  ${title}\n${bar}  ${pc.strikethrough(pc.dim('cancelled'))}`;
   }
 
-  const n = spec.headers.length;
-  const natural = spec.headers.map((h, i) =>
+  // One column spare so a line never sits on the terminal's last column.
+  const room = Math.max(1, opts.columns - GUTTER - 1);
+  const headers = spec.headers.length > 0 ? spec.headers : [''];
+  const allNatural = headers.map((h, i) =>
     Math.max(textWidth(h), ...spec.rows.map((r) => textWidth(cleanCell(r.cells[i] ?? '')))),
   );
-  // The line is GUTTER + sum(widths) + 3n + 3 wide (see the segment widths
-  // below); keep one column spare so a line never sits on the last column.
-  const budget = Math.max(n, opts.columns - GUTTER - 1 - (3 * n + 3));
-  const widths = fitColumns(natural, budget);
+  // A narrow terminal drops the rightmost columns rather than wrapping lines.
+  const kept = keptColumns(allNatural, room, spec.priority);
+  const n = kept.length;
+  const natural = kept.map((c) => allNatural[c]!);
+  // The line is GUTTER + sum(widths) + 3n + 3 wide (see the segment widths below).
+  const budget = Math.max(n, room - (3 * n + 3));
+  const widths = fitColumns(natural, budget, columnFloors(natural));
   // Widen the last column so action labels and hints fit, as far as the budget allows.
   const actionNeed = Math.max(
     0,
@@ -356,7 +428,7 @@ export function renderTableSelect<V extends string>(
       `${vbar} ${pointer(on)} ${cells.join(` ${vbar} `)} ${vbar}`;
     body.push(
       cellLine(
-        spec.headers.map((h, i) => pc.bold(fit(cleanCell(h), widths[i]!))),
+        kept.map((c, i) => pc.bold(fit(cleanCell(headers[c] ?? ''), widths[i]!))),
         false,
       ),
     );
@@ -366,8 +438,8 @@ export function renderTableSelect<V extends string>(
       const row = spec.rows[r]!;
       const on = cur.cursor === spec.actions.length + r;
       const cells = widths.map((w, i) => {
-        const s = fit(cleanCell(row.cells[i] ?? ''), w);
-        const t = row.tones?.[i];
+        const s = fit(cleanCell(row.cells[kept[i]!] ?? ''), w);
+        const t = row.tones?.[kept[i]!];
         return on ? pc.bold(t ? tone(t, s) : pc.cyan(s)) : tone(t, s);
       });
       body.push(cellLine(cells, on));
@@ -388,7 +460,9 @@ export function renderTableSelect<V extends string>(
   for (const l of body) lines.push(`${bar}  ${l}`);
   lines.push(`${bar}  ${pc.dim('↑/↓ move · enter select · esc/q quit')}`);
   lines.push(pc.gray('└'));
-  return lines.join('\n');
+  // Every line within the terminal, so each one is exactly one screen row and
+  // `visibleRows`' count holds.
+  return lines.map((l) => clipLine(l, Math.max(1, opts.columns - 1))).join('\n');
 }
 
 function pickedLabel<V extends string>(spec: TableSelectSpec<V>, cursor: number): string {
@@ -396,6 +470,19 @@ function pickedLabel<V extends string>(spec: TableSelectSpec<V>, cursor: number)
   if (a) return cleanCell(a.label);
   const r = spec.rows[cursor - spec.actions.length];
   return r ? cleanCell(r.cells[0] ?? r.value) : '';
+}
+
+/** Where a prompt starts: on `cursorAt`, scrolled so that row shows. */
+export function initialCursor<V extends string>(
+  spec: TableSelectSpec<V>,
+  termRows: number,
+): CursorState {
+  const cursor = indexOf(spec, spec.cursorAt);
+  const visible = visibleRows(spec, termRows);
+  return {
+    cursor,
+    scroll: scrollFor(0, cursor - spec.actions.length, visible, spec.rows.length),
+  };
 }
 
 /** The cursor index of `value` (an action first, then a row), or 0. */
@@ -434,6 +521,18 @@ class TableSelectPrompt<V extends string> extends Prompt {
           const out = (
             this as unknown as { output: Writable & { columns?: number; rows?: number } }
           ).output;
+          // Keep the scroll the frame shows, so the next key moves from it
+          // (it changes with the height on a resize).
+          const visible = visibleRows(this.spec, out.rows ?? process.stdout.rows ?? 24);
+          this.cur = {
+            ...this.cur,
+            scroll: scrollFor(
+              this.cur.scroll,
+              this.cur.cursor - this.spec.actions.length,
+              visible,
+              this.spec.rows.length,
+            ),
+          };
           return renderTableSelect(this.spec, this.cur, {
             columns: out.columns ?? process.stdout.columns ?? 80,
             rows: out.rows ?? process.stdout.rows ?? 24,
@@ -454,8 +553,8 @@ class TableSelectPrompt<V extends string> extends Prompt {
       },
       false,
     );
-    const start = indexOf(spec, spec.cursorAt);
-    this.cur = { cursor: start, scroll: 0 };
+    const out = (io.output ?? process.stdout) as Writable & { rows?: number };
+    this.cur = initialCursor(spec, out.rows ?? process.stdout.rows ?? 24);
     this.outcome = undefined;
   }
 
@@ -474,7 +573,10 @@ class TableSelectPrompt<V extends string> extends Prompt {
         return;
       }
       this.outcome = 'submit';
-      return; // clack's 'return' handling sets state 'submit'
+      // Set here, not left to clack: it submits on 'return' only, and `\n`
+      // arrives as 'enter'. clack closes on any key that leaves it final.
+      this.state = 'submit';
+      return;
     }
     if (k === 'quit' || k === 'cancel') {
       this.outcome = k;

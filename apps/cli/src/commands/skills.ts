@@ -361,6 +361,8 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
         { value: '+discard', label: 'Discard from hub…' },
       ],
       headers: SKILL_HEADERS,
+      // SKILL, STATUS, LOCAL, HUB, SIZE, UPDATED, FROM: what a narrow terminal keeps.
+      priority: [0, 3, 1, 2, 4, 6, 5],
       rows: rows.map((r) => ({ value: r.name, cells: skillTuiCells(r), tones: skillTones(r) })),
       emptyText: 'No skills here or on the hub.',
       ...(cursorAt ? { cursorAt } : {}),
