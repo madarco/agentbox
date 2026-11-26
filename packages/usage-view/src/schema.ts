@@ -381,8 +381,13 @@ export type SubscriptionRow = z.infer<typeof SubscriptionRow>;
 export const TZ_MAX_LENGTH = 64;
 const zoneList = (): ReadonlySet<string> => {
   const set = new Set(Intl.supportedValuesOf('timeZone'));
-  // Node lists `UTC` under no name of its own; the share must still be able to say it.
+  // Node lists neither `UTC` nor the fixed-offset `Etc/GMT±N` zones (a container's
+  // TZ often is one); both are a closed set of their own.
   set.add('UTC');
+  for (let h = 1; h <= 14; h++) {
+    set.add(`Etc/GMT-${String(h)}`);
+    if (h <= 12) set.add(`Etc/GMT+${String(h)}`);
+  }
   return set;
 };
 let zones: ReadonlySet<string> | null = null;

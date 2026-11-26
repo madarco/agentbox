@@ -251,7 +251,7 @@ describe('time zone', () => {
   const range = { id: '7d', since: '2026-11-20', until: '2026-11-26', today: '2026-11-26' };
 
   it('accepts listed IANA zones and UTC', () => {
-    for (const tz of ['Europe/Rome', 'America/New_York', 'UTC', 'Asia/Tokyo']) {
+    for (const tz of ['Europe/Rome', 'America/New_York', 'UTC', 'Asia/Tokyo', 'Etc/GMT+5']) {
       expect(UsageRange.safeParse({ ...range, tz }).success, tz).toBe(true);
     }
   });
@@ -273,6 +273,8 @@ describe('time zone', () => {
 
   it('canonicalizes what Intl accepts, and nothing else', () => {
     expect(canonicalTimeZone('utc')).toBe('UTC');
+    expect(canonicalTimeZone('Etc/GMT-2')).toBe('Etc/GMT-2');
+    expect(isTimeZone('Etc/GMT+13')).toBe(false);
     expect(canonicalTimeZone('Europe/Rome')).toBe('Europe/Rome');
     expect(isTimeZone(canonicalTimeZone('Asia/Kolkata')!)).toBe(true);
     expect(canonicalTimeZone('Mars/Olympus')).toBeNull();

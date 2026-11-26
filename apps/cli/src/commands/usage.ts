@@ -102,7 +102,7 @@ export const usageCommand = new Command('usage')
   .enablePositionalOptions()
   .option(
     '--since <when>',
-    'first day: YYYY-MM-DD, or a number of days ending at --until (30d, 7d, 365d)',
+    'first day: YYYY-MM-DD, or a number of days or weeks ending at --until (30d, 2w, 365d)',
     '30d',
   )
   .option('--until <day>', 'last day, YYYY-MM-DD (default today)')

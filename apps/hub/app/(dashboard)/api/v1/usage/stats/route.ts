@@ -1,7 +1,7 @@
 // GET /api/v1/usage/stats — the usage dashboard's `UsageStats` for a window
 // (docs/usage-dashboard-plan.md, Phase 2): agent-hours and parallelism from the
 // recorded sessions, shipped work and box-hours from the activity ledger.
-//   since:        a local day (YYYY-MM-DD) or a number of days back (`30d`, the default)
+//   since:        a local day (YYYY-MM-DD) or a number of days or weeks back (`30d`, the default, `2w`)
 //   until:        a local day, inclusive (default today)
 //   tz:           IANA time zone the days are in (default UTC)
 //   range:        7d | month | 90d | year, the page's label (default from the length)

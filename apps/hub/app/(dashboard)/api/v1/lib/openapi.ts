@@ -1956,7 +1956,7 @@ export function buildOpenApi(): Record<string, unknown> {
               in: 'query',
               schema: { type: 'string' },
               description:
-                'First local day (`YYYY-MM-DD`), or a number of days ending at `until` (`7d`, `365d`). Default `30d`.',
+                'First local day (`YYYY-MM-DD`), or a number of days or weeks ending at `until` (`7d`, `2w`, `365d`). Default `30d`.',
             },
             {
               name: 'until',

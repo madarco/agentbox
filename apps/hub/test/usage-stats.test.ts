@@ -192,7 +192,7 @@ describe('countedPushes', () => {
 });
 
 describe('boxRunsOf', () => {
-  it('runs from ready to stop, a pause ends a run, a resume starts one, open runs end now', () => {
+  it('runs from ready to stop, a pause ends a run, a resume starts one, a lone stop counts nothing', () => {
     const rows = [
       ev('box.ready', at(1), { boxId: 'a' }),
       ev('box.paused', at(2), { boxId: 'a' }),
@@ -201,11 +201,10 @@ describe('boxRunsOf', () => {
       ev('box.stopped', at(5), { boxId: 'b' }),
       ev('box.started', at(6), { boxId: 'c' }),
     ];
-    const runs = boxRunsOf(rows, () => 'docker', at(0), at(8));
+    const runs = boxRunsOf(rows, () => 'docker', at(8));
     expect(runs.map((r) => [r.boxId, (r.end - r.start) / HOUR])).toEqual([
       ['a', 1],
       ['a', 1],
-      ['b', 5],
       ['c', 2],
     ]);
   });
@@ -276,6 +275,14 @@ describe('computeUsageStats', () => {
     expect(stats.daily.find((d) => d.date === '2026-11-20')!.tokens).toBe(1000);
     // No transcript text reaches the stats.
     expect(JSON.stringify(stats)).not.toContain('secret prompt text');
+  });
+
+  it('shows no live counters on a past window', async () => {
+    const ledger = fakeLedger([ev('box.ready', at(1), { boxId: 'a' })]);
+    const past = parseUsageStatsQuery({ since: '2026-11-19', until: '2026-11-20' }, NOW);
+    if (!past.ok) throw new Error(past.message);
+    const stats = await computeUsageStats({ history: null, ledger, now: () => NOW }, past.query);
+    expect(stats.kpis.peak.runningNow).toBe(0);
   });
 
   it('filters by subscription', async () => {

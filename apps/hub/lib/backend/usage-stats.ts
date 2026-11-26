@@ -85,15 +85,18 @@ export function parseUsageStatsQuery(
   const until = raw.until ?? today;
   if (!DAY_RE.test(until)) return { ok: false, message: 'until must be a date, YYYY-MM-DD' };
   let since: string;
-  const rel = /^(\d{1,4})d$/.exec(raw.since ?? '30d');
+  const rel = /^(\d{1,4})([dw])$/.exec(raw.since ?? '30d');
   if (rel) {
-    const n = Number(rel[1]);
+    const n = Number(rel[1]) * (rel[2] === 'w' ? 7 : 1);
     if (n < 1) return { ok: false, message: 'since must cover at least one day' };
     since = addDays(until, -(n - 1));
   } else if (raw.since && DAY_RE.test(raw.since)) {
     since = raw.since;
   } else {
-    return { ok: false, message: 'since must be a date (YYYY-MM-DD) or a number of days (30d)' };
+    return {
+      ok: false,
+      message: 'since must be a date (YYYY-MM-DD) or a number of days or weeks (30d, 2w)',
+    };
   }
   if (since > until) return { ok: false, message: 'since must not be after until' };
   if (since > today) return { ok: false, message: 'since must not be in the future' };
@@ -146,18 +149,20 @@ async function readLedger(
   const out: ActivityEvent[] = [];
   const seen = new Set<string>();
   let from = sinceMs;
+  // Page on until a read adds nothing: `list` may return fewer rows than it read (it
+  // drops a row it cannot parse), so a short page is no sign of the end.
   for (;;) {
     const page = await ledger.list({ sinceMs: from, untilMs, order: 'asc', limit: LEDGER_PAGE });
+    let added = 0;
     for (const e of page) {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
       out.push(e);
+      added++;
     }
-    if (page.length < LEDGER_PAGE) return out;
-    const last = atMs(page[page.length - 1]!);
-    // A page ending inside one millisecond restarts at it; `seen` drops the repeats.
-    if (!(last > from)) return out;
-    from = last;
+    if (added === 0 || page.length === 0) return out;
+    // Restart at the last page's millisecond; `seen` drops the repeats.
+    from = atMs(page[page.length - 1]!);
   }
 }
 
@@ -182,23 +187,26 @@ const RUNNING = new Set(['box.created', 'box.ready', 'box.started', 'box.resumed
 const IDLE = new Set(['box.stopped', 'box.paused', 'box.destroyed', 'box.failed']);
 
 /**
- * Running time per box from its lifecycle rows. A box whose first row in the read
- * stops it was running when the read starts; one still running runs until `now`.
+ * Running time per box from its lifecycle rows, each run from a running row to the
+ * next stop, pause, failure or destroy; one still running runs until `now`. A stop
+ * with no running row before it in the read counts nothing: the box may have been
+ * stopped long before.
  */
 export function boxRunsOf(
   rows: readonly ActivityEvent[],
   provider: (boxId: string) => ProviderId,
-  readFrom: number,
   now: number,
 ): BoxRun[] {
   const byBox = new Map<string, ActivityEvent[]>();
   for (const e of rows) {
     if (!e.boxId || !(RUNNING.has(e.type) || IDLE.has(e.type))) continue;
-    byBox.set(e.boxId, [...(byBox.get(e.boxId) ?? []), e]);
+    const list = byBox.get(e.boxId);
+    if (list) list.push(e);
+    else byBox.set(e.boxId, [e]);
   }
   const runs: BoxRun[] = [];
   for (const [boxId, evs] of byBox) {
-    let start: number | null = IDLE.has(evs[0]!.type) ? readFrom : null;
+    let start: number | null = null;
     for (const e of evs) {
       const t = atMs(e);
       if (RUNNING.has(e.type)) start ??= t;
@@ -382,7 +390,7 @@ export async function computeUsageStats(
     });
   }
 
-  const boxRuns = boxRunsOf(rows, (id) => boxes.get(id)?.provider ?? 'other', readFrom, now);
+  const boxRuns = boxRunsOf(rows, (id) => boxes.get(id)?.provider ?? 'other', now);
 
   // The previous window of the same length, when there is anything before this one.
   const hasEarlier = spanRows.some((r) => r.start < from) || rows.some((e) => atMs(e) < from);
@@ -407,7 +415,7 @@ export async function computeUsageStats(
   }
 
   // Live counters only make sense for a window that reaches today.
-  const live = q.until >= q.today;
+  const live = q.until >= dayKey(now, tz);
   const lastState = new Map<string, string>();
   for (const e of rows) {
     if (e.boxId && (RUNNING.has(e.type) || IDLE.has(e.type))) lastState.set(e.boxId, e.type);

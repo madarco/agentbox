@@ -263,15 +263,15 @@ agentbox usage --since 7d --json
 - **PRs merged**, **commits** and **lines** added and removed, from the boxes' pushes and pull requests. A `push --host-only` landing counts only when no published push of the same box follows it.
 - **Box-hours**: how long boxes ran, from their lifecycle (created or started to stopped, paused or destroyed).
 
-Days are local days in `--tz`; a window may be at most a year. Agent-hours outlive transcript retention: a session's intervals are kept when [`history.retentionDays`](/docs/configuration#history--session-history) deletes its turns. The numbers come from [`GET /api/v1/usage/stats`](/docs/api#history).
+Days are local days in `--tz`, and `--until` is included; a window may be at most a year. Agent-hours outlive transcript retention: a session's intervals are kept when [`history.retentionDays`](/docs/configuration#history--session-history) deletes its turns. The numbers come from [`GET /api/v1/usage/stats`](/docs/api#history).
 
-| Flag                             | Meaning                                                                                        |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `--since <when>`                 | first day, `YYYY-MM-DD`, or a number of days ending at `--until` (`7d`, `365d`); default `30d` |
-| `--until <day>`                  | last day, `YYYY-MM-DD`; default today                                                          |
-| `--tz <zone>`                    | IANA time zone the days are in, e.g. `Europe/Rome`; default this machine's                     |
-| `--subscription <agent/account>` | only sessions and boxes on this subscription                                                   |
-| `--local`, `--json`              | read this machine's hub; print the whole `UsageStats` JSON                                     |
+| Flag                             | Meaning                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `--since <when>`                 | first day, `YYYY-MM-DD`, or a number of days or weeks ending at `--until` (`7d`, `2w`, `365d`); default `30d` |
+| `--until <day>`                  | last day, `YYYY-MM-DD`; default today                                                                         |
+| `--tz <zone>`                    | IANA time zone the days are in, e.g. `Europe/Rome`; default this machine's                                    |
+| `--subscription <agent/account>` | only sessions and boxes on this subscription                                                                  |
+| `--local`, `--json`              | read this machine's hub; print the whole `UsageStats` JSON                                                    |
 
 ### Usage tokens
 

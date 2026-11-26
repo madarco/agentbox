@@ -14,9 +14,10 @@ Open items found while building the phases of
 - **No postgres history store yet.** The span and token queries are plain SQL
   window functions and `CASE`, so a postgres `HistoryRepo` can run them as they
   are, but history is sqlite-only today (a control box keeps `history.db` too).
-- **Box-hours start at the read.** A box whose first ledger row in the read (a year
-  plus one window back) stops it is counted as running from the read's start; one
-  with no row in the read at all is not counted. `runningNow` is the boxes whose
+- **Box-hours start at the read.** The read reaches a year plus one window back. A
+  box whose first row in it stops it counts nothing before that stop (it may have
+  been stopped for months), and one with no row in the read is not counted, so a
+  box left running for over a year undercounts. `runningNow` is the boxes whose
   newest lifecycle row is a running one, so a resume the ledger missed (see the
   Phase 1 item) reads as not running.
 - **A share's zone must be one agent-box.sh also lists.** `isTimeZone` checks the
@@ -31,6 +32,19 @@ Open items found while building the phases of
   `at, id`, and ids are random for rows with no source key, so a pause and a
   resume in the same millisecond can read reversed (box-hours then miss a
   zero-length run; harmless). An insertion sequence column would fix it.
+- **Sessions purged before the spans migration have no hours.** Their turns were
+  already gone when `history_spans` arrived; only sessions purged afterwards keep
+  their intervals. Tokens are unaffected.
+- **Spans are refreshed on the read path.** A GET recomputes the spans of every
+  session that took turns since the last read (a few ms each); the first read after
+  the migration does every session once (2.5 s for 1M turns). If that shows up,
+  move the refresh to the ingest sweep.
+- **A ledger read stops at 50 000 rows of one millisecond.** `list` has no cursor
+  past `at`, so a page entirely inside one millisecond cannot be stepped over. Only
+  a bulk import could write that.
+- **`agentbox usage` and `usage tokens` read windows differently.** `usage` takes
+  local days (`--until` included) or `<n>d`/`<n>w`; `usage tokens` keeps ISO times
+  and durations (`24h`, `all`) with `--until` excluded, as before.
 - **Spans are cut at one idle gap.** `history_spans` is computed at the 10-minute
   default; `usageSpans` refuses another gap. A configurable gap would need a
   recompute of every session.

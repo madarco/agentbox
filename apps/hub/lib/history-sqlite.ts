@@ -389,6 +389,8 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   );
   if (!columns(db, 'history_sessions').has('spans_dirty')) {
     db.exec('ALTER TABLE history_sessions ADD COLUMN spans_dirty INTEGER NOT NULL DEFAULT 1');
+    // A session purged before this column has no turns left to cut intervals from.
+    db.exec('UPDATE history_sessions SET spans_dirty = 0 WHERE purged_at IS NOT NULL');
   }
   // Live status (docs/agent-live-status-plan.md, Phase 3): a cost where the
   // agent records one. Old rows stay NULL until the re-parse job redoes them.
@@ -1024,19 +1026,22 @@ export async function openSqliteHistoryRepo(
       const offset = q.zone.length
         ? `CASE ${[...q.zone]
             .reverse()
-            .map((z) => `WHEN ts_ms >= ${int(z.fromMs)} THEN ${int(z.offsetMs)}`)
+            .map((z) => `WHEN ${USAGE_TIME} >= ${int(z.fromMs)} THEN ${int(z.offsetMs)}`)
             .join(' ')} ELSE ${int(q.zone[0]!.offsetMs)} END`
         : '0';
       return (
         db
           .prepare(
-            `SELECT session_key, (ts_ms + ${offset}) / 86400000 AS d,
-               SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS tok,
-               SUM(cost_usd) AS cost
-             FROM history_usage WHERE ts_ms >= ? AND ts_ms < ? ${acct ? ACCOUNT_SCOPE : ''}
+            `SELECT u.session_key AS session_key, (${USAGE_TIME} + ${offset}) / 86400000 AS d,
+               SUM(u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens) AS tok,
+               SUM(u.cost_usd) AS cost
+             FROM history_usage u JOIN history_sessions s ON s.key = u.session_key
+             WHERE ((u.ts_ms >= ? AND u.ts_ms < ?)
+               OR (u.ts_ms IS NULL AND ${USAGE_TIME} >= ? AND ${USAGE_TIME} < ?))
+               ${acct ? 'AND s.account = ?' : ''}
              GROUP BY session_key, d`,
           )
-          .all(q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[]
+          .all(q.sinceMs, q.untilMs, q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[]
       ).map((r) => ({
         sessionKey: String(r.session_key),
         day: n(r.d),
