@@ -35,10 +35,11 @@ Open items found while building the phases of
 - **Sessions purged before the spans migration have no hours.** Their turns were
   already gone when `history_spans` arrived; only sessions purged afterwards keep
   their intervals. Tokens are unaffected.
-- **Spans are refreshed on the read path.** A GET recomputes the spans of every
-  session that took turns since the last read (a few ms each); the first read after
-  the migration does every session once (2.5 s for 1M turns). If that shows up,
-  move the refresh to the ingest sweep.
+- **New turns reach the dashboard within a minute.** Spans are refreshed by the
+  history service's minute sweep (and a background backfill at start), not on the
+  read, so a turn taken seconds ago is not in the stats yet. One session with
+  millions of turns would still block one batch; split a session's refresh if that
+  shows up.
 - **A ledger read stops at 50 000 rows of one millisecond.** `list` has no cursor
   past `at`, so a page entirely inside one millisecond cannot be stepped over. Only
   a bulk import could write that.

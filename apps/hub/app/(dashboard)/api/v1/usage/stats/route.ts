@@ -25,18 +25,18 @@ export async function GET(req: Request): Promise<Response> {
   }
   const p = new URL(req.url).searchParams;
   const str = (k: string): string | undefined => p.get(k)?.trim() || undefined;
-  const parsed = parseUsageStatsQuery(
-    {
-      since: str('since'),
-      until: str('until'),
-      tz: str('tz'),
-      range: str('range'),
-      subscription: str('subscription'),
-    },
-    Date.now(),
-  );
-  if (!parsed.ok) return fail('invalid_request', parsed.message);
   try {
+    const parsed = parseUsageStatsQuery(
+      {
+        since: str('since'),
+        until: str('until'),
+        tz: str('tz'),
+        range: str('range'),
+        subscription: str('subscription'),
+      },
+      Date.now(),
+    );
+    if (!parsed.ok) return fail('invalid_request', parsed.message);
     const stats = await usageStats(
       { history: history?.repo ?? null, ledger: ledger ?? null },
       parsed.query,

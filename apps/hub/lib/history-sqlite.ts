@@ -689,13 +689,6 @@ export async function openSqliteHistoryRepo(
     }
     db.prepare('UPDATE history_sessions SET spans_dirty = 0 WHERE key = ?').run(key);
   };
-  const refreshDirtySpans = (): void => {
-    const keys = (
-      db.prepare('SELECT key FROM history_sessions WHERE spans_dirty = 1').all() as Row[]
-    ).map((r) => String(r.key));
-    for (const key of keys) tx(() => refreshSpansOf(key));
-  };
-
   /** Delete a session's files with their chunks and turns (its usage stays). */
   const dropFilesOf = (key: string): string[] => {
     const files = (
@@ -1001,7 +994,6 @@ export async function openSqliteHistoryRepo(
       if (q.idleGapMs !== DEFAULT_IDLE_GAP_MS) {
         throw new Error(`history_spans are cut at ${String(DEFAULT_IDLE_GAP_MS)} ms`);
       }
-      refreshDirtySpans();
       const acct = q.account !== undefined;
       return (
         db
@@ -1048,6 +1040,15 @@ export async function openSqliteHistoryRepo(
         tokens: n(r.tok),
         costUsd: r.cost === null || r.cost === undefined ? null : n(r.cost),
       }));
+    },
+    async refreshSpans(limit) {
+      const keys = (
+        db
+          .prepare('SELECT key FROM history_sessions WHERE spans_dirty = 1 LIMIT ?')
+          .all(Math.max(1, Math.trunc(limit))) as Row[]
+      ).map((r) => String(r.key));
+      for (const key of keys) tx(() => refreshSpansOf(key));
+      return keys.length;
     },
     async usageSessions(keys) {
       const out: UsageSessionMeta[] = [];

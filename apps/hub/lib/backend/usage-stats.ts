@@ -60,6 +60,11 @@ export interface UsageStatsDeps {
 }
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** `YYYY-MM-DD` naming a real date (no month 13, no 31 February). */
+const isDay = (d: string): boolean =>
+  DAY_RE.test(d) &&
+  Number.isFinite(Date.parse(`${d}T00:00:00Z`)) &&
+  new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
 const SUBSCRIPTION_RE = /^[A-Za-z0-9._-]{1,64}\/[^\s/]{1,128}$/;
 
 function rangeIdFor(days: number): RangeId {
@@ -83,14 +88,14 @@ export function parseUsageStatsQuery(
   if (!tz) return { ok: false, message: 'tz must be an IANA time zone, e.g. Europe/Rome' };
   const today = dayKey(now, tz);
   const until = raw.until ?? today;
-  if (!DAY_RE.test(until)) return { ok: false, message: 'until must be a date, YYYY-MM-DD' };
+  if (!isDay(until)) return { ok: false, message: 'until must be a date, YYYY-MM-DD' };
   let since: string;
   const rel = /^(\d{1,4})([dw])$/.exec(raw.since ?? '30d');
   if (rel) {
     const n = Number(rel[1]) * (rel[2] === 'w' ? 7 : 1);
     if (n < 1) return { ok: false, message: 'since must cover at least one day' };
     since = addDays(until, -(n - 1));
-  } else if (raw.since && DAY_RE.test(raw.since)) {
+  } else if (raw.since && isDay(raw.since)) {
     since = raw.since;
   } else {
     return {
@@ -168,13 +173,14 @@ async function readLedger(
 
 /**
  * Pushes to count. A host-only landing publishes nothing, so it counts only when no
- * published push of the same box follows it: the published one carries the commits.
+ * published push of the same box with commits follows it: that one carries them.
  */
 export function countedPushes(rows: readonly ActivityEvent[]): ActivityEvent[] {
   const pushes = rows.filter((e) => e.type === 'git.push');
   const lastPublished = new Map<string, number>();
   for (const e of pushes) {
-    if (e.hostOnly || !e.boxId) continue;
+    // An up-to-date push is a row with no counts: it published nothing.
+    if (e.hostOnly || !e.boxId || !(e.commits && e.commits > 0)) continue;
     const t = atMs(e);
     if (t > (lastPublished.get(e.boxId) ?? -Infinity)) lastPublished.set(e.boxId, t);
   }

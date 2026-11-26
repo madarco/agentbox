@@ -168,6 +168,9 @@ describe('parseUsageStatsQuery', () => {
       { tz: 'x'.repeat(200) },
       { range: 'decade' },
       { subscription: 'no slash' },
+      { until: '2026-13-01' },
+      { until: '2026-01-32' },
+      { since: '2026-02-30', until: '2026-03-02' },
     ];
     for (const raw of bad)
       expect(parseUsageStatsQuery(raw, NOW).ok, JSON.stringify(raw)).toBe(false);
@@ -188,6 +191,14 @@ describe('countedPushes', () => {
       ev('git.push', at(4), { boxId: 'a', hostOnly: true, commits: 1 }),
     ];
     expect(countedPushes(rows).map((e) => e.commits)).toEqual([3, 2, 1]);
+  });
+
+  it('keeps a landing when the push after it published nothing (up to date)', () => {
+    const rows = [
+      ev('git.push', at(1), { boxId: 'a', hostOnly: true, commits: 5 }),
+      ev('git.push', at(2), { boxId: 'a' }),
+    ];
+    expect(countedPushes(rows).reduce((n, e) => n + (e.commits ?? 0), 0)).toBe(5);
   });
 });
 
@@ -256,6 +267,7 @@ describe('computeUsageStats', () => {
       ev('pr.merged', at(12.1), { boxId: 'a', pr: { repo: 'acme/api', number: 7 }, id: 'dup' }),
       ev('box.stopped', at(13), { boxId: 'a' }),
     ]);
+    await repo.refreshSpans(1000);
     const stats = await computeUsageStats({ history: repo, ledger, now: () => NOW }, window);
     expect(() => UsageStats.parse(stats)).not.toThrow();
     // a 3h1m + b 1h1m + host 1h1m.
@@ -293,12 +305,23 @@ describe('computeUsageStats', () => {
       ev('git.push', at(10), { boxId: 'a', account: 'claude/work', commits: 1 }),
       ev('git.push', at(10), { boxId: 'b', account: 'claude/home', commits: 5 }),
     ]);
+    await repo.refreshSpans(1000);
     const stats = await computeUsageStats(
       { history: repo, ledger, now: () => NOW },
       { ...window, subscription: 'claude/work' },
     );
     expect(stats.hero.agentHours).toBeCloseTo(1, 1);
     expect(stats.hero.commits).toBe(1);
+  });
+
+  it('reads only stored intervals; the refresh brings new turns in', async () => {
+    const repo = await openSqliteHistoryRepo(':memory:');
+    await session(repo, { id: 's1', boxId: 'a', turns: every(9, 10) });
+    const win = { sinceMs: at(0), untilMs: at(24), idleGapMs: 10 * MIN };
+    expect(await repo.usageSpans(win)).toEqual([]);
+    expect(await repo.refreshSpans(1000)).toBe(1);
+    expect(await repo.usageSpans(win)).toHaveLength(1);
+    expect(await repo.refreshSpans(1000)).toBe(0);
   });
 
   it('keeps the hours of a purged session', async () => {
@@ -308,6 +331,7 @@ describe('computeUsageStats', () => {
       boxId: 'a',
       turns: [...every(9, 10), ...every(11, 12)],
     });
+    await repo.refreshSpans(1000);
     const before = await computeUsageStats({ history: repo, ledger: null, now: () => NOW }, window);
     await repo.purgeSession(key, NOW);
     const after = await computeUsageStats({ history: repo, ledger: null, now: () => NOW }, window);
@@ -324,6 +348,7 @@ describe('computeUsageStats', () => {
       NOW,
     );
     if (!rome.ok) throw new Error(rome.message);
+    await repo.refreshSpans(1000);
     const stats = await computeUsageStats(
       { history: repo, ledger: null, now: () => NOW },
       rome.query,

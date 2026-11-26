@@ -163,14 +163,18 @@ from Phase 1 on.
   `history.db` + the ledger and returns `UsageStats` for a window, an IANA zone
   and an optional subscription (`agent/account`).
   - Active intervals are cut in SQL (window functions over `history_turns.ts_ms`)
-    and kept per session in `history_spans`; a write marks the session dirty and
-    the next read recomputes only dirty sessions. Retention keeps a purged
+    and kept per session in `history_spans`; a write marks the session dirty, and
+    the history service recomputes dirty sessions in small batches at start and
+    with its minute sweep, never on a request (the relay and the web server share
+    the hub process). A read uses the spans stored, so a turn shows up within a
+    minute. Retention keeps a purged
     session's spans, so a year view keeps its hours past `history.retentionDays`.
   - Tokens are summed per session per local day in SQL, from the zone's offset
     segments over the window (`zoneSegments`), so the store needs no zone support.
   - Measured on 1M turns and 200k usage rows (2000 sessions over a year): a year
-    view in about 0.4 s, a week in 0.2 s, most of it `buildUsageStats` in JS; the
-    first read after the migration computes every session's spans once (2.5 s).
+    view in about 0.4 s, a week in 0.2 s, most of it `buildUsageStats` in JS;  after
+    the migration the hub backfills every session's spans in the background once
+    (2.5 s of sqlite work per 1M turns, in batches of 50 sessions).
     Answers are cached for a minute per (window, zone, subscription).
   - Sessions group by the `managerId` the ledger records per box, else by overlap.
     Commits come from `git.push` counts, never rows; a `hostOnly` landing counts

@@ -535,6 +535,45 @@ describe('time zones across DST', () => {
     }
   });
 
+  it('the Gantt keeps whole DST days and labels lanes by the local clock', () => {
+    const rome = 'Europe/Rome';
+    const local = (d: string, h: number): number => dayStart(d, rome) + h * HOUR;
+    const run = (d: string, fromH: number, toH: number): number[] =>
+      Array.from(
+        { length: Math.round((toH - fromH) * 60) / 5 + 1 },
+        (_, i) => local(d, fromH) + i * 5 * MIN,
+      );
+    const gantt = (d: string, sessions: SessionTurns[]) =>
+      buildUsageStats({
+        range: {
+          id: '7d',
+          since: addDays(d, -1),
+          until: addDays(d, 1),
+          today: addDays(d, 1),
+          tz: rome,
+        },
+        now: local(addDays(d, 2), 0),
+        sessions,
+        events: [],
+        ganttDays: [d],
+        intervals: { tailMs: 0 },
+      }).gantt[0]!.lanes;
+    // 25 h day: 23:15-23:45 on the wall is 24.25 h after midnight, still that day.
+    const fall = gantt('2026-10-25', [session('a', 'a', run('2026-10-25', 24.25, 24.75))]);
+    expect(fall).toHaveLength(1);
+    expect(fall[0]!.intervals[0]![0]).toBeCloseTo(23.25, 3);
+    // A 14:00 interval after the change reads 14 on the wall clock.
+    const fall14 = gantt('2026-10-25', [session('a', 'a', run('2026-10-25', 15, 15.5))]);
+    expect(fall14[0]!.intervals[0]![0]).toBeCloseTo(14, 3);
+    // 23 h day: the next day's 00:15 is not this day's lane.
+    const spring = gantt('2026-03-29', [
+      session('a', 'a', run('2026-03-30', 0.25, 0.5)),
+      session('b', 'b', run('2026-03-29', 22, 22.5)),
+    ]);
+    expect(spring.map((l) => l.box)).toEqual(['b']);
+    expect(spring[0]!.intervals[0]![0]).toBeCloseTo(23, 3);
+  });
+
   it('precomputed spans give the same lanes as the turns', () => {
     const turns = every(0, 3);
     const a = lanesFromSessions([session('a', 'a', turns)]);

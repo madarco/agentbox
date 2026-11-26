@@ -859,14 +859,21 @@ export function buildUsageStats(input: BuildInput): UsageStats {
   }
   const gantt: GanttDayStats[] = ganttDates.slice(0, LIMITS.ganttDays).map((date) => {
     const d0 = dayStart(date, tz);
+    // Day ends from the zone, not d0 + 24 h: a DST day is 23 or 25 hours long.
+    const d1 = dayStart(addDays(date, 1), tz);
+    const d2 = dayStart(addDays(date, 2), tz);
+    // Lane hours are the local clock's (hours since local midnight on the wall), so a
+    // 14:00 interval reads 14 on a DST day too; never running backwards in the repeated hour.
+    const clock0 = d0 + zoneOffset(d0, tz);
+    const clockHour = (t: number): number => (t + zoneOffset(t, tz) - clock0) / HOUR;
     const laneRows: LaneStats[] = [];
     for (const l of lanes) {
       // An interval belongs to the day it starts in, and keeps going past midnight (up to
-      // 48 h). One that started the evening before is that day's, not this one's.
+      // the end of the next day). One that started the evening before is that day's.
       const spans = clipSpans(
-        l.spans.filter((s) => s.start >= d0 && s.start < d0 + DAY),
+        l.spans.filter((s) => s.start >= d0 && s.start < d1),
         d0,
-        d0 + 2 * DAY,
+        d2,
       );
       if (spans.length === 0) continue;
       const info = l.boxId ? boxInfo.get(l.boxId) : undefined;
@@ -878,12 +885,11 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       laneRows.push({
         agent: l.agent,
         provider: l.provider,
-        intervals: spans
-          .slice(0, LIMITS.intervalsPerLane)
-          .map(
-            (s) =>
-              [round((s.start - d0) / HOUR, 3), round((s.end - d0) / HOUR, 3)] as [number, number],
-          ),
+        intervals: spans.slice(0, LIMITS.intervalsPerLane).map((s) => {
+          const a = Math.min(Math.max(round(clockHour(s.start), 3), 0), 48);
+          const b = Math.min(Math.max(round(clockHour(s.end), 3), a), 48);
+          return [a, b] as [number, number];
+        }),
         box: clip(info?.name ?? l.key),
         pr: pr ? clip(pr.repo && pr.number ? `${pr.repo}#${pr.number}` : 'a pull request') : null,
       });

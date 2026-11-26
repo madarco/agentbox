@@ -330,9 +330,9 @@ export interface HistoryRepo {
   replaceUsage(key: string, rows: StoredUsageRow[]): Promise<void>;
   usage(q: UsageQuery): Promise<UsageReport>;
   /**
-   * The active intervals (turns no more than `idleGapMs` apart) of every session
-   * with a turn in the window, cut in the store; a purged session's come from the
-   * intervals it kept when its turns were dropped.
+   * The stored active intervals (turns no more than `idleGapMs` apart) overlapping
+   * the window. Reads only: sessions whose turns changed since are brought up to
+   * date by `refreshSpans`, off the request path.
    */
   usageSpans(q: UsageWindow & { idleGapMs: number }): Promise<UsageSpanRow[]>;
   /**
@@ -341,6 +341,8 @@ export interface HistoryRepo {
    */
   usageTokens(q: UsageWindow & { zone: readonly ZoneSegment[] }): Promise<UsageTokenDay[]>;
   usageSessions(keys: readonly string[]): Promise<UsageSessionMeta[]>;
+  /** Recompute the intervals of up to `limit` sessions whose turns changed; returns how many. */
+  refreshSpans(limit: number): Promise<number>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
   /** Keys of `agent`'s sessions projected by a parser older than `version`. */
@@ -462,6 +464,12 @@ export interface HistoryService extends HistoryIngestSink {
    * the box it ran in (null for a host session). Returns an unsubscribe fn.
    */
   onSessionUpdated(fn: (sessionKey: string, boxId: string | null) => void): () => void;
+  /**
+   * Bring the usage dashboard's stored intervals up to date (sessions that took turns
+   * since, or every session after the migration), in batches. Run at start and with
+   * the minute sweep; returns how many sessions it redid.
+   */
+  refreshUsageSpans(): Promise<number>;
   /** Seal idle files and apply retention. */
   sweep(opts?: {
     retention?: boolean;
@@ -471,8 +479,11 @@ export interface HistoryService extends HistoryIngestSink {
   repo: HistoryRepo;
 }
 
+const SPAN_BATCH = 50;
+
 export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   const { repo, archive } = deps;
+  let spansRunning = false;
   const now = deps.now ?? Date.now;
   const log = deps.log ?? (() => {});
   // One writer: frames for one file must apply in order, and sqlite is
@@ -907,6 +918,24 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return reparsing;
     },
 
+    async refreshUsageSpans() {
+      if (spansRunning) return 0;
+      spansRunning = true;
+      let done = 0;
+      try {
+        // Small batches with a turn of the event loop between them: the hub's relay
+        // and web server share this process, and sqlite blocks while it works.
+        for (;;) {
+          const n = await repo.refreshSpans(SPAN_BATCH);
+          done += n;
+          if (n < SPAN_BATCH) return done;
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      } finally {
+        spansRunning = false;
+      }
+    },
+
     onSessionUpdated(fn) {
       updateListeners.add(fn);
       return () => updateListeners.delete(fn);
@@ -936,6 +965,17 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       }),
 
     start() {
+      const spans = (): void => {
+        service.refreshUsageSpans().then(
+          (n) => {
+            if (n > 50)
+              log(`history: usage intervals of ${String(n)} session(s) brought up to date`);
+          },
+          (e: unknown) =>
+            log(`history: usage intervals failed: ${e instanceof Error ? e.message : String(e)}`),
+        );
+      };
+      spans();
       const run = (retention: boolean): void => {
         void service.sweep({ retention }).then(
           (r) => {
@@ -966,7 +1006,10 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         .catch((e: unknown) =>
           log(`history: account backfill failed: ${e instanceof Error ? e.message : String(e)}`),
         );
-      const a = setInterval(() => run(false), 60_000);
+      const a = setInterval(() => {
+        run(false);
+        spans();
+      }, 60_000);
       const b = setInterval(() => {
         run(true);
         redo();
