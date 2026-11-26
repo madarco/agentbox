@@ -25,6 +25,8 @@ export interface DailySeries {
   maxHours: number;
   /** The date of the day with the most agents at once, or null with no activity. */
   peakDay: string | null;
+  /** The slot of `peakDay`'s bar (the one highlighted), or -1. */
+  peakIndex: number;
   /** Days drawn, and whether they start after the range does (a share keeps the last 62). */
   days: number;
   partial: boolean;
@@ -54,13 +56,17 @@ export function dailySeries(share: UsageShare): DailySeries {
   const bars: Bar[] = [];
   let peakDay: string | null = null;
   let peakBest = 0;
-  for (let i = 0; i < days.length; i += bucketDays) {
+  let peakBar = -1;
+  // Buckets end on the newest day, so a short remainder is the oldest bar, not today's.
+  const first = days.length % bucketDays || bucketDays;
+  for (let i = 0; i < days.length; i = i === 0 ? first : i + bucketDays) {
     const bar: Bar = { peak: 0, hours: agents.map(() => 0) };
-    for (const d of days.slice(i, i + bucketDays)) {
+    for (const d of days.slice(i, i === 0 ? first : i + bucketDays)) {
       bar.peak = Math.max(bar.peak, d.peak);
       if (d.peak > peakBest) {
         peakBest = d.peak;
         peakDay = d.date;
+        peakBar = bars.length;
       }
       for (const id of AGENT_IDS) {
         const h = d.byAgent[id]?.agentHours ?? 0;
@@ -70,10 +76,8 @@ export function dailySeries(share: UsageShare): DailySeries {
     }
     bars.push(bar);
   }
-  const padded: (Bar | null)[] = [
-    ...Array<null>(Math.max(0, MIN_SLOTS - bars.length)).fill(null),
-    ...bars,
-  ];
+  const pad = Math.max(0, MIN_SLOTS - bars.length);
+  const padded: (Bar | null)[] = [...Array<null>(pad).fill(null), ...bars];
   return {
     bars: padded,
     bucketDays,
@@ -81,6 +85,7 @@ export function dailySeries(share: UsageShare): DailySeries {
     maxPeak: Math.max(0, ...bars.map((b) => b.peak)),
     maxHours: Math.max(0, ...bars.map((b) => b.hours.reduce((a, v) => a + v, 0))),
     peakDay,
+    peakIndex: peakBar < 0 ? -1 : peakBar + pad,
     days: days.length,
     partial: days.length > 0 && days[0]!.date > share.range.since,
   };

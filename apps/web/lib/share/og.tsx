@@ -8,7 +8,7 @@ import type { DailySeries } from './og-series';
 
 export const OG_SIZE = { width: 1200, height: 630 } as const;
 export const OG_ALT =
-  'Usage shared from AgentBox: coding agents running at the same time, hours of agent work, and agents at once per day';
+  'Usage shared from AgentBox: coding agents running at the same time, hours of agent work, and charts of agents at once and agent-hours over the period';
 
 const mono = 'IBM Plex Mono';
 const sans = 'IBM Plex Sans';
@@ -232,7 +232,7 @@ function PeakChart({ s }: { s: DailySeries }) {
             width={bar}
             height={h}
             rx={Math.min(3, bar / 3)}
-            fill={b.peak === s.maxPeak ? OG.accent : '#86cfa2'}
+            fill={i === s.peakIndex ? OG.accent : '#86cfa2'}
           />
         );
       })}
@@ -308,10 +308,8 @@ function OgCard({ share }: { share: UsageShare }) {
 
   const third = hasSpeedup(share)
     ? { value: speedup(h.speedup), label: 'faster than one agent' }
-    : {
-        value: compact(h.prsMerged),
-        label: one(h.prsMerged, 'pull request merged', 'pull requests merged'),
-      };
+    : // The footer already counts PRs: show how many sandboxes the work used instead.
+      { value: compact(h.boxes), label: one(h.boxes, 'sandbox used', 'sandboxes used') };
   const shipped =
     `${compact(h.prsMerged)} ${one(h.prsMerged, 'PR', 'PRs')} merged · ` +
     `${compact(h.commits)} ${one(h.commits, 'commit', 'commits')}\u00a0·\u00a0`;
@@ -415,9 +413,9 @@ function OgCard({ share }: { share: UsageShare }) {
         <div style={{ display: 'flex', marginLeft: 'auto', fontSize: 21, color: INK_2 }}>
           <span>{shipped}</span>
           <span style={{ color: '#1baf7a', fontWeight: 600 }}>+{compact(h.additions)}</span>
-          <span style={{ color: OG.faint }}>{' / '}</span>
+          <span style={{ color: OG.faint }}>{'\u00a0/\u00a0'}</span>
           <span style={{ color: '#e34948', fontWeight: 600 }}>-{compact(h.deletions)}</span>
-          <span>{' lines'}</span>
+          <span>{'\u00a0lines'}</span>
         </div>
       </div>
     </div>

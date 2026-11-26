@@ -79,7 +79,21 @@ describe('dailySeries', () => {
     } as UsageShare);
     expect(s.bars.length).toBeLessThanOrEqual(MAX_BARS);
     expect(s.bucketDays).toBe(4);
-    expect(s.bars[0]).toEqual({ peak: 4, hours: [4] });
+    // 366 = 2 + 91 * 4: the short bucket is the oldest one.
+    expect(s.bars[0]).toEqual({ peak: 2, hours: [2] });
+    expect(s.bars.at(-1)!.hours).toEqual([4]);
+  });
+
+  it('highlights only the first busiest day', () => {
+    const s = dailySeries(
+      withDays([
+        day('2026-11-24', 5, { claude: split(1) }),
+        day('2026-11-25', 2, { claude: split(1) }),
+        day('2026-11-26', 5, { claude: split(1) }),
+      ]),
+    );
+    expect(s.peakDay).toBe('2026-11-24');
+    expect(s.peakIndex).toBe(MIN_SLOTS - 3);
   });
 
   it('names the top three agents and sums the rest as other', () => {
@@ -98,6 +112,7 @@ describe('dailySeries', () => {
     expect(s.bars.at(-2)!.hours).toEqual([5, 4, 3, 2]);
     expect(s.bars.at(-1)!.hours).toEqual([0, 0, 0, 1]);
     expect(s.peakDay).toBe('2026-11-26');
+    expect(s.peakIndex).toBe(s.bars.length - 1);
     expect(s.maxHours).toBe(14);
   });
 
@@ -120,7 +135,19 @@ describe('share wording', () => {
   const share = toShare(usageFixture(), 'example');
 
   it('names a calendar month, else the dates', () => {
-    expect(periodText(share)).toBe('November 2026');
+    // The fixture's November ends on the 26th: dates, since a share is frozen.
+    expect(periodText(share)).toBe('1 Nov - 26 Nov 2026');
+    const full = { ...share.range, since: '2026-11-01', today: '2026-11-30', until: '2026-11-30' };
+    expect(periodText({ ...share, range: full })).toBe('November 2026');
+    const febLeap = {
+      ...share.range,
+      since: '2028-02-01',
+      today: '2028-02-29',
+      until: '2028-02-29',
+    };
+    expect(periodText({ ...share, range: febLeap })).toBe('February 2028');
+    const spill = { ...share.range, since: '2026-11-01', today: '2026-12-01', until: '2026-12-01' };
+    expect(periodText({ ...share, range: spill })).toBe('1 Nov - 1 Dec 2026');
     expect(periodText({ ...share, range: { ...share.range, id: '7d', since: '2026-11-20' } })).toBe(
       '20 Nov - 26 Nov 2026',
     );
@@ -131,7 +158,7 @@ describe('share wording', () => {
 
   it('labels the numbers in the metadata', () => {
     const m = shareMeta(share);
-    expect(m.title).toBe("@example's coding agents · November 2026");
+    expect(m.title).toBe("@example's coding agents · 1 Nov - 26 Nov 2026");
     expect(m.description).toContain('9 agents running at the same time (peak).');
     expect(m.description).toContain(
       '612 hours of agent work in 211 hours, 2.9x faster than one agent.',

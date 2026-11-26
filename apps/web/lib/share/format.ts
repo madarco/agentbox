@@ -27,7 +27,7 @@ export function rangeText(share: UsageShare): string {
   const a = longDay(since);
   const b = longDay(today);
   if (since === today) return b;
-  return since.slice(0, 4) === today.slice(0, 4) ? `${a.slice(0, -5)} - ${b}` : `${a} - ${b}`;
+  return since.slice(0, 4) === today.slice(0, 4) ? `${dayMonth(since)} - ${b}` : `${a} - ${b}`;
 }
 
 /** Singular when the printed number is "1" (0.96 hours prints as "1 hour"). */
@@ -38,34 +38,25 @@ const plural = (n: number, one: string, many = `${one}s`): string =>
 export const peakText = (share: UsageShare): string =>
   `${plural(share.hero.peakAtOnce, 'agent')} at once`;
 
-/** "612 hours of work in 211 hours" */
-export const hoursText = (share: UsageShare): string =>
-  `${plural(share.hero.agentHours, 'hour')} of work in ${plural(share.hero.wallHours, 'hour')}`;
-
 /** What AgentBox is, in one line, for a stranger seeing a share in a feed. */
 export const TAGLINE = 'AgentBox runs coding agents in parallel, each in its own sandbox.';
 
-const MONTH_NAMES = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
+const monthName = new Intl.DateTimeFormat('en-US', { month: 'long', timeZone: 'UTC' });
 
-/** "November 2026" for a calendar-month window, else the dates it covers. */
+const lastOfMonth = (day: string): boolean => {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y!, m!, 0)).getUTCDate() === d;
+};
+
+/**
+ * "November 2026" when the share covers exactly one whole calendar month, else the
+ * dates it covers ("1 Nov - 26 Nov 2026"). A share is frozen, so a month still in
+ * progress is named by its dates, not as "so far".
+ */
 export function periodText(share: UsageShare): string {
-  const { id, since } = share.range;
-  if (id === 'month' && since.endsWith('-01')) {
-    const [y, m] = since.split('-').map(Number);
-    return `${MONTH_NAMES[m! - 1]} ${y}`;
+  const { since, today } = share.range;
+  if (since.endsWith('-01') && since.slice(0, 7) === today.slice(0, 7) && lastOfMonth(today)) {
+    return `${monthName.format(new Date(`${since}T00:00:00Z`))} ${since.slice(0, 4)}`;
   }
   return rangeText(share);
 }
@@ -77,7 +68,10 @@ export const shareTitle = (share: UsageShare): string =>
 /** Below 1.1x there is no speed-up worth claiming (one agent at a time). */
 export const hasSpeedup = (share: UsageShare): boolean => share.hero.speedup >= 1.1;
 
-/** Title and description for the page metadata and the link preview: numbers only. */
+/**
+ * Title and description for the page metadata and the link preview. The title names
+ * whose agents and when; the description carries the numbers. No free text but the handle.
+ */
 export function shareMeta(share: UsageShare): { title: string; description: string } {
   const h = share.hero;
   const peak = `${plural(h.peakAtOnce, 'agent')} running at the same time (peak)`;
