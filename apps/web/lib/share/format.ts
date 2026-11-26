@@ -16,6 +16,9 @@ export function longDay(day: string): string {
   return `${d} ${MONTHS[m! - 1]} ${y}`;
 }
 
+/** `2026-11-19` -> `19 Nov`. */
+export const dayMonth = (day: string): string => longDay(day).slice(0, -5);
+
 export const dateDay = (d: Date): string => longDay(d.toISOString().slice(0, 10));
 
 /** `1 Nov - 26 Nov 2026`, the window the numbers cover (up to its last day with data). */
@@ -23,6 +26,7 @@ export function rangeText(share: UsageShare): string {
   const { since, today } = share.range;
   const a = longDay(since);
   const b = longDay(today);
+  if (since === today) return b;
   return since.slice(0, 4) === today.slice(0, 4) ? `${a.slice(0, -5)} - ${b}` : `${a} - ${b}`;
 }
 
@@ -38,16 +42,53 @@ export const peakText = (share: UsageShare): string =>
 export const hoursText = (share: UsageShare): string =>
   `${plural(share.hero.agentHours, 'hour')} of work in ${plural(share.hero.wallHours, 'hour')}`;
 
+/** What AgentBox is, in one line, for a stranger seeing a share in a feed. */
+export const TAGLINE = 'AgentBox runs coding agents in parallel, each in its own sandbox.';
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/** "November 2026" for a calendar-month window, else the dates it covers. */
+export function periodText(share: UsageShare): string {
+  const { id, since } = share.range;
+  if (id === 'month' && since.endsWith('-01')) {
+    const [y, m] = since.split('-').map(Number);
+    return `${MONTH_NAMES[m! - 1]} ${y}`;
+  }
+  return rangeText(share);
+}
+
+/** "@madarco's coding agents · November 2026" */
+export const shareTitle = (share: UsageShare): string =>
+  `@${share.handle}'s coding agents · ${periodText(share)}`;
+
+/** Below 1.1x there is no speed-up worth claiming (one agent at a time). */
+export const hasSpeedup = (share: UsageShare): boolean => share.hero.speedup >= 1.1;
+
 /** Title and description for the page metadata and the link preview: numbers only. */
 export function shareMeta(share: UsageShare): { title: string; description: string } {
   const h = share.hero;
-  // Below 1.1x there is no speed-up worth claiming (one agent at a time).
-  const fast = h.speedup >= 1.1;
+  const peak = `${plural(h.peakAtOnce, 'agent')} running at the same time (peak)`;
+  const work =
+    `${plural(h.agentHours, 'hour')} of agent work in ${plural(h.wallHours, 'hour')}` +
+    (hasSpeedup(share) ? `, ${speedup(h.speedup)} faster than one agent` : '');
   return {
-    title: `${share.handle}'s agents: ${peakText(share)}${fast ? `, ${speedup(h.speedup)} faster` : ''}`,
+    title: shareTitle(share),
     description:
-      `${hoursText(share)}${fast ? `, ${speedup(h.speedup)} speed-up` : ''}. ` +
+      `${peak}. ${work}. ` +
       `${plural(h.prsMerged, 'PR')} merged, ${plural(h.commits, 'commit')}, ` +
-      `+${num(h.additions)} / -${num(h.deletions)} lines (${rangeText(share)}).`,
+      `+${num(h.additions)} / -${num(h.deletions)} lines. ${TAGLINE}`,
   };
 }
