@@ -399,7 +399,7 @@ function SubscriptionCard({
         <span className="ml-auto">
           {weekLoaded ? (
             <Link
-              href={`/usage?subscription=${encodeURIComponent(key)}`}
+              href={`/usage?view=tokens&subscription=${encodeURIComponent(key)}`}
               className="tabular-nums underline-offset-2 hover:text-foreground hover:underline"
               title={`${(weekTokens ?? 0).toLocaleString()} tokens in the last 7 days. Open in Usage`}
             >

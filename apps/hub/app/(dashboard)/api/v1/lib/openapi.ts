@@ -1974,7 +1974,7 @@ export function buildOpenApi(): Record<string, unknown> {
             {
               name: 'range',
               in: 'query',
-              schema: { type: 'string', enum: ['7d', 'month', '90d', 'year'] },
+              schema: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
               description: "The page's range label. Default from the window's length.",
             },
             {
@@ -1998,7 +1998,7 @@ export function buildOpenApi(): Record<string, unknown> {
                       range: {
                         type: 'object',
                         properties: {
-                          id: { type: 'string', enum: ['7d', 'month', '90d', 'year'] },
+                          id: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
                           since: { type: 'string' },
                           until: { type: 'string' },
                           today: { type: 'string' },

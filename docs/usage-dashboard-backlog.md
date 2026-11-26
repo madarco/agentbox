@@ -3,7 +3,35 @@
 Open items found while building the phases of
 [`usage-dashboard-plan.md`](./usage-dashboard-plan.md). Newest phase first.
 
-## From Phase 5 (agent-box.sh share endpoint and page)
+## From Phase 3 (the hub Usage page)
+
+- **The default window is the last 30 days**, to match the tray's header pill
+  (hours saved over `since=30d`). The mockup's ranges have no 30-day option and
+  select "This month"; the page adds **30 days** (`RangeId` `30d`) and opens on it.
+  The stats endpoint names a window with no `range` by its length and start: a
+  window from the 1st is `month`, any other up to 31 days `30d` (so `agentbox usage`'s
+  default reads "Last 30 days", not "November so far").
+- **The hub has no dark theme.** `ThemeProvider` is light-only and the hub defines
+  no `.dark` tokens, so the view's dark styles (checked by forcing `.dark`) show on a
+  light shell. When the hub gets a dark theme, the page needs nothing more.
+- **Instrument Serif is not loaded in the hub.** The view's italic accents fall back
+  to Georgia; the hub self-hosts only IBM Plex. Add the font file under `app/fonts`
+  if the serif matters.
+- **The Recently merged feed and session titles are still empty / generic** (the
+  Phase 2 items): the page passes nothing extra yet.
+- **Agent logos are still duplicated** between the hub and `usage-view`.
+- **"This month" is computed from the browser's clock.** The page sends the month's
+  first and last day; a browser clock past midnight on the last day of a month, ahead
+  of the hub's, asks for a `since` in the hub's future and gets a 400 until the hub's
+  day turns. The rolling ranges send no `until` and are safe. A `since=month` form on
+  the endpoint would remove it.
+- **`range.id` gained `30d`.** A client that decodes `range.id` with a closed enum
+  (the tray, an older agent-box.sh share endpoint) must accept it; deploy apps/web
+  before hubs share a `30d` window.
+- **CSV is per day only.** Sessions, boxes and projects are not exported; the token
+  breakdown has its own view but no export.
+
+
 
 - **Owner setup before it works in production**: add Neon to the Vercel project
   (`DATABASE_URL`) and set `SHARE_IP_SALT` to a random secret. Until then the

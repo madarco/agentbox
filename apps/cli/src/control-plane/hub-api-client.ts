@@ -1044,7 +1044,7 @@ export interface HubApiUsageStatsQuery {
   /** IANA zone. */
   tz?: string;
   subscription?: string;
-  range?: '7d' | 'month' | '90d' | 'year';
+  range?: '7d' | '30d' | 'month' | '90d' | 'year';
 }
 
 export type HubApiUsageDimension =
