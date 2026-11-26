@@ -423,7 +423,9 @@ describe('the timeline backfill', () => {
     expect((await store.list())[0]?.id).toBe('tl:old');
   });
 
-  it('imports 5000 lines in well under a second', async () => {
+  // The bound catches a per-row transaction (tens of seconds for 5000 rows), not
+  // jitter: shared CI runners take over a second for the batched import.
+  it('imports 5000 lines in a few seconds', async () => {
     const many: string[] = [];
     const start = Date.parse('2026-09-01T00:00:00.000Z');
     for (let i = 0; i < 5000; i++) {
@@ -443,7 +445,7 @@ describe('the timeline backfill', () => {
       cutoffMs: Date.parse('2030-01-01'),
     });
     expect(r.inserted).toBe(5000);
-    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(Date.now() - t0).toBeLessThan(5000);
   });
 
   it('maps no line the ledger does not keep', () => {

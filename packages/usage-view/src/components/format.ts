@@ -30,6 +30,8 @@ export const nf = (n: number): string => Math.round(n).toLocaleString('en-US');
 
 /** One decimal under 10, whole numbers above: 2.9, 14, 612. */
 export const hrs = (n: number): string => (n < 10 ? String(Math.round(n * 10) / 10) : nf(n));
+/** `hrs(n)` hours, singular when it prints as 1. */
+export const hoursLabel = (n: number): string => `${hrs(n)} ${hrs(n) === '1' ? 'hour' : 'hours'}`;
 
 export const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 export const DOW_LONG = [

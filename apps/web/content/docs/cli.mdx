@@ -259,7 +259,7 @@ agentbox usage --since 7d --json
 `usage` prints what your agents did in a window, from the hub's [recorded sessions](#session-history) and its activity ledger, for every box, provider and PC that ships to the hub:
 
 - **Agent-hours**: the time agents were active, from their transcripts. A session's turns no more than 10 minutes apart make one active interval, which ends a minute after its last turn; two sessions in one box at once count once. Sessions on a PC (no box) count as provider `host`.
-- **Wall hours**: the time at least one agent was active. **Speed-up** is agent-hours over wall hours; **peak at once** is the most boxes active at the same moment, with its day.
+- **Wall hours**: the time at least one agent was active. **Speed-up** is agent-hours over wall hours. **Hours saved** is agent-hours minus wall hours (never below 0): how much longer the same agent work would have taken one agent at a time. It is machine time against a serial run, not your time. **Peak at once** is the most boxes active at the same moment, with its day.
 - **PRs merged**, **commits** and **lines** added and removed, from the boxes' pushes and pull requests. A `push --host-only` landing counts only when no published push of the same box follows it.
 - **Box-hours**: how long boxes ran, from their lifecycle (created or started to stopped, paused or destroyed).
 
