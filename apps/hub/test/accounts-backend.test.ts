@@ -4,8 +4,12 @@ import {
   setDefaultCheckpointRefusal,
   subscriptionOf,
 } from '../lib/backend/accounts';
-import { accountIdProblem } from '@agentbox/core';
-import { ACCOUNT_ID_RE, parseCreateBox } from '../app/(dashboard)/api/v1/lib/validate';
+import { accountIdProblem, normalizeAccountName } from '@agentbox/core';
+import {
+  ACCOUNT_ID_RE,
+  newAccountName,
+  parseCreateBox,
+} from '../app/(dashboard)/api/v1/lib/validate';
 
 describe('setDefaultCheckpointRefusal (#437-7)', () => {
   it('refuses a box on a named account, naming it', () => {
@@ -43,6 +47,9 @@ describe('the browser-safe account-id rule matches core', () => {
     'work',
     'a',
     'team-2',
+    'work_max',
+    '_a',
+    'a_',
     'x'.repeat(32),
     'x'.repeat(33),
     'Work',
@@ -54,6 +61,13 @@ describe('the browser-safe account-id rule matches core', () => {
   ])('%j', (id) => {
     expect(ACCOUNT_ID_RE.test(id)).toBe(accountIdProblem(id) === null);
   });
+
+  it.each(['Work Max', 'team-2', ' a  b ', 'bad.name', 'café', '', 'x'.repeat(33)])(
+    'newAccountName agrees with normalizeAccountName for %j',
+    (typed) => {
+      expect(newAccountName(typed)).toBe(normalizeAccountName(typed).name ?? null);
+    },
+  );
 });
 
 describe('subscriptionOf', () => {

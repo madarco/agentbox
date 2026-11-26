@@ -192,12 +192,15 @@ export function accountNameFor(typed: string, existing: readonly string[]): stri
 export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
   const { agent: name, id: typed } = parseAccountRef(ref);
   const agent = agentId(name);
-  if (isDefaultAccount(typed.trim())) {
-    throw new Error(
-      `the default account is the agent's own login: \`agentbox ${agent} login\` signs it in`,
-    );
+  // The list decides whether the name is an existing one (kept as is) or a new
+  // one (normalized); without it a '-' name would silently become another
+  // account, so stop (the hub failure is already reported).
+  const list = await loadList();
+  if (!list) {
+    process.exitCode ||= 1;
+    return;
   }
-  const known = (await loadList())?.accounts.filter((a) => a.agent === agent) ?? [];
+  const known = list.accounts.filter((a) => a.agent === agent);
   const id = accountNameFor(
     typed,
     known.map((a) => a.id),
@@ -207,11 +210,11 @@ export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
       `the default account is the agent's own login: \`agentbox ${agent} login\` signs it in`,
     );
   }
-  if (id !== typed) log.info(`name: ${agent}/${id}`);
+  if (id !== typed.trim()) log.info(`name: ${agent}/${id}`);
   let kind = kindOf(opts);
   if (!kind) {
     if (!interactive()) throw new Error('pick a kind: --login, --setup-token or --api-key');
-    const kinds = (await loadList())?.agents.find((a) => a.id === agent)?.kinds ?? [];
+    const kinds = list.agents.find((a) => a.id === agent)?.kinds ?? [];
     if (kinds.length === 0) throw new Error(`${agent} cannot hold named accounts`);
     const picked = await select({
       message: `What kind of ${agent} account?`,

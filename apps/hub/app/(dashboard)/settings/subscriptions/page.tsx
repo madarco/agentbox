@@ -19,6 +19,7 @@ import { SubMark, SubMeters, TierBadge, subLine, subName } from '@/components/su
 import { refreshAccounts, resetText, useAccounts, type Account } from '@/lib/accounts-client';
 import { groupSubscriptions, subscriptionKey, type AccountKind } from '@/lib/subscriptions';
 import { cn } from '@/lib/utils';
+import { newAccountName } from '@/app/(dashboard)/api/v1/lib/validate';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 
@@ -40,16 +41,6 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!r.ok) throw new Error(body.error?.message ?? `request failed (${String(r.status)})`);
   return body as T;
 }
-
-/**
- * The name the hub stores for a typed one ("Work Max" -> work_max); the hub
- * normalizes too and refuses what this preview would not fix.
- */
-const nameOf = (typed: string): string =>
-  typed
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_');
 
 const enc = (a: Account): string => `/${encodeURIComponent(a.agent)}/${encodeURIComponent(a.id)}`;
 
@@ -98,6 +89,10 @@ export default function SubscriptionsPage() {
   const chosen = pastedAgents.find((a) => a.id === agent) ?? pastedAgents[0];
   const pastedKinds: Kind[] = (chosen?.kinds ?? []).filter((k) => k !== 'login');
   const chosenKind = pastedKinds.includes(kind) ? kind : pastedKinds[0];
+  // What the hub will store: an existing name as typed, a new one normalized.
+  const typedId = id.trim();
+  const existingName = (accounts ?? []).some((a) => a.agent === chosen?.id && a.id === typedId);
+  const savedAs = typedId && !existingName ? newAccountName(typedId) : null;
 
   const act = async (key: string, fn: () => Promise<unknown>): Promise<void> => {
     setBusy(key);
@@ -261,7 +256,7 @@ export default function SubscriptionsPage() {
                   onChange={(ev) => setId(ev.target.value)}
                   placeholder="name (e.g. work max)"
                   aria-label="Name"
-                  title={id.trim() ? `Saved as ${nameOf(id)}` : undefined}
+                  title={savedAs ? `Saved as ${savedAs}` : undefined}
                   className="w-40 font-mono"
                   autoComplete="off"
                 />
@@ -281,9 +276,11 @@ export default function SubscriptionsPage() {
                   <Icons.plus /> Add
                 </Button>
               </form>
-              {id.trim() && nameOf(id) !== id.trim() ? (
+              {typedId && !existingName && savedAs !== typedId ? (
                 <div className="mt-2 font-mono text-[12px] text-muted-foreground">
-                  saved as {chosen?.id ?? ''}/{nameOf(id)}
+                  {savedAs
+                    ? `saved as ${chosen?.id ?? ''}/${savedAs}`
+                    : 'a name is letters, digits, spaces or _'}
                 </div>
               ) : null}
               <div className="mt-3 text-[12px] text-muted-foreground">

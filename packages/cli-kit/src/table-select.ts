@@ -9,7 +9,7 @@
  * function below the class, which is what the unit tests exercise.
  */
 import { Prompt } from '@clack/core';
-import { createColors } from 'picocolors';
+import pc0, { createColors } from 'picocolors';
 import type { Readable, Writable } from 'node:stream';
 
 export type TableTone = 'red' | 'yellow' | 'green' | 'cyan' | 'dim';
@@ -437,15 +437,18 @@ class TableSelectPrompt<V extends string> extends Prompt {
           return renderTableSelect(this.spec, this.cur, {
             columns: out.columns ?? process.stdout.columns ?? 80,
             rows: out.rows ?? process.stdout.rows ?? 24,
-            color: true,
+            // picocolors' own detection: NO_COLOR, FORCE_COLOR, a dumb terminal.
+            color: pc0.isColorSupported,
+            // `outcome` first: Enter on an empty table quits, though clack's
+            // 'return' handling then marks the prompt submitted.
             state:
-              this.state === 'submit'
-                ? 'submit'
-                : this.state === 'cancel'
-                  ? this.outcome === 'quit'
-                    ? 'quit'
-                    : 'cancel'
-                  : 'active',
+              this.outcome === 'quit' && this.state !== 'active' && this.state !== 'initial'
+                ? 'quit'
+                : this.state === 'submit'
+                  ? 'submit'
+                  : this.state === 'cancel'
+                    ? 'cancel'
+                    : 'active',
           });
         },
       },
@@ -502,12 +505,18 @@ export async function tableSelect<V extends string>(
   const p = new TableSelectPrompt(spec, io);
   const input = io.input ?? process.stdin;
   const output = io.output ?? process.stdout;
-  // A resize reflows the old frame's lines, so clack's line diff no longer
-  // knows where they are: clear the screen and draw anew (runs before clack's
-  // own resize listener, which then redraws from an empty previous frame).
+  // A resize reflows the old frame's lines, which clack's line diff can't
+  // follow. Move to the top of the old frame as it now wraps, erase from there
+  // down (output above the frame stays) and let clack's own resize listener,
+  // registered after this one, draw anew from an empty previous frame.
   const onResize = (): void => {
-    output.write('\x1b[H\x1b[2J');
-    (p as unknown as { _prevFrame: string })._prevFrame = '';
+    const self = p as unknown as { _prevFrame: string };
+    const cols = (output as Writable & { columns?: number }).columns ?? 80;
+    const rows = self._prevFrame
+      .split('\n')
+      .reduce((n, line) => n + Math.max(1, Math.ceil(textWidth(line) / cols)), 0);
+    output.write(`\r${rows > 1 ? `\x1b[${String(rows - 1)}A` : ''}\x1b[J`);
+    self._prevFrame = '';
   };
   (input as unknown as KeypressEmitter).on('keypress', p.onKey);
   output.on('resize', onResize);
