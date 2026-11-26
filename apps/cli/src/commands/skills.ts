@@ -106,13 +106,7 @@ function skillTones(r: SkillRow): (TableTone | undefined)[] {
   if (r.status === 'skipped') return SKILL_HEADERS.map(() => 'dim');
   const flag = localFlag(r);
   const status: TableTone | undefined =
-    r.status === 'same'
-      ? 'green'
-      : r.status === 'skipped'
-        ? 'dim'
-        : r.status === 'differs'
-          ? 'yellow'
-          : undefined;
+    r.status === 'same' ? 'green' : r.status === 'differs' ? 'yellow' : undefined;
   return [
     undefined,
     flag === 'invalid' ? 'red' : flag === 'flagged' ? 'yellow' : undefined,
