@@ -68,7 +68,8 @@ export interface UsageViewProps {
 /** The fields both variants render; the private ones are absent on a share. */
 interface View {
   share: boolean;
-  handle: string | null;
+  /** A share's display name, if it has one. */
+  name: string | null;
   range: UsageStats['range'];
   hero: UsageStats['hero'];
   /** A share has no `hoursSaved` KPI: its value comes from the hero, with no delta. */
@@ -98,10 +99,10 @@ interface View {
 }
 
 function toView(data: UsageStats | UsageShare): View {
-  if ('handle' in data) {
+  if (!('generatedAt' in data)) {
     return {
       share: true,
-      handle: data.handle,
+      name: data.name ?? null,
       range: data.range,
       hero: data.hero,
       kpis: data.kpis,
@@ -125,7 +126,7 @@ function toView(data: UsageStats | UsageShare): View {
   }
   return {
     share: false,
-    handle: null,
+    name: null,
     range: data.range,
     hero: data.hero,
     kpis: data.kpis,
@@ -198,7 +199,7 @@ export function UsageView({
           {Icons.info}
           {footer ??
             (v.share
-              ? `Shared by ${v.handle} from AgentBox. Numbers only: no project, box or pull request names leave the hub.`
+              ? `Shared ${v.name ? `by ${v.name} ` : ''}from AgentBox. Numbers only: no project, box or pull request names leave the hub.`
               : `Updated ${v.generatedAt ? new Date(v.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'just now'}.`)}
         </div>
       </TipProvider>
@@ -223,7 +224,7 @@ function Header({
         </h1>
         <p>
           {v.share
-            ? `What ${v.handle}'s agents did side by side, what they shipped, and the hours it took.`
+            ? `What ${v.name ? `${v.name}'s` : 'these'} agents did side by side, what they shipped, and the hours it took.`
             : 'What your agents did side by side, what they shipped, and the hours and tokens it used.'}
         </p>
       </div>
@@ -256,7 +257,7 @@ function Hero({ v }: { v: View }): ReactElement {
       {PROVIDER_LABEL[p.id]} <span>{provTotal ? Math.round((p.hours / provTotal) * 100) : 0}%</span>
     </b>
   ));
-  const who = v.share ? `${v.handle}'s agents` : 'Your agents';
+  const who = v.share ? (v.name ? `${v.name}'s agents` : 'These agents') : 'Your agents';
   return (
     <section className="hero">
       <div>

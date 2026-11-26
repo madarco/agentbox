@@ -5,8 +5,8 @@
  * (docs/agent-history-plan.md, Phase 7), from `/api/v1/usage`. Both are hub
  * clients; the CLI reads no store of its own.
  */
-import { confirm, isCancel, log, text } from '@agentbox/cli-kit';
-import { HANDLE_RE } from '@agentbox/usage-view';
+import { confirm, isCancel, log } from '@agentbox/cli-kit';
+import { SHARE_NAME_RE } from '@agentbox/usage-view';
 import { Command } from 'commander';
 import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
@@ -96,13 +96,54 @@ const tokensCommand = new Command('tokens')
     },
   );
 
-const shareCommand = new Command('share')
+const shareListCommand = new Command('list')
+  .alias('ls')
+  .description('The usage shares this hub published, newest first (never their delete secrets)')
+  .option('--json', 'print them as JSON')
+  .option('--local', "use this machine's hub instead of the configured one")
+  .action(async (opts: { json?: boolean; local?: boolean }) => {
+    await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
+      const { shares } = await client.usageShareSettings();
+      if (opts.json) {
+        process.stdout.write(`${JSON.stringify(shares, null, 2)}\n`);
+        return;
+      }
+      if (shares.length === 0) {
+        log.info('No shares yet: `agentbox usage share` publishes one.');
+        return;
+      }
+      renderTable(
+        ['ID', 'SHARED', 'URL'],
+        shares.map((s) => [s.id, s.createdAt.slice(0, 10), s.url || `(on ${s.origin})`]),
+      );
+    });
+  });
+
+const shareRmCommand = new Command('rm')
+  .alias('delete')
   .description(
-    "Publish the window's usage on agent-box.sh (share.endpoint) and print its public URL. Only metrics leave the hub, with the handle: no box, project, branch, PR or session name",
+    "Delete one of this hub's usage shares on the site that holds it; the page then 404s",
+  )
+  .argument('<id>', 'share id, as `agentbox usage share list` prints it')
+  .option('--local', "use this machine's hub instead of the configured one")
+  .action(async (id: string, opts: { local?: boolean }) => {
+    await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
+      const r = await client.usageShareDelete(id);
+      log.success(
+        r.deleted ? `Deleted share ${r.id}.` : `Share ${r.id} was already gone; forgotten here.`,
+      );
+    });
+  });
+
+const shareCommand = new Command('share')
+  // `list` / `rm` take their own --local; without this the parent would consume it.
+  .enablePositionalOptions()
+  .description(
+    "Publish the window's usage on agent-box.sh (share.endpoint) at a new random link and print it. Only metrics leave the hub, with the optional --name: no box, project, branch, PR or session name",
   )
   .option(
-    '--handle <handle>',
-    'public handle, lowercase letters, digits and dashes (default: the last one shared)',
+    '--name <text>',
+    'a name to show on the page ("shared by ..."): lowercase letters, digits and dashes. Plain text, not an account',
   )
   .option(
     '--since <when>',
@@ -117,7 +158,7 @@ const shareCommand = new Command('share')
   .option('--local', "use this machine's hub instead of the configured one")
   .action(
     async (opts: {
-      handle?: string;
+      name?: string;
       since: string;
       until?: string;
       tz?: string;
@@ -127,37 +168,18 @@ const shareCommand = new Command('share')
       local?: boolean;
     }) => {
       const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      const name = opts.name?.trim() || undefined;
+      if (name !== undefined && !SHARE_NAME_RE.test(name)) {
+        throw new Error(`invalid --name "${name}": lowercase letters, digits and dashes, up to 39`);
+      }
       await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
-        const settings = await client.usageShareSettings();
-        let handle = opts.handle?.trim() || settings.lastHandle || '';
-        if (!handle && interactive && !opts.dryRun) {
-          const answer = await text({
-            message: 'Public handle',
-            placeholder: 'your-name',
-            validate: (v) =>
-              HANDLE_RE.test(v ?? '')
-                ? undefined
-                : 'lowercase letters, digits and dashes, up to 39',
-          });
-          if (isCancel(answer)) return;
-          handle = answer;
-        }
-        if (!handle) handle = opts.dryRun ? 'you' : '';
-        if (!HANDLE_RE.test(handle)) {
-          throw new Error(
-            handle
-              ? `invalid handle "${handle}": lowercase letters, digits and dashes, up to 39`
-              : 'no handle: pass --handle <handle>',
-          );
-        }
         const window = {
           since: opts.since,
           until: opts.until,
           tz: opts.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
           subscription: opts.subscription,
-          handle,
+          ...(name ? { name } : {}),
         };
-        const site = new URL(settings.endpoint).host;
         if (opts.dryRun) {
           const p = await client.usageSharePreview(window);
           process.stdout.write(`${JSON.stringify(p.share, null, 2)}\n`);
@@ -165,19 +187,21 @@ const shareCommand = new Command('share')
           return;
         }
         if (interactive && !opts.yes) {
+          const { endpoint, endpointError } = await client.usageShareSettings();
+          if (!endpoint) throw new Error(endpointError ?? 'share.endpoint is not usable');
           const ok = await confirm({
-            message: `Publish this window's usage as ${site}/u/${handle}? (--dry-run shows exactly what is sent)`,
+            message: `Publish this window's usage on ${new URL(endpoint).host} at a new public link? (--dry-run shows exactly what is sent)`,
           });
           if (isCancel(ok) || !ok) return;
         }
         const posted = await client.usageShare(window);
         process.stdout.write(`${posted.url}\n`);
-        if (posted.claimedNow) {
-          log.info(`This hub now holds the handle "${posted.handle}" on ${site}.`);
-        }
+        log.info(`Remove it with: agentbox usage share rm ${posted.id}`);
       });
     },
-  );
+  )
+  .addCommand(shareListCommand)
+  .addCommand(shareRmCommand);
 
 export const usageCommand = new Command('usage')
   .description(

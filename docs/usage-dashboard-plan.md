@@ -63,7 +63,7 @@ data accumulates, and destroyed boxes' transcripts cannot be backfilled.
 ```
 box / relay hooks ──► activity ledger (hub-owned, every box) ─┐
 history.db (turns, usage) ────────────────────────────────────┼─► usage-stats domain ─► GET /api/v1/usage/stats ─► hub Usage page
-workspace timelines (backfill only) ──────────────────────────┘                       └─► share snapshot ─► POST agent-box.sh/api/share ─► Neon ─► /u/<handle>/<n>
+workspace timelines (backfill only) ──────────────────────────┘                       └─► share snapshot ─► POST agent-box.sh/api/share ─► Neon ─► /s/<id>
 ```
 
 - **`UsageStats`**: one JSON shape for everything the page shows. Daily buckets
@@ -76,7 +76,8 @@ workspace timelines (backfill only) ──────────────�
 - **`UsageShare`**: the public subset of `UsageStats`. Numbers, dates, and ids
   from fixed enums (agent, provider). No project, box, branch, PR or session
   names; lanes and sessions are labeled by agent + provider ("claude on hetzner").
-  The only string is the handle (`^[a-z0-9-]{1,39}$`).
+  The only string is an optional display name (`^[a-z0-9-]{1,39}$`), plain text
+  that is not an identity (see Phase 5).
 
 ## Phases
 
@@ -147,7 +148,7 @@ from Phase 1 on.
   pure functions that build them (intervals, union, overlap, sessions, streaks),
   unit-tested on fixtures. **Done** (feat/usage-view): `buildUsageStats(input)`
   takes plain arrays (`SessionTurns`, `git.push` / `pr.merged` events, token rows,
-  box info, box runs) that the hub adapts its rows to; `toShare(stats, handle)`
+  box info, box runs) that the hub adapts its rows to; `toShare(stats, name?)`
   builds the public subset. Decisions made there:
   - Days are local days in a named IANA zone (`range.tz`, e.g. `Europe/Rome`),
     bucketed with `Intl`, so a window across a DST change keeps 23- and 25-hour days
@@ -332,58 +333,72 @@ and 4b (contributions to a remote hub).
 - `POST https://agent-box.sh/api/share`: read the body as raw text and pass it to
   `parseShareBody` from `@agentbox/usage-view`. It refuses more than 64 KB of raw
   text and any `__proto__` / `constructor` / `prototype` key, then parses with the
-  strict zod schema (unknown keys rejected, every string an enum or the handle
+  strict zod schema (unknown keys rejected, every string an enum or the display-name
   regex, numbers and arrays bounded). **Store `JSON.stringify` of the parsed
   result, never the raw body**: zod drops some keys silently (`__proto__`), so
   only the re-serialized output is known to hold nothing but numbers, dates,
-  enum ids and the handle. Stored in Neon Postgres (the Vercel
+  enum ids and the display name. Stored in Neon Postgres (the Vercel
   Marketplace integration, `vercel integration add neon --non-interactive`):
-  `handles (handle pk, claim_hash, created_at)` and
-  `shares (handle, n, snapshot jsonb, ip_hash, created_at, pk (handle, n))`.
-  `n` is assigned in the insert transaction, so concurrent posts never collide.
-- Rate limit by IP, in SQL (built): at most 10 shares per hour and 3 new handles
-  per day per IP hash (HMAC-SHA256 with `SHARE_IP_SALT`; the raw IP is never
-  stored), 429 with `Retry-After`. A Vercel Firewall rate-limit rule on
+  `shares (id pk, snapshot jsonb, delete_hash, ip_hash, created_at, deleted_at)`.
+  The id is 24 random characters of `[a-z0-9]` minted by the site.
+- Rate limit by IP, in SQL (built): at most 10 shares per hour per IP hash
+  (HMAC-SHA256 with `SHARE_IP_SALT`; the raw IP is never stored), 429 with
+  `Retry-After`. Deleted shares still count. A Vercel Firewall rate-limit rule on
   `/api/share` can be added in front of it, no code.
-- Handle claim: the first post for a handle returns a claim secret; the hub
-  stores it (`~/.agentbox/hub/share.json`, 0600) and sends it on every later post
-  for that handle. A post for a claimed handle without its secret is refused.
-- Page `agent-box.sh/u/<handle>/<n>` renders `packages/usage-view` from the
-  stored JSON. `/u/<handle>` lists that handle's shares.
+- Ownership: the POST answers `{ url, id, deleteSecret }` and the site keeps only
+  the secret's SHA-256. `DELETE /api/share/<id>` with `Authorization: Bearer
+  <deleteSecret>` (constant-time compare) clears the snapshot and keeps the row as
+  a tombstone (so the rate limit still counts it); the page and its images are
+  revalidated and 404.
+- Page `agent-box.sh/s/<id>` renders `packages/usage-view` from the stored JSON
+  (`noindex`: a share is reached by its link).
 - **OG image** (a first-class deliverable, not an afterthought: the link preview
-  is what spreads on X, LinkedIn and Slack). `app/u/[handle]/[n]/opengraph-image.tsx`
+  is what spreads on X, LinkedIn and Slack). `app/s/[id]/opengraph-image.tsx`
   with `next/og` `ImageResponse`, 1200x630, reusing `lib/og.ts` (`loadOgFonts`,
   the IBM Plex fonts, `boxMark`) like `app/home-og/route.tsx`. Content, all from
   the stored numbers:
   - the hero line ("9 agents at once · 612 hours of work in 211 hours · 2.9×"),
   - the shipped row (PRs merged, commits, +lines/−lines),
   - a strip of the activity wall (last ~20 weeks) drawn as flexbox squares,
-  - the top-3 provider marks as round avatars, the handle, and the agent-box.sh
+  - the top-3 provider marks as round avatars, the display name, and the agent-box.sh
     mark.
-  The image is immutable per share, so it is generated once and cached
-  (`Cache-Control: public, max-age=31536000, immutable`). The page sets
+  A share can be deleted, and nothing purges a browser, proxy or CDN copy on
+  delete, so the image is cached by the client only and briefly
+  (`Cache-Control: public, max-age=300`, no `s-maxage`). The page sets
   `og:title`, `og:description` (numbers only), `twitter:card=summary_large_image`.
   Check it with real unfurls (X card validator, LinkedIn post inspector, a Slack
   paste) and with the shortest and largest plausible numbers (1 box, 6-digit
   hours) so nothing overflows. A light and a dark variant are not needed:
   unfurls show one image, so use the paper background with the green accent.
 
+**Share ids, not handles (2026-11-26).** The first build lived at
+`/u/<handle>/<n>` with a handle claimed first-come by a claim secret. With no
+account behind it, anyone could take a name (`/u/torvalds/1`) and post numbers
+under it, so the handle namespace is gone: a share's URL is an unguessable id,
+and the optional display name is plain text on the page ("shared by …"), never
+in the URL, never unique, never claimed. `pnpm db:migrate` (`SHARE_MIGRATION`
+in `db/schema.mjs`) drops the old `handles`/`shares` tables when they are empty,
+under an `ACCESS EXCLUSIVE` lock taken before the check (it refuses if they hold
+rows), and creates the id-keyed one; it is idempotent. The app's lazy
+`SHARE_DDL` only ever creates, so a cold function never drops anything.
+
 Built (2026-11-26): `apps/web` with the `postgres` driver (`prepare: false` for
 Neon's pooler). Run `pnpm --filter @agentbox/web db:migrate` once at setup (with
-the production `DATABASE_URL`): the first POST also creates the tables, but two
-cold functions doing it at once can race. Handles that would read as official
-(`agentbox`, `madarco`, `anthropic`, …) are reserved, and the rate limit counts
-an IPv6 client by its /64. `proxy.ts` 404s a malformed `/u/` path before
-anything renders or is cached. The pages are ISR-cached forever and
-revalidated by the POST; `/u/example` renders the fixture without a database.
-The handle `example` is reserved. Env on the Vercel project: `DATABASE_URL`
+the production `DATABASE_URL`): the first POST creates a missing table, but only
+the migration replaces the old handle-keyed one, and until it runs on such a
+database shares fail. The rate limit counts an IPv6 client
+by its /64. `proxy.ts` 404s a malformed `/s/` path before anything renders or is
+cached. The pages are ISR-cached forever and revalidated by the POST and the
+DELETE; `/s/example` renders the fixture without a database. Env on the Vercel
+project: `DATABASE_URL`
 (from the Neon integration) and `SHARE_IP_SALT` (a random secret); without them
 `POST /api/share` answers 503 and the share pages 404.
 
 ### Phase 6 — share from the hub
 
 - A Share button on the Usage page opens a preview of the exact `UsageShare`
-  that will be sent (the same component, public subset), a handle field, then
+  that will be sent (the same component, public subset), an optional name to
+  show, then
   posts through the hub server (`POST /api/v1/usage/share`; the browser never
   calls agent-box.sh) and shows the public URL.
 - `share.endpoint` config key (default `https://agent-box.sh/api/share`) for
@@ -393,18 +408,21 @@ The handle `example` is reserved. Env on the Vercel project: `DATABASE_URL`
 **Done (2026-11-26).** `apps/hub/lib/backend/usage-share.ts` builds the share with
 `toShare` over the same `usageStats` the page reads and posts it from the hub
 (`POST /api/v1/usage/share`; `preview: true` returns the share and posts nothing;
-`GET` gives the endpoint and the handles held there). Claim secrets live in
-`~/.agentbox/hub/share.json` (0600), keyed by the endpoint's origin and handle, so a
-preview deployment never receives the agent-box.sh secret; the last handle is
-remembered per origin. `share.endpoint` is read from the hub machine's global
-config only, and an unreadable config is a 503, never a silent fall back to
-agent-box.sh. The site's 403/409 map to `conflict`, 429 to `rate_limited` (with
-`Retry-After`), 503 to `backend_unavailable`, 400/unreachable/a URL on another
-origin to `upstream_error` (502). If the secret can't be saved after the site
-stored the share, it is written to a file of its own and the error names the
-public URL. The Usage page's Share opens a dialog that renders the preview with
-`UsageView` (public variant), a handle field checked with `HANDLE_RE`, then the
-URL with Copy link. `agentbox usage share [--handle] [--since …] [--dry-run] [-y]`.
+`GET` gives the endpoint and the shares this hub made). Each share's delete secret
+lives in `~/.agentbox/hub/share.json` (0600) with its endpoint, origin, id, URL and
+time; `DELETE /api/v1/usage/share/<id>` sends it to the site that minted it and
+forgets the share (a site 404 forgets it too). The last display name is
+remembered. `share.endpoint` is read from the hub machine's global config only,
+and an unreadable config is a 503, never a silent fall back to agent-box.sh. The
+site's 429 maps to `rate_limited` (with `Retry-After`), 503 to
+`backend_unavailable`, 400/unreachable/a URL on another origin to
+`upstream_error` (502). If the secret can't be saved after the site stored the
+share, it is written to a file of its own and the error names the public URL.
+The Usage page's Share opens a dialog that renders the preview with `UsageView`
+(public variant), an optional name checked with `SHARE_NAME_RE`, then the URL
+with Copy link, and lists the hub's past shares with Delete.
+`agentbox usage share [--name] [--since …] [--dry-run] [-y]`, `agentbox usage
+share list` and `agentbox usage share rm <id>`.
 Checked live against a local `next dev` of `apps/web` with a scratch Postgres (see
 the PR); the open items are in the backlog.
 
@@ -432,11 +450,11 @@ Read-only SQL on a copy of the live `history.db` (30 sessions, 7,033 turns,
 
 ## Decisions (defaults proposed, to confirm)
 
-1. **URL**: `agent-box.sh/u/<handle>/<n>` rather than `/sessions/…`, since
-   "sessions" already names agent transcripts in the hub. Proposed: `/u/`.
-2. **Identity**: claim-on-first-post secret, no account. Later option: verify a
-   GitHub login so the handle is the real GitHub user and the page shows the
-   avatar.
+1. **URL**: `agent-box.sh/s/<id>`, an unguessable id (decided 2026-11-26; the
+   first build's `/u/<handle>/<n>` let anyone post under someone else's name).
+2. **Identity**: none. A share carries an optional display name as plain text and
+   a delete secret that only proves ownership of that one share. Later option:
+   verify a GitHub login so a page can show a real, verified user.
 3. **Storage**: Neon Postgres on the agent-box.sh Vercel project (decided
    2026-11-26). It also gives a later gallery or leaderboard for free, and a
    per-IP count in SQL as a backstop to the firewall rule.

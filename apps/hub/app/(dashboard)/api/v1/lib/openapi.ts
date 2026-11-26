@@ -2100,42 +2100,55 @@ export function buildOpenApi(): Record<string, unknown> {
       '/usage/share': {
         get: {
           tags: ['History'],
-          summary: 'Usage share settings',
+          summary: 'Usage shares',
           description:
-            'The site a usage share is posted to (`share.endpoint`) and the handles this hub holds a claim for there. Claim secrets are never returned.',
+            'The site a usage share is posted to (`share.endpoint`), the shares this hub made (newest first, on any site) and the display name of the last one. An invalid `share.endpoint` gives `endpoint: null` and `endpointError`, and the shares are still listed. Delete secrets are never returned.',
           responses: {
             '200': {
-              description: 'Endpoint and claimed handles',
+              description: 'Endpoint, past shares and the last name',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
-                      endpoint: { type: 'string' },
-                      handles: { type: 'array', items: { type: 'string' } },
-                      lastHandle: { type: 'string', nullable: true },
+                      endpoint: { type: 'string', nullable: true },
+                      endpointError: { type: 'string' },
+                      shares: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            url: { type: 'string' },
+                            endpoint: { type: 'string' },
+                            origin: { type: 'string' },
+                            createdAt: { type: 'string', format: 'date-time' },
+                          },
+                        },
+                      },
+                      lastName: { type: 'string', nullable: true },
                     },
                   },
                 },
               },
             },
             '400': errorResponse,
+            '503': errorResponse,
           },
         },
         post: {
           tags: ['History'],
           summary: 'Share usage publicly',
           description:
-            "Builds the public `UsageShare` of a window (metrics, dates and agent/provider ids plus the handle; no box, project, branch, PR or session names) and posts it to `share.endpoint` (default `https://agent-box.sh/api/share`) from the hub. The first share of a handle claims it: the site's claim secret is kept in `~/.agentbox/hub/share.json` and sent with later shares of that handle. With `preview: true` nothing is posted and the share is returned.",
+            'Builds the public `UsageShare` of a window (metrics, dates and agent/provider ids plus an optional display name; no box, project, branch, PR or session names) and posts it to `share.endpoint` (default `https://agent-box.sh/api/share`) from the hub. The site answers with a random id (the page is `/s/<id>`) and a delete secret, which the hub keeps in `~/.agentbox/hub/share.json` (0600) and never returns. The name is plain text on the page, not an identity: never in the URL, never unique. With `preview: true` nothing is posted and the share is returned.',
           requestBody: {
             required: true,
             content: {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['handle'],
                   properties: {
-                    handle: { type: 'string', pattern: '^[a-z0-9-]{1,39}$' },
+                    name: { type: 'string', pattern: '^[a-z0-9-]{1,39}$' },
                     preview: { type: 'boolean' },
                     since: { type: 'string' },
                     until: { type: 'string' },
@@ -2153,24 +2166,49 @@ export function buildOpenApi(): Record<string, unknown> {
               content: { 'application/json': { schema: { type: 'object' } } },
             },
             '201': {
-              description: 'Posted: `{ url, handle, n, claimedNow }`',
+              description: 'Posted: `{ url, id, createdAt }`',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
                       url: { type: 'string' },
-                      handle: { type: 'string' },
-                      n: { type: 'integer' },
-                      claimedNow: { type: 'boolean' },
+                      id: { type: 'string' },
+                      createdAt: { type: 'string', format: 'date-time' },
                     },
                   },
                 },
               },
             },
             '400': errorResponse,
-            '409': errorResponse,
             '413': errorResponse,
+            '429': errorResponse,
+            '502': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/usage/share/{id}': {
+        delete: {
+          tags: ['History'],
+          summary: 'Delete a usage share',
+          description:
+            "Deletes one of this hub's shares on the site that holds it, with the delete secret kept in `share.json`, then forgets it. `deleted: false` when the site no longer had it (it is forgotten too). A share the site refuses to delete (wrong secret) or a site that cannot be reached leaves the record in place.",
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: {
+            '200': {
+              description: '`{ id, deleted }`',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: { id: { type: 'string' }, deleted: { type: 'boolean' } },
+                  },
+                },
+              },
+            },
+            '404': errorResponse,
+            '409': errorResponse,
             '429': errorResponse,
             '502': errorResponse,
             '503': errorResponse,

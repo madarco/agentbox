@@ -73,7 +73,7 @@ describe('usageIsEmpty', () => {
 });
 
 describe('usageShareBody', () => {
-  it('names the same window as the stats query, plus the handle', () => {
+  it('names the same window as the stats query, plus the display name if any', () => {
     expect(
       usageShareBody('month', '2028-02-10', 'Europe/Rome', 'claude/work', 'marco', true),
     ).toEqual({
@@ -82,14 +82,13 @@ describe('usageShareBody', () => {
       since: '2028-02-01',
       until: '2028-02-29',
       subscription: 'claude/work',
-      handle: 'marco',
+      name: 'marco',
       preview: true,
     });
-    expect(usageShareBody('7d', '2028-02-10', 'UTC', undefined, 'marco', false)).toEqual({
+    expect(usageShareBody('7d', '2028-02-10', 'UTC', undefined, '', false)).toEqual({
       tz: 'UTC',
       range: '7d',
       since: '7d',
-      handle: 'marco',
     });
   });
 });

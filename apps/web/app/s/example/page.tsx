@@ -11,8 +11,8 @@ const { title, description } = shareMeta(share);
 export const metadata: Metadata = {
   title: { absolute: title },
   description,
-  alternates: { canonical: '/u/example' },
-  openGraph: { type: 'website', title, description, url: '/u/example' },
+  alternates: { canonical: '/s/example' },
+  openGraph: { type: 'website', title, description, url: '/s/example' },
   twitter: { card: 'summary_large_image', title, description },
 };
 

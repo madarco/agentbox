@@ -5,41 +5,10 @@ import { SHARE_DDL } from '@/db/schema.mjs';
 
 export type Sql = postgres.Sql;
 
-/** Per IP hash, the SQL backstop to a firewall rule. */
+/** Per IP hash, the SQL backstop to a firewall rule. Deleted shares still count. */
 export const SHARE_RATE = {
   sharesPerHour: 10,
-  newHandlesPerDay: 3,
 } as const;
-
-/**
- * Handles nobody can claim: the site's own (`/u/example` is the fixture demo), and names
- * that would read as official numbers. A claim cannot be recovered, so these stay free.
- */
-export const RESERVED_HANDLES = new Set([
-  'agentbox',
-  'agent-box',
-  'madarco',
-  'admin',
-  'root',
-  'api',
-  'www',
-  'support',
-  'help',
-  'official',
-  'anthropic',
-  'claude',
-  'openai',
-  'codex',
-  'vercel',
-  'github',
-  'example',
-  'test',
-  'demo',
-  'u',
-  'share',
-  'null',
-  'undefined',
-]);
 
 let client: Sql | null = null;
 let ready: Promise<void> | null = null;
@@ -77,81 +46,48 @@ function sameHash(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-export type CreateResult =
-  | { ok: true; n: number; claimSecret?: string }
-  | { ok: false; status: 403 }
-  | { ok: false; status: 429; retryAfter: number };
+const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-class Reject extends Error {
-  constructor(readonly result: CreateResult) {
-    super('share rejected');
+/** 24 characters of [a-z0-9] from the CSPRNG, unbiased (bytes >= 252 are redrawn). */
+export function newShareId(): string {
+  let id = '';
+  while (id.length < 24) {
+    for (const b of randomBytes(32)) {
+      if (b < 252 && id.length < 24) id += ID_ALPHABET[b % 36];
+    }
   }
+  return id;
 }
 
+export type CreateResult =
+  | { ok: true; id: string; deleteSecret: string }
+  | { ok: false; status: 429; retryAfter: number };
+
 /**
- * Store one share. Runs in one transaction, serialized per IP hash (so a burst cannot
- * slip past the limits) and per handle (so `n` is max + 1 without a race).
+ * Store one share under a fresh id. Serialized per IP hash in one transaction, so a
+ * burst cannot slip past the hourly limit. Only the delete secret's hash is kept.
  */
 export async function createShare(
   sql: Sql,
-  input: { share: UsageShare; ipHash: string; secret: string | null },
+  input: { share: UsageShare; ipHash: string },
 ): Promise<CreateResult> {
-  const { share, ipHash, secret } = input;
-  const handle = share.handle;
-  if (RESERVED_HANDLES.has(handle)) return { ok: false, status: 403 };
+  const { share, ipHash } = input;
   await ensureSchema(sql);
-  // A wrong secret is refused before any lock, so guessing can't queue up behind the owner.
-  const [claimed] = await sql<{ claim_hash: string }[]>`
-    SELECT claim_hash FROM handles WHERE handle = ${handle}`;
-  if (claimed && (!secret || !sameHash(sha256(secret), claimed.claim_hash))) {
-    return { ok: false, status: 403 };
-  }
-  // A rejection throws, so the transaction rolls back (a returned value would commit).
-  const reject = (r: CreateResult): never => {
-    throw new Reject(r);
-  };
-  try {
-    return await sql.begin(async (tx): Promise<CreateResult> => {
-      await tx`SELECT pg_advisory_xact_lock(hashtext(${'share-ip:' + ipHash}))`;
-      const [recent] = await tx<{ count: number; oldest: Date | null }[]>`
+  return sql.begin(async (tx): Promise<CreateResult> => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${'share-ip:' + ipHash}))`;
+    const [recent] = await tx<{ count: number; oldest: Date | null }[]>`
       SELECT count(*)::int AS count, min(created_at) AS oldest FROM shares
       WHERE ip_hash = ${ipHash} AND created_at > now() - interval '1 hour'`;
-      if (recent!.count >= SHARE_RATE.sharesPerHour) {
-        reject({ ok: false, status: 429, retryAfter: retryAfter(recent!.oldest, 3600) });
-      }
-
-      let claimSecret: string | undefined;
-      const created = await tx`
-      INSERT INTO handles (handle, claim_hash) VALUES (${handle}, '')
-      ON CONFLICT (handle) DO NOTHING RETURNING handle`;
-      if (created.length === 1) {
-        // A new handle is counted by its first share (n = 1), which carries the IP hash.
-        const [fresh] = await tx<{ count: number; oldest: Date | null }[]>`
-        SELECT count(*)::int AS count, min(created_at) AS oldest FROM shares
-        WHERE ip_hash = ${ipHash} AND n = 1 AND created_at > now() - interval '1 day'`;
-        if (fresh!.count >= SHARE_RATE.newHandlesPerDay) {
-          reject({ ok: false, status: 429, retryAfter: retryAfter(fresh!.oldest, 86400) });
-        }
-        claimSecret = randomBytes(32).toString('base64url');
-        await tx`UPDATE handles SET claim_hash = ${sha256(claimSecret)} WHERE handle = ${handle}`;
-      } else {
-        const [row] = await tx<{ claim_hash: string }[]>`
-        SELECT claim_hash FROM handles WHERE handle = ${handle} FOR UPDATE`;
-        if (!secret || !sameHash(sha256(secret), row!.claim_hash))
-          reject({ ok: false, status: 403 });
-      }
-
-      const [inserted] = await tx<{ n: number }[]>`
-      INSERT INTO shares (handle, n, snapshot, ip_hash)
-      SELECT ${handle}, coalesce(max(n), 0) + 1, ${tx.json(share as postgres.JSONValue)}, ${ipHash}
-      FROM shares WHERE handle = ${handle}
-      RETURNING n`;
-      return claimSecret ? { ok: true, n: inserted!.n, claimSecret } : { ok: true, n: inserted!.n };
-    });
-  } catch (err) {
-    if (err instanceof Reject) return err.result;
-    throw err;
-  }
+    if (recent!.count >= SHARE_RATE.sharesPerHour) {
+      return { ok: false, status: 429, retryAfter: retryAfter(recent!.oldest, 3600) };
+    }
+    const id = newShareId();
+    const deleteSecret = randomBytes(32).toString('base64url');
+    await tx`
+      INSERT INTO shares (id, snapshot, delete_hash, ip_hash)
+      VALUES (${id}, ${tx.json(share as postgres.JSONValue)}, ${sha256(deleteSecret)}, ${ipHash})`;
+    return { ok: true, id, deleteSecret };
+  });
 }
 
 function retryAfter(oldest: Date | null, windowSec: number): number {
@@ -159,44 +95,41 @@ function retryAfter(oldest: Date | null, windowSec: number): number {
   return Math.max(1, Math.ceil((oldest.getTime() + windowSec * 1000 - Date.now()) / 1000));
 }
 
+/**
+ * Delete a share with its delete secret. The snapshot is cleared and the row kept as a
+ * tombstone, so the hourly limit still counts it and the id is never handed out again.
+ */
+export async function deleteShare(
+  sql: Sql,
+  id: string,
+  secret: string,
+): Promise<'deleted' | 'not_found' | 'forbidden'> {
+  const [row] = await orEmpty(
+    sql<{ delete_hash: string }[]>`
+      SELECT delete_hash FROM shares WHERE id = ${id} AND deleted_at IS NULL`,
+  );
+  if (!row) return 'not_found';
+  if (!sameHash(sha256(secret), row.delete_hash)) return 'forbidden';
+  const done = await sql`
+    UPDATE shares SET snapshot = NULL, deleted_at = now()
+    WHERE id = ${id} AND deleted_at IS NULL RETURNING id`;
+  return done.length === 1 ? 'deleted' : 'not_found';
+}
+
 export interface StoredShare {
   share: UsageShare;
   createdAt: Date;
 }
 
-/** A stored share, re-validated on the way out; null when absent or no longer valid. */
-export async function getShare(sql: Sql, handle: string, n: number): Promise<StoredShare | null> {
+/** A stored share, re-validated on the way out; null when absent, deleted or no longer valid. */
+export async function getShare(sql: Sql, id: string): Promise<StoredShare | null> {
   const [row] = await orEmpty(
     sql<{ snapshot: unknown; created_at: Date }[]>`
-      SELECT snapshot, created_at FROM shares WHERE handle = ${handle} AND n = ${n}`,
+      SELECT snapshot, created_at FROM shares WHERE id = ${id} AND deleted_at IS NULL`,
   );
   if (!row) return null;
   const parsed = UsageShare.safeParse(row.snapshot);
   return parsed.success ? { share: parsed.data, createdAt: row.created_at } : null;
-}
-
-export interface ShareSummary extends StoredShare {
-  n: number;
-}
-
-const LIST_MAX = 200;
-
-/** A handle's newest shares; `more` when older ones were left out. */
-export async function listShares(
-  sql: Sql,
-  handle: string,
-): Promise<{ shares: ShareSummary[]; more: boolean }> {
-  const rows = await orEmpty(
-    sql<{ n: number; snapshot: unknown; created_at: Date }[]>`
-      SELECT n, snapshot, created_at FROM shares WHERE handle = ${handle}
-      ORDER BY n DESC LIMIT ${LIST_MAX + 1}`,
-  );
-  const shares: ShareSummary[] = [];
-  for (const r of rows.slice(0, LIST_MAX)) {
-    const parsed = UsageShare.safeParse(r.snapshot);
-    if (parsed.success) shares.push({ n: r.n, share: parsed.data, createdAt: r.created_at });
-  }
-  return { shares, more: rows.length > LIST_MAX };
 }
 
 /**

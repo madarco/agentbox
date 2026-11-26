@@ -36,11 +36,12 @@ documentation. Deployed on Vercel as a single Next.js app.
 - `public/` — Next public root: `home.html` (the marketing page) + assets
   (`logo.svg`, favicons, `cover.jpg`, …) + generated `schema/` + `screenshots/`
   (docs figure images).
-- `app/u/**` + `app/api/share` + `lib/share/` — public usage shares
-  (`/u/<handle>/<n>`, `/u/<handle>`, `/u/example`, `POST /api/share`, the OG image
-  in `lib/share/og.tsx`), rendered by `@agentbox/usage-view`. Stored in Neon
+- `app/s/**` + `app/api/share` + `lib/share/` — public usage shares
+  (`/s/<id>` with a random 24-character id, `/s/example`, `POST /api/share`,
+  `DELETE /api/share/<id>` with the share's delete secret, the OG image in
+  `lib/share/og.tsx`), rendered by `@agentbox/usage-view`. Stored in Neon
   Postgres (`DATABASE_URL`, `SHARE_IP_SALT`; schema in `db/schema.mjs`, applied
-  once at setup with `pnpm db:migrate`). `proxy.ts` 404s malformed `/u/` paths
+  once at setup with `pnpm db:migrate`). `proxy.ts` 404s malformed `/s/` paths
   before ISR caches them. Tests:
   `SHARE_TEST_DATABASE_URL=postgres://… pnpm test` against a `postgres:16` container
   (skipped without it). See `docs/usage-dashboard-plan.md` Phase 5.

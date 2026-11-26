@@ -279,23 +279,27 @@ Days are local days in `--tz`, and `--until` is included; a window may be at mos
 
 ```bash
 # Publish the last 30 days on agent-box.sh, print the URL
-agentbox usage share --handle marco
+agentbox usage share --name marco
 
 # See exactly what would be sent, post nothing
 agentbox usage share --since 7d --dry-run
+
+# The shares this hub made, and deleting one
+agentbox usage share list
+agentbox usage share rm <id>
 ```
 
-`usage share` publishes a window's usage as a public page at `agent-box.sh/u/<handle>/<n>` and prints its URL. The hub builds the share and posts it; only metrics leave it, with the handle: hours, counts, dates, and agent and provider ids, never a box, project, branch, pull request or session name (see [Sharing your usage](/docs/hub#sharing-your-usage-on-agent-boxsh)). The first share of a handle claims it for this hub. In a terminal it asks before publishing; `-y` skips that.
+`usage share` publishes a window's usage as a public page at `agent-box.sh/s/<id>`, with a new random id each time, and prints its URL. The hub builds the share and posts it; only metrics leave it, with the optional name: hours, counts, dates, and agent and provider ids, never a box, project, branch, pull request or session name (see [Sharing your usage](/docs/hub#sharing-your-usage-on-agent-boxsh)). In a terminal it asks before publishing; `-y` skips that.
 
-| Flag                                           | Meaning                                                                                             |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `--handle <handle>`                            | public handle, lowercase letters, digits and `-`, up to 39; default the last one shared, else asked |
-| `--since`, `--until`, `--tz`, `--subscription` | the window, as for [`agentbox usage`](#usage); default the last 30 days                             |
-| `--dry-run`                                    | print the JSON that would be sent and post nothing                                                  |
-| `-y, --yes`                                    | don't ask before publishing                                                                         |
-| `--local`                                      | use this machine's hub                                                                              |
+| Flag                                           | Meaning                                                                                                   |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--name <text>`                                | a name to show on the page ("shared by ..."): lowercase letters, digits and `-`, up to 39. Not an account |
+| `--since`, `--until`, `--tz`, `--subscription` | the window, as for [`agentbox usage`](#usage); default the last 30 days                                   |
+| `--dry-run`                                    | print the JSON that would be sent and post nothing                                                        |
+| `-y, --yes`                                    | don't ask before publishing                                                                               |
+| `--local`                                      | use this machine's hub                                                                                    |
 
-The site refuses a handle another hub claimed, and more than 10 shares an hour from one address; both come back as a clear error.
+`usage share list` (`--json`) prints the shares this hub made, newest first. `usage share rm <id>` deletes one on the site with the delete secret the hub kept for it; the page then answers 404. The site refuses more than 10 shares an hour from one address, which comes back as a clear error.
 
 ### Usage tokens
 

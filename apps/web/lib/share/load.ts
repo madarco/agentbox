@@ -1,11 +1,10 @@
 import { cache } from 'react';
-import { shareParams } from './params';
+import { validShareId } from './params';
 import { db, getShare } from './store';
 
-/** One share by its route params, read once per request (page, metadata and image share it). */
-export const loadShare = cache(async (handle: string, n: string) => {
-  const p = shareParams(handle, n);
+/** One share by its id, read once per request (page, metadata and image share it). */
+export const loadShare = cache(async (id: string) => {
   const sql = db();
-  if (!p || !sql) return null;
-  return getShare(sql, p.handle, p.n);
+  if (!validShareId(id) || !sql) return null;
+  return getShare(sql, id);
 });

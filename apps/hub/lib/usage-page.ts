@@ -108,20 +108,20 @@ export function usageIsEmpty(stats: UsageStats): boolean {
 
 /**
  * The `POST /api/v1/usage/share` body for the window the page shows: the same
- * fields `usageStatsQuery` puts in the stats URL, plus the handle.
+ * fields `usageStatsQuery` puts in the stats URL, plus the display name if any.
  */
 export function usageShareBody(
   range: RangeId,
   today: string,
   tz: string,
   subscription: string | undefined,
-  handle: string,
+  name: string,
   preview: boolean,
 ): Record<string, string | boolean> {
   const body: Record<string, string | boolean> = Object.fromEntries(
     usageStatsQuery(range, today, tz, subscription),
   );
-  body.handle = handle;
+  if (name) body.name = name;
   if (preview) body.preview = true;
   return body;
 }

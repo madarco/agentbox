@@ -70,7 +70,7 @@ describe('toShare', () => {
     ]);
   });
 
-  it('only free strings are dates, the handle and a listed time zone', () => {
+  it('only free strings are dates, the display name and a listed time zone', () => {
     const strings: string[] = [];
     const walk = (v: unknown, key: string): void => {
       if (typeof v === 'string') strings.push(`${key}=${v}`);
@@ -100,7 +100,7 @@ describe('toShare', () => {
       const ok =
         /^\d{4}-\d{2}-\d{2}$/.test(value) ||
         enums.has(value) ||
-        s === 'handle=marco-d' ||
+        s === 'name=marco-d' ||
         (s.startsWith('tz=') && isTimeZone(value));
       expect(ok, s).toBe(true);
     }
@@ -155,7 +155,9 @@ describe('toShare', () => {
     expect(bytes).toBeLessThan(64 * 1024);
   });
 
-  it('rejects a bad handle', () => {
+  it('rejects a bad display name, and leaves it out when there is none', () => {
+    expect('name' in toShare(usageFixture())).toBe(false);
+    expect(() => toShare(usageFixture(), '')).toThrow();
     expect(() => toShare(usageFixture(), 'Marco D')).toThrow();
     expect(() => toShare(usageFixture(), 'a'.repeat(40))).toThrow();
   });
@@ -409,7 +411,7 @@ describe('parseShareBody', () => {
   const body = JSON.stringify(toShare(usageFixture(), 'me'));
 
   it('returns the parsed share', () => {
-    expect(parseShareBody(body).handle).toBe('me');
+    expect(parseShareBody(body).name).toBe('me');
   });
 
   it('rejects __proto__, constructor and prototype keys at any depth', () => {
@@ -428,7 +430,7 @@ describe('parseShareBody', () => {
 
   it('rejects malformed JSON and invalid shares', () => {
     expect(() => parseShareBody('{')).toThrow();
-    expect(() => parseShareBody('{"handle":"me"}')).toThrow();
+    expect(() => parseShareBody('{"name":"me"}')).toThrow();
   });
 });
 

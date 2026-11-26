@@ -429,14 +429,16 @@ function OgCard({ share }: { share: UsageShare }) {
   );
 }
 
-/** The link-preview card of one share. Immutable, so cached for a year. */
+/**
+ * The link-preview card of one share. A share can be deleted, and nothing purges a
+ * browser, a proxy or the CDN on delete (`revalidatePath` covers Next's own cache
+ * only, and the meta URL carries a `?hash`), so the card is cached briefly and only
+ * by the client: a deleted share's card is gone within minutes.
+ */
 export async function renderShareOg(share: UsageShare): Promise<ImageResponse> {
   const fonts = await loadOgFonts();
-  // Missing fonts render a fallback face: cache that briefly, never as the share's image.
-  const cache =
-    fonts.length === 4
-      ? 'public, max-age=31536000, s-maxage=31536000, immutable'
-      : 'public, max-age=60, s-maxage=60';
+  // Missing fonts render a fallback face: cache that even more briefly.
+  const cache = fonts.length === 4 ? 'public, max-age=300' : 'public, max-age=60';
   return new ImageResponse(<OgCard share={share} />, {
     ...OG_SIZE,
     fonts: fonts.length ? fonts : undefined,

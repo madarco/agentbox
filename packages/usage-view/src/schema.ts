@@ -21,7 +21,11 @@ export type AgentId = z.infer<typeof AgentId>;
 export type ProviderId = z.infer<typeof ProviderId>;
 export type RangeId = z.infer<typeof RangeId>;
 
-export const HANDLE_RE = /^[a-z0-9-]{1,39}$/;
+/**
+ * A share's optional display name: plain text shown as "Shared by …", never in a URL,
+ * never unique and never claimed, so it says nothing about who posted the share.
+ */
+export const SHARE_NAME_RE = /^[a-z0-9-]{1,39}$/;
 
 /** Upper bounds. Generous for one person, tight enough that a share stays small. */
 export const LIMITS = {
@@ -465,7 +469,7 @@ const coreShape = {
 
 export const UsageShare = z.strictObject({
   ...coreShape,
-  handle: z.string().regex(HANDLE_RE),
+  name: z.string().regex(SHARE_NAME_RE).optional(),
   punchcard: PunchcardShare,
   daily: DailyColumns,
   wall: WallColumns,
