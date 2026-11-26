@@ -181,7 +181,7 @@ from Phase 1 on.
 
 ### Phase 4 — where sessions live, and how they reach the usage page
 
-Proposed 2026-11-26 with the owner; decisions marked **(to confirm)**.
+Decided 2026-11-26 with the owner.
 
 **What happens today** (measured 2026-11-26):
 - Docker boxes: the relay reads their transcripts host-side from the box's
@@ -206,20 +206,23 @@ Proposed 2026-11-26 with the owner; decisions marked **(to confirm)**.
 
 **No remote hub (default install).**
 - Every box's sessions come back to the PC's hub, continuously and on close:
-  add a final flush on `stop` and `pause` (not only `destroy`), and for a
-  cloud box already paused at destroy, ship from it on the next resume or wake
-  it briefly **(to confirm: wake or accept the loss)**.
+  add a final flush on `stop` and `pause` (not only `destroy`). A cloud box
+  already paused or stopped at destroy is not woken: its last <30 s is an
+  accepted loss.
 - `history.db` stays the one durable store and the usage page reads only it.
 - New: **materialize box sessions where the agents look.** After a session
   ships, write it into the PC's native location for the box's project
   (`~/.claude/projects/<host project key>/<session>.jsonl`, codex/opencode/pi
   equivalents later), so the host agent finds past box sessions the way it
-  finds its own (`/resume`, reading old transcripts). Written from
-  `history.db` (one source), rewritten only when it changes, and re-created
-  after the agent's own cleanup removes it only if the user asks
-  (`agentbox sessions download`). **(to confirm: automatic per project, or
-  opt-in `history.materialize`)**. Redaction stays: the materialized copy is
-  the redacted one.
+  finds its own (`/resume`, reading old transcripts). **Automatic**, on by
+  default for every box session of a project with a known host checkout.
+  Written from `history.db` (one source), rewritten only when it changes, and
+  **re-created when missing**, including after the agent's own cleanup
+  deleted it: everything `history.db` holds is materialized. A re-created file
+  gets a fresh mtime, so Claude's `cleanupPeriodDays` removes it again after
+  30 days and the next pass writes it back; that churn is cheap (missing
+  files only, one pass a day plus after each ship). Redaction stays: the
+  materialized copy is the redacted one. A config key turns it off.
 - Not proposed: dropping `history.db` for the native folders. It would lose
   compression, redaction, the other agents' formats, search and the usage
   index, and Claude's 30-day cleanup would delete the history.
