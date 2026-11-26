@@ -94,7 +94,16 @@ function skillCells(r: SkillRow): string[] {
   ];
 }
 
+/** The TUI's cells: a skipped skill reads plainly "skipped". */
+function skillTuiCells(r: SkillRow): string[] {
+  const cells = skillCells(r);
+  if (r.status === 'skipped') cells[3] = 'skipped';
+  return cells;
+}
+
 function skillTones(r: SkillRow): (TableTone | undefined)[] {
+  // A skipped skill reaches no box: the whole row is dimmed.
+  if (r.status === 'skipped') return SKILL_HEADERS.map(() => 'dim');
   const flag = localFlag(r);
   const status: TableTone | undefined =
     r.status === 'same'
@@ -358,7 +367,7 @@ async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
         { value: '+discard', label: 'Discard from hub…' },
       ],
       headers: SKILL_HEADERS,
-      rows: rows.map((r) => ({ value: r.name, cells: skillCells(r), tones: skillTones(r) })),
+      rows: rows.map((r) => ({ value: r.name, cells: skillTuiCells(r), tones: skillTones(r) })),
       emptyText: 'No skills here or on the hub.',
       ...(cursorAt ? { cursorAt } : {}),
     });
@@ -410,8 +419,12 @@ async function skillMenu(client: HubApiClient, ctx: SkillsContext, r: SkillRow):
   if (SKILL_NAME_RE.test(r.name)) {
     options.push(
       r.status === 'skipped'
-        ? { value: 'unskip', label: 'Sync it again' }
-        : { value: 'skip', label: 'Skip it', hint: 'never synced; nothing is deleted' },
+        ? { value: 'unskip', label: 'Unskip', hint: 'boxes get it again' }
+        : {
+            value: 'skip',
+            label: 'Skip (boxes stop getting it)',
+            hint: 'never synced or delivered; nothing is deleted',
+          },
     );
   }
   if (r.hub) options.push({ value: 'discard', label: 'Discard from hub', hint: 'every version' });

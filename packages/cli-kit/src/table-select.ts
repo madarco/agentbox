@@ -501,11 +501,21 @@ export async function tableSelect<V extends string>(
 ): Promise<TableSelectResult<V>> {
   const p = new TableSelectPrompt(spec, io);
   const input = io.input ?? process.stdin;
+  const output = io.output ?? process.stdout;
+  // A resize reflows the old frame's lines, so clack's line diff no longer
+  // knows where they are: clear the screen and draw anew (runs before clack's
+  // own resize listener, which then redraws from an empty previous frame).
+  const onResize = (): void => {
+    output.write('\x1b[H\x1b[2J');
+    (p as unknown as { _prevFrame: string })._prevFrame = '';
+  };
   (input as unknown as KeypressEmitter).on('keypress', p.onKey);
+  output.on('resize', onResize);
   try {
     await p.prompt();
   } finally {
     (input as unknown as KeypressEmitter).off('keypress', p.onKey);
+    output.off('resize', onResize);
   }
   if (p.outcome === 'quit') return { kind: 'quit' };
   if (p.outcome !== 'submit') return { kind: 'cancel' };

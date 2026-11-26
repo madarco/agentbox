@@ -68,7 +68,7 @@ CLI:
 
 - `agentbox accounts` is **deleted** (no alias). `agentbox credentials` takes
   over:
-  - bare, on a TTY: the TUI (`@clack/prompts`, shaped like `agentbox skills`).
+  - bare, on a TTY: the TUI (a cli-kit `tableSelect` table since Phase 1b).
     Without a TTY it prints the list.
   - `credentials list [--json]`: one row per account grouped by agent: kind,
     label, identity (email, plan), status (`ok` / `expiring` / `revoked` /
@@ -115,6 +115,25 @@ Hub (`/api/v1`):
 
 Web: Settings → Subscriptions shows a `Default` badge per agent's global default
 and a "Make default" action on every other account card (the `PUT` route).
+
+## Phase 1b (done): one Name per account, the table TUI
+
+- **Name, no label.** An account has one name, its id. A new name is
+  normalized by `normalizeAccountName` (`@agentbox/core`): lowercased, runs of
+  spaces or `-` become `_` ("Work Max" -> `work_max`), anything else refused.
+  `accountIdProblem` still accepts an existing id with `-`; only new names are
+  normalized (`credentials add`, the TUI, and the hub's `POST /api/v1/accounts`,
+  which matches an existing id as is). The `label` is gone from the store type,
+  the CLI (`credentials label`, `add --label`, Relabel), the hub
+  (`PATCH /api/v1/accounts/:agent/:id`, the POST body, `AccountView.label`,
+  `Box.accountsInfo[].label`) and the web Subscriptions page. A label already in
+  `~/.agentbox/accounts.json` is ignored on read, not migrated. The list's
+  `ACCOUNT` + `LABEL` columns are one `NAME` column. The tray still reads
+  `label` (it was optional, so it just stops showing).
+- **Table TUI.** Bare `agentbox credentials` (and `agentbox skills`) is one
+  cli-kit `tableSelect` screen: action rows above a bordered table whose rows
+  are selectable; Enter on an account opens the per-account actions, and the
+  table comes back refreshed after each one.
 
 ## Phase 2: Renew in the web UI
 
