@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
+import { addDays } from '../aggregate.js';
+import { decodeDaily, decodeWall } from '../columns.js';
 import { AGENT_IDS, PROVIDER_IDS } from '../schema.js';
 import type {
   AgentId,
@@ -101,8 +103,8 @@ function toView(data: UsageStats | UsageShare): View {
       range: data.range,
       hero: data.hero,
       kpis: data.kpis,
-      daily: data.daily,
-      wall: data.wall,
+      daily: decodeDaily(data.daily),
+      wall: decodeWall(data.wall),
       streaks: data.streaks,
       punchcard: data.punchcard,
       gantt: data.gantt.map((g) => ({
@@ -685,6 +687,7 @@ function Daily({ v }: { v: View }): ReactElement {
   }, [v.daily, splitNow, metric]);
 
   const real = v.daily.filter((d) => d.date <= v.range.today);
+  const lastDay = v.range.today < v.range.until ? v.range.today : v.range.until;
   const soFar = real.reduce((a, d) => a + d[metric], 0);
   const pace = real.length ? soFar / real.length : 0;
   const remaining =
@@ -707,10 +710,14 @@ function Daily({ v }: { v: View }): ReactElement {
     };
   });
   for (let i = 1; i <= remaining; i++) {
-    const date = new Date(Date.parse(`${v.range.today}T00:00:00Z`) + i * 864e5)
-      .toISOString()
-      .slice(0, 10);
-    rows.push({ date, forecast: true, total: pace, parts: {}, prsMerged: 0, commits: 0 });
+    rows.push({
+      date: addDays(v.range.today, i),
+      forecast: true,
+      total: pace,
+      parts: {},
+      prsMerged: 0,
+      commits: 0,
+    });
   }
   const splitOptions: (readonly [Split, string])[] = [
     ['agent', 'By agent'],
@@ -720,7 +727,11 @@ function Daily({ v }: { v: View }): ReactElement {
   return (
     <>
       <SectionTitle
-        title={`Every day ${rangeNoun(v.range.id)}`}
+        title={
+          real.length < daysInclusive(v.range.since, lastDay)
+            ? `Every day, the last ${real.length} days`
+            : `Every day ${rangeNoun(v.range.id)}`
+        }
         sub={`Stacked by who did the work.${remaining ? ' Hatched bars are the forecast to the end of the window.' : ''}`}
       />
       <div className="card">
@@ -1078,7 +1089,7 @@ function Leaderboard({ v }: { v: View }): ReactElement {
   const [metric, setMetric] = useState<'lines' | 'hours' | 'tokens'>('lines');
   const val = (b: BoxRow): number =>
     metric === 'lines' ? b.additions + b.deletions : metric === 'hours' ? b.hours : b.tokens;
-  const boxes = [...(v.boxes ?? [])].sort((a, b) => val(b) - val(a));
+  const boxes = [...(v.boxes ?? [])].sort((a, b) => val(b) - val(a)).slice(0, 6);
   const max = boxes[0] ? val(boxes[0]) || 1 : 1;
   return (
     <>
@@ -1117,7 +1128,7 @@ function Leaderboard({ v }: { v: View }): ReactElement {
               </thead>
               <tbody>
                 {boxes.map((b, i) => (
-                  <tr key={b.name}>
+                  <tr key={`${i}-${b.name}`}>
                     <td className="rank" style={{ paddingRight: 0 }}>
                       {i + 1}
                     </td>
@@ -1173,7 +1184,7 @@ function Leaderboard({ v }: { v: View }): ReactElement {
               </thead>
               <tbody>
                 {(v.projects ?? []).map((p, i) => (
-                  <tr key={p.name}>
+                  <tr key={`${i}-${p.name}`}>
                     <td>
                       <div className="who">
                         <span

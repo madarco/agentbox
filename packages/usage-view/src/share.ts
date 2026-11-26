@@ -1,4 +1,5 @@
-import { HANDLE_RE, UsageShare } from './schema.js';
+import { encodeDaily, encodeWall } from './columns.js';
+import { HANDLE_RE, LIMITS, UsageShare } from './schema.js';
 import type { UsageStats } from './schema.js';
 
 /**
@@ -13,24 +14,14 @@ export function toShare(stats: UsageStats, handle: string): UsageShare {
     handle,
     range: stats.range,
     hero: stats.hero,
-    kpis: stats.kpis,
-    daily: stats.daily.map((d) => ({
-      date: d.date,
-      tokens: d.tokens,
-      agentHours: d.agentHours,
-      wallHours: d.wallHours,
-      boxHours: d.boxHours,
-      peak: d.peak,
-      avgAtOnce: d.avgAtOnce,
-      commits: d.commits,
-      prsMerged: d.prsMerged,
-      additions: d.additions,
-      deletions: d.deletions,
-      files: d.files,
-      byAgent: d.byAgent,
-      byProvider: d.byProvider,
-    })),
-    wall: stats.wall,
+    // Boxes running and PRs waiting at publish time are live state, not a result.
+    kpis: {
+      ...stats.kpis,
+      peak: { ...stats.kpis.peak, runningNow: 0 },
+      prs: { ...stats.kpis.prs, waitingReview: 0 },
+    },
+    daily: encodeDaily(stats.daily.slice(-LIMITS.shareDailyDays), stats.range.since),
+    wall: encodeWall(stats.wall, stats.range.since),
     streaks: stats.streaks,
     gantt: stats.gantt.map((g) => ({
       date: g.date,

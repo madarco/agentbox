@@ -26,6 +26,8 @@ export const HANDLE_RE = /^[a-z0-9-]{1,39}$/;
 /** Upper bounds. Generous for one person, tight enough that a share stays small. */
 export const LIMITS = {
   dailyDays: 400,
+  /** A share keeps the last 92 days of its daily chart; the wall still covers the year. */
+  shareDailyDays: 92,
   wallDays: 371,
   ganttDays: 7,
   lanes: 64,
@@ -86,12 +88,10 @@ const dailyCore = {
   byProvider: z.partialRecord(ProviderId, SplitValues),
 };
 
-export const DailyShare = z.strictObject(dailyCore);
 export const DailyStats = z.strictObject({
   ...dailyCore,
   byProject: z.record(name, SplitValues).optional(),
 });
-export type DailyShare = z.infer<typeof DailyShare>;
 export type DailyStats = z.infer<typeof DailyStats>;
 
 export const WallDay = z.strictObject({
@@ -105,6 +105,74 @@ export const WallDay = z.strictObject({
   tokens: tokens,
 });
 export type WallDay = z.infer<typeof WallDay>;
+
+// A share stores the daily rows and the wall column by column (one array per metric,
+// day i is `start` + i): a year of rows is several times the 64 KB a share may weigh.
+const lengthsMatch = (arrays: readonly (readonly unknown[])[]): boolean =>
+  arrays.every((a) => a.length === arrays[0]!.length);
+const splitArrays = (
+  s: Record<string, { tokens: number[]; agentHours: number[]; commits: number[] } | undefined>,
+) => Object.values(s).flatMap((v) => (v ? [v.tokens, v.agentHours, v.commits] : []));
+
+const dcol = <T extends z.ZodType>(t: T) => z.array(t).max(LIMITS.shareDailyDays);
+export const SplitColumns = z.strictObject({
+  tokens: dcol(tokens),
+  agentHours: dcol(hours),
+  commits: dcol(count),
+});
+export const DailyColumns = z
+  .strictObject({
+    start: day,
+    tokens: dcol(tokens),
+    agentHours: dcol(hours),
+    wallHours: dcol(hours),
+    boxHours: dcol(hours),
+    peak: dcol(count),
+    avgAtOnce: dcol(ratio),
+    commits: dcol(count),
+    prsMerged: dcol(count),
+    additions: dcol(lines),
+    deletions: dcol(lines),
+    files: dcol(count),
+    byAgent: z.partialRecord(AgentId, SplitColumns),
+    byProvider: z.partialRecord(ProviderId, SplitColumns),
+  })
+  .refine(
+    (d) =>
+      lengthsMatch([
+        d.tokens,
+        d.agentHours,
+        d.wallHours,
+        d.boxHours,
+        d.peak,
+        d.avgAtOnce,
+        d.commits,
+        d.prsMerged,
+        d.additions,
+        d.deletions,
+        d.files,
+        ...splitArrays(d.byAgent),
+        ...splitArrays(d.byProvider),
+      ]),
+    { message: 'daily columns differ in length' },
+  );
+export type DailyColumns = z.infer<typeof DailyColumns>;
+
+const wcol = <T extends z.ZodType>(t: T) => z.array(t).max(LIMITS.wallDays);
+export const WallColumns = z
+  .strictObject({
+    start: day,
+    all: wcol(count),
+    peak: wcol(count),
+    commits: wcol(count),
+    prs: wcol(count),
+    agentHours: wcol(hours),
+    tokens: wcol(tokens),
+  })
+  .refine((w) => lengthsMatch([w.all, w.peak, w.commits, w.prs, w.agentHours, w.tokens]), {
+    message: 'wall columns differ in length',
+  });
+export type WallColumns = z.infer<typeof WallColumns>;
 
 export const Hero = z.strictObject({
   agentHours: hours,
@@ -272,7 +340,6 @@ const coreShape = {
   range: UsageRange,
   hero: Hero,
   kpis: Kpis,
-  wall: z.array(WallDay).max(LIMITS.wallDays),
   streaks: Streaks,
   punchcard: Punchcard,
 };
@@ -280,7 +347,8 @@ const coreShape = {
 export const UsageShare = z.strictObject({
   ...coreShape,
   handle: z.string().regex(HANDLE_RE),
-  daily: z.array(DailyShare).max(LIMITS.dailyDays),
+  daily: DailyColumns,
+  wall: WallColumns,
   gantt: z.array(GanttDayShare).max(LIMITS.ganttDays),
   sessions: z.array(SessionShare).max(LIMITS.sessions),
   providers: z.array(ProviderShare).max(PROVIDER_IDS.length),
@@ -291,6 +359,7 @@ export const UsageStats = z.strictObject({
   ...coreShape,
   generatedAt: z.iso.datetime({ offset: true }),
   daily: z.array(DailyStats).max(LIMITS.dailyDays),
+  wall: z.array(WallDay).max(LIMITS.wallDays),
   gantt: z.array(GanttDayStats).max(LIMITS.ganttDays),
   sessions: z.array(SessionStats).max(LIMITS.sessions),
   providers: z.array(ProviderStats).max(PROVIDER_IDS.length),

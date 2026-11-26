@@ -1,23 +1,30 @@
+import { daysBetween } from '../aggregate.js';
 import type { AgentId, ProviderId, RangeId } from '../schema.js';
 
-export const fmt = (n: number): string =>
-  n >= 1e9
-    ? (n / 1e9).toFixed(2) + 'B'
-    : n >= 1e6
-      ? (n / 1e6).toFixed(1) + 'M'
-      : n >= 1e4
-        ? Math.round(n / 1e3) + 'k'
-        : n >= 1e3
-          ? (n / 1e3).toFixed(1) + 'k'
-          : String(Math.round(n));
+/**
+ * Compact number: 812, 1.2k, 38k, 126.4M, 1.25B. Each tier checks its own rounded
+ * text, so 999,999 prints as 1.0M rather than 1000k.
+ */
+export function fmt(n: number): string {
+  if (Math.round(n) < 1000) return String(Math.round(n));
+  if (n < 1e4) {
+    const k = (n / 1e3).toFixed(1);
+    if (k !== '10.0') return k + 'k';
+  }
+  if (Math.round(n / 1e3) < 1000) return Math.round(n / 1e3) + 'k';
+  const m = (n / 1e6).toFixed(1);
+  if (Number(m) < 1000) return m + 'M';
+  return (n / 1e9).toFixed(2) + 'B';
+}
 
 /** Like `fmt`, but keeps one decimal up to 100k: 38.2k, 11.4k, 214k. */
-export const fmtLines = (n: number): string =>
-  n >= 1e5 && n < 1e6
-    ? Math.round(n / 1e3) + 'k'
-    : n >= 1e4 && n < 1e5
-      ? (n / 1e3).toFixed(1) + 'k'
-      : fmt(n);
+export function fmtLines(n: number): string {
+  if (n >= 1e4 && n < 1e5) {
+    const k = (n / 1e3).toFixed(1);
+    if (k !== '100.0') return k + 'k';
+  }
+  return fmt(n);
+}
 
 export const nf = (n: number): string => Math.round(n).toLocaleString('en-US');
 
@@ -77,8 +84,7 @@ export const dm = (day: string): string => `${dayNum(day)} ${MONTHS[monthIdx(day
 export const fullDay = (day: string): string =>
   `${DOW[dow(day)]}, ${dayNum(day)} ${MONTHS[monthIdx(day)]} ${parse(day).getUTCFullYear()}`;
 
-export const daysInclusive = (from: string, to: string): number =>
-  Math.round((parse(to).getTime() - parse(from).getTime()) / 864e5) + 1;
+export const daysInclusive = (from: string, to: string): number => daysBetween(from, to).length;
 
 /** "09:30" from hours since midnight; past 24 wraps. */
 export const hm = (h: number): string => {

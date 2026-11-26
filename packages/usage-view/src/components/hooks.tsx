@@ -110,16 +110,25 @@ export function CountUp({
   format: (n: number) => string;
 }): ReactElement {
   const [shown, setShown] = useState(value);
-  useEffect(() => {
+  // Where the next count starts: 0 on first mount, then the last value shown.
+  const from = useRef(0);
+  // A layout effect, so a client render drops to the start before the first paint
+  // instead of flashing the final number.
+  useIsoLayoutEffect(() => {
     if (prefersReducedMotion()) {
       setShown(value);
+      from.current = value;
       return;
     }
+    const start = from.current;
+    setShown(start);
     let raf = 0;
     const t0 = performance.now();
     const step = (t: number): void => {
       const p = Math.min(1, (t - t0) / 1100);
-      setShown(value * (1 - Math.pow(1 - p, 3)));
+      const cur = start + (value - start) * (1 - Math.pow(1 - p, 3));
+      from.current = cur;
+      setShown(cur);
       if (p < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);

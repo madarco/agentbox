@@ -313,16 +313,26 @@ export function concurrencyByDay(
   lanes: readonly Lane[],
   tzOffset: number,
 ): Map<string, DayConcurrency> {
+  // One profile over every span, its segments split at local midnights: the same numbers as
+  // clipping per day, in one pass.
+  const acc = new Map<string, { agentMs: number; wallMs: number; peak: number }>();
+  for (const seg of overlapProfile(lanes.flatMap((l) => l.spans))) {
+    for (const [d, parts] of spansByDay([seg], tzOffset)) {
+      const a = acc.get(d) ?? { agentMs: 0, wallMs: 0, peak: 0 };
+      const ms = totalMs(parts);
+      a.agentMs += ms * seg.n;
+      a.wallMs += ms;
+      a.peak = Math.max(a.peak, seg.n);
+      acc.set(d, a);
+    }
+  }
   const out = new Map<string, DayConcurrency>();
-  const days = new Set<string>();
-  for (const l of lanes) for (const k of spansByDay(l.spans, tzOffset).keys()) days.add(k);
-  for (const d of days) {
-    const c = concurrency(lanes, dayStart(d, tzOffset), dayStart(addDays(d, 1), tzOffset));
+  for (const [d, a] of acc) {
     out.set(d, {
-      agentHours: c.agentMs / HOUR,
-      wallHours: c.wallMs / HOUR,
-      peak: c.peak,
-      avgAtOnce: c.wallMs > 0 ? c.agentMs / c.wallMs : 0,
+      agentHours: a.agentMs / HOUR,
+      wallHours: a.wallMs / HOUR,
+      peak: a.peak,
+      avgAtOnce: a.wallMs > 0 ? a.agentMs / a.wallMs : 0,
     });
   }
   return out;
@@ -538,6 +548,12 @@ export interface BuildInput {
   intervals?: IntervalOptions;
 }
 
+/** Fit a display name into the schema's 1..LIMITS.name characters. */
+const clip = (s: string | null | undefined, fallback = 'unknown'): string =>
+  (s && s.trim() ? s : fallback).slice(0, LIMITS.name);
+const clipOrNull = (s: string | null | undefined): string | null =>
+  s && s.trim() ? clip(s) : null;
+
 const round = (n: number, d = 2): number => Math.round(n * 10 ** d) / 10 ** d;
 
 function addSplit<K extends string>(
@@ -627,7 +643,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       const agentHours = totalMs(spans) / HOUR;
       addSplit(row.byAgent, l.agent, { agentHours });
       addSplit(row.byProvider, l.provider, { agentHours });
-      if (project) addSplit(row.byProject!, project, { agentHours });
+      if (project) addSplit(row.byProject!, clip(project), { agentHours });
     }
   }
   for (const t of rangeTokens) {
@@ -637,7 +653,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     addSplit(row.byAgent, t.agent, { tokens: t.tokens });
     addSplit(row.byProvider, t.provider, { tokens: t.tokens });
     const project = t.project ?? (t.boxId ? boxInfo.get(t.boxId)?.project : null);
-    if (project) addSplit(row.byProject!, project, { tokens: t.tokens });
+    if (project) addSplit(row.byProject!, clip(project), { tokens: t.tokens });
   }
   for (const e of rangeEvents) {
     if (e.type !== 'git.push') continue;
@@ -647,7 +663,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     addSplit(row.byAgent, info?.agent ?? 'other', { commits: e.commits });
     addSplit(row.byProvider, info?.provider ?? 'other', { commits: e.commits });
     const project = e.project ?? info?.project;
-    if (project) addSplit(row.byProject!, project, { commits: e.commits });
+    if (project) addSplit(row.byProject!, clip(project), { commits: e.commits });
   }
   for (const row of daily) {
     row.tokens = Math.round(row.tokens);
@@ -715,8 +731,8 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       peak: s.peak,
       prsMerged: s.prsMerged,
       minutes: Math.round(s.minutes),
-      title: title.slice(0, LIMITS.name),
-      project: mostCommon(projects) ?? null,
+      title: clip(title),
+      project: clipOrNull(mostCommon(projects)),
     };
   });
 
@@ -728,8 +744,11 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       .sort((a, b) => b.peak - a.peak || b.agentHours - a.agentHours)
       .slice(0, 3)
       .map((d) => d.date);
-  const mergedAt = new Map<string, PrMergedEvent>();
-  for (const e of input.events) if (e.type === 'pr.merged' && e.boxId) mergedAt.set(e.boxId, e);
+  const mergesByBox = new Map<string, PrMergedEvent[]>();
+  for (const e of input.events) {
+    if (e.type !== 'pr.merged' || !e.boxId) continue;
+    mergesByBox.set(e.boxId, [...(mergesByBox.get(e.boxId) ?? []), e]);
+  }
   const gantt: GanttDayStats[] = ganttDates.slice(0, LIMITS.ganttDays).map((date) => {
     const d0 = dayStart(date, tz);
     const laneRows: LaneStats[] = [];
@@ -738,9 +757,11 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       const spans = clipSpans(l.spans, d0, d0 + 2 * DAY).filter((s) => s.start < d0 + DAY);
       if (spans.length === 0) continue;
       const info = l.boxId ? boxInfo.get(l.boxId) : undefined;
-      const pr = l.boxId ? mergedAt.get(l.boxId) : undefined;
       const lastEnd = spans[spans.length - 1]!.end;
-      const prOnDay = pr && pr.at >= d0 && pr.at <= lastEnd + HOUR;
+      // The last PR the box merged while this lane ran (or within the hour after it).
+      const pr = (l.boxId ? (mergesByBox.get(l.boxId) ?? []) : [])
+        .filter((e) => e.at >= d0 && e.at <= lastEnd + HOUR)
+        .sort((a, b) => b.at - a.at)[0];
       laneRows.push({
         agent: l.agent,
         provider: l.provider,
@@ -750,8 +771,8 @@ export function buildUsageStats(input: BuildInput): UsageStats {
             (s) =>
               [round((s.start - d0) / HOUR, 3), round((s.end - d0) / HOUR, 3)] as [number, number],
           ),
-        box: (info?.name ?? l.key).slice(0, LIMITS.name),
-        pr: prOnDay && pr.repo && pr.number ? `${pr.repo}#${pr.number}` : null,
+        box: clip(info?.name ?? l.key),
+        pr: pr ? clip(pr.repo && pr.number ? `${pr.repo}#${pr.number}` : 'a pull request') : null,
       });
     }
     laneRows.sort((a, b) => a.intervals[0]![0] - b.intervals[0]![0]);
@@ -791,7 +812,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       id,
       hours: round(p.hours, 1),
       boxes: p.boxes.size,
-      note: input.providerNotes?.[id] ?? null,
+      note: clipOrNull(input.providerNotes?.[id]),
     }))
     .sort((a, b) => b.hours - a.hours);
 
@@ -804,10 +825,10 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     .map((e) => {
       const info = e.boxId ? boxInfo.get(e.boxId) : undefined;
       return {
-        title: e.title!.slice(0, LIMITS.name),
-        repo: e.repo!,
+        title: clip(e.title),
+        repo: clip(e.repo),
         number: e.number!,
-        box: info?.name ?? 'unknown',
+        box: clip(info?.name),
         agent: info?.agent ?? 'other',
         provider: info?.provider ?? 'other',
         additions: e.additions ?? 0,
@@ -823,8 +844,8 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     let r = boxAgg.get(boxId);
     if (!r) {
       r = {
-        name: info.name.slice(0, LIMITS.name),
-        project: info.project ?? null,
+        name: clip(info.name),
+        project: clipOrNull(info.project),
         agent: info.agent,
         provider: info.provider,
         hours: 0,
@@ -850,7 +871,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
   const projAgg = new Map<string, ProjectRow>();
   const projRow = (name: string): ProjectRow => {
     const p = projAgg.get(name) ?? {
-      name: name.slice(0, LIMITS.name),
+      name: clip(name),
       prs: 0,
       commits: 0,
       additions: 0,
@@ -876,10 +897,20 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       if (project) projRow(project).prs += 1;
     }
   }
-  const boxes = [...boxAgg.values()]
+  const allBoxes = [...boxAgg.values()]
     .map((b) => ({ ...b, hours: round(b.hours, 1), tokens: Math.round(b.tokens) }))
-    .sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions) || b.hours - a.hours)
-    .slice(0, 6);
+    .sort((a, b) => b.additions + b.deletions - (a.additions + a.deletions) || b.hours - a.hours);
+  // Keep the top boxes by each leaderboard metric, so every tab ranks the right ones.
+  const keep = new Set(
+    (['lines', 'hours', 'tokens'] as const).flatMap((m) =>
+      [...allBoxes]
+        .sort((a, b) =>
+          m === 'lines' ? b.additions + b.deletions - (a.additions + a.deletions) : b[m] - a[m],
+        )
+        .slice(0, 6),
+    ),
+  );
+  const boxes = allBoxes.filter((b) => keep.has(b)).slice(0, LIMITS.boxes);
   const projects = [...projAgg.values()]
     .sort((a, b) => b.prs - a.prs || b.commits - a.commits)
     .slice(0, 6);

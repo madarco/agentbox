@@ -106,7 +106,20 @@ from Phase 1 on.
 
 - `packages/usage-view`: the zod `UsageStats` / `UsageShare` schemas and the
   pure functions that build them (intervals, union, overlap, sessions, streaks),
-  unit-tested on fixtures.
+  unit-tested on fixtures. **Done** (feat/usage-view): `buildUsageStats(input)`
+  takes plain arrays (`SessionTurns`, `git.push` / `pr.merged` events, token rows,
+  box info, box runs) that the hub adapts its rows to; `toShare(stats, handle)`
+  builds the public subset. Decisions made there:
+  - `tzOffset` is local time minus UTC in minutes (CET is `60`, the opposite sign
+    of `Date#getTimezoneOffset`). A fixed offset is wrong across DST; see the backlog.
+  - A box's sessions are unioned into one lane, so two sessions in one box count
+    once in "boxes at once" and in agent-hours. Host sessions are one lane each.
+  - Lines and files come from `git.push` only; a merged PR's lines were already
+    pushed. `pr.merged` counts PRs and gives "biggest PR".
+  - The share drops the live counters (`runningNow`, `waitingReview`) as well as
+    every name. It stores `daily` and `wall` column by column (one array per
+    metric) and keeps the last 92 days of the daily chart, so a full year with every
+    agent and provider is about 47 KB.
 - `apps/hub/lib/backend/usage-stats.ts` reads `history.db` + the ledger and
   returns `UsageStats` for a window, a tz offset and an optional subscription.
 - `GET /api/v1/usage/stats?since=&until=&tzOffset=&subscription=`; the existing
@@ -117,7 +130,11 @@ from Phase 1 on.
 ### Phase 3 — the hub Usage page
 
 - Port the mockup to `packages/usage-view` React components (hand-drawn SVG, no
-  chart library), styled with the hub's tokens, light and dark.
+  chart library), light and dark. **Done** (feat/usage-view) as `UsageView` from
+  `@agentbox/usage-view/react`, styled by its own scoped `usage.css` (the mockup's
+  `.usage` variables, not the hub's tokens, so the hub and agent-box.sh render it
+  the same; dark under any `.dark` ancestor). A fixture of the mockup's numbers and
+  a vite preview (`pnpm --filter @agentbox/usage-view preview`) ship with it.
 - `apps/hub/app/(dashboard)/usage/page.tsx` becomes a pure REST client of
   `/api/v1/usage/stats` (plus `/api/v1/usage` for the token breakdowns). Range
   control, subscription filter, Export CSV.

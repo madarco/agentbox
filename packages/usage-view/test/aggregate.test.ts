@@ -346,3 +346,84 @@ describe('buildUsageStats', () => {
     expect(stats.punchcard[4]![10]).toBeGreaterThan(2);
   });
 });
+
+describe('buildUsageStats edge cases', () => {
+  const range = {
+    id: '7d' as const,
+    since: '2026-11-17',
+    until: '2026-11-19',
+    today: '2026-11-19',
+    tzOffset: 0,
+  };
+
+  it("marks each Gantt day with the PR merged that day, not the box's last one", () => {
+    const stats = buildUsageStats({
+      range,
+      now: at(20),
+      sessions: [session('s', 'b', [...every(-48 + 9, -48 + 10), ...every(9, 10)])],
+      events: [
+        { type: 'pr.merged', at: at(-48 + 10), boxId: 'b', repo: 'r', number: 1 },
+        { type: 'pr.merged', at: at(10), boxId: 'b', repo: 'r', number: 2 },
+      ],
+      boxes: [{ boxId: 'b', name: 'b', agent: 'claude', provider: 'docker' }],
+      ganttDays: ['2026-11-17', '2026-11-19'],
+    });
+    expect(stats.gantt.map((g) => g.lanes[0]!.pr)).toEqual(['r#1', 'r#2']);
+  });
+
+  it('keeps the top boxes by every leaderboard metric', () => {
+    const boxes = Array.from({ length: 8 }, (_, i) => ({
+      boxId: `b${i}`,
+      name: `box-${i}`,
+      agent: 'claude' as const,
+      provider: 'docker' as const,
+    }));
+    const stats = buildUsageStats({
+      range,
+      now: at(20),
+      // b7 runs longest but pushes nothing
+      sessions: boxes.map((b, i) => session(b.boxId, b.boxId, every(9, i === 7 ? 15 : 9.5))),
+      events: boxes.slice(0, 7).map((b, i) => ({
+        type: 'git.push' as const,
+        at: at(9.2),
+        boxId: b.boxId,
+        commits: 1,
+        files: 1,
+        additions: 100 * (i + 1),
+        deletions: 0,
+      })),
+      boxes,
+    });
+    expect(stats.boxes.map((b) => b.name)).toContain('box-7');
+    expect(stats.boxes.map((b) => b.name)).toContain('box-6');
+  });
+
+  it('fits long or empty names into the schema', () => {
+    const long = 'x'.repeat(500);
+    const stats = buildUsageStats({
+      range,
+      now: at(20),
+      sessions: [session('s', 'b', every(9, 10))],
+      events: [{ type: 'pr.merged', at: at(10), boxId: 'b', repo: long, number: 3, title: long }],
+      boxes: [{ boxId: 'b', name: '', project: long, agent: 'claude', provider: 'docker' }],
+      providerNotes: { docker: long },
+    });
+    expect(() => UsageStats.parse(stats)).not.toThrow();
+    expect(stats.feed[0]!.box).toBe('unknown');
+  });
+
+  it('per-day concurrency matches clipping each day', () => {
+    const lanes = lanesFromSessions([
+      session('a', 'a', every(20, 30)),
+      session('b', 'b', every(23, 25)),
+      session('c', 'c', every(-3, 1)),
+    ]);
+    const byDay = concurrencyByDay(lanes, 60);
+    for (const [d, v] of byDay) {
+      const c = concurrency(lanes, dayStart(d, 60), dayStart(d, 60) + 24 * HOUR);
+      expect(v.peak).toBe(c.peak);
+      expect(v.agentHours).toBeCloseTo(c.agentMs / HOUR, 6);
+      expect(v.wallHours).toBeCloseTo(c.wallMs / HOUR, 6);
+    }
+  });
+});

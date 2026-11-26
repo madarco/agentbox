@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { UsageShare, UsageStats, toShare, usageFixture } from '../src/index.js';
+import {
+  AGENT_IDS,
+  PROVIDER_IDS,
+  UsageShare,
+  UsageStats,
+  addDays,
+  decodeDaily,
+  decodeWall,
+  toShare,
+  usageFixture,
+} from '../src/index.js';
 
 describe('fixture', () => {
   it('is a valid UsageStats', () => {
@@ -85,8 +95,37 @@ describe('toShare', () => {
     }
   });
 
-  it('stays well under 64 KB for a year', () => {
-    expect(new TextEncoder().encode(JSON.stringify(share)).length).toBeLessThan(64 * 1024);
+  it('drops the live counters', () => {
+    expect(share.kpis.peak.runningNow).toBe(0);
+    expect(share.kpis.prs.waitingReview).toBe(0);
+  });
+
+  it('round-trips the daily rows and the wall', () => {
+    const f = usageFixture();
+    const rows = decodeDaily(share.daily);
+    expect(rows).toHaveLength(f.daily.length);
+    expect(rows[18]!.byAgent).toEqual(f.daily[18]!.byAgent);
+    expect(rows[18]!.commits).toBe(f.daily[18]!.commits);
+    expect(decodeWall(share.wall)).toEqual(f.wall);
+  });
+
+  it('stays under 64 KB for a full year with every agent and provider', () => {
+    const f = usageFixture();
+    const split = { tokens: 123_456_789, agentHours: 12.34, commits: 123 };
+    const day = f.daily[18]!;
+    f.range = { ...f.range, id: 'year', since: '2025-11-27' };
+    f.daily = Array.from({ length: 365 }, (_, i) => ({
+      ...day,
+      date: addDays('2025-11-27', i),
+      tokens: 987_654_321,
+      byAgent: Object.fromEntries(AGENT_IDS.map((a) => [a, split])),
+      byProvider: Object.fromEntries(PROVIDER_IDS.map((p) => [p, split])),
+    }));
+    f.wall = f.wall.map((w) => ({ ...w, tokens: 987_654_321, agentHours: 123.45 }));
+    const big = toShare(f, 'a'.repeat(39));
+    expect(decodeDaily(big.daily)).toHaveLength(92);
+    const bytes = new TextEncoder().encode(JSON.stringify(big)).length;
+    expect(bytes).toBeLessThan(64 * 1024);
   });
 
   it('rejects a bad handle', () => {
@@ -104,17 +143,34 @@ describe('UsageShare is strict', () => {
     expect(() =>
       UsageShare.parse({ ...good, gantt: [{ ...good.gantt[0]!, lanes: [lane] }] }),
     ).toThrow();
+    expect(() => UsageShare.parse({ ...good, daily: { ...good.daily, byProject: {} } })).toThrow();
+  });
+
+  it('rejects columns of different lengths', () => {
     expect(() =>
-      UsageShare.parse({ ...good, daily: [{ ...good.daily[0]!, byProject: {} }] }),
+      UsageShare.parse({ ...good, daily: { ...good.daily, commits: good.daily.commits.slice(1) } }),
     ).toThrow();
+    const claude = good.daily.byAgent.claude!;
+    expect(() =>
+      UsageShare.parse({
+        ...good,
+        daily: { ...good.daily, byAgent: { claude: { ...claude, tokens: [1] } } },
+      }),
+    ).toThrow();
+    expect(() => UsageShare.parse({ ...good, wall: { ...good.wall, peak: [] } })).toThrow();
   });
 
   it('rejects an unknown key in a per-agent or per-provider split', () => {
-    const split = { tokens: 1, agentHours: 1, commits: 1 };
-    const day = { ...good.daily[0]!, byAgent: { ...good.daily[0]!.byAgent, 'my-project': split } };
-    expect(() => UsageShare.parse({ ...good, daily: [day] })).toThrow();
-    const day2 = { ...good.daily[0]!, byProvider: { 'acme-cloud': split } };
-    expect(() => UsageShare.parse({ ...good, daily: [day2] })).toThrow();
+    const n = good.daily.tokens.length;
+    const cols = {
+      tokens: Array(n).fill(1),
+      agentHours: Array(n).fill(1),
+      commits: Array(n).fill(1),
+    };
+    const d1 = { ...good.daily, byAgent: { ...good.daily.byAgent, 'my-project': cols } };
+    expect(() => UsageShare.parse({ ...good, daily: d1 })).toThrow();
+    const d2 = { ...good.daily, byProvider: { 'acme-cloud': cols } };
+    expect(() => UsageShare.parse({ ...good, daily: d2 })).toThrow();
   });
 
   it('rejects a free string where an enum goes', () => {
