@@ -1944,6 +1944,108 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/usage/stats': {
+        get: {
+          tags: ['History'],
+          summary: 'Usage dashboard stats',
+          description:
+            "The usage dashboard's `UsageStats` for a window (the shape `@agentbox/usage-view` defines). Agent-hours, wall hours, speed-up and peak at once come from the recorded sessions' active intervals: turns at most 10 minutes apart make one interval, which ends one minute after its last turn; a session with no box counts as provider `host`. Commits, lines, files, merged PRs and box-hours come from the activity ledger; a host-only landing counts only when no published push of the same box follows it. Intervals outlive transcript retention. Cached for a minute per window, zone and subscription.",
+          parameters: [
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'First local day (`YYYY-MM-DD`), or a number of days ending at `until` (`7d`, `365d`). Default `30d`.',
+            },
+            {
+              name: 'until',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Last local day, inclusive (`YYYY-MM-DD`). Default today.',
+            },
+            {
+              name: 'tz',
+              in: 'query',
+              schema: { type: 'string' },
+              description:
+                'IANA time zone the days are bucketed in (`Europe/Rome`), correct across DST. Default `UTC`.',
+            },
+            {
+              name: 'range',
+              in: 'query',
+              schema: { type: 'string', enum: ['7d', 'month', '90d', 'year'] },
+              description: "The page's range label. Default from the window's length.",
+            },
+            {
+              name: 'subscription',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Only sessions and boxes on this subscription, `<agent>/<account>`.',
+            },
+          ],
+          responses: {
+            '200': {
+              description:
+                'The UsageStats: `range`, `hero`, `kpis`, `daily`, `wall`, `streaks`, `gantt`, `sessions`, `punchcard`, `providers`, `feed`, `boxes`, `projects`, `subscriptions`.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      version: { type: 'integer' },
+                      generatedAt: { type: 'string' },
+                      range: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', enum: ['7d', 'month', '90d', 'year'] },
+                          since: { type: 'string' },
+                          until: { type: 'string' },
+                          today: { type: 'string' },
+                          tz: { type: 'string' },
+                        },
+                      },
+                      hero: {
+                        type: 'object',
+                        properties: {
+                          agentHours: { type: 'number' },
+                          wallHours: { type: 'number' },
+                          speedup: { type: 'number' },
+                          peakAtOnce: { type: 'integer' },
+                          peakDate: { type: 'string', nullable: true },
+                          prsMerged: { type: 'integer' },
+                          commits: { type: 'integer' },
+                          additions: { type: 'integer' },
+                          deletions: { type: 'integer' },
+                          files: { type: 'integer' },
+                          boxes: { type: 'integer' },
+                        },
+                      },
+                      kpis: { type: 'object' },
+                      daily: { type: 'array', items: { type: 'object' } },
+                      wall: { type: 'array', items: { type: 'object' } },
+                      streaks: { type: 'object' },
+                      gantt: { type: 'array', items: { type: 'object' } },
+                      sessions: { type: 'array', items: { type: 'object' } },
+                      punchcard: {
+                        type: 'array',
+                        items: { type: 'array', items: { type: 'number' } },
+                      },
+                      providers: { type: 'array', items: { type: 'object' } },
+                      feed: { type: 'array', items: { type: 'object' } },
+                      boxes: { type: 'array', items: { type: 'object' } },
+                      projects: { type: 'array', items: { type: 'object' } },
+                      subscriptions: { type: 'array', items: { type: 'object' } },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/usage': {
         get: {
           tags: ['History'],

@@ -245,18 +245,49 @@ All but `host` take `--local`.
 ## Usage
 
 ```bash
-# Tokens per agent over the last 7 days (the default window)
+# The last 30 days: agent-hours, agents at once, what shipped
 agentbox usage
 
-# Per day and agent this month, in this machine's time zone
-agentbox usage --by day,agent --since 30d
+# The last year, in another time zone; one subscription only
+agentbox usage --since 365d --tz America/New_York
+agentbox usage --subscription claude/work
 
-# One project's usage by box, or one box by model, over all time
-agentbox usage --by box --project acme/api --since all
-agentbox usage --by model --box auth-work --since all --json
+# The whole UsageStats (daily rows, Gantt lanes, sessions, streaks) as JSON
+agentbox usage --since 7d --json
 ```
 
-`usage` sums the tokens the [recorded sessions](#session-history) spent, one count per model response: input, output, cache read and cache write, plus how many responses and sessions they came from. It covers every box, provider and PC that ships to the hub, and keeps counting sessions whose transcripts retention already deleted. `--by` groups by up to two of `day`, `agent`, `account` (the subscription, `<agent>/<account>`: the box's [named LLM account](/docs/run-an-agent#several-accounts-per-agent), `default` for the agent's default login; a box that borrows another agent's login with `--model-auth` counts under the lender's; `--account` takes the same form), `box`, `project`, `host` (the PC), `model` and `session`; the last row is the total. `--since`/`--until` take an ISO-8601 time or a duration back from now (`24h`, `7d`, `2w`; `--since all` for no bound) and select on each response's own time. Cost is not computed. The hub web UI's **Usage** page shows the same numbers, and the data comes from [`GET /api/v1/usage`](/docs/api#history).
+`usage` prints what your agents did in a window, from the hub's [recorded sessions](#session-history) and its activity ledger, for every box, provider and PC that ships to the hub:
+
+- **Agent-hours**: the time agents were active, from their transcripts. A session's turns no more than 10 minutes apart make one active interval, which ends a minute after its last turn; two sessions in one box at once count once. Sessions on a PC (no box) count as provider `host`.
+- **Wall hours**: the time at least one agent was active. **Speed-up** is agent-hours over wall hours; **peak at once** is the most boxes active at the same moment, with its day.
+- **PRs merged**, **commits** and **lines** added and removed, from the boxes' pushes and pull requests. A `push --host-only` landing counts only when no published push of the same box follows it.
+- **Box-hours**: how long boxes ran, from their lifecycle (created or started to stopped, paused or destroyed).
+
+Days are local days in `--tz`; a window may be at most a year. Agent-hours outlive transcript retention: a session's intervals are kept when [`history.retentionDays`](/docs/configuration#history--session-history) deletes its turns. The numbers come from [`GET /api/v1/usage/stats`](/docs/api#history).
+
+| Flag                             | Meaning                                                                                        |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `--since <when>`                 | first day, `YYYY-MM-DD`, or a number of days ending at `--until` (`7d`, `365d`); default `30d` |
+| `--until <day>`                  | last day, `YYYY-MM-DD`; default today                                                          |
+| `--tz <zone>`                    | IANA time zone the days are in, e.g. `Europe/Rome`; default this machine's                     |
+| `--subscription <agent/account>` | only sessions and boxes on this subscription                                                   |
+| `--local`, `--json`              | read this machine's hub; print the whole `UsageStats` JSON                                     |
+
+### Usage tokens
+
+```bash
+# Tokens per agent over the last 7 days (the default window)
+agentbox usage tokens
+
+# Per day and agent this month, in this machine's time zone
+agentbox usage tokens --by day,agent --since 30d
+
+# One project's usage by box, or one box by model, over all time
+agentbox usage tokens --by box --project acme/api --since all
+agentbox usage tokens --by model --box auth-work --since all --json
+```
+
+`usage tokens` sums the tokens the [recorded sessions](#session-history) spent, one count per model response: input, output, cache read and cache write, plus how many responses and sessions they came from. It covers every box, provider and PC that ships to the hub, and keeps counting sessions whose transcripts retention already deleted. `--by` groups by up to two of `day`, `agent`, `account` (the subscription, `<agent>/<account>`: the box's [named LLM account](/docs/run-an-agent#several-accounts-per-agent), `default` for the agent's default login; a box that borrows another agent's login with `--model-auth` counts under the lender's; `--account` takes the same form), `box`, `project`, `host` (the PC), `model` and `session`; the last row is the total. `--since`/`--until` take an ISO-8601 time or a duration back from now (`24h`, `7d`, `2w`; `--since all` for no bound) and select on each response's own time. Cost is not computed. The hub web UI's **Usage** page shows the same numbers, and the data comes from [`GET /api/v1/usage`](/docs/api#history).
 
 | Flag                                                              | Meaning                                                                                                                                                          |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |

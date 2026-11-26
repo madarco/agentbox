@@ -3,6 +3,34 @@
 Open items found while building the phases of
 [`usage-dashboard-plan.md`](./usage-dashboard-plan.md). Newest phase first.
 
+## From Phase 2 (the stats API)
+
+- **The feed of merged PRs is empty.** `FeedItem` needs a title, and the ledger
+  holds no free text, so `buildUsageStats` drops every merge from the feed
+  (`feedTotal` still counts them). The hub page (Phase 3) could fetch the titles
+  of the last few merges from GitHub, or the workspace timeline where one exists.
+- **Session titles are not passed.** Manager sessions are named "N boxes, <date>";
+  the page phase should pass `sessionTitles` from `GET /api/v1/managers`.
+- **No postgres history store yet.** The span and token queries are plain SQL
+  window functions and `CASE`, so a postgres `HistoryRepo` can run them as they
+  are, but history is sqlite-only today (a control box keeps `history.db` too).
+- **Box-hours start at the read.** A box whose first ledger row in the read (a year
+  plus one window back) stops it is counted as running from the read's start; one
+  with no row in the read at all is not counted. `runningNow` is the boxes whose
+  newest lifecycle row is a running one, so a resume the ledger missed (see the
+  Phase 1 item) reads as not running.
+- **A share's zone must be one agent-box.sh also lists.** `isTimeZone` checks the
+  runtime's own `Intl` list, which differs a little between ICU versions (an alias
+  such as `Asia/Kolkata` is `Asia/Calcutta` on Node 24). The hub canonicalizes the
+  zone it is given; the share endpoint (Phase 5) should map a zone it does not list
+  to `UTC` rather than refuse the share.
+- **A purged session that is shipped again** recomputes its spans from the first
+  remaining turn on; a purged span that overlaps the new turns loses its purged
+  part. Rare (a transcript has to come back after 90 days).
+- **Spans are cut at one idle gap.** `history_spans` is computed at the 10-minute
+  default; `usageSpans` refuses another gap. A configurable gap would need a
+  recompute of every session.
+
 ## From Phase 1 (activity ledger)
 
 - **Resumes that bypass the hub routes are not recorded.** The ledger has
@@ -10,25 +38,25 @@ Open items found while building the phases of
   keepalive's idle pause. A box woken any other way gets no `box.resumed`: an
   e2b sandbox auto-resuming on inbound traffic, or a paused docker box unpaused
   by something other than `POST /boxes/{id}/resume`. A `start` on a paused box
-  resumes it but is recorded as `box.started`. Box-hours in Phase 2 should treat
-  `box.started` after `box.paused` as a resume, and read any running/paused
-  state change from the box status loop as a fallback.
+  resumes it but is recorded as `box.started`. Box-hours (Phase 2) count any running row after a stop, pause or failure
+  as the start of a run, so `box.started` after `box.paused` works; a state change
+  from the box status loop is still not read.
 - **A push's stat comes from the ref update git prints.** Every push path
   (hub route, relay docker, relay cloud, scratch repo) measures from the old
   tip in git's own `a1..b2  src -> dst` line, so nothing is read before a push.
   If that line is missing (a quiet push, or output from a git that words it
   differently), the row is written without counts rather than counting the
   whole branch. A push git reports as up to date is still a row, with no
-  counts; Phase 2 should count commits, not rows.
+  counts; Phase 2 counts commits, not rows.
 - **An old in-box ctl does not mark a hub-route push it reports itself.** A
   direct or leased box running an image from before this change sends
   `git.pushed` without `hostInitiated`. Both rows are then keyed
   `push:<box>:<tip>`, so one survives, but it may be the box's (actor `box`)
   instead of the hub's.
 - **`hostOnly` pushes are counted rows.** A `push --host-only` landing is
-  recorded with `hostOnly: true`. If the same commits are pushed later, Phase 2
-  must not count them twice. Count published pushes for "shipped", and
-  host-only landings only when nothing published follows.
+  recorded with `hostOnly: true`. Phase 2 counts a host-only landing only when no
+  published push of the same box follows it, so the same commits never count
+  twice.
 - **Backfilled rows carry less.** A workspace timeline has no provider or
   account, and its repo is the workspace project's (or the PR's). Destroyed
   boxes' rows can't be enriched afterwards.
@@ -47,12 +75,6 @@ Open items found while building the phases of
 
 ## From the `packages/usage-view` work (Phase 2 package half, Phase 3 components)
 
-- **Days across a DST change.** `UsageRange.tzOffset` is one fixed offset (local minus
-  UTC, minutes), so a 90-day or year window that crosses a DST change buckets the days on
-  the other side of it an hour off (a 00:30 turn lands on the previous day, the punchcard
-  shifts one hour). The fix is an IANA zone (`tz: 'Europe/Rome'`) and `Intl`-based day
-  keys in `dayKey` / `dayStart` / `spansByDay` / the punchcard. Kept the offset for now
-  because the plan's API is `?tzOffset=`; decide before the hub endpoint ships.
 - **Box-hours vs agent-hours in the daily chart.** The mockup's "Box-hours" metric on the
   daily chart, the punchcard and the providers card is drawn from agent-hours (active
   intervals), because those are what split by agent and provider. Box-hours (ledger
