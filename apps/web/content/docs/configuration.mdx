@@ -396,9 +396,10 @@ Whether a granted tool prompts on every call is controlled by `box.autoApproveSa
 
 The hub's [skills library](/docs/skills#your-skills-library-on-the-hub).
 
-| Key                    | Type | Default            | Meaning                                                                                                                 |
-| ---------------------- | ---- | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `skills.maxSkillBytes` | int  | `52428800` (50 MB) | largest skill (total bytes of its files) `agentbox skills` and the automatic first seed upload; a bigger one is skipped |
+| Key                    | Type | Default            | Meaning                                                                                                                            |
+| ---------------------- | ---- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `skills.maxSkillBytes` | int  | `52428800` (50 MB) | largest skill (total bytes of its files) `agentbox skills` and the automatic first seed upload; a bigger one is skipped            |
+| `skills.notice`        | bool | `true`             | after `create` (without `--attach`), a queued `-i` run and `queue list`, print one line naming the skills not in sync with the hub |
 
 The hub's own limit is its custody blob cap (`AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, 100 MiB).
 
