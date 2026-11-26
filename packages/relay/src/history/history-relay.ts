@@ -36,7 +36,7 @@ import { collectHostSecrets } from './host-secrets.js';
  */
 
 /** Box paths are fixed: the box user is always `vscode`. */
-const BOX_PROJECT_KEY = '-workspace';
+export const BOX_PROJECT_KEY = '-workspace';
 const SECRETS_TTL_MS = 5 * 60_000;
 const CAPTURE_TTL_MS = 60_000;
 

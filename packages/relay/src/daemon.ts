@@ -137,11 +137,13 @@ export async function startRelayDaemon(opts: RelayDaemonOptions): Promise<RelayD
         'cp between a hub box and this machine will not reach it (run `agentbox hub login`)',
     );
   }
+  const historyRelay = handle.history;
   const autopause = startAutopauseLoop({
     registry: handle.registry,
     statusStore: handle.statusStore,
     events: handle.events,
     log,
+    ...(historyRelay ? { beforePause: (boxId: string) => historyRelay.flushBox(boxId) } : {}),
   });
   const cloudKeepalive = startCloudKeepaliveLoop({
     registry: handle.registry,

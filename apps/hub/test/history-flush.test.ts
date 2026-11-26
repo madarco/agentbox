@@ -103,4 +103,42 @@ describe('flushBoxHistory', () => {
     await flushBoxHistory(box('docker'), deps('running'));
     expect(execs).toEqual([['agentbox-ctl', 'history', 'flush']]);
   });
+
+  it('a stop or pause flush never settles the docker reads, and refreshes the usage after', async () => {
+    for (const reason of ['stop', 'pause'] as const) {
+      let settled = false;
+      let after = 0;
+      const order: string[] = [];
+      await flushBoxHistory(box('docker'), {
+        relayHistory: {
+          flushBox: async () => void order.push('relay read'),
+          settleBox: async () => void (settled = true),
+        },
+        exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+        probeState: async () => 'running',
+        log: () => {},
+        reason,
+        afterFlush: async () => void after++,
+      });
+      expect(order).toEqual(['relay read']);
+      expect(settled).toBe(false);
+      expect(after).toBe(1);
+    }
+  });
+
+  it('a stop on a dead cloud box returns at its bound, saying it stops anyway', async () => {
+    const lines: string[] = [];
+    let after = 0;
+    await flushBoxHistory(box('hetzner'), {
+      relayHistory: { flushBox: async () => null, settleBox: async () => undefined },
+      exec: () => new Promise(() => {}), // the box never answers
+      probeState: async () => 'running',
+      log: (l) => lines.push(l),
+      reason: 'stop',
+      timeoutMs: 20,
+      afterFlush: async () => void after++,
+    });
+    expect(lines.some((l) => l.includes('timed out; stopping anyway'))).toBe(true);
+    expect(after).toBe(1);
+  });
 });

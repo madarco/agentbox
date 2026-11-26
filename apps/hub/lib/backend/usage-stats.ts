@@ -454,7 +454,14 @@ export async function computeUsageStats(
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 32;
-const cache = new Map<string, { at: number; value: Promise<UsageStats> }>();
+type StatsCache = Map<string, { at: number; value: Promise<UsageStats> }>;
+// On globalThis: the route reads it from the Next bundle, the hub's lifecycle
+// code (server.ts) clears it after a box's final flush, and the two load this
+// module separately.
+const cacheKey = Symbol.for('agentbox.hub.usageStatsCache');
+const cache: StatsCache =
+  ((globalThis as Record<symbol, unknown>)[cacheKey] as StatsCache | undefined) ?? new Map();
+(globalThis as Record<symbol, unknown>)[cacheKey] = cache;
 
 /** `computeUsageStats`, shared for a minute per (window, zone, subscription). */
 export function usageStats(deps: UsageStatsDeps, q: UsageStatsQuery): Promise<UsageStats> {
@@ -475,7 +482,7 @@ export function usageStats(deps: UsageStatsDeps, q: UsageStatsQuery): Promise<Us
   return value;
 }
 
-/** For tests. */
+/** After new turns land (a box's final flush), and for tests. */
 export function clearUsageStatsCache(): void {
   cache.clear();
 }

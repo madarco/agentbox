@@ -363,6 +363,12 @@ export interface UserConfig {
      * over the global value.
      */
     hostSessions?: boolean;
+    /**
+     * Write box claude sessions from the hub into this PC's
+     * `~/.claude/projects/<project>/` (default true), so `claude --resume`
+     * finds them. Global, or per project.
+     */
+    materialize?: boolean;
   };
   update?: {
     /**
@@ -572,6 +578,7 @@ export interface EffectiveConfig {
     capture: boolean;
     retentionDays: number;
     hostSessions: boolean;
+    materialize: boolean;
   };
   update: {
     check: boolean;
@@ -788,6 +795,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     capture: true,
     retentionDays: 90,
     hostSessions: false,
+    materialize: true,
   },
   update: {
     check: true,
@@ -1539,6 +1547,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       "Ship the agent sessions run directly on this PC (not in a box) to the hub's session history (default false). Set globally, it turns the relay's host-session watcher on for every project agentbox knows on this PC; set in a project's config, true allows and false denies that project whatever the global value. Only registered project folders are read. Sessions go to the configured hub (relay.controlPlaneUrl, with this PC's device token) or the local one. `agentbox sessions host` toggles it and shows the watcher's status.",
+  },
+  {
+    key: 'history.materialize',
+    type: 'bool',
+    description:
+      "Write the claude sessions of this project's boxes from the hub's session history into this PC's `~/.claude/projects/<project folder key>/` (default true), so `claude --resume` in the project lists them next to your own. The copy is the redacted one the hub stores. It is rewritten when the session changes and written again when it is missing, including after claude's own `cleanupPeriodDays` removed it. A file claude wrote on this PC is never overwritten. Needs the hub to know the project's folder on this machine (a box created from it, a registered project, or the checkouts registry). Set false globally or in a project's config to stop it; files already written stay.",
   },
   {
     key: 'update.check',

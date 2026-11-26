@@ -483,7 +483,8 @@ const SPAN_BATCH = 50;
 
 export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   const { repo, archive } = deps;
-  let spansRunning = false;
+  let spansRun: Promise<number> | null = null;
+  let spansAgain = false;
   const now = deps.now ?? Date.now;
   const log = deps.log ?? (() => {});
   // One writer: frames for one file must apply in order, and sqlite is
@@ -918,22 +919,34 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return reparsing;
     },
 
-    async refreshUsageSpans() {
-      if (spansRunning) return 0;
-      spansRunning = true;
-      let done = 0;
-      try {
-        // Small batches with a turn of the event loop between them: the hub's relay
-        // and web server share this process, and sqlite blocks while it works.
-        for (;;) {
-          const n = await repo.refreshSpans(SPAN_BATCH);
-          done += n;
-          if (n < SPAN_BATCH) return done;
-          await new Promise((r) => setTimeout(r, 0));
-        }
-      } finally {
-        spansRunning = false;
+    refreshUsageSpans() {
+      // A caller arriving mid-run (a box's final flush) may hold turns the run
+      // already went past: it waits for one more round, which picks them up.
+      if (spansRun) {
+        spansAgain = true;
+        return spansRun;
       }
+      const run = (async () => {
+        let done = 0;
+        try {
+          do {
+            spansAgain = false;
+            // Small batches with a turn of the event loop between them: the hub's relay
+            // and web server share this process, and sqlite blocks while it works.
+            for (;;) {
+              const n = await repo.refreshSpans(SPAN_BATCH);
+              done += n;
+              if (n < SPAN_BATCH) break;
+              await new Promise((r) => setTimeout(r, 0));
+            }
+          } while (spansAgain);
+          return done;
+        } finally {
+          spansRun = null;
+        }
+      })();
+      spansRun = run;
+      return run;
     },
 
     onSessionUpdated(fn) {

@@ -111,6 +111,14 @@ export interface AutopauseLoopDeps {
   inspectStatus?: (containerName: string) => Promise<ContainerState>;
   /** Injectable for tests; defaults to `docker pause`. */
   pause?: (containerName: string) => Promise<void>;
+  /**
+   * Ship the box's last history before it is frozen (usage dashboard Phase 4a):
+   * the relay reads a paused docker box only at its destroy. Bounded here by
+   * `BEFORE_PAUSE_TIMEOUT_MS`; a failure never blocks the pause.
+   */
+  beforePause?: (boxId: string) => Promise<unknown>;
+  /** Tests: the `beforePause` bound. */
+  beforePauseTimeoutMs?: number;
   intervalMs?: number;
 }
 
@@ -120,6 +128,28 @@ export interface AutopauseLoopHandle {
 }
 
 const DEFAULT_INTERVAL_MS = 60_000;
+export const BEFORE_PAUSE_TIMEOUT_MS = 30_000;
+
+async function boundedBeforePause(
+  fn: (boxId: string) => Promise<unknown>,
+  boxId: string,
+  log: (line: string) => void,
+  timeoutMs: number,
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  try {
+    const r = await Promise.race([fn(boxId).then(() => 'done' as const), timeout]);
+    if (r === 'timeout') log(`autopause: history flush of ${boxId} timed out; pausing anyway`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`autopause: history flush of ${boxId} failed (${msg}); pausing anyway`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle {
   const loadConfig = deps.loadConfig ?? loadAutopauseConfig;
@@ -172,6 +202,14 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
         const e = byId.get(boxId);
         if (!e) continue;
         try {
+          if (deps.beforePause) {
+            await boundedBeforePause(
+              deps.beforePause,
+              boxId,
+              log,
+              deps.beforePauseTimeoutMs ?? BEFORE_PAUSE_TIMEOUT_MS,
+            );
+          }
           await pause(e.containerName);
           void recordActivity({
             type: 'box.paused',

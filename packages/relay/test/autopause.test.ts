@@ -157,6 +157,44 @@ describe('startAutopauseLoop', () => {
     expect((evs[0]!.payload as { action: string }).action).toBe('paused');
   });
 
+  it('flushes the box history before the pause, and a hung flush does not block it', async () => {
+    const order: string[] = [];
+    for (const hang of [false, true]) {
+      const registry = new BoxRegistry();
+      registry.register({
+        boxId: 'b1',
+        token: 't',
+        name: 'b1',
+        registeredAt: new Date().toISOString(),
+        containerName: 'agentbox-b1',
+        createdAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+      });
+      const gotPause = deferred<void>();
+      const loop = startAutopauseLoop({
+        registry,
+        statusStore: statusFor('idle', new Date(Date.now() - 30 * 60_000).toISOString()),
+        events: new EventBuffer(),
+        log: () => {},
+        intervalMs: 5,
+        loadConfig: async () => ({ enabled: true, maxRunningBoxes: 0, idleMinutes: 5 }),
+        inspectStatus: async (): Promise<ContainerState> => 'running',
+        beforePause: (id) => {
+          order.push(`flush ${id}`);
+          return hang ? new Promise(() => {}) : Promise.resolve();
+        },
+        beforePauseTimeoutMs: 10,
+        pause: async (name) => {
+          order.push(`pause ${name}`);
+          gotPause.resolve();
+        },
+      });
+      await gotPause.promise;
+      await loop.stop();
+    }
+    expect(order.slice(0, 2)).toEqual(['flush b1', 'pause agentbox-b1']);
+    expect(order.filter((l) => l.startsWith('pause')).length).toBeGreaterThanOrEqual(2);
+  });
+
   it('does not pause when another agent (codex) is working even if claude is idle', async () => {
     const registry = new BoxRegistry();
     registry.register({

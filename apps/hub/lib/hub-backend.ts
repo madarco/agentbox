@@ -53,7 +53,8 @@ import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
 import { installActivityBoxContext, withBoxActivity } from './backend/activity';
 import { createWorkspaceBackend } from './backend/workspaces';
-import { flushBoxHistory } from './backend/history-flush';
+import { flushBoxHistory, type HistoryFlushReason } from './backend/history-flush';
+import { clearUsageStatsCache } from './backend/usage-stats';
 import { createCheckoutBackend } from './backend/checkouts';
 import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
@@ -1568,6 +1569,19 @@ async function findOrHydrateBox(id: string, hydrate?: HydrateFn): Promise<BoxRec
   return hydrate ? await hydrate(id) : null;
 }
 
+/**
+ * After a box's final flush: fold its last turns into the usage intervals now
+ * rather than at the next minute sweep, and drop the stats cache so the next
+ * read of `/api/v1/usage/stats` sees them.
+ */
+async function refreshUsageAfterFlush(): Promise<void> {
+  try {
+    await globalThis.__AGENTBOX_HUB_HISTORY?.refreshUsageSpans();
+  } finally {
+    clearUsageStatsCache();
+  }
+}
+
 const SWITCHING_REFUSAL = 'the box is switching accounts; try again when the switch is done';
 
 async function runLifecycle(
@@ -2167,6 +2181,21 @@ async function probeOpenTargets(): Promise<OpenTargetsReport | null> {
 }
 
 export function createHubBackend(handle: RelayServerHandle): HubBackend {
+  // Ship a box's last turns before it stops, pauses or goes away (usage
+  // dashboard Phase 4a), then bring the usage stats up to date with them.
+  const flushHistoryBefore = (
+    box: BoxRecord,
+    provider: Provider,
+    reason: HistoryFlushReason,
+  ): Promise<void> =>
+    flushBoxHistory(box, {
+      ...(handle.history ? { relayHistory: handle.history } : {}),
+      exec: (b, argv, o) => provider.exec(b, argv, o),
+      probeState: (b) => provider.probeState(b),
+      log: (line) => console.warn(`[hub] ${line}`),
+      reason,
+      afterFlush: refreshUsageAfterFlush,
+    });
   // Reverse-adoption: drive a box the control box knows only from its Store
   // registration (PC-created / independent) by reconstructing its local record on
   // demand. Threaded into every provider-driven path below.
@@ -2569,7 +2598,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         },
         hydrate,
       ),
-    pause: (id) => runLifecycle(id, (box, provider) => provider.pause(box), hydrate),
+    pause: (id) =>
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          await flushHistoryBefore(box, provider, 'pause');
+          await provider.pause(box);
+        },
+        hydrate,
+      ),
     resume: (id) =>
       runLifecycle(
         id,
@@ -2580,7 +2617,15 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         },
         hydrate,
       ),
-    stop: (id) => runLifecycle(id, (box, provider) => provider.stop(box), hydrate),
+    stop: (id) =>
+      runLifecycle(
+        id,
+        async (box, provider) => {
+          await flushHistoryBefore(box, provider, 'stop');
+          await provider.stop(box);
+        },
+        hydrate,
+      ),
     screen: (id) =>
       runLifecycle(
         id,
@@ -2638,12 +2683,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       }
       try {
         const provider = await providerForBox(box);
-        await flushBoxHistory(box, {
-          ...(handle.history ? { relayHistory: handle.history } : {}),
-          exec: (b, argv, o) => provider.exec(b, argv, o),
-          probeState: (b) => provider.probeState(b),
-          log: (line) => console.warn(`[hub] ${line}`),
-        });
+        await flushHistoryBefore(box, provider, 'destroy');
         await provider.destroy(box, { keepSnapshot: opts?.keepSnapshot });
         // Drop the destroyed box's `~/.agentbox/ssh/config` block (regenerate from state).
         await syncAgentboxSshConfig().catch(() => {});
