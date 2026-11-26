@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  CONTRIBUTION_LIMITS,
   addDays,
   dayKey,
   dayStart,
@@ -220,8 +221,11 @@ const PUSH_TIMEOUT_MS = 30_000;
 export interface ContributionPusher {
   /** The periodic push: the last weeks, only when they changed. */
   tick(): Promise<SyncResult>;
-  /** Push the whole year now, changed or not. */
-  syncNow(): Promise<SyncResult>;
+  /**
+   * Push now. By default like a tick (the recent weeks, or the year on a first
+   * push), skipped when unchanged; `full` sends the whole year whatever changed.
+   */
+  syncNow(opts?: { full?: boolean }): Promise<SyncResult>;
 }
 
 export function createContributionPusher(deps: ContributionPusherDeps): ContributionPusher {
@@ -231,6 +235,8 @@ export function createContributionPusher(deps: ContributionPusherDeps): Contribu
   // Per target: the hash of the last body it accepted, and whether it has had a full year.
   const lastHash = new Map<string, string>();
   const hadFull = new Set<string>();
+  // The zone of the last accepted push: a change makes the hub drop the stored year.
+  const lastTz = new Map<string, string>();
   let running: Promise<SyncResult> | null = null;
 
   async function push(full: boolean): Promise<SyncResult> {
@@ -239,12 +245,26 @@ export function createContributionPusher(deps: ContributionPusherDeps): Contribu
     if (!target) return { status: 'no-remote' };
     const machineId = deps.machineId();
     if (!machineId) return { status: 'no-machine-id' };
-    // The first push to a hub sends the year; later ones the recent weeks.
-    const days = full || !hadFull.has(target.url) ? FULL_DAYS : PERIODIC_DAYS;
+    // The first push to a hub sends the year, and so does one in a new zone (the
+    // hub replaces everything a machine sent when its zone changes); later ones the
+    // recent weeks.
+    const zone = tz();
+    const days =
+      full || !hadFull.has(target.url) || lastTz.get(target.url) !== zone
+        ? FULL_DAYS
+        : PERIODIC_DAYS;
     let body: string;
     try {
-      const c = await deps.build({ machineId, days, tz: tz(), now: now() });
+      const c = await deps.build({ machineId, days, tz: zone, now: now() });
       body = JSON.stringify(c);
+      const bytes = Buffer.byteLength(body, 'utf8');
+      if (bytes > CONTRIBUTION_LIMITS.bytes) {
+        return {
+          status: 'failed',
+          target: target.url,
+          error: `contribution is ${String(bytes)} bytes, over the ${String(CONTRIBUTION_LIMITS.bytes)} limit`,
+        };
+      }
       const hash = createHash('sha256').update(body).digest('hex');
       if (!full && days === PERIODIC_DAYS && lastHash.get(target.url) === hash) {
         return { status: 'unchanged', target: target.url };
@@ -264,13 +284,14 @@ export function createContributionPusher(deps: ContributionPusherDeps): Contribu
         };
       }
       lastHash.set(target.url, hash);
+      lastTz.set(target.url, zone);
       if (days === FULL_DAYS) hadFull.add(target.url);
       return {
         status: 'pushed',
         target: target.url,
         days,
         intervals: c.intervals.length,
-        bytes: body.length,
+        bytes,
       };
     } catch (e) {
       return {
@@ -299,5 +320,5 @@ export function createContributionPusher(deps: ContributionPusherDeps): Contribu
     return run;
   }
 
-  return { tick: () => serialize(false), syncNow: () => serialize(true) };
+  return { tick: () => serialize(false), syncNow: (o) => serialize(o?.full === true) };
 }

@@ -123,13 +123,14 @@ export const usageCommand = new Command('usage')
       json?: boolean;
     }) => {
       // With a remote hub configured, this PC's local boxes and sessions reach it as
-      // a usage contribution (metrics only): push it first so the numbers are current.
+      // a usage contribution (metrics only): push the recent weeks first (skipped
+      // when unchanged) so the numbers are current.
       // No-op without a remote hub; never auto-starts the local one.
       if (!opts.local) {
-        const r = await withHubClientQuiet({ preferLocal: true }, (c) =>
-          c.syncUsageContribution(),
-        );
-        if (!r.ok && !/no hub is configured or running/.test(r.error)) {
+        const r = await withHubClientQuiet({ preferLocal: true }, (c) => c.syncUsageContribution());
+        // Only a refused or failed push is worth a word: a stopped local hub, an older
+        // one without the route, or no remote hub at all just means nothing to send.
+        if (!r.ok && r.error.includes('usage contribution not pushed')) {
           log.warn(`This PC's usage was not sent to the remote hub: ${r.error}`);
         }
       }

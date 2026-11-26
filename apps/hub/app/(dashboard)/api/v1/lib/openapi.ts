@@ -1985,7 +1985,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['History'],
           summary: "Push this PC's usage contribution now",
           description:
-            "On a PC's hub: send this PC's contribution (the last year) to its configured control box now. `agentbox usage` calls it before reading a remote hub. `status`: `pushed` (with `target`, `days`, `intervals`, `bytes`), `unchanged`, `disabled` (`history.contributeUsage` is false), `no-remote` or `no-machine-id`.",
+            "On a PC's hub: send this PC's contribution to its configured control box now: the last 35 days (the year on a first push, or after a time-zone change), skipped when unchanged; `?full=1` sends the year whatever changed. A device token may only send its own machine id. `agentbox usage` calls it before reading a remote hub. `status`: `pushed` (with `target`, `days`, `intervals`, `bytes`), `unchanged`, `disabled` (`history.contributeUsage` is false), `no-remote` or `no-machine-id`.",
           responses: {
             '200': {
               description: 'What happened.',

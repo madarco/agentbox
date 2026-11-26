@@ -93,6 +93,7 @@ describe('createContributionPusher', () => {
     const posts: { url: string; auth: string; body: UsageContribution }[] = [];
     const builds: number[] = [];
     let intervals = 0;
+    let zone = 'UTC';
     const pusher = createContributionPusher({
       enabled: async () => o.enabled ?? true,
       target: async () => (o.target === false ? null : { url: 'https://cb.example', apiKey: 'k' }),
@@ -119,9 +120,15 @@ describe('createContributionPusher', () => {
         return new Response('{}', { status: o.status ?? 200 });
       }) as typeof fetch,
       now: () => NOW,
-      tz: () => 'UTC',
+      tz: () => zone,
     });
-    return { pusher, posts, builds, setIntervals: (n: number) => (intervals = n) };
+    return {
+      pusher,
+      posts,
+      builds,
+      setIntervals: (n: number) => (intervals = n),
+      setZone: (z: string) => (zone = z),
+    };
   }
 
   it('sends the year first, then the recent weeks only when they changed', async () => {
@@ -134,16 +141,26 @@ describe('createContributionPusher', () => {
     expect(h.builds).toEqual([FULL_DAYS, PERIODIC_DAYS, PERIODIC_DAYS, PERIODIC_DAYS]);
     expect(h.posts[0]!.url).toBe('https://cb.example/api/v1/usage/contributions');
     expect(h.posts[0]!.auth).toBe('Bearer k');
-    // On demand: the year, changed or not.
-    expect((await h.pusher.syncNow()).status).toBe('pushed');
+    // On demand: like a tick, or the year with `full`.
+    expect((await h.pusher.syncNow()).status).toBe('unchanged');
+    expect((await h.pusher.syncNow({ full: true })).status).toBe('pushed');
     expect(h.builds.at(-1)).toBe(FULL_DAYS);
+  });
+
+  it('sends the year again after a zone change', async () => {
+    const h = harness();
+    await h.pusher.tick();
+    await h.pusher.tick();
+    h.setZone('Europe/Rome');
+    await h.pusher.tick();
+    expect(h.builds).toEqual([FULL_DAYS, PERIODIC_DAYS, FULL_DAYS]);
   });
 
   it('does nothing when turned off or with no remote hub, and reports a refused push', async () => {
     expect((await harness({ enabled: false }).pusher.tick()).status).toBe('disabled');
     expect((await harness({ target: false }).pusher.syncNow()).status).toBe('no-remote');
     const refused = harness({ status: 413 });
-    const r = await refused.pusher.syncNow();
+    const r = await refused.pusher.syncNow({ full: true });
     expect(r).toMatchObject({ status: 'failed', error: expect.stringContaining('413') });
     // A failed push is retried on the next tick (it was never recorded as sent).
     expect((await refused.pusher.tick()).status).toBe('failed');

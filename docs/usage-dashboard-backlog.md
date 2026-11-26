@@ -9,9 +9,13 @@ Open items found while building the phases of
   parallel PR. Once it is merged, add a button on the local hub's page that calls
   `POST /api/v1/usage/contributions/sync` and shows its `status`, shown only when a
   remote hub is configured (`no-remote` hides it).
-- **A contribution is not tied to its sender.** Any `/api/v1` credential may post
-  under any machine id. A device token could pin the id to its device (the
-  multi-PC Stage 2 item about devices claiming each other's ids applies here too).
+- **The shared API key may post under any machine id.** A device token can only
+  send its own id (the route checks it), but a PC on the shared `hub setup` key is
+  trusted for any id, and 64 made-up ids would fill the store.
+- **A box run that started before the periodic window keeps its stored end.** The
+  PC's 35-day read cannot see the start row of an older run, so the stored run is
+  kept as it was at the last full push (box-hours undercount until the next year
+  push, at hub start or `?full=1`).
 - **No subscription view of PC rows.** A contribution carries no account (an
   account name is free text), so `?subscription=` shows the control box's rows
   only. Sending a hash of the account would allow it.

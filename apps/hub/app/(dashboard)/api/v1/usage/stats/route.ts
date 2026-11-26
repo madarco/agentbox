@@ -20,7 +20,7 @@ export async function GET(req: Request): Promise<Response> {
   const history = globalThis.__AGENTBOX_HUB_HISTORY;
   const ledger = globalThis.__AGENTBOX_HUB_ACTIVITY;
   const contributions = globalThis.__AGENTBOX_HUB_USAGE_CONTRIBUTIONS;
-  if (!history && !ledger && !contributions) {
+  if (!history && !ledger) {
     return fail(
       'backend_unavailable',
       'neither session history nor the activity ledger is enabled',

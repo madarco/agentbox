@@ -32,6 +32,8 @@ export const CONTRIBUTION_LIMITS = {
   intervals: 50_000,
   tokens: 50_000,
   shipped: 50_000,
+  /** Merged PRs one contribution may carry in all (each is one event on the reader). */
+  prsMerged: 20_000,
   boxes: 10_000,
   boxRuns: 50_000,
 } as const;
@@ -50,6 +52,8 @@ const Day = z
 /** Epoch ms between 2020 and 2100. */
 const Ms = z.number().int().min(1_577_836_800_000).max(4_102_444_800_000);
 const Count = z.number().int().min(0).max(1e12);
+/** Events of one box on one day: each merged PR becomes one event on the reader. */
+const DayCount = z.number().int().min(0).max(1_000);
 const Zone = z.string().max(64).refine(isTimeZone, 'not a time zone this runtime lists');
 
 /** One active interval of an agent. A host session (no box) names its session id. */
@@ -85,12 +89,12 @@ export const ContribShipped = z
   .object({
     day: Day,
     boxId: Id.nullable(),
-    pushes: Count,
+    pushes: DayCount,
     commits: Count,
     files: Count,
     additions: Count,
     deletions: Count,
-    prsMerged: Count,
+    prsMerged: DayCount,
   })
   .strict();
 
@@ -125,6 +129,10 @@ export const UsageContribution = z
   })
   .strict()
   .refine((c) => c.window.since <= c.window.until, 'window.since must not be after window.until')
+  .refine(
+    (c) => c.shipped.reduce((n, s) => n + s.prsMerged, 0) <= CONTRIBUTION_LIMITS.prsMerged,
+    `at most ${String(CONTRIBUTION_LIMITS.prsMerged)} merged PRs in all`,
+  )
   .refine(
     (c) =>
       (Date.parse(`${c.window.until}T00:00:00Z`) - Date.parse(`${c.window.since}T00:00:00Z`)) /
@@ -261,24 +269,46 @@ export function toContribution(
       ...(idOk(b.managerId) ? { managerId: b.managerId } : {}),
     }));
 
+  // Fit the receiver's schema: a PC over a bound sends its newest rows rather than
+  // a body every push would get refused.
+  let prs = 0;
+  const shipped = [...shippedMap.values()]
+    .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0))
+    .map((r) => {
+      const prsMerged = Math.min(r.prsMerged, 1_000, CONTRIBUTION_LIMITS.prsMerged - prs);
+      prs += prsMerged;
+      return { ...r, pushes: Math.min(r.pushes, 1_000), prsMerged };
+    })
+    .slice(0, CONTRIBUTION_LIMITS.shipped);
+  const newest = <T>(rows: T[], start: (r: T) => number | string, max: number): T[] =>
+    rows.length <= max
+      ? rows
+      : [...rows]
+          .sort((a, b) => (start(a) < start(b) ? -1 : start(a) > start(b) ? 1 : 0))
+          .slice(-max);
   return {
     v: 1,
     machineId: opts.machineId,
     window: { since: opts.since, until: opts.until },
     tz,
-    intervals,
-    tokens: [...tokenMap.values()],
-    shipped: [...shippedMap.values()],
-    boxes,
-    boxRuns,
+    intervals: newest(intervals.filter(inMs), (i) => i.start, CONTRIBUTION_LIMITS.intervals),
+    tokens: newest([...tokenMap.values()], (t) => t.day, CONTRIBUTION_LIMITS.tokens),
+    shipped,
+    boxes: boxes.slice(0, CONTRIBUTION_LIMITS.boxes),
+    boxRuns: newest(boxRuns.filter(inMs), (r) => r.start, CONTRIBUTION_LIMITS.boxRuns),
   };
 }
+
+const MS_MIN = 1_577_836_800_000;
+const MS_MAX = 4_102_444_800_000;
+/** Inside the schema's 2020-2100 bounds (a skewed clock can write anything). */
+const inMs = (r: { start: number; end: number }): boolean => r.start >= MS_MIN && r.end <= MS_MAX;
 
 // ── the control box side: one stored contribution per machine ──
 
 /**
  * Replace what `prev` holds for `next`'s window with `next`. Intervals and box runs
- * overlapping the window go, days inside it go; the rest of `prev` stays, so a
+ * starting in the window go, days inside it go; the rest of `prev` stays, so a
  * short periodic push keeps the year an earlier full push sent. A zone change
  * replaces everything (stored days would mean different hours). Rows older than
  * `keepSinceMs` are dropped.
@@ -293,15 +323,32 @@ export function mergeContribution(
   const from = dayStart(next.window.since, tz);
   const to = dayStart(addDays(next.window.until, 1), tz);
   const keepDay = dayKey(keepSinceMs, tz);
-  const outside = (start: number, end: number): boolean =>
-    (end <= from || start >= to) && end > keepSinceMs;
+  // A row starting inside the window is replaced by the push. One that started
+  // before it is kept (the push's read may not reach its start: a box run whose
+  // start row is older than the window), unless the push sends the same row again.
+  const sent = new Set(
+    next.intervals.map((i) => `${i.boxId ?? `h:${i.sessionId!}`}@${String(i.start)}`),
+  );
+  const sentRuns = new Set(next.boxRuns.map((r) => `${r.boxId}@${String(r.start)}`));
+  const keepRow = (start: number, end: number, key: string, again: ReadonlySet<string>): boolean =>
+    end > keepSinceMs && (start >= to || (start < from && !again.has(key)));
   const dayOutside = (d: string): boolean =>
     (d < next.window.since || d > next.window.until) && d >= keepDay;
 
-  const intervals = [...prev.intervals.filter((i) => outside(i.start, i.end)), ...next.intervals];
+  const intervals = [
+    ...prev.intervals.filter((i) =>
+      keepRow(i.start, i.end, `${i.boxId ?? `h:${i.sessionId!}`}@${String(i.start)}`, sent),
+    ),
+    ...next.intervals,
+  ];
   const tokens = [...prev.tokens.filter((t) => dayOutside(t.day)), ...next.tokens];
   const shipped = [...prev.shipped.filter((s) => dayOutside(s.day)), ...next.shipped];
-  const boxRuns = [...prev.boxRuns.filter((r) => outside(r.start, r.end)), ...next.boxRuns];
+  const boxRuns = [
+    ...prev.boxRuns.filter((r) =>
+      keepRow(r.start, r.end, `${r.boxId}@${String(r.start)}`, sentRuns),
+    ),
+    ...next.boxRuns,
+  ];
   const used = new Set<string>();
   for (const i of intervals) if (i.boxId) used.add(i.boxId);
   for (const t of tokens) if (t.boxId) used.add(t.boxId);
@@ -408,8 +455,8 @@ export function contributionRows(
         deletions: s.deletions,
       });
     }
-    // Bounded by the schema's count cap per row; a day's merges are rarely more than tens.
-    const prs = not(own.prBoxIds, s.boxId) ? Math.min(s.prsMerged, 10_000) : 0;
+    // Bounded by the schema: at most 1000 per row and CONTRIBUTION_LIMITS.prsMerged in all.
+    const prs = not(own.prBoxIds, s.boxId) ? s.prsMerged : 0;
     for (let n = 0; n < prs; n++) {
       events.push({ type: 'pr.merged', at, boxId: s.boxId });
     }

@@ -289,13 +289,15 @@ Decided 2026-11-26 with the owner.
     machines max, 400 days kept). `POST /api/v1/usage/contributions` (size-checked
     while reading), `GET` lists counts per machine. `/usage/stats` merges every
     machine's rows except its own machine id's, and none under `?subscription=`.
+    A device token may only post its own machine id.
     Double counting is avoided per kind: a box whose sessions the control box
     holds drops the PC's intervals and tokens for it, a box with `git.push` rows
     there drops the PC's push counts, the same for merged PRs and lifecycle rows,
     and a host session id the control box holds drops the PC's copy.
   - PC: `createContributionPusher` in the hub process, every 5 minutes, only when
     the body's hash changed; the first push to a hub sends a year, later ones 35
-    days. `POST /api/v1/usage/contributions/sync` pushes the year now;
+    days (and the year again after a zone change). A body over the cap is not
+    sent. `POST /api/v1/usage/contributions/sync` pushes now (`?full=1`: the year);
     `agentbox usage` calls it on the local hub before reading a remote one.
     `history.contributeUsage: false` turns it off.
   - The "Sync this PC" button on the Usage page is not wired (the page is in a

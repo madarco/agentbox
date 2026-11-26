@@ -6,6 +6,7 @@
 // GET lists what each machine sent (counts only).
 import { CONTRIBUTION_LIMITS, parseContributionBody } from '@agentbox/usage-view';
 import { ContributionLimitError } from '@/lib/backend/usage-contrib';
+import { DEVICE_ID_HEADER } from '@/lib/peer';
 import { fail, ok } from '../../lib/envelope';
 
 export const runtime = 'nodejs';
@@ -27,6 +28,12 @@ export async function POST(req: Request): Promise<Response> {
     contribution = parseContributionBody(raw);
   } catch (e) {
     return fail('invalid_request', `invalid contribution: ${message(e)}`.slice(0, 2000));
+  }
+  // A PC on its own device token sends its own usage only (the header is set by
+  // server.ts from the verified token; a client-supplied copy is stripped).
+  const device = (req.headers.get(DEVICE_ID_HEADER) ?? '').trim();
+  if (device && device !== contribution.machineId) {
+    return fail('forbidden', 'a device can only send its own usage');
   }
   try {
     return ok(await store.upsert(contribution));
