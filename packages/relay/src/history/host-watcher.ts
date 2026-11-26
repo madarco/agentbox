@@ -31,6 +31,7 @@ import {
 import { AGENT_SYNC_SPECS, hubBearerFor, readState } from '@agentbox/sandbox-core';
 import { collectHostSecrets } from './host-secrets.js';
 import { hostProjectDecisions, type HostProjectDecision } from './host-settings.js';
+import { readMaterialized } from './materialized.js';
 
 /**
  * Phase 5 of docs/agent-history-plan.md: ship the agent sessions run directly on
@@ -84,6 +85,8 @@ export interface HostSessionWatcherDeps {
   /** Tests: the home dir agent config dirs are under, and the seams below. */
   home?: string;
   statusFile?: string;
+  /** The hub's materialized-copies manifest (default `MATERIALIZED_FILE`). */
+  materializedFile?: string;
   knownFolders?: () => Promise<Array<{ folder: string; originUrl?: string }>>;
   decide?: typeof hostProjectDecisions;
   hostSecrets?: () => Promise<string[]>;
@@ -184,6 +187,8 @@ export function localHostSource(
   agent: string,
   sessionDir: string,
   folder: string,
+  /** Tests: the materialized-copies manifest (default `MATERIALIZED_FILE`). */
+  materializedFile?: string,
 ): HistoryFileSource {
   // A session's cwd never changes once written: cache it per file.
   const cwdOf = new Map<string, string>();
@@ -196,8 +201,12 @@ export function localHostSource(
       const names = (await readdir(sessionDir).catch(() => [] as string[]))
         .filter((n) => n.endsWith('.jsonl'))
         .sort();
+      // A box session the hub wrote here is already in the hub under its box:
+      // shipping it again would add a host copy of every turn.
+      const materialized = (await readMaterialized(materializedFile)).files;
       const out: HistoryBinding[] = [];
       for (const n of names) {
+        if (materialized[join(sessionDir, n)]) continue;
         let cwd = cwdOf.get(n);
         if (cwd === undefined) {
           const found = await firstCwd(join(sessionDir, n));
@@ -420,7 +429,12 @@ export class HostSessionWatcher {
               ...(repoUrl ? { projectRepoUrl: repoUrl } : {}),
             },
             agents: [{ agent: a.agent, configDir: a.hostConfigDir, projectKey, spec: a.spec }],
-            source: localHostSource(a.agent, join(a.hostConfigDir, root), p.folder),
+            source: localHostSource(
+              a.agent,
+              join(a.hostConfigDir, root),
+              p.folder,
+              this.deps.materializedFile,
+            ),
             sink: resolved.sink,
             redactor: { redact: (b) => this.redactor.redact(b) },
             // Under the hub route's 12 MB body cap once base64'd.

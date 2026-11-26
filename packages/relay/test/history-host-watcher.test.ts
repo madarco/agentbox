@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HistoryFrame, HistoryIngestResult } from '@agentbox/core';
 import { HostSessionWatcher, hostWatchedAgents } from '../src/history/host-watcher.js';
 import type { HostDecisions } from '../src/history/host-settings.js';
+import { writeMaterialized } from '../src/history/materialized.js';
 
 const S = 'aaaaaaaa-1111-2222-3333-444444444444';
 const T = 'bbbbbbbb-1111-2222-3333-444444444444';
@@ -206,6 +207,42 @@ describe('host session watcher: lossy keys and refusing hubs', () => {
     });
     await w.tick();
     expect(m.frames.map((f) => f.path)).toEqual([`projects/-work-my-app/${S}.jsonl`]);
+  });
+
+  it('skips a box session the hub materialized into the folder', async () => {
+    await session('-work-a', S, '{"cwd":"/work/a","n":1}\n');
+    const copy = await session('-work-a', T, '{"cwd":"/work/a","n":2}\n');
+    const manifest = join(home, 'materialized.json');
+    await writeMaterialized(
+      {
+        version: 1,
+        files: {
+          [copy]: {
+            session: `claude:${T}`,
+            fileId: 1,
+            generation: 0,
+            offset: 1,
+            size: 1,
+            mtimeMs: 0,
+          },
+        },
+      },
+      manifest,
+    );
+    const m = memSink();
+    const w = new HostSessionWatcher({
+      home,
+      statusFile: join(home, 'status.json'),
+      materializedFile: manifest,
+      log: () => {},
+      machineId: () => 'pc-1',
+      hostSecrets: async () => [],
+      knownFolders: async () => [{ folder: '/work/a' }],
+      decide: decisions(true, { '/work/a': true }),
+      resolveSink: async () => ({ target: 'local', sink: m.sink }),
+    });
+    await w.tick();
+    expect(m.frames.map((f) => f.path)).toEqual([`projects/-work-a/${S}.jsonl`]);
   });
 
   it('backs off a hub that refuses, instead of re-posting every pass', async () => {

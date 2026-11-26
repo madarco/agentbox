@@ -68,6 +68,7 @@ import { createDeviceService, type DeviceService } from './lib/backend/devices';
 import { borrowingAgentIds, subscriptionOf } from './lib/backend/accounts';
 import { createHistoryService, type HistoryService } from './lib/backend/history';
 import { createMemoryService, type MemoryService } from './lib/backend/history-memory';
+import { createSessionMaterializer } from './lib/backend/history-materialize';
 import { createMcpServer, MCP_INSTRUCTIONS, type McpHubScope } from './lib/backend/mcp';
 import { historyMcpTools } from './lib/backend/mcp-history';
 import { skillsMcpTools } from './lib/backend/mcp-skills';
@@ -314,6 +315,15 @@ async function main(): Promise<void> {
   );
   globalThis.__AGENTBOX_HUB_HISTORY = history;
   history?.start();
+  // Box claude sessions written into this PC's `~/.claude/projects` (usage
+  // dashboard Phase 4a). `history.materialize` is read per project on every write.
+  const materializer = history
+    ? createSessionMaterializer({
+        history,
+        log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+      })
+    : undefined;
+  materializer?.start();
   // The activity ledger (usage dashboard Phase 1). Opened before the relay,
   // whose push and create-job hooks and autopause loop write to it. Like
   // history, a failure costs the hub its ledger, never its boot.
@@ -701,6 +711,7 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     process.stdout.write(`agentbox-hub: ${signal} — shutting down\n`);
     history?.stop();
+    materializer?.stop();
     void (worker?.stop() ?? Promise.resolve()).finally(() =>
       daemon.stop().finally(() => process.exit(0)),
     );
