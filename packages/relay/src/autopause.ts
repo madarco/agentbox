@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { recordActivity } from './activity/ledger.js';
 import { readFile } from 'node:fs/promises';
 import {
   BUILT_IN_DEFAULTS,
@@ -172,6 +173,12 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
         if (!e) continue;
         try {
           await pause(e.containerName);
+          void recordActivity({
+            type: 'box.paused',
+            actor: 'autopause',
+            boxId,
+            provider: 'docker',
+          });
           const mins = e.idleMs != null ? Math.round(e.idleMs / 60_000) : null;
           events.append({
             boxId,

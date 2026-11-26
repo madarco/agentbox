@@ -51,6 +51,7 @@ import { createLiveStatus } from './backend/live-status';
 import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
+import { activityBoxContext, withBoxActivity } from './backend/activity';
 import { createWorkspaceBackend } from './backend/workspaces';
 import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
@@ -63,6 +64,7 @@ import { createPcSkillsBackend } from './backend/skills-pc';
 import { pcSkillsDeps } from './backend/skills-pc-wiring';
 import type { BackendDeps } from './backend/deps';
 import {
+  configureActivityBoxContext,
   configureBoxPushStat,
   deleteJob,
   enqueuePrepareJob,
@@ -2221,6 +2223,18 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // `direct` push), and has no provider modules to measure it with — it never
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
+  // Every ledger row a box id names is filled from this hub's record of it.
+  configureActivityBoxContext(
+    activityBoxContext(backendDeps, async (boxId) => {
+      const reg = await handle.store.getBox(boxId);
+      if (!reg) return undefined;
+      return {
+        name: reg.name,
+        ...(reg.originUrl ? { originUrl: reg.originUrl } : {}),
+        provider: reg.kind === 'cloud' && reg.backend ? reg.backend : 'docker',
+      };
+    }),
+  );
   const checkouts = createCheckoutBackend(backendDeps);
   const skills = createSkillsBackend({
     store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
@@ -4225,7 +4239,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     }
     return res;
   };
-  return withBoxTimeline(hub, {
+  return withBoxTimeline(withBoxActivity(hub, backendDeps), {
     deps: backendDeps,
     stampFor: (ref, wsId) => managers.timelineStamp(ref, wsId),
     boxGone: (boxId) => workspaces.boxGone(boxId),

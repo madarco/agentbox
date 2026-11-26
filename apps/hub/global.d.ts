@@ -1,4 +1,4 @@
-import type { Store } from '@agentbox/relay';
+import type { ActivityStore, Store } from '@agentbox/relay';
 import type { HubBackend } from './lib/boxes/backend-types';
 import type { DeviceService } from './lib/backend/devices';
 import type { HistoryService } from './lib/backend/history';
@@ -22,6 +22,12 @@ declare global {
   // server on `node:sqlite`; the /api/v1/history routes reach it through here.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_HISTORY: HistoryService | undefined;
+
+  // The activity ledger (usage dashboard Phase 1), opened by the custom server;
+  // `/api/v1/activity` reads it through here, since Next bundles its own copy
+  // of `@agentbox/relay` and would not see the server's installed ledger.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_ACTIVITY: ActivityStore | undefined;
 
   // Agent memory versions (docs/agent-history-plan.md, Phase 4), in history.db.
   // eslint-disable-next-line no-var

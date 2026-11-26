@@ -6,6 +6,7 @@ import type { BoxRecord, Provider } from '@agentbox/core';
 import { BOX_WORKSPACE } from '@agentbox/sandbox-core';
 import type { ListedBox } from '@agentbox/sandbox-docker';
 import { boxPushLineStat, type HostArg, type PushLineStat } from '@agentbox/relay';
+import { subscriptionOf } from './accounts';
 import { hubMachine, type DiffStat, type TimelineBoxFact } from './deps';
 import { parseShortstat } from './timeline';
 
@@ -45,6 +46,8 @@ export function boxFactOf(
     branches: [...new Set(branches)],
     ...(b.state ? { state: b.state } : {}),
     ...(agent ? { agent } : {}),
+    provider: b.provider ?? 'docker',
+    ...(agent ? { account: subscriptionOf(b, agent) } : {}),
     projectRoot: root,
     projectId: hashProjectPath(root),
     ...(extra.originUrl ? { originUrl: extra.originUrl } : {}),

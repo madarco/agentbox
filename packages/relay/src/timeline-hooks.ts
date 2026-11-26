@@ -4,12 +4,14 @@
 // its own failures — a log miss must never change an RPC result or a job status.
 import { thisMachine } from '@agentbox/config';
 import { readState } from '@agentbox/sandbox-core';
+import { activityLedger, recordActivity } from './activity/ledger.js';
 import { ghRunContext, ghVerbArgv, resolveGhTarget, runHostGh } from './gh.js';
 import type { QueueJob } from './queue.js';
 import { managerIdForTarget } from './workspaces/manager.js';
 import {
   boxPushStat,
   pushLineStat,
+  pushLinesOnly,
   type PushLineStat,
   type PushStatInput,
 } from './workspaces/push-stat.js';
@@ -91,12 +93,27 @@ export async function recordBoxGitPush(
 ): Promise<void> {
   if (result.exitCode !== 0 || origin.hostInitiated || origin.hostOnly) return;
   try {
-    const ws = await timelineSink().workspaceFor(boxWorkspaceKey(ctx));
+    // The ledger takes every box's push; the timeline only one in a workspace.
+    const ws = await timelineSink()
+      .workspaceFor(boxWorkspaceKey(ctx))
+      .catch(() => null);
+    if (!ws && !activityLedger()) return;
+    const diff = await pushDiff(ctx.boxId, stat, opts.boxBefore);
+    await recordActivity({
+      type: 'git.push',
+      actor: 'box',
+      boxId: ctx.boxId,
+      ...(opts.key ? { id: opts.key } : {}),
+      ...(ctx.boxName ? { boxName: ctx.boxName } : {}),
+      ...(ctx.branch ? { branch: ctx.branch } : {}),
+      ...(ctx.originUrl ? { repoUrl: ctx.originUrl } : {}),
+      ...(ws ? { workspaceId: ws.id } : {}),
+      ...(diff ?? {}),
+    });
     if (!ws) return;
-    const [taskIds, managerId, diff] = await Promise.all([
+    const [taskIds, managerId] = await Promise.all([
       boxTaskIds(ws.id, ctx.boxId),
       managerIdForTarget({ boxId: ctx.boxId }, { workspaceId: ws.id }),
-      pushDiff(ctx.boxId, stat, opts.boxBefore),
     ]);
     await timelineSink().record(ws.id, {
       type: 'git.push',
@@ -107,7 +124,7 @@ export async function recordBoxGitPush(
       ...(ctx.branch ? { branch: ctx.branch } : {}),
       ...(managerId ? { managerId } : {}),
       ...(taskIds.length ? { taskIds } : {}),
-      ...(diff ?? {}),
+      ...(pushLinesOnly(diff) ?? {}),
     });
   } catch {
     /* best-effort */
@@ -226,8 +243,10 @@ export async function recordBoxGhResult(
   const verb = ghVerbArgv(args);
   if (verb[0] !== 'pr' || (verb[1] !== 'create' && verb[1] !== 'merge')) return;
   try {
-    const ws = await timelineSink().workspaceFor(boxWorkspaceKey(ctx));
-    if (!ws) return;
+    const ws = await timelineSink()
+      .workspaceFor(boxWorkspaceKey(ctx))
+      .catch(() => null);
+    if (!ws && !activityLedger()) return;
     const target =
       verb[1] === 'create'
         ? parsePrUrl(result.stdout)?.url
@@ -243,10 +262,12 @@ export async function recordBoxGhResult(
     const pr = JSON.parse(view.stdout) as GhPrJson;
     const parsed = parsePrUrl(pr.url);
     if (!parsed) return;
-    const [taskIds, managerId] = await Promise.all([
-      boxTaskIds(ws.id, ctx.boxId),
-      managerIdForTarget({ boxId: ctx.boxId }, { workspaceId: ws.id }),
-    ]);
+    const [taskIds, managerId] = ws
+      ? await Promise.all([
+          boxTaskIds(ws.id, ctx.boxId),
+          managerIdForTarget({ boxId: ctx.boxId }, { workspaceId: ws.id }),
+        ])
+      : [[], undefined];
     const events = prTimelineEvents(pr, parsed.repo, {
       actor: 'box',
       boxId: ctx.boxId,
@@ -256,7 +277,19 @@ export async function recordBoxGhResult(
     });
     for (const ev of events) {
       if (ev.type === 'pr.ready') continue;
-      await timelineSink().record(ws.id, ev);
+      await recordActivity({
+        ...(ev.key ? { id: ev.key } : {}),
+        type: ev.type as 'pr.opened' | 'pr.merged' | 'pr.closed',
+        actor: 'box',
+        boxId: ctx.boxId,
+        ...(ev.at ? { at: ev.at } : {}),
+        ...(ctx.boxName ? { boxName: ctx.boxName } : {}),
+        ...(ev.branch ? { branch: ev.branch } : {}),
+        ...(ctx.originUrl ? { repoUrl: ctx.originUrl } : {}),
+        ...(ws ? { workspaceId: ws.id } : {}),
+        ...(ev.pr ? { pr: { repo: ev.pr.repo, number: ev.pr.number, url: ev.pr.url } } : {}),
+      });
+      if (ws) await timelineSink().record(ws.id, ev);
     }
   } catch {
     /* best-effort */
@@ -279,18 +312,38 @@ export async function recordCreateJobTimeline(job: QueueJob): Promise<void> {
   if (job.kind === 'prepare') return;
   if (job.status !== 'done' && job.status !== 'failed') return;
   try {
-    const ws = await timelineSink().workspaceFor({
-      host: thisMachine(),
-      projectRoot: job.createOpts.workspace,
-      // A hub-routed create clones into a throwaway folder, so its job's
-      // `workspace` names nothing a workspace maps; the repo is the only key
-      // that joins it.
-      ...(job.createOpts.repoUrl ? { originUrl: job.createOpts.repoUrl } : {}),
-    });
-    if (!ws) return;
+    const ws = await timelineSink()
+      .workspaceFor({
+        host: thisMachine(),
+        projectRoot: job.createOpts.workspace,
+        // A hub-routed create clones into a throwaway folder, so its job's
+        // `workspace` names nothing a workspace maps; the repo is the only key
+        // that joins it.
+        ...(job.createOpts.repoUrl ? { originUrl: job.createOpts.repoUrl } : {}),
+      })
+      .catch(() => null);
+    if (!ws && !activityLedger()) return;
     const box = job.boxId
       ? (await readState().catch(() => null))?.boxes.find((b) => b.id === job.boxId)
       : undefined;
+    const ready = job.status === 'done';
+    const agent = jobAgent(job);
+    const name = box?.name ?? (job.boxName || job.createOpts.name);
+    const branch = box?.gitWorktrees?.[0]?.branch ?? box?.cloud?.workspaceBranch;
+    await recordActivity({
+      id: `job:${job.id}:${ready ? 'ready' : 'failed'}`,
+      type: ready ? 'box.ready' : 'box.failed',
+      actor: 'hub',
+      jobId: job.id,
+      ...(job.boxId ? { boxId: job.boxId } : {}),
+      ...(name ? { boxName: name } : {}),
+      ...(agent ? { agent } : {}),
+      ...(branch ? { branch } : {}),
+      ...(box?.provider || job.providerName ? { provider: box?.provider ?? job.providerName } : {}),
+      ...(job.createOpts.repoUrl ? { repoUrl: job.createOpts.repoUrl } : {}),
+      ...(ws ? { workspaceId: ws.id } : {}),
+    });
+    if (!ws) return;
     const [tasks, byJob, byBox] = await Promise.all([
       readTasks(ws.id).catch(() => []),
       managerIdForTarget({ boxJobId: job.id }, { workspaceId: ws.id }),
@@ -302,10 +355,6 @@ export async function recordCreateJobTimeline(job: QueueJob): Promise<void> {
       .filter((t) => t.boxJobId === job.id || (job.boxId !== undefined && t.boxId === job.boxId))
       .map((t) => t.id);
     const managerId = byJob ?? byBox;
-    const name = box?.name ?? (job.boxName || job.createOpts.name);
-    const branch = box?.gitWorktrees?.[0]?.branch ?? box?.cloud?.workspaceBranch;
-    const agent = jobAgent(job);
-    const ready = job.status === 'done';
     await timelineSink().record(ws.id, {
       type: ready ? 'box.ready' : 'box.failed',
       actor: 'hub',

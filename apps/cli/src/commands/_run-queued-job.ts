@@ -43,6 +43,7 @@ import { startPiSession, ensurePiInstalled } from '@agentbox/agent-pi';
 import { startCodexSession, ensureCodexInstalled } from '@agentbox/agent-codex';
 import {
   configureTimelineSinkFromConfig,
+  openActivityLedger,
   readJob,
   takeQueueLoginCode,
   recordCreateJobTimeline,
@@ -223,6 +224,12 @@ export const runQueuedJobCommand = new Command('_run-queued-job')
     // store is there, and a row written to this disk has no workspace to land in.
     const sink = await configureTimelineSinkFromConfig({ warn: (line) => log.write(line) });
     if (sink.kind === 'remote') log.write('timeline events forward to the control box');
+    // The hub's activity ledger takes the same rows for every box, workspace or not.
+    // The same env as the hub, so the same store; a ledger that will not open costs
+    // only those rows.
+    await openActivityLedger().catch((e: unknown) =>
+      log.write(`activity ledger unavailable: ${e instanceof Error ? e.message : String(e)}`),
+    );
     let job: QueueJob | null = null;
     try {
       job = await readJob(id);

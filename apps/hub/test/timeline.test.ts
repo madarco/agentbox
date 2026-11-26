@@ -1140,7 +1140,7 @@ describe('push rows', () => {
     const asked: string[] = [];
     h.deps.boxPushStat = async (boxId) => {
       asked.push(boxId);
-      return { additions: 21, deletions: 4 };
+      return { additions: 21, deletions: 4, commits: 1, filesChanged: 2 };
     };
     const ok = async () => ({ ok: true as const });
     const hub = withBoxTimeline(

@@ -8,6 +8,7 @@ import {
   parseShortstat,
   pushedRef,
   pushLineStat,
+  pushLinesOnly,
   readRefTip,
   type BoxGitExec,
 } from '../src/workspaces/push-stat.js';
@@ -79,7 +80,7 @@ describe('pushLineStat', () => {
     await git(dir, 'update-ref', 'refs/remotes/origin/feat', next);
     expect(
       await pushLineStat({ repo: dir, ref: 'refs/remotes/origin/feat', branch: 'feat', before }),
-    ).toEqual({ additions: 7, deletions: 0 });
+    ).toEqual({ additions: 7, deletions: 0, commits: 1, filesChanged: 1 });
   });
 
   it('measures a rebase + force-push from the merge base, not the upstream it moved onto', async () => {
@@ -101,7 +102,7 @@ describe('pushLineStat', () => {
         branch: 'feat',
         before: old,
       }),
-    ).toEqual({ additions: 4, deletions: 0 });
+    ).toEqual({ additions: 4, deletions: 0, commits: 1, filesChanged: 1 });
   });
 
   it('measures a first push from the merge base with the default branch', async () => {
@@ -114,7 +115,17 @@ describe('pushLineStat', () => {
     // No tracking ref at all: the local branch stands in for it.
     expect(
       await pushLineStat({ repo: dir, ref: 'refs/remotes/origin/feat', branch: 'feat' }),
-    ).toEqual({ additions: 6, deletions: 0 });
+    ).toEqual({ additions: 6, deletions: 0, commits: 2, filesChanged: 2 });
+  });
+
+  it('counts a push with commits but no changed lines (a rename)', async () => {
+    const { dir } = await repo();
+    await git(dir, 'checkout', '-q', '-b', 'feat');
+    await git(dir, 'mv', 'base.txt', 'moved.txt');
+    await git(dir, 'commit', '-q', '-m', 'rename');
+    const stat = await pushLineStat({ repo: dir, ref: 'refs/heads/feat', branch: 'feat' });
+    expect(stat).toMatchObject({ additions: 0, deletions: 0, commits: 1 });
+    expect(pushLinesOnly(stat)).toBeUndefined();
   });
 
   it('has nothing to say for a push that moved nothing, an unknown ref, or no repo', async () => {
@@ -166,14 +177,21 @@ describe('boxPushLineStat', () => {
       [`merge-base origin/main ${HEAD_SHA}`]: BASE_SHA,
       [`diff --shortstat ${BASE_SHA}..${HEAD_SHA}`]:
         ' 2 files changed, 9 insertions(+), 4 deletions(-)',
+      [`rev-list --count ${BASE_SHA}..${HEAD_SHA}`]: '3',
     });
-    expect(await boxPushLineStat(exec)).toEqual({ additions: 9, deletions: 4 });
+    expect(await boxPushLineStat(exec)).toEqual({
+      additions: 9,
+      deletions: 4,
+      commits: 3,
+      filesChanged: 2,
+    });
     // origin/HEAD is tried first and answers nothing, so origin/main is asked next.
     expect(calls.map((a) => a.join(' '))).toEqual([
       HEAD_ARGS,
       `merge-base origin/HEAD ${HEAD_SHA}`,
       `merge-base origin/main ${HEAD_SHA}`,
       `diff --shortstat ${BASE_SHA}..${HEAD_SHA}`,
+      `rev-list --count ${BASE_SHA}..${HEAD_SHA}`,
     ]);
   });
 
@@ -183,7 +201,12 @@ describe('boxPushLineStat', () => {
       [`merge-base master ${HEAD_SHA}`]: BASE_SHA,
       [`diff --shortstat ${BASE_SHA}..${HEAD_SHA}`]: ' 1 file changed, 1 insertion(+)',
     });
-    expect(await boxPushLineStat(exec)).toEqual({ additions: 1, deletions: 0 });
+    expect(await boxPushLineStat(exec)).toEqual({
+      additions: 1,
+      deletions: 0,
+      commits: 0,
+      filesChanged: 1,
+    });
     expect(calls.map((a) => a[1])).toContain('main');
   });
 
@@ -193,8 +216,14 @@ describe('boxPushLineStat', () => {
       [HEAD_ARGS]: HEAD_SHA,
       [`merge-base --is-ancestor ${before} ${HEAD_SHA}`]: '',
       [`diff --shortstat ${before}..${HEAD_SHA}`]: ' 1 file changed, 3 insertions(+)',
+      [`rev-list --count ${before}..${HEAD_SHA}`]: '1',
     });
-    expect(await boxPushLineStat(exec, { before })).toEqual({ additions: 3, deletions: 0 });
+    expect(await boxPushLineStat(exec, { before })).toEqual({
+      additions: 3,
+      deletions: 0,
+      commits: 1,
+      filesChanged: 1,
+    });
     expect(calls.some((a) => a[1] === 'origin/HEAD')).toBe(false);
   });
 
@@ -205,7 +234,12 @@ describe('boxPushLineStat', () => {
       [`merge-base origin/HEAD ${HEAD_SHA}`]: BASE_SHA,
       [`diff --shortstat ${BASE_SHA}..${HEAD_SHA}`]: ' 1 file changed, 7 insertions(+)',
     });
-    expect(await boxPushLineStat(exec, { before })).toEqual({ additions: 7, deletions: 0 });
+    expect(await boxPushLineStat(exec, { before })).toEqual({
+      additions: 7,
+      deletions: 0,
+      commits: 0,
+      filesChanged: 1,
+    });
   });
 
   it('is undefined for a push that moved nothing, an unreadable HEAD or no base', async () => {

@@ -7,6 +7,27 @@ import { execa } from 'execa';
 export interface PushLineStat {
   additions: number;
   deletions: number;
+  /** Commits the push brought onto the branch (`git rev-list --count base..after`). */
+  commits: number;
+  filesChanged: number;
+}
+
+/**
+ * The +/- lines of a stat, as a timeline row carries them: the ledger keeps the
+ * commit and file counts, the timeline schema has no field for them.
+ */
+export function pushLinesOnly(
+  stat: PushLineStat | undefined,
+): { additions: number; deletions: number } | undefined {
+  if (!stat || stat.additions + stat.deletions === 0) return undefined;
+  return { additions: stat.additions, deletions: stat.deletions };
+}
+
+/** A stat worth a row: something moved. A rename-only or binary push has commits and no lines. */
+function statOf(shortstat: string, commits: number): PushLineStat | undefined {
+  const { filesChanged, additions, deletions } = parseShortstat(shortstat);
+  if (commits <= 0 && additions + deletions === 0 && filesChanged === 0) return undefined;
+  return { additions, deletions, commits: Math.max(0, commits), filesChanged };
 }
 
 export interface PushStatInput {
@@ -115,7 +136,7 @@ async function isAncestor(git: Git, before: string, after: string): Promise<bool
 }
 
 /**
- * Lines added and removed by a push: `before..after` when the old tip is known
+ * Lines added and removed, files changed and commits brought in by a push: `before..after` when the old tip is known
  * and still an ancestor, else from the merge base with the default branch (a
  * first push, or a rebase + force-push whose `before..after` would count the
  * upstream changes it was rebased onto). Undefined on anything unexpected,
@@ -131,10 +152,12 @@ export async function pushLineStat(input: PushStatInput): Promise<PushLineStat |
       ? input.before
       : await defaultBranchBase(git, after);
   if (!base || base === after) return undefined;
-  const out = await git(['diff', '--shortstat', `${base}..${after}`]);
+  const [out, count] = await Promise.all([
+    git(['diff', '--shortstat', `${base}..${after}`]),
+    git(['rev-list', '--count', `${base}..${after}`]),
+  ]);
   if (out === undefined) return undefined;
-  const { additions, deletions } = parseShortstat(out);
-  return additions + deletions > 0 ? { additions, deletions } : undefined;
+  return statOf(out, Number(count ?? 0));
 }
 
 // ── the box half ──
@@ -199,8 +222,8 @@ export async function boxPushLineStat(
   if (!base || base === head) return undefined;
   const shortstat = await out(['diff', '--shortstat', `${base}..${head}`]);
   if (shortstat === undefined) return undefined;
-  const { additions, deletions } = parseShortstat(shortstat);
-  return additions + deletions > 0 ? { additions, deletions } : undefined;
+  const count = await out(['rev-list', '--count', `${base}..${head}`]);
+  return statOf(shortstat, Number(count ?? 0));
 }
 
 /**

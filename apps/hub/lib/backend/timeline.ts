@@ -2,13 +2,9 @@
 // written by every mutation point), aggregated for reading, plus the rows that
 // are only ever true NOW — a box working a task, a PR waiting to be merged —
 // which are built at read time and never stored.
-import { stat } from 'node:fs/promises';
 import {
   findManager,
   parseShortstat,
-  pushedRef,
-  pushLineStat,
-  readRefTip,
   listWorkspaces,
   readReconciledManagers,
   readReconciledTasks,
@@ -16,6 +12,7 @@ import {
   readTimeline,
   readWorkspace,
   appendTimelineEvent,
+  pushLinesOnly,
   timelineSink,
   sortTasksByOrder,
   stampFields,
@@ -24,13 +21,11 @@ import {
   type TimelineEvent,
   type TimelineEventInput,
   type TimelinePr,
-  type PushLineStat,
-  type PushStatInput,
   type TimelineStamp,
   type WorkTask,
 } from '@agentbox/relay';
 import { inBackground } from './background';
-import { sameMachineRef, type MachineRef } from '@agentbox/config';
+import type { MachineRef } from '@agentbox/config';
 import {
   hubMachine,
   reconcileContext,
@@ -39,6 +34,12 @@ import {
   type TimelineBoxFact,
 } from './deps';
 import { createGithubPrSync, type GithubPrSync } from './github-prs';
+import {
+  measurePush,
+  pushStatSourceBefore,
+  type PushStatSource,
+  type PushTarget,
+} from './push-measure';
 import { assignLanes, jobIdOfKey } from './timeline-lanes';
 import type {
   HubBackend,
@@ -587,17 +588,6 @@ export async function stampInWorkspace(
   return rec?.workspaceId === wsId ? stamp : HUMAN;
 }
 
-/** Where one push's +/- lines are read from; see `pushStatBefore`. */
-type PushStatSource = { kind: 'host'; input: PushStatInput } | { kind: 'box'; boxId: string };
-
-/** How a push route addresses the host ref it moves. */
-interface PushTarget {
-  remote?: string;
-  hostOnly?: boolean;
-  /** `push-host --as`: the local branch it lands on. */
-  as?: string;
-}
-
 export interface BoxTimelineSeams {
   deps: BackendDeps;
   /** A manager's stamp (turn + prompt), only when it is a manager of `wsId`. */
@@ -629,42 +619,9 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     return deps.boxFact(id);
   }
 
-  /**
-   * Where a push's +/- lines come from. The host repo when this hub holds it —
-   * the ref's tip has to be read before the push moves it — else the box itself,
-   * which is the only reader a control box has: its record of a box points at
-   * the create job's temp clone, deleted long before the push.
-   */
-  async function pushStatBefore(
-    fact: TimelineBoxFact | undefined,
-    push: PushTarget,
-  ): Promise<PushStatSource | undefined> {
-    const boxBranch = fact?.branches[0];
-    if (!fact || !boxBranch) return undefined;
-    if (await hostRepoHere(fact)) {
-      const branch = push.hostOnly && push.as ? push.as : boxBranch;
-      const ref = pushedRef(branch, push);
-      const before = await readRefTip(fact.projectRoot, ref);
-      return {
-        kind: 'host',
-        input: { repo: fact.projectRoot, ref, branch, ...(before ? { before } : {}) },
-      };
-    }
-    return deps.boxPushStat ? { kind: 'box', boxId: fact.id } : undefined;
-  }
-
-  /** A folder on THIS machine, still there. A fact with no host names one here (Phase 1's rule). */
-  async function hostRepoHere(fact: TimelineBoxFact): Promise<boolean> {
-    if (fact.host && !sameMachineRef(fact.host, localHost())) return false;
-    if (!fact.projectRoot) return false;
-    return (await stat(fact.projectRoot).catch(() => null)) !== null;
-  }
-
-  function pushDiff(src: PushStatSource): Promise<PushLineStat | undefined> {
-    return src.kind === 'host'
-      ? pushLineStat(src.input)
-      : (deps.boxPushStat?.(src.boxId) ?? Promise.resolve(undefined));
-  }
+  const pushStatBefore = (fact: TimelineBoxFact | undefined, push: PushTarget) =>
+    pushStatSourceBefore(deps, fact, push);
+  const pushDiff = (src: PushStatSource) => measurePush(deps, src);
 
   /** Did the destroy leave the box gone? A record this hub still has says no. */
   async function boxIsGone(id: string, ok: boolean): Promise<boolean> {
@@ -718,7 +675,7 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
         type,
         ...stampFields(stamp),
         ...base,
-        ...(diff ?? {}),
+        ...(pushLinesOnly(diff) ?? {}),
         ...(after && previous ? { base: previous } : {}),
       });
       deps.notify();

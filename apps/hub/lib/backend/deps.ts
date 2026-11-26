@@ -18,6 +18,10 @@ export interface TimelineBoxFact {
   /** Persisted runtime state (`running`, `paused`, ...); absent when unknown. */
   state?: string;
   agent?: string;
+  /** `docker` when the record names none. */
+  provider?: string;
+  /** The subscription the agent runs on (`agent/account`), when the box has an agent. */
+  account?: string;
   projectRoot: string;
   projectId: string;
   /**

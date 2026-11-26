@@ -3,6 +3,23 @@
 // verification checklist asserts every route appears here. Served verbatim at
 // GET /api/v1/openapi.json; GET /api/v1/docs renders it with Scalar.
 
+/** `ACTIVITY_TYPES` from `@agentbox/relay`, spelled out: this file imports nothing (a test pins the two equal). */
+export const ACTIVITY_EVENT_TYPES = [
+  'box.created',
+  'box.ready',
+  'box.failed',
+  'box.started',
+  'box.stopped',
+  'box.paused',
+  'box.resumed',
+  'box.destroyed',
+  'git.push',
+  'pr.opened',
+  'pr.ready',
+  'pr.merged',
+  'pr.closed',
+];
+
 /** The token sums of `GET /usage` (totals and each group). */
 const USAGE_TOTALS = {
   inputTokens: { type: 'integer' },
@@ -1822,6 +1839,96 @@ export function buildOpenApi(): Record<string, unknown> {
             '401': errorResponse,
             '404': errorResponse,
             '409': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/activity': {
+        get: {
+          tags: ['History'],
+          summary: 'Activity ledger',
+          description:
+            'Box lifecycle (created, ready, failed, started, stopped, paused, resumed, destroyed), pushes (commits, files changed, lines added and removed) and PR states for every box this hub owns, in a workspace or not, oldest first. Rows imported from workspace timelines carry `source: backfill` and no provider or account.',
+          parameters: [
+            {
+              name: 'since',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'ISO-8601, or a duration back from now (`30m`, `24h`, `7d`, `2w`).',
+            },
+            {
+              name: 'until',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Exclusive end, same forms as `since`.',
+            },
+            {
+              name: 'type',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'Comma-separated event types, e.g. `box.paused,box.resumed`.',
+            },
+            { name: 'box', in: 'query', schema: { type: 'string' }, description: 'Box id.' },
+            {
+              name: 'limit',
+              in: 'query',
+              schema: { type: 'integer' },
+              description: 'Rows returned; default 1000, max 50000.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Events in the window',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      since: { type: 'string', nullable: true },
+                      until: { type: 'string', nullable: true },
+                      events: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            type: { type: 'string', enum: ACTIVITY_EVENT_TYPES },
+                            at: { type: 'string' },
+                            actor: { type: 'string' },
+                            boxId: { type: 'string' },
+                            boxName: { type: 'string' },
+                            provider: { type: 'string' },
+                            agent: { type: 'string' },
+                            account: { type: 'string' },
+                            repoUrl: { type: 'string' },
+                            projectKey: { type: 'string' },
+                            workspaceId: { type: 'string' },
+                            managerId: { type: 'string' },
+                            jobId: { type: 'string' },
+                            branch: { type: 'string' },
+                            commits: { type: 'integer' },
+                            filesChanged: { type: 'integer' },
+                            additions: { type: 'integer' },
+                            deletions: { type: 'integer' },
+                            hostOnly: { type: 'boolean' },
+                            pr: {
+                              type: 'object',
+                              properties: {
+                                repo: { type: 'string' },
+                                number: { type: 'integer' },
+                                url: { type: 'string' },
+                              },
+                            },
+                            source: { type: 'string', enum: ['live', 'backfill'] },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
             '503': errorResponse,
           },
         },

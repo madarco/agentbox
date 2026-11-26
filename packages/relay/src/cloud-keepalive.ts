@@ -38,6 +38,7 @@
  * (`lifecycle.onTimeout`), so hitting the cap costs a stall rather than the box.
  */
 
+import { recordActivity } from './activity/ledger.js';
 import { readFile } from 'node:fs/promises';
 import {
   BUILT_IN_DEFAULTS,
@@ -410,6 +411,7 @@ export function startCloudKeepaliveLoop(deps: CloudKeepaliveLoopDeps): CloudKeep
           });
           idlePaused.set(boxId, e.lastActivityMs);
           backoffUntil.delete(boxId);
+          void recordActivity({ type: 'box.paused', actor: 'autopause', boxId });
           // The tracked deadline belongs to a session that no longer exists;
           // drop it so the next wake re-seeds from the record.
           tracked.delete(boxId);
