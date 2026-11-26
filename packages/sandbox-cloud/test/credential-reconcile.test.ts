@@ -46,10 +46,10 @@ describe('reconcileAgentCredentialsViaTransport', () => {
     await reconcileAgentCredentialsViaTransport(t, { backups });
     const push = t.ops.find((o) => o.op === 'pushFile');
     expect(push).toBeDefined();
-    expect(push!.args['boxDestPath']).toBe(`${CLAUDE_BOX_PATH}.agentbox-push`);
+    expect(push!.args['boxDestPath']).toMatch(/\.credentials\.json\.agentbox-push-[0-9a-f]{8}$/);
   });
 
-  it('a box blob of ANOTHER login is neither captured nor overwritten', async () => {
+  it('a newer box blob of ANOTHER login is neither captured nor overwritten', async () => {
     const owned = (account: string, exp: number): string =>
       JSON.stringify({
         claudeAiOauth: { refreshToken: 'r', expiresAt: exp, accountUuid: account },
@@ -61,6 +61,20 @@ describe('reconcileAgentCredentialsViaTransport', () => {
     await reconcileAgentCredentialsViaTransport(t, { backups });
     expect(await readFile(backups.claude, 'utf8')).toBe(owned('work', 100));
     expect(t.ops.filter((o) => o.op === 'pushFile')).toHaveLength(0);
+  });
+
+  it('puts the account`s login in when it is newer than another login the box holds (switched while down)', async () => {
+    const owned = (account: string, exp: number): string =>
+      JSON.stringify({
+        claudeAiOauth: { refreshToken: 'r', expiresAt: exp, accountUuid: account },
+      });
+    await writeFile(backups.claude, owned('work', 300));
+    const t = makeRecordingTransport({
+      readText: (path) => (path === CLAUDE_BOX_PATH ? owned('home', 100) : null),
+    });
+    await reconcileAgentCredentialsViaTransport(t, { backups });
+    expect(await readFile(backups.claude, 'utf8')).toBe(owned('work', 300));
+    expect(t.ops.filter((o) => o.op === 'pushFile')).toHaveLength(1);
   });
 
   it('captures the box claude blob to the backup when the box is newer', async () => {
@@ -90,7 +104,9 @@ describe('reconcileAgentCredentialsViaTransport', () => {
     });
     await reconcileAgentCredentialsViaTransport(t, { backups });
     const push = t.ops.find((o) => o.op === 'pushFile');
-    expect(push!.args['boxDestPath']).toBe('/home/vscode/.codex/auth.json.agentbox-push');
+    expect(push!.args['boxDestPath']).toMatch(
+      /^\/home\/vscode\/\.codex\/auth\.json\.agentbox-push-/,
+    );
     expect(await readFile(backups.codex, 'utf8')).toBe('{"token":"host"}');
   });
 

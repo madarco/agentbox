@@ -253,14 +253,21 @@ keeps its conversation on the new account:
   refused before anything changes (Claude ignores a malformed setup token and
   reads as logged out). Leaving a token for a login restarts the agent too,
   since the token's variable has to go.
-- A docker box created before boxes had their own credential file can't switch
-  to a login: destroy it and create it again.
+- A docker box created before boxes had their own credential file can only go
+  back to the login it was created with (a restart). For any other login,
+  destroy it and create it again.
 
-If the box's agent was renewing the old account's login at the moment of the
-switch, that renewal can land in the box afterwards. AgentBox spots it (the
-login names its own account) and puts the new account's login back, so the
-switch holds. A box that is not running records a token switch and uses it at
-its next start. Usage is counted under the account the box records.
+Before the switch, AgentBox keeps a renewal the box made of the old account's
+login, so that account's other boxes don't lose it. If the agent was renewing
+the old login at the moment of the switch, that renewal can land in the box
+afterwards. AgentBox spots it (the login names its own account), stores it for
+the old account, and puts the new account's login back, so the switch holds.
+Any other login you sign in inside the box stays in that box only. A cloud box
+that was stopped while its account changed gets the account's login when it
+resumes, unless the box holds a newer one. A box that is not running records a
+token switch and uses it at its next start. Usage is counted under the account
+the box records. Claude's `/status` can show the old account's name until its
+next profile refresh; requests use the new login.
 
 When an account hits its plan limit, the hub can do this for you. The
 `accounts.onLimit` key (global, or **Settings → General** in the hub) is `ask`

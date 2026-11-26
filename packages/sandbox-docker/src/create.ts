@@ -75,7 +75,9 @@ import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
   boxCredentialMount,
   emptyCredentialPlaceholder,
+  ensureVolumeCredentialIsFile,
   hasBoxCredentialFile,
+  removeBoxCredentialFiles,
   writeBoxCredentialFile,
 } from './box-credentials.js';
 import { volumeSettingsTarget } from './sync/settings-propagate.js';
@@ -868,7 +870,13 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
             .catch(() => null);
     const content = held?.trim() ? held : emptyCredentialPlaceholder(agent);
     if (content === null) continue;
-    await writeBoxCredentialFile({ id, name, projectIndex }, agent, content);
+    try {
+      await ensureVolumeCredentialIsFile(choice.volume, ensureRef, agent);
+      await writeBoxCredentialFile({ id, name, projectIndex }, agent, content);
+    } catch (err) {
+      await removeBoxCredentialFiles({ id, name, projectIndex });
+      throw err;
+    }
     extraVolumes.push(boxCredentialMount({ id, name, projectIndex }, agent));
     credentialFiles.push(agent);
   }
@@ -1098,23 +1106,30 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     createdAt,
   };
 
-  await runBox({
-    name: containerName,
-    image: imageRef,
-    extraVolumes,
-    limits: effectiveLimits,
-    portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
-    env: {
-      AGENTBOX_BOX_ID: id,
-      ...agentboxEnv,
-      ...Object.assign({}, ...agentMounts.map((m) => m.env)),
-      ...relayEnv,
-      ...vncEnv,
-      ...portlessEnv,
-      ...(opts.claudeEnv ?? {}),
-    },
-    onLog: log,
-  });
+  try {
+    await runBox({
+      name: containerName,
+      image: imageRef,
+      extraVolumes,
+      limits: effectiveLimits,
+      portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
+      env: {
+        AGENTBOX_BOX_ID: id,
+        ...agentboxEnv,
+        ...Object.assign({}, ...agentMounts.map((m) => m.env)),
+        ...relayEnv,
+        ...vncEnv,
+        ...portlessEnv,
+        ...(opts.claudeEnv ?? {}),
+      },
+      onLog: log,
+    });
+  } catch (err) {
+    // No record yet, so no destroy will find these: a live refresh token must
+    // not outlive a box that never started.
+    await removeBoxCredentialFiles({ id, name, projectIndex });
+    throw err;
+  }
   log(`container ${containerName} started`);
 
   // Provisional registration: the box now exists, so persist it before the

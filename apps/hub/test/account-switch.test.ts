@@ -11,6 +11,7 @@ import {
 
 const SPEC = {
   id: 'claude',
+  dockerVolume: 'agentbox-claude-config',
   credential: { liveReload: true, bindMountable: true },
   accountEnv: { 'api-key': 'ANTHROPIC_API_KEY', 'setup-token': 'CLAUDE_CODE_OAUTH_TOKEN' },
   accountTokenPattern: { 'setup-token': '^sk-ant-oat01-[A-Za-z0-9_-]{60,}$' },
@@ -41,6 +42,7 @@ function deps(o: Partial<AccountSwitchDeps> & { kinds?: Record<string, string> }
     writeLogin: vi.fn(async (_b: BoxRecord, _a: string, account: string) => {
       calls.push(`write:${account}`);
     }),
+    captureLogin: async (_b, _a, account) => void calls.push(`capture:${account}`),
     rewriteCloudEnv: async () => void calls.push('env-file'),
     restartAgent: async () => void calls.push('restart'),
     recordSwitch: async (_id, e: AccountSwitchRecord) => {
@@ -96,18 +98,28 @@ describe('switchBoxAccount', () => {
     expect(calls).toEqual([]);
   });
 
-  it('a login on docker: records, then writes the file, and claude keeps running', async () => {
+  it('a login on docker: keeps what the box holds, records, then writes the file, and claude keeps running', async () => {
     const { d, calls } = deps();
     const r = await switchBoxAccount(d, 'web', { account: 'work' });
     expect(r).toMatchObject({ kind: 'ok', how: 'file', restarted: false });
-    expect(calls).toEqual(['record:default>work:file:manual', 'register', 'write:work']);
+    expect(calls).toEqual([
+      'capture:default',
+      'record:default>work:file:manual',
+      'register',
+      'write:work',
+    ]);
   });
 
   it('a login on a cloud box takes the same path, no env file, no restart', async () => {
     const { d, calls } = deps({ findBox: async () => box({ provider: 'e2b' }) });
     const r = await switchBoxAccount(d, 'web', { account: 'work' });
     expect(r).toMatchObject({ kind: 'ok', how: 'file', restarted: false });
-    expect(calls).toEqual(['record:default>work:file:manual', 'register', 'write:work']);
+    expect(calls).toEqual([
+      'capture:default',
+      'record:default>work:file:manual',
+      'register',
+      'write:work',
+    ]);
   });
 
   it('a paused or stopped docker box takes a login (the file is on the host)', async () => {
@@ -124,6 +136,27 @@ describe('switchBoxAccount', () => {
     const r = await switchBoxAccount(d, 'web', { account: 'work' });
     expect(r).toMatchObject({ kind: 'ok', how: 'file', restarted: true });
     expect(calls).toEqual(['record:tok>work:file:manual', 'register', 'write:work', 'restart']);
+  });
+
+  it('a failed capture does not stop the switch', async () => {
+    const { d, calls } = deps({
+      captureLogin: async () => {
+        throw new Error('box unreachable');
+      },
+    });
+    expect(await switchBoxAccount(d, 'web', { account: 'work' })).toMatchObject({ kind: 'ok' });
+    expect(calls).toContain('write:work');
+  });
+
+  it('a box without its own file goes back to the login of the volume it mounts, by restart', async () => {
+    const legacy = async () => box({ credentialFiles: undefined, accounts: { claude: 'tok' } });
+    const { d, calls } = deps({ findBox: legacy });
+    const r = await switchBoxAccount(d, 'web', { account: 'default' });
+    expect(r).toMatchObject({ kind: 'ok', how: 'env', restarted: true });
+    expect(calls).toEqual(['record:tok>default:env:manual', 'register', 'restart']);
+    // Another login than the volume's still needs a file of its own.
+    const other = deps({ findBox: legacy });
+    expect((await switchBoxAccount(other.d, 'web', { account: 'work' })).kind).toBe('refused');
   });
 
   it('an agent that does not re-read its file is restarted after a login switch', async () => {
@@ -147,6 +180,7 @@ describe('switchBoxAccount', () => {
       error: 'could not write the work login into web, so it stays on default: disk full',
     });
     expect(calls).toEqual([
+      'capture:default',
       'record:default>work:file:manual',
       'register',
       'write:work',

@@ -40,6 +40,7 @@ import {
   readCredentialBackup,
   resolveAgentSpec,
   runDockerCredentialRefresh,
+  shouldAcceptCredentialBlob,
   shouldAcceptCredentialUpdate,
   credentialIdentityMismatch,
   writeCredentialBackup,
@@ -807,11 +808,20 @@ export async function reconcileAgentCredentialsViaTransport(
         log(`captured ${spec.id} credential from box (no host backup)`);
         continue;
       }
-      // The box holds another login than its account's: a person signed it in
-      // inside the box. It keeps it, and it never replaces the account's copy.
-      // (A refresh race right after a switch is repaired live by the relay.)
+      // The box holds another login than its account's. It never replaces the
+      // account's copy. When the account's copy is the newer one, the account
+      // changed while the box was down (a switch, or a re-login of the account),
+      // so it goes in. Otherwise a person signed a newer login in inside the
+      // box, which it keeps.
       if (boxReal && hostReal && credentialIdentityMismatch(spec.id, boxText, hostText)) {
-        log(`box holds another ${spec.id} login than its account's; left as it is`);
+        if (
+          shouldAcceptCredentialBlob(spec.credential.freshness?.jsonPath, hostText, boxText).accept
+        ) {
+          await pushCredentialToBox(transport, spec.id, hostText);
+          log(`box held another ${spec.id} login; put its account's newer one in`);
+        } else {
+          log(`box holds another, newer ${spec.id} login than its account's; left as it is`);
+        }
         continue;
       }
       // Box->host capture needs an ORDERING to be safe, or a resumed box's

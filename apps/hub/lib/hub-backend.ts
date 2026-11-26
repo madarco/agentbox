@@ -59,7 +59,7 @@ import { createCheckoutBackend } from './backend/checkouts';
 import { createHostSessionsBackend } from './backend/history-host';
 import { addBoxAgent } from './backend/box-agents';
 import { isSwitchingAccount, switchBoxAccount, withRecordAccounts } from './backend/account-switch';
-import { writeBoxLogin } from './backend/box-login';
+import { captureBoxLogin, writeBoxLogin } from './backend/box-login';
 import { restartBoxAgent } from './backend/agent-restart';
 import { createSkillsBackend } from './backend/skills-backend';
 import { createPcSkillsBackend } from './backend/skills-pc';
@@ -3639,6 +3639,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           boxState: async (box) => (await providerForBox(box)).probeState(box),
           writeLogin: async (box, agent, account) =>
             writeBoxLogin(await providerForBox(box), box, agent, account),
+          captureLogin: async (box, agent, account) => {
+            await captureBoxLogin(await providerForBox(box), box, agent, account);
+          },
           rewriteCloudEnv: async (box) => rewriteCloudAgentEnv(await providerForBox(box), box),
           restartAgent: async (box, agent) =>
             restartBoxAgent(await providerForBox(box), box, agent),

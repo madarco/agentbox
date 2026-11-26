@@ -227,9 +227,10 @@ async function dockerVolumeRm(name: string): Promise<{ removed: boolean; error?:
   }
 }
 
-async function cliPropagate(
+export async function cliPropagate(
   agent: string,
   id: string,
+  extra: readonly string[] = [],
 ): Promise<{ exitCode: number; output: string }> {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) throw new Error('hub is missing AGENTBOX_CLI_ENTRY; cannot fan the login out');
@@ -244,6 +245,7 @@ async function cliPropagate(
         '--agent',
         agent,
         ...(isDefaultAccount(id) ? [] : ['--account', id]),
+        ...extra,
       ],
       { timeout: 300_000, maxBuffer: 4 * 1024 * 1024 },
     );

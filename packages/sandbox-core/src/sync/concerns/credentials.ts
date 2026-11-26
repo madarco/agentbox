@@ -26,6 +26,7 @@
  */
 
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AgentCredential, SyncTransport } from '@agentbox/core';
@@ -498,7 +499,8 @@ export async function pushCredentialToBox(
     );
   }
   const dir = abs.slice(0, abs.lastIndexOf('/'));
-  const staged = `${abs}.agentbox-push`;
+  // Unique per push: two writers (a switch and a fan-out) must not share a stage.
+  const staged = `${abs}.agentbox-push-${randomBytes(4).toString('hex')}`;
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-cred-push-'));
   try {
     const tmp = join(stage, 'credential');

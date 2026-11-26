@@ -119,7 +119,9 @@ describe('pushCredentialToBox', () => {
     const t = makeRecordingTransport();
     await pushCredentialToBox(t, 'claude', claudeBlob(9));
     const push = t.ops.find((o) => o.op === 'pushFile');
-    expect(push!.args['boxDestPath']).toBe('/home/vscode/.claude/.credentials.json.agentbox-push');
+    expect(push!.args['boxDestPath']).toMatch(
+      /^\/home\/vscode\/\.claude\/\.credentials\.json\.agentbox-push-[0-9a-f]{8}$/,
+    );
     const execs = t.ops.filter((o) => o.op === 'exec');
     expect(execs.some((e) => (e.args['cmd'] as string[]).join(' ').includes('mkdir -p'))).toBe(
       true,
@@ -158,8 +160,8 @@ describe('pushCredentialToBox', () => {
       .filter((o) => o.op === 'exec')
       .map((e) => (e.args['cmd'] as string[]).join(' '))
       .find((c) => c.includes('chmod 600'));
-    expect(place).toContain(
-      `mv -fT '/home/vscode/.local/share/opencode/auth.json.agentbox-push' '/home/vscode/.local/share/opencode/auth.json'`,
+    expect(place).toMatch(
+      /mv -fT '\/home\/vscode\/\.local\/share\/opencode\/auth\.json\.agentbox-push-[0-9a-f]{8}' '\/home\/vscode\/\.local\/share\/opencode\/auth\.json'/,
     );
   });
 });

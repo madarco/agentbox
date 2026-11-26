@@ -150,6 +150,7 @@ export {
   credentialFreshness,
   credentialExpiry,
   oauthRefreshExpiresAt,
+  shouldAcceptCredentialBlob,
   shouldAcceptCredentialUpdate,
   credentialIdentityMismatch,
   IDENTITY_MISMATCH,

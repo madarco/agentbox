@@ -15,6 +15,8 @@
 // The token's shape is checked first: claude ignores a malformed OAuth token and
 // reads as logged out, with nothing saying why.
 import {
+  accountConfigVolume,
+  agentConfigVolume,
   isDefaultAccount,
   primaryAgent,
   type AccountSwitchRecord,
@@ -39,6 +41,13 @@ export interface AccountSwitchDeps {
    * `agent`. Throws with a message a person can act on.
    */
   writeLogin(box: BoxRecord, agent: string, account: string): Promise<void>;
+  /**
+   * Before the box's file is overwritten: credit what it holds now to
+   * `account` (the one it is leaving) when that is a newer copy of the same
+   * login. A refresh made since the watcher's last poll would otherwise be
+   * lost, and with it the rotated refresh token every box on `account` needs.
+   */
+  captureLogin(box: BoxRecord, agent: string, account: string): Promise<void>;
   /** Cloud: rewrite the agent env file from the (already moved) record. */
   rewriteCloudEnv(box: BoxRecord): Promise<void>;
   /** Kill the agent's session and start it again, resuming its conversation. */
@@ -76,6 +85,23 @@ export type SwitchResult =
   | { kind: 'invalid'; error: string }
   | { kind: 'refused'; error: string }
   | { kind: 'error'; error: string };
+
+/**
+ * A docker box created before per-box credential files still mounts one
+ * account's config volume. Going back to THAT account's login (after a switch
+ * to a token) needs no write: drop the token and restart. Pure.
+ */
+export function mountsAccountVolume(
+  box: Pick<BoxRecord, 'provider' | 'credentialFiles'> & Partial<BoxRecord>,
+  spec: Pick<AgentSyncSpec, 'id' | 'dockerVolume'>,
+  account: string,
+): boolean {
+  if ((box.provider ?? 'docker') !== 'docker' || box.credentialFiles?.includes(spec.id)) {
+    return false;
+  }
+  const mounted = agentConfigVolume(box as BoxRecord, spec.id) ?? spec.dockerVolume;
+  return mounted === accountConfigVolume(spec.dockerVolume, account);
+}
 
 /**
  * Why `box` cannot take another login for `agent` in `state`, or null. Pure.
@@ -198,12 +224,18 @@ async function switchLocked(
   // A switch restarts the agent unless it is login to login and the agent
   // re-reads its credential file on its own.
   let restart = true;
-  if (kind === 'login') {
+  // Only a login account's copy can take what the box holds (a token
+  // account's secret is its token).
+  let fromIsLogin = false;
+  if (kind === 'login' && mountsAccountVolume(box, spec, to)) {
+    // how stays `env`: the token goes, the agent restarts on the volume's login.
+  } else if (kind === 'login') {
     const refusal = loginSwitchRefusal(box, spec, state);
     if (refusal) return { kind: 'refused', error: refusal };
     how = 'file';
     const fromKind = isDefaultAccount(from) ? 'login' : await deps.accountKind(agent, from);
-    restart = !spec.credential?.liveReload || fromKind !== 'login';
+    fromIsLogin = fromKind === 'login';
+    restart = !spec.credential?.liveReload || !fromIsLogin;
   } else {
     const envKey = spec.accountEnv?.[kind];
     if (!envKey) return { kind: 'invalid', error: `${agent} has no ${kind} accounts` };
@@ -229,6 +261,13 @@ async function switchLocked(
   };
 
   try {
+    // While the record still says `from`, so a post the watcher races in is
+    // credited to `from` too.
+    if (how === 'file' && fromIsLogin) {
+      await deps.captureLogin(box, agent, from).catch((err: unknown) => {
+        deps.log(`could not keep ${box.name}'s ${from} login before the switch: ${errText(err)}`);
+      });
+    }
     const entry: AccountSwitchRecord = {
       at: deps.now().toISOString(),
       agent,

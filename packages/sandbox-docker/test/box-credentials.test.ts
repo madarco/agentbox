@@ -34,7 +34,21 @@ describe('per-box credential file', () => {
     await mod.writeBoxCredentialFile(box, 'claude', '{"b":2}');
     expect((await stat(file)).ino).toBe(before);
     expect(await readFile(file, 'utf8')).toBe('{"b":2}');
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    // The box user (uid 1000) is not the host user on every Linux host.
+    expect((await stat(file)).mode & 0o777).toBe(0o666);
+    expect((await stat(join(file, '..'))).mode & 0o777).toBe(0o700);
+  });
+
+  it('writes a shorter blob without leaving the old tail', async () => {
+    const file = await mod.writeBoxCredentialFile(box, 'claude', '{"long":"xxxxxxxxxxxxxxxx"}');
+    await mod.writeBoxCredentialFile(box, 'claude', '{"s":1}');
+    expect(await readFile(file, 'utf8')).toBe('{"s":1}');
+  });
+
+  it('removes the box`s credential files', async () => {
+    const file = await mod.writeBoxCredentialFile(box, 'claude', '{}');
+    await mod.removeBoxCredentialFiles(box);
+    await expect(stat(file)).rejects.toThrow();
   });
 
   it('gives claude a logged-out placeholder, and no file to an agent without a safe empty value', () => {
