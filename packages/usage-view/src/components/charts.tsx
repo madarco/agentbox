@@ -344,7 +344,7 @@ export function ConcChart({ rows }: { rows: readonly ConcRow[] }): ReactElement 
       : [0, 1, 2, 3, 4].map((i) => (max / 4) * i);
   const y = (v: number): number => T + (H - T - B) * (1 - v / max);
   const n = Math.max(rows.length, 1);
-  const slot = (W - L - R) / n;
+  const slot = Math.max(0, (W - L - R) / n);
   const bw = Math.max(1, Math.min(16, slot - 3));
   const px = (i: number): number => L + slot * i + slot / 2;
   const line = rows.map((r, i) => `${px(i)},${y(r.avgAtOnce)}`).join(' L');
@@ -490,7 +490,7 @@ export function DailyChart({
   const max = niceMax(max0(rows.map((r) => r.total)));
   const y = (v: number): number => T + (H - T - B) * (1 - v / max);
   const n = Math.max(rows.length, 1);
-  const slot = (W - L - R) / n;
+  const slot = Math.max(0, (W - L - R) / n);
   const bw = Math.max(1, Math.min(24, slot - 4));
   const todayIdx = rows.findIndex((r) => r.forecast);
   return (
@@ -802,7 +802,7 @@ export function Punchcard({ grid }: { grid: readonly (readonly number[])[] }): R
   const T = 8;
   const B = 26;
   const R = 6;
-  const cw = (W - L - R) / 24;
+  const cw = Math.max(0, (W - L - R) / 24);
   const ch = (H - T - B) / 7;
   const order = [1, 2, 3, 4, 5, 6, 0];
   const max = max0(grid.flat()) || 1;
@@ -899,7 +899,7 @@ export function DiffChart({ rows }: { rows: readonly DiffRow[] }): ReactElement 
   const mid = T + (H - T - B) * (maxA / span);
   const k = (H - T - B) / span;
   const n = Math.max(rows.length, 1);
-  const slot = (W - L - R) / n;
+  const slot = Math.max(0, (W - L - R) / n);
   const bw = Math.max(1, Math.min(16, slot - 3));
   return (
     <div ref={ref} className="chart-wrap">

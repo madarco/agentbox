@@ -1974,7 +1974,7 @@ export function buildOpenApi(): Record<string, unknown> {
             {
               name: 'range',
               in: 'query',
-              schema: { type: 'string', enum: ['7d', 'month', '90d', 'year'] },
+              schema: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
               description: "The page's range label. Default from the window's length.",
             },
             {
@@ -1998,7 +1998,7 @@ export function buildOpenApi(): Record<string, unknown> {
                       range: {
                         type: 'object',
                         properties: {
-                          id: { type: 'string', enum: ['7d', 'month', '90d', 'year'] },
+                          id: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
                           since: { type: 'string' },
                           until: { type: 'string' },
                           today: { type: 'string' },
@@ -2042,6 +2042,86 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '400': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
+      '/usage/share': {
+        get: {
+          tags: ['History'],
+          summary: 'Usage share settings',
+          description:
+            'The site a usage share is posted to (`share.endpoint`) and the handles this hub holds a claim for there. Claim secrets are never returned.',
+          responses: {
+            '200': {
+              description: 'Endpoint and claimed handles',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      endpoint: { type: 'string' },
+                      handles: { type: 'array', items: { type: 'string' } },
+                      lastHandle: { type: 'string', nullable: true },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+          },
+        },
+        post: {
+          tags: ['History'],
+          summary: 'Share usage publicly',
+          description:
+            "Builds the public `UsageShare` of a window (metrics, dates and agent/provider ids plus the handle; no box, project, branch, PR or session names) and posts it to `share.endpoint` (default `https://agent-box.sh/api/share`) from the hub. The first share of a handle claims it: the site's claim secret is kept in `~/.agentbox/hub/share.json` and sent with later shares of that handle. With `preview: true` nothing is posted and the share is returned.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['handle'],
+                  properties: {
+                    handle: { type: 'string', pattern: '^[a-z0-9-]{1,39}$' },
+                    preview: { type: 'boolean' },
+                    since: { type: 'string' },
+                    until: { type: 'string' },
+                    tz: { type: 'string' },
+                    range: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
+                    subscription: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Preview: `{ share, endpoint, bytes }`, nothing posted',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '201': {
+              description: 'Posted: `{ url, handle, n, claimedNow }`',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      url: { type: 'string' },
+                      handle: { type: 'string' },
+                      n: { type: 'integer' },
+                      claimedNow: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '409': errorResponse,
+            '413': errorResponse,
+            '429': errorResponse,
+            '502': errorResponse,
             '503': errorResponse,
           },
         },

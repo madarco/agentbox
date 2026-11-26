@@ -194,7 +194,7 @@ from Phase 1 on.
 - `agentbox usage` prints the hero numbers (`--json` the whole `UsageStats`); the
   token breakdown that was `agentbox usage` is now `agentbox usage tokens`.
 
-### Phase 3 — the hub Usage page
+### Phase 3 — the hub Usage page (done 2026-11-26)
 
 - Port the mockup to `packages/usage-view` React components (hand-drawn SVG, no
   chart library), light and dark. **Done** (feat/usage-view) as `UsageView` from
@@ -209,6 +209,9 @@ from Phase 1 on.
   (`agentbox cp ../agentbox-design/control-shadcn/{views-usage.jsx,usage.css}`):
   the design repo is not in the workspace.
 - Update the tray if it links to Usage; update the public docs page for Usage.
+- **Done** (feat/usage-page): `/usage` renders `UsageView`; the range (`?range=`,
+  default `30d` to match the tray's pill) and `?subscription=` live in the URL;
+  Export CSV is one row per day; the token breakdown moved to `/usage?view=tokens`.
 
 ### Phase 4 — where sessions live, and how they reach the usage page
 
@@ -394,6 +397,24 @@ The handle `example` is reserved. Env on the Vercel project: `DATABASE_URL`
 - `share.endpoint` config key (default `https://agent-box.sh/api/share`) for
   testing against a preview deployment.
 - `agentbox usage share` for the CLI.
+
+**Done (2026-11-26).** `apps/hub/lib/backend/usage-share.ts` builds the share with
+`toShare` over the same `usageStats` the page reads and posts it from the hub
+(`POST /api/v1/usage/share`; `preview: true` returns the share and posts nothing;
+`GET` gives the endpoint and the handles held there). Claim secrets live in
+`~/.agentbox/hub/share.json` (0600), keyed by the endpoint's origin and handle, so a
+preview deployment never receives the agent-box.sh secret; the last handle is
+remembered per origin. `share.endpoint` is read from the hub machine's global
+config only, and an unreadable config is a 503, never a silent fall back to
+agent-box.sh. The site's 403/409 map to `conflict`, 429 to `rate_limited` (with
+`Retry-After`), 503 to `backend_unavailable`, 400/unreachable/a URL on another
+origin to `upstream_error` (502). If the secret can't be saved after the site
+stored the share, it is written to a file of its own and the error names the
+public URL. The Usage page's Share opens a dialog that renders the preview with
+`UsageView` (public variant), a handle field checked with `HANDLE_RE`, then the
+URL with Copy link. `agentbox usage share [--handle] [--since …] [--dry-run] [-y]`.
+Checked live against a local `next dev` of `apps/web` with a scratch Postgres (see
+the PR); the open items are in the backlog.
 
 ## Phase 0 results (2026-11-26, history-side only)
 

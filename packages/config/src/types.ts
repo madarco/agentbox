@@ -406,6 +406,10 @@ export interface UserConfig {
      */
     maxSkillBytes?: number;
   };
+  share?: {
+    /** Where the hub posts a usage share (`agentbox usage share`, the Usage page's Share). */
+    endpoint?: string;
+  };
 }
 
 /**
@@ -595,6 +599,9 @@ export interface EffectiveConfig {
   };
   skills: {
     maxSkillBytes: number;
+  };
+  share: {
+    endpoint: string;
   };
 }
 
@@ -809,6 +816,9 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   skills: {
     // 50 MB: the largest real skill measured in Phase 0 is 23 MB.
     maxSkillBytes: 50 * 1024 * 1024,
+  },
+  share: {
+    endpoint: 'https://agent-box.sh/api/share',
   },
 };
 
@@ -1590,6 +1600,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'int',
     description:
       "Largest skill (total bytes of its files, default 52428800 = 50 MB) that `agentbox skills` and the automatic first seed upload to the hub's skills library. A bigger skill is listed and skipped. The hub's own bound is its custody blob cap (AGENTBOX_CUSTODY_MAX_BLOB_BYTES, 100 MiB).",
+  },
+  {
+    key: 'share.endpoint',
+    type: 'string',
+    description:
+      "Where the hub posts a public usage share (`agentbox usage share`, the Usage page's Share button). Default `https://agent-box.sh/api/share`; point it at a preview deployment's `/api/share` to test. Must be https (http only for localhost). Read by the hub from the GLOBAL config of the machine it runs on.",
   },
 ];
 
