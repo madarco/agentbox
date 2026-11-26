@@ -71,6 +71,41 @@ export function parseAccountFlags(
   return out;
 }
 
+/** Where a new box's account for one agent comes from. */
+export interface AccountDefault {
+  /** The account a new box gets (`default` = the agent's own login). */
+  account: string;
+  source: 'project' | 'global' | 'default';
+  /** `<agent>.account` in the project config layer, when set. */
+  project?: string;
+  /** `<agent>.account` in the global config layer, when set. */
+  global?: string;
+}
+
+/**
+ * The account a new box would get per agent, with no `--account` flag: the
+ * project setting, else the global one, else the default login (the same order
+ * {@link resolveBoxAccounts} applies). The repo's agentbox.yaml never counts.
+ * Pure.
+ */
+export function accountDefaults(
+  agents: readonly string[],
+  config: Pick<LoadedConfig, 'layers'> | undefined,
+): Record<string, AccountDefault> {
+  const out: Record<string, AccountDefault> = {};
+  for (const agent of agents) {
+    const project = layerValue(config?.layers.project.values, agent);
+    const global = layerValue(config?.layers.global.values, agent);
+    out[agent] = {
+      account: project ?? global ?? DEFAULT_ACCOUNT_ID,
+      source: project ? 'project' : global ? 'global' : 'default',
+      ...(project ? { project } : {}),
+      ...(global ? { global } : {}),
+    };
+  }
+  return out;
+}
+
 export interface ResolvedBoxAccounts {
   /** Named accounts only — what `CreateBoxRequest.accounts` / `BoxRecord.accounts` carry. */
   accounts: Record<string, string>;
@@ -125,7 +160,7 @@ export async function resolveBoxAccounts(o: {
     const row = findAccount(file, spec.id, id);
     if (!row) {
       throw new Error(
-        `no ${spec.id} account '${id}' on this machine: add it with \`agentbox ${spec.id} login --account ${id}\` (see \`agentbox accounts\`)`,
+        `no ${spec.id} account '${id}' on this machine: add it with \`agentbox credentials add ${spec.id}/${id}\` (see \`agentbox credentials\`)`,
       );
     }
     if (o.loginOnly?.includes(spec.id) && row.kind !== 'login') {

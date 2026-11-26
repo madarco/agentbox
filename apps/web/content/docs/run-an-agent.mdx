@@ -126,14 +126,17 @@ Setting `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` (Claude) or `OPENAI_API_
 
 Claude and Codex can keep more than one login: a personal and a work
 subscription, a long-lived token for CI, or an API key. The plain
-`agentbox <agent> login` is the **default** account, as before. A named account
-gets its own name:
+`agentbox <agent> login` signs in the **default** account. Everything else lives
+under `agentbox credentials`. Run it bare in a terminal for a menu that lists
+every account with its status, plan meters and boxes, and lets you add, renew,
+relabel or remove one, make it the default, or move a box onto it. Each action
+is also a subcommand:
 
 ```bash
-agentbox claude login --account work --label "Work"   # a second subscription login
-agentbox codex login --account work
-agentbox claude login --account ci --setup-token      # paste a `claude setup-token` token
-agentbox claude login --account overflow --api-key    # paste an API key
+agentbox credentials add claude/work --login --label "Work"   # a second subscription login
+agentbox credentials add codex/work --login
+agentbox credentials add claude/ci --setup-token              # paste a `claude setup-token` token
+agentbox credentials add claude/overflow --api-key            # paste an API key
 ```
 
 A named login signs in against its own config volume, separate from the default
@@ -148,26 +151,54 @@ A subscription login renews itself, and each renewal signs out every other copy
 of that login until AgentBox hands them the new one. A setup token never renews.
 
 ```bash
-agentbox accounts                     # agent, account, kind, label, email/plan, whether a secret is stored
-agentbox accounts label claude/work "Work laptop"
-agentbox accounts rm claude/work      # its stored login and config volume (not while a box uses it)
+agentbox credentials                  # the menu (on a terminal), else the list
+agentbox credentials list --json      # account, kind, label, email/plan, status, limits, default, boxes
+agentbox credentials label claude/work "Work laptop"
+agentbox credentials rm claude/work   # its stored login and config volume (not while a box uses it)
 ```
+
+The STATUS column reads `revoked` when a box's agent had the account's login
+refused (Claude's "Login expired · Please run /login" after another box's
+renewal signed it out, or a revoked setup token or API key) and has not had a
+real reply since, nor has the stored login been renewed. Each box counts on its
+own: another box working on the same account does not clear it, and the status
+names the box that is still failing. It reads `at limit` when a
+plan window is full, and `expiring` for a setup token in the last 30 days of its
+year. A revoked login comes back with one command:
+
+```bash
+agentbox credentials renew claude/default   # sign in again, then push the login to every box on it
+agentbox credentials renew claude/work --skip-sign-in   # the stored login is fine; only a box lost it
+```
+
+Without a terminal, `renew` (like `add --login`) prints the sign-in URL; finish
+with `agentbox credentials renew claude/work --code <CODE>`, which then pushes
+the login out.
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
 secret 0600 under `~/.agentbox/credentials/`. The hub's **Settings → Subscriptions** page shows
-the same list, and lets you add a setup token or API key, relabel or remove one.
-Named logins are copied to your control box keyed by this machine, so two
-computers' `work` accounts never mix; setup tokens and API keys stay on the
-machine.
+the same list, and lets you add a setup token or API key, relabel or remove one,
+and pick the default. `agentbox credentials` always asks this machine's own hub,
+even when a remote control box is configured. Named logins are copied to your
+control box keyed by this machine, so two computers' `work` accounts never mix;
+setup tokens and API keys stay on the machine.
 
 ### Choosing the account a box runs on
 
 ```bash
 agentbox claude --account work                 # this box only
 agentbox create --account claude=work          # repeatable: --account codex=work
-agentbox config set claude.account work        # default for this project
-agentbox config set claude.account work --global
+agentbox credentials use claude/work           # default for this project
+agentbox credentials use claude/work --global  # default everywhere
+agentbox credentials use                       # per agent: what a new box here gets, and why
+agentbox credentials use claude --clear        # drop this project's setting
 ```
+
+`credentials use` writes the `<agent>.account` config key (refusing an account
+that does not exist), so `agentbox config set claude.account work` still works.
+The global default can also be picked with **Make default** on the hub's
+Subscriptions page. `agentbox list` shows each box's account in the SUBSCRIPTION
+column (`default`, or `claude/work`).
 
 `--account` wins over the project setting, which wins over the global one; with
 none, the box uses the default account. A repo's `agentbox.yaml` cannot choose
@@ -199,8 +230,8 @@ setup token: it never renews.
 ### Switching a box to another account
 
 ```bash
-agentbox accounts switch my-box claude/ci      # a setup token or API key
-agentbox accounts switch my-box claude/work    # a login (docker boxes)
+agentbox credentials switch my-box claude/ci      # a setup token or API key
+agentbox credentials switch my-box claude/work    # a login (docker boxes)
 ```
 
 The box page in the hub has the same choice: an account selector on the agent's

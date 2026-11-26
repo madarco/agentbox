@@ -1,9 +1,29 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// removeAccount reads the global config and walks ~/.agentbox/projects, and
+// config paths are fixed from $HOME at import: move HOME before any import.
+const HOME = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { mkdtempSync: mk } = require('node:fs') as typeof import('node:fs');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { tmpdir: td } = require('node:os') as typeof import('node:os');
+  const home = mk(`${td()}/agentbox-acct-api-`);
+  process.env.HOME = home;
+  return home;
+});
+afterAll(() => rmSync(HOME, { recursive: true, force: true }));
+
 import { AGENT_SYNC_SPECS, upsertAccount, writeAccountSecret } from '@agentbox/sandbox-core';
-import { accountsInfoOf, createAccountBackend } from '../lib/backend/accounts';
+import {
+  accountAuthState,
+  accountsInfoOf,
+  createAccountBackend,
+  parsePropagateOutput,
+  subscriptionsOf,
+} from '../lib/backend/accounts';
 
 let dir: string;
 let removed: string[];
@@ -162,5 +182,155 @@ describe('removing an account whose volume docker cannot remove (review)', () =>
     volumeAnswer = { removed: false };
     const r = await backend().removeAccount('claude', 'idle');
     expect(r.ok && r.value).toEqual({ volumeRemoved: false });
+  });
+});
+
+describe('account auth state (credentials-tui Phase 1)', () => {
+  const NOW = Date.parse('2026-11-26T12:00:00Z');
+  const login = { kind: 'login' as const, createdAt: '2026-01-01T00:00:00Z' };
+  const box = (o: { box?: string; failedAt?: string; okAt?: string }) => ({
+    box: o.box ?? 'web',
+    failedAt: o.failedAt ?? null,
+    error: o.failedAt ? 'authentication_failed' : null,
+    okAt: o.okAt ?? null,
+  });
+  const ev = (o: { failedAt?: string; okAt?: string }) => ({ boxes: [box(o)] });
+
+  it('is revoked while the refusal is newer than every real reply and the stored secret', () => {
+    expect(
+      accountAuthState(
+        login,
+        ev({ failedAt: '2026-11-26T10:00:00Z', okAt: '2026-11-26T09:00:00Z' }),
+        null,
+        NOW,
+      ),
+    ).toEqual({
+      state: 'revoked',
+      since: '2026-11-26T10:00:00Z',
+      box: 'web',
+      detail: 'authentication_failed',
+    });
+  });
+  it('a later real reply, or a newer secret (a renew), clears it', () => {
+    expect(
+      accountAuthState(
+        login,
+        ev({ failedAt: '2026-11-26T10:00:00Z', okAt: '2026-11-26T10:05:00Z' }),
+        null,
+        NOW,
+      ).state,
+    ).toBe('ok');
+    expect(
+      accountAuthState(
+        login,
+        ev({ failedAt: '2026-11-26T10:00:00Z' }),
+        Date.parse('2026-11-26T11:00:00Z'),
+        NOW,
+      ).state,
+    ).toBe('ok');
+    expect(accountAuthState(login, null, null, NOW).state).toBe('ok');
+  });
+  it("one box's real reply does not hide another box's refusal", () => {
+    const r = accountAuthState(
+      login,
+      {
+        boxes: [
+          box({ box: 'a', okAt: '2026-11-26T11:00:00Z' }),
+          box({ box: 'b', failedAt: '2026-11-26T10:00:00Z', okAt: '2026-11-26T09:00:00Z' }),
+          box({ box: 'c', failedAt: '2026-11-26T08:00:00Z', okAt: '2026-11-26T08:30:00Z' }),
+        ],
+      },
+      null,
+      NOW,
+    );
+    expect(r).toMatchObject({ state: 'revoked', box: 'b', since: '2026-11-26T10:00:00Z' });
+  });
+  it('a setup token is expiring in the last 30 days of its year', () => {
+    const tok = (createdAt: string) =>
+      accountAuthState({ kind: 'setup-token', createdAt }, null, null, NOW);
+    expect(tok('2025-12-10T00:00:00Z')).toEqual({
+      state: 'expiring',
+      since: '2026-12-10T00:00:00.000Z',
+    });
+    expect(tok('2026-06-01T00:00:00Z').state).toBe('ok');
+  });
+
+  it('the list carries it, from the backend deps', async () => {
+    const b = createAccountBackend({
+      store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
+      boxes: () => Promise.resolve(boxes),
+      machineId: () => 'm-test',
+      authEvidence: (sub) =>
+        Promise.resolve(sub === 'claude/work' ? ev({ failedAt: '2099-01-01T00:00:00Z' }) : null),
+    });
+    const r = await b.listAccounts();
+    expect(r.accounts.find((a) => a.id === 'work')?.auth).toMatchObject({
+      state: 'revoked',
+      box: 'web',
+    });
+    expect(r.accounts.find((a) => a.id === 'idle')?.auth).toEqual({ state: 'ok' });
+  });
+});
+
+describe('POST /api/v1/accounts/:agent/:id/renew (backend)', () => {
+  it('fans a login out through propagate, the account named', async () => {
+    const calls: string[] = [];
+    const b = createAccountBackend({
+      store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
+      boxes: () => Promise.resolve(boxes),
+      machineId: () => 'm-test',
+      runPropagate: (agent, id) => {
+        calls.push(`${agent}/${id}`);
+        return Promise.resolve({
+          exitCode: 0,
+          output:
+            'pushed claude credential to volume v (b-work)\npropagated claude credential to 1 target(s)\n{"pushed":1,"failed":0}\n',
+        });
+      },
+    });
+    const r = await b.renewAccount('claude', 'work');
+    expect(calls).toEqual(['claude/work']);
+    expect(r.ok && r.value).toEqual({
+      pushed: 1,
+      failed: 0,
+      output: [
+        'pushed claude credential to volume v (b-work)',
+        'propagated claude credential to 1 target(s)',
+      ],
+    });
+    expect((await b.renewAccount('claude', 'nope')).ok).toBe(false);
+  });
+  it('refuses a pasted kind', async () => {
+    const b = backend();
+    await b.addPastedAccount({ agent: 'claude', id: 'ci', kind: 'setup-token', token: TOKEN });
+    const r = await b.renewAccount('claude', 'ci');
+    expect(!r.ok && r.code).toBe('invalid_request');
+  });
+  it('reads the counts off the JSON summary line', () => {
+    expect(
+      parsePropagateOutput(
+        'a: boom\npropagated claude credential to 2 target(s), 1 failed\n{"pushed":2,"failed":1}\n',
+        1,
+      ),
+    ).toEqual({
+      pushed: 2,
+      failed: 1,
+      output: ['a: boom', 'propagated claude credential to 2 target(s), 1 failed'],
+    });
+    // It died before the summary.
+    expect(parsePropagateOutput('no usable claude credential\n', 1)).toMatchObject({
+      pushed: 0,
+      failed: 1,
+    });
+  });
+});
+
+describe('Box.subscriptions', () => {
+  it("names each agent's subscription, a borrower under its lender", () => {
+    expect(subscriptionsOf({ agents: ['claude'], accounts: { claude: 'work' } })).toEqual({
+      claude: 'claude/work',
+    });
+    expect(subscriptionsOf({ lastAgent: 'claude' })).toEqual({ claude: 'claude/default' });
+    expect(subscriptionsOf({})).toBeUndefined();
   });
 });

@@ -1502,6 +1502,51 @@ export interface AccountView {
    * codex account with no session), never 0%.
    */
   limits?: AccountLimits;
+  /** Whether the credential works, from what the boxes saw (docs/credentials-tui-plan.md). */
+  auth: AccountAuthView;
+  /** Set when this account is the agent's default for new boxes, per config layer. */
+  default?: { global?: true; project?: true };
+}
+
+/**
+ * `revoked`: a box's agent had the credential refused, and no real reply or new
+ * secret has landed since. `expiring`: a setup token within 30 days of its
+ * one-year life. `ok`: no evidence against it.
+ */
+export interface AccountAuthView {
+  state: 'ok' | 'expiring' | 'revoked';
+  /** ISO time of the evidence (the refusal, or the token's expiry). */
+  since?: string;
+  /** The box whose agent saw the refusal. */
+  box?: string;
+  /** The agent's own error code (`authentication_failed`). */
+  detail?: string;
+}
+
+/** Where a new box's account for one agent comes from (`credentials use`). */
+export interface AccountDefaultView {
+  account: string;
+  source: 'project' | 'global' | 'default';
+  project?: string;
+  global?: string;
+}
+
+/** `PUT /api/v1/accounts/default`. */
+export interface SetAccountDefaultInput {
+  agent: string;
+  /** null clears the setting in that layer. */
+  account: string | null;
+  scope: 'global' | 'project';
+  /** The project folder (absolute), for `scope: 'project'`. */
+  project?: string;
+}
+
+/** `POST /api/v1/accounts/:agent/:id/renew`: the fan-out's outcome. */
+export interface AccountRenewView {
+  pushed: number;
+  failed: number;
+  /** The fan-out's own lines (one per target). */
+  output: string[];
 }
 
 /** An agent that can hold named accounts, and which kinds. */
@@ -1520,12 +1565,23 @@ export interface AccountPolicyView {
 }
 
 export interface AccountBackend {
-  listAccounts(): Promise<{
+  /** `project`: an absolute folder, to mark (and report) that project's defaults too. */
+  listAccounts(opts?: { project?: string }): Promise<{
     accounts: AccountView[];
     agents: AccountAgentView[];
+    /** Per agent, the account a new box gets and where that comes from. */
+    defaults?: Record<string, AccountDefaultView>;
+    /** Set instead of `defaults` when the config can't be read. */
+    defaultsError?: string;
     /** The machine id these accounts belong to (custody keys named accounts by it). */
     machine?: string;
   }>;
+  getAccountDefaults(opts?: {
+    project?: string;
+  }): Promise<AccountResult<Record<string, AccountDefaultView>>>;
+  setAccountDefault(input: unknown): Promise<AccountResult<Record<string, AccountDefaultView>>>;
+  /** Fan the account's stored login out to the boxes on it. */
+  renewAccount(agent: string, id: string): Promise<AccountResult<AccountRenewView>>;
   /** `accounts.onLimit` from this machine's global config (hub settings 3c). */
   getAccountPolicy(): Promise<AccountPolicyView>;
   setAccountPolicy(input: unknown): Promise<AccountResult<AccountPolicyView>>;
@@ -1535,7 +1591,14 @@ export interface AccountBackend {
   removeAccount(
     agent: string,
     id: string,
-  ): Promise<AccountResult<{ volumeRemoved: boolean; volumeError?: string }>>;
+  ): Promise<
+    AccountResult<{
+      volumeRemoved: boolean;
+      volumeError?: string;
+      defaultsCleared?: string[];
+      defaultsError?: string;
+    }>
+  >;
 }
 
 export type AccountKind = 'login' | 'setup-token' | 'api-key';

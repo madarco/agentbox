@@ -230,6 +230,7 @@ import { vncUnavailableReason } from './boxes/vnc-link';
 import { hubProfile } from './auth-config';
 import {
   accountsInfoOf,
+  subscriptionsOf,
   createAccountBackend,
   resolveCreateAccounts,
   setDefaultCheckpointRefusal,
@@ -2263,9 +2264,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
   });
   // A box records its account in state.json AND in its relay registration;
-  // a Store-only box has only the latter, and must still block `accounts rm`.
+  // a Store-only box has only the latter, and must still block `credentials rm`.
   const accounts = createAccountBackend({
     limits: accountLimits,
+    authEvidence: async (subscription) =>
+      (await globalThis.__AGENTBOX_HUB_HISTORY?.repo.accountAuth(subscription)) ?? null,
     // A local box is in both: its state.json record (the richer one) wins.
     boxes: async () => {
       const local = (await readState()).boxes;
@@ -2505,8 +2508,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         const managerId = managerByBox.get(box.id);
         const pr = prOf(box);
         const accountsInfo = accountsInfoOf(box.accounts, accountFile);
+        const subscriptions = subscriptionsOf(box);
         return {
           ...box,
+          ...(subscriptions ? { subscriptions } : {}),
           ...(summary ? { tasks: summary } : {}),
           ...(managerId ? { managerId } : {}),
           ...(pr ? { pr } : {}),

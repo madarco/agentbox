@@ -4,11 +4,21 @@
 // whose account must be a login. A remote control box has no account store yet
 // (Phase 5), so a named account is refused there with a message naming it.
 import { execFile } from 'node:child_process';
+import { stat } from 'node:fs/promises';
+import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
-import { loadEffectiveConfig, setConfigValue, tryGetMachineId } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  setConfigValue,
+  tryGetMachineId,
+  listProjectsConfigured,
+  unsetConfigValue,
+} from '@agentbox/config';
 import { homedir } from 'node:os';
 import {
   accountConfigVolume,
+  accountIdProblem,
+  accountSecretPath,
   modelAuthSourceId,
   agentAccountKinds,
   findAccount,
@@ -19,9 +29,18 @@ import {
   type BoxRuntimeState,
   type LlmAccount,
 } from '@agentbox/core';
-import type { AccountBackend, AccountPolicyView, AccountView } from '../boxes/backend-types';
+import type {
+  AccountAuthView,
+  AccountBackend,
+  AccountDefaultView,
+  AccountPolicyView,
+  AccountRenewView,
+  AccountView,
+} from '../boxes/backend-types';
 import type { LimitsSource } from './account-limits';
+import type { HistoryAccountAuth } from './history';
 import {
+  accountDefaults,
   AGENT_SYNC_SPECS,
   boxesOnAccount,
   encodePastedSecret,
@@ -33,6 +52,7 @@ import {
   removeAccount as removeStoredAccount,
   resolveBoxAccounts,
   resolveLoginAccount,
+  STATE_DIR,
   upsertAccount,
   writeAccountSecret,
   type AccountStoreOptions,
@@ -96,6 +116,67 @@ export interface AccountBackendDeps {
   configHome?: string;
   /** This hub's machine id, the `<machine>` its named accounts sit under in custody. */
   machineId?: () => string | undefined;
+  /** Credential evidence from the boxes' transcripts; absent = none known. */
+  authEvidence?: (subscription: string) => Promise<HistoryAccountAuth | null>;
+  /** When the account's stored secret was last written (epoch ms), or null. Default: its mtime. */
+  secretWrittenAt?: (agent: string, id: string) => Promise<number | null>;
+  /**
+   * Fan an account's stored login out to its boxes. Default: the host CLI's
+   * `credentials propagate` (the relay's fan-out, run on demand).
+   */
+  runPropagate?: (agent: string, id: string) => Promise<{ exitCode: number; output: string }>;
+  now?: () => number;
+}
+
+/** A setup token from `claude setup-token` lives one year. */
+const SETUP_TOKEN_LIFE_MS = 365 * 24 * 60 * 60_000;
+const EXPIRING_WINDOW_MS = 30 * 24 * 60 * 60_000;
+
+/**
+ * Whether an account's credential works, from the evidence (pure):
+ * `revoked` while any box's newest refusal is newer than both that box's
+ * newest real reply and the stored secret's last write; `expiring` for a setup token in its last
+ * 30 days; otherwise `ok`.
+ */
+export function accountAuthState(
+  account: Pick<LlmAccount, 'kind' | 'createdAt'>,
+  ev: HistoryAccountAuth | null | undefined,
+  secretWrittenAt: number | null,
+  nowMs: number,
+): AccountAuthView {
+  // Per box: one box's working login says nothing about another's (a refresh
+  // in one box can rotate the token out from under the rest). The newest
+  // still-dead box is the one reported.
+  let dead: HistoryAccountAuth['boxes'][number] | undefined;
+  let deadAt = -Infinity;
+  for (const b of ev?.boxes ?? []) {
+    const failed = b.failedAt ? Date.parse(b.failedAt) : NaN;
+    if (!Number.isFinite(failed)) continue;
+    const ok = b.okAt ? Date.parse(b.okAt) : NaN;
+    if (failed <= (Number.isFinite(ok) ? ok : 0) || failed <= (secretWrittenAt ?? 0)) continue;
+    if (failed > deadAt) {
+      dead = b;
+      deadAt = failed;
+    }
+  }
+  if (dead) {
+    return {
+      state: 'revoked',
+      since: dead.failedAt!,
+      box: dead.box,
+      ...(dead.error ? { detail: dead.error } : {}),
+    };
+  }
+  if (account.kind === 'setup-token') {
+    const created = Date.parse(account.createdAt);
+    if (Number.isFinite(created)) {
+      const expires = created + SETUP_TOKEN_LIFE_MS;
+      if (nowMs >= expires - EXPIRING_WINDOW_MS) {
+        return { state: 'expiring', since: new Date(expires).toISOString() };
+      }
+    }
+  }
+  return { state: 'ok' };
 }
 
 /** What the account list reads of a box. */
@@ -146,17 +227,96 @@ async function dockerVolumeRm(name: string): Promise<{ removed: boolean; error?:
   }
 }
 
+async function cliPropagate(
+  agent: string,
+  id: string,
+): Promise<{ exitCode: number; output: string }> {
+  const entry = process.env['AGENTBOX_CLI_ENTRY'];
+  if (!entry) throw new Error('hub is missing AGENTBOX_CLI_ENTRY; cannot fan the login out');
+  try {
+    const r = await execFileAsync(
+      process.execPath,
+      [
+        entry,
+        'credentials',
+        'propagate',
+        '--json',
+        '--agent',
+        agent,
+        ...(isDefaultAccount(id) ? [] : ['--account', id]),
+      ],
+      { timeout: 300_000, maxBuffer: 4 * 1024 * 1024 },
+    );
+    return { exitCode: 0, output: `${r.stdout}${r.stderr}` };
+  } catch (err) {
+    const e = err as { code?: unknown; stdout?: unknown; stderr?: unknown; message?: string };
+    return {
+      exitCode: typeof e.code === 'number' ? e.code : 1,
+      output: `${String(e.stdout ?? '')}${String(e.stderr ?? e.message ?? '')}`,
+    };
+  }
+}
+
+/**
+ * The fan-out's outcome from `credentials propagate --json`: its last line is
+ * `{"pushed","failed"}`, the rest are the per-target lines. Without that line
+ * (it died first) a non-zero exit counts as one failure. Pure.
+ */
+export function parsePropagateOutput(output: string, exitCode: number): AccountRenewView {
+  const lines = output
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(lines[i]!);
+    } catch {
+      continue;
+    }
+    const r = parsed as { pushed?: unknown; failed?: unknown };
+    if (typeof r?.pushed === 'number' && typeof r.failed === 'number') {
+      return { pushed: r.pushed, failed: r.failed, output: lines.filter((_, j) => j !== i) };
+    }
+  }
+  return { pushed: 0, failed: exitCode === 0 ? 0 : 1, output: lines };
+}
+
 export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBackend {
   const boxes = deps.boxes ?? (async () => (await readState()).boxes);
   const removeVolume = deps.removeVolume ?? dockerVolumeRm;
   const store = deps.store;
+  const now = deps.now ?? Date.now;
+  const runPropagate = deps.runPropagate ?? cliPropagate;
+  const secretWrittenAt =
+    deps.secretWrittenAt ??
+    (async (agent: string, id: string): Promise<number | null> => {
+      const spec = findAgentSpec(agent);
+      const path = spec ? accountSecretPath(spec, id, store?.stateDir ?? STATE_DIR) : undefined;
+      if (!path) return null;
+      return (await stat(path).catch(() => null))?.mtimeMs ?? null;
+    });
 
-  async function view(account: LlmAccount, all?: readonly AccountBoxFacts[]): Promise<AccountView> {
+  async function view(
+    account: LlmAccount,
+    all?: readonly AccountBoxFacts[],
+    defaults?: Record<string, AccountDefaultView>,
+  ): Promise<AccountView> {
     const list = all ?? (await boxes().catch(() => []));
     const on = boxesOnSubscription(list, account.agent, account.id);
-    const limits = await deps.limits
-      ?.limitsFor(account.agent, account.id, on.some(isRunning))
-      .catch(() => undefined);
+    const key = `${account.agent}/${account.id}`;
+    const [limits, ev, written] = await Promise.all([
+      deps.limits?.limitsFor(account.agent, account.id, on.some(isRunning)).catch(() => undefined),
+      deps.authEvidence?.(key).catch(() => null),
+      secretWrittenAt(account.agent, account.id).catch(() => null),
+    ]);
+    // With no global setting, the agent's own login IS the global default.
+    const d = defaults?.[account.agent];
+    const globalId = d ? (d.global ?? 'default') : undefined;
+    const isDefault = {
+      ...(globalId === account.id ? { global: true as const } : {}),
+      ...(d?.project === account.id ? { project: true as const } : {}),
+    };
     return {
       agent: account.agent,
       id: account.id,
@@ -166,7 +326,100 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       hasSecret: (await readAccountSecret(account.agent, account.id, store)) !== null,
       boxes: on.map((b) => b.name),
       ...(limits ? { limits } : {}),
+      auth: accountAuthState(account, ev, written, now()),
+      ...(Object.keys(isDefault).length > 0 ? { default: isDefault } : {}),
     };
+  }
+
+  /** Agents that can hold accounts, per the registry (or the test store's specs). */
+  function accountAgents(): AgentSyncSpec[] {
+    return (store?.specs ?? AGENT_SYNC_SPECS).filter(
+      (s) => agentAccountKinds(s).length > 0 && !s.hidden,
+    );
+  }
+
+  /**
+   * A project folder from a client, or a message: absolute, a directory, and
+   * (`write`) inside a git checkout or an agentbox.yaml project, so a client
+   * cannot plant project config on an arbitrary folder of the hub's machine.
+   */
+  async function projectProblem(project: unknown, write = false): Promise<string | null> {
+    if (typeof project !== 'string' || !isAbsolute(project)) {
+      return 'project must be an absolute folder path';
+    }
+    const st = await stat(project).catch(() => null);
+    if (!st?.isDirectory()) return `no such folder: ${project}`;
+    if (!write) return null;
+    for (let dir = project; ; dir = dirname(dir)) {
+      for (const marker of ['.git', 'agentbox.yaml']) {
+        if (await stat(join(dir, marker)).catch(() => null)) return null;
+      }
+      if (dirname(dir) === dir) break;
+    }
+    return `not a project (no git checkout or agentbox.yaml): ${project}`;
+  }
+
+  /**
+   * Throws on an unreadable config: reporting every agent as `default` then
+   * would badge the wrong account.
+   */
+  async function defaultsFor(project?: string): Promise<Record<string, AccountDefaultView>> {
+    // Without a project, only the global layer counts: the hub's own cwd is no
+    // project of the user's.
+    const cfg = await loadEffectiveConfig(project ?? configHome);
+    const layers = project
+      ? cfg.layers
+      : { ...cfg.layers, project: { ...cfg.layers.project, values: {} } };
+    return accountDefaults(
+      accountAgents().map((s) => s.id),
+      { layers },
+    );
+  }
+
+  const configError = (err: unknown): string =>
+    `cannot read the config: ${err instanceof Error ? err.message : String(err)}`;
+
+  /**
+   * Drop every `<agent>.account` setting that names a removed account: the
+   * global one and each known project's. Left in place, the next create there
+   * would fail on an account that no longer exists. Returns what it cleared
+   * (`global`, or the project folder).
+   */
+  async function clearDefaultsNaming(
+    agent: string,
+    id: string,
+  ): Promise<{ cleared: string[]; errors: string[] }> {
+    const key = `${agent}.account`;
+    const cleared: string[] = [];
+    const errors: string[] = [];
+    // Each layer on its own: one unreadable config must not stop the rest, and
+    // never fails the removal that already happened.
+    const clear = async (
+      where: string,
+      scope: 'global' | 'project',
+      dir: string,
+      project?: string,
+    ) => {
+      try {
+        const d = (await defaultsFor(project))[agent];
+        if ((scope === 'global' ? d?.global : d?.project) !== id) return;
+        await unsetConfigValue(scope, key, dir);
+        cleared.push(where);
+      } catch (err) {
+        errors.push(`${where}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    await clear('global', 'global', configHome);
+    let projects: Awaited<ReturnType<typeof listProjectsConfigured>> = [];
+    try {
+      projects = await listProjectsConfigured();
+    } catch (err) {
+      errors.push(`projects: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    for (const p of projects) {
+      if (p.hasConfigFile) await clear(p.originalPath, 'project', p.originalPath, p.originalPath);
+    }
+    return { cleared, errors };
   }
 
   function specOf(agent: unknown): AgentSyncSpec | null {
@@ -189,16 +442,113 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       await setConfigValue('global', 'accounts.onLimit', onLimit, configHome);
       return { ok: true, value: await policy() };
     },
-    async listAccounts() {
+    async listAccounts(opts = {}) {
       const { accounts } = await readAccounts(store);
       const all = await boxes().catch(() => []);
-      const views = await Promise.all(accounts.map((a) => view(a, all)));
-      const agents = (store?.specs ?? AGENT_SYNC_SPECS)
-        .filter((s) => agentAccountKinds(s).length > 0 && !s.hidden)
-        .map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
+      const project =
+        opts.project && !(await projectProblem(opts.project)) ? opts.project : undefined;
+      // An unreadable config lists the accounts without default marks, and says so.
+      let defaults: Record<string, AccountDefaultView> | undefined;
+      let defaultsError: string | undefined;
+      try {
+        defaults = await defaultsFor(project);
+      } catch (err) {
+        defaultsError = configError(err);
+      }
+      const views = await Promise.all(accounts.map((a) => view(a, all, defaults)));
+      const agents = accountAgents().map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
       // A machine with no id yet (unwritable HOME) lists its accounts without one.
       const machine = deps.machineId ? deps.machineId() : tryGetMachineId();
-      return { accounts: views, agents, ...(machine ? { machine } : {}) };
+      return {
+        accounts: views,
+        agents,
+        ...(defaults ? { defaults } : { defaultsError: defaultsError! }),
+        ...(machine ? { machine } : {}),
+      };
+    },
+
+    async getAccountDefaults(opts = {}) {
+      if (opts.project !== undefined) {
+        const problem = await projectProblem(opts.project);
+        if (problem) return { ok: false, code: 'invalid_request', error: problem };
+      }
+      try {
+        return { ok: true, value: await defaultsFor(opts.project) };
+      } catch (err) {
+        return { ok: false, code: 'conflict', error: configError(err) };
+      }
+    },
+
+    async setAccountDefault(input) {
+      const b = (input ?? {}) as Record<string, unknown>;
+      const spec = specOf(b.agent);
+      if (!spec || agentAccountKinds(spec).length === 0) {
+        return {
+          ok: false,
+          code: 'invalid_request',
+          error: 'unknown agent, or one without accounts',
+        };
+      }
+      const scope = b.scope ?? 'global';
+      if (scope !== 'global' && scope !== 'project') {
+        return { ok: false, code: 'invalid_request', error: 'scope must be "global" or "project"' };
+      }
+      let project: string | undefined;
+      if (scope === 'project') {
+        const problem = await projectProblem(b.project, true);
+        if (problem) return { ok: false, code: 'invalid_request', error: problem };
+        project = b.project as string;
+      }
+      if (b.account !== null && typeof b.account !== 'string') {
+        return { ok: false, code: 'invalid_request', error: 'account must be a string or null' };
+      }
+      const key = `${spec.id}.account`;
+      const cwd = project ?? configHome;
+      if (b.account === null) {
+        await unsetConfigValue(scope, key, cwd);
+      } else {
+        const id = b.account.trim();
+        const problem = accountIdProblem(id);
+        if (problem) return { ok: false, code: 'invalid_request', error: problem };
+        // `default` is the agent's own login: always a valid choice, signed in or not.
+        if (!isDefaultAccount(id) && !findAccount(await readAccounts(store), spec.id, id)) {
+          return {
+            ok: false,
+            code: 'not_found',
+            error: `no ${spec.id} account '${id}' on this machine (see \`agentbox credentials\`)`,
+          };
+        }
+        await setConfigValue(scope, key, id, cwd);
+      }
+      try {
+        return { ok: true, value: await defaultsFor(project) };
+      } catch (err) {
+        return { ok: false, code: 'conflict', error: configError(err) };
+      }
+    },
+
+    async renewAccount(agent, id) {
+      const spec = specOf(agent);
+      if (!spec) return { ok: false, code: 'not_found', error: 'unknown agent' };
+      const row = findAccount(await readAccounts(store), spec.id, id);
+      if (!row) return { ok: false, code: 'not_found', error: `no ${spec.id} account '${id}'` };
+      if (row.kind !== 'login') {
+        return {
+          ok: false,
+          code: 'invalid_request',
+          error: `${spec.id}/${id} is a ${row.kind}: remove it and add the new one (\`agentbox credentials add\`)`,
+        };
+      }
+      const r = await runPropagate(spec.id, row.id);
+      const value = parsePropagateOutput(r.output, r.exitCode);
+      if (r.exitCode !== 0 && value.pushed === 0 && value.failed === 0) {
+        return {
+          ok: false,
+          code: 'conflict',
+          error: value.output.slice(-3).join('\n') || 'fan-out failed',
+        };
+      }
+      return { ok: true, value };
     },
 
     async addPastedAccount(input) {
@@ -209,7 +559,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         return {
           ok: false,
           code: 'invalid_request',
-          error: `kind must be api-key or setup-token; sign a login in with \`agentbox ${spec.id} login --account <name>\``,
+          error: `kind must be api-key or setup-token; sign a login in with \`agentbox credentials add ${spec.id}/<name> --login\``,
         };
       }
       const token = typeof b.token === 'string' ? b.token.trim() : '';
@@ -229,21 +579,35 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       const problem = pastedSecretProblem(token);
       if (problem) return { ok: false, code: 'invalid_request', error: problem };
       const existing = findAccount(await readAccounts(store), spec.id, req.id);
-      if (existing) {
+      // `replace`: a new token for the same account (a rotated or expiring setup
+      // token), so boxes on it need not be moved off first. Same kind only.
+      const replace = b.replace === true;
+      if (existing && (!replace || existing.kind !== req.kind)) {
         return {
           ok: false,
           code: 'conflict',
-          error: `${spec.id} account '${req.id}' already exists; remove it first`,
+          error:
+            replace && existing.kind !== req.kind
+              ? `${spec.id} account '${req.id}' is a ${existing.kind}; remove it first`
+              : `${spec.id} account '${req.id}' already exists; remove it first, or replace its token`,
+        };
+      }
+      if (replace && !existing) {
+        return {
+          ok: false,
+          code: 'not_found',
+          error: `no ${spec.id} account '${req.id}' to replace`,
         };
       }
       // From here a failure is the hub's (disk, permissions), not the input's:
-      // it propagates and the route answers 500.
+      // it propagates and the route answers 500. A new token restarts the
+      // setup token's year, so `createdAt` moves with it.
       const row: LlmAccount = {
         agent: spec.id,
         id: req.id,
         kind: req.kind,
-        createdAt: new Date().toISOString(),
-        ...(label ? { label } : {}),
+        createdAt: new Date(now()).toISOString(),
+        ...((label ?? existing?.label) ? { label: label ?? existing!.label! } : {}),
       };
       await upsertAccount(row, store);
       try {
@@ -254,7 +618,8 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
           store,
         );
       } catch (err) {
-        await removeStoredAccount(spec.id, req.id, store).catch(() => {});
+        if (existing) await upsertAccount(existing, store).catch(() => {});
+        else await removeStoredAccount(spec.id, req.id, store).catch(() => {});
         throw err;
       }
       return { ok: true, value: await view(row) };
@@ -304,11 +669,16 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       deps.limits?.forget(spec.id, id);
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);
+      const { cleared: defaultsCleared, errors } = await clearDefaultsNaming(spec.id, id);
       return {
         ok: true,
         value: {
           volumeRemoved: r.removed,
           ...(r.error ? { volumeError: `could not remove ${volume}: ${r.error}` } : {}),
+          ...(defaultsCleared.length > 0 ? { defaultsCleared } : {}),
+          ...(errors.length > 0
+            ? { defaultsError: `could not check the settings naming it: ${errors.join('; ')}` }
+            : {}),
         },
       };
     },
@@ -368,6 +738,23 @@ export function subscriptionOf(
   const only = consumed.length === 1 ? consumed[0]! : undefined;
   const owner = only && !only.startsWith('env:') ? only : agent;
   return `${owner}/${box.accounts?.[owner] ?? 'default'}`;
+}
+
+/**
+ * Every agent's subscription in a box (`Box.subscriptions`), for the agents the
+ * box was created for: its own agents, else its last agent. Undefined when the
+ * box names no agent. Pure apart from the default registry lookup.
+ */
+export function subscriptionsOf(
+  box: Pick<BoxRecord, 'accounts' | 'borrowedCredentials'> & {
+    agents?: readonly string[];
+    lastAgent?: string;
+  },
+  specOf?: Parameters<typeof subscriptionOf>[2],
+): Record<string, string> | undefined {
+  const agents = box.agents?.length ? box.agents : box.lastAgent ? [box.lastAgent] : [];
+  if (agents.length === 0) return undefined;
+  return Object.fromEntries(agents.map((a) => [a, subscriptionOf(box, a, specOf)]));
 }
 
 /**

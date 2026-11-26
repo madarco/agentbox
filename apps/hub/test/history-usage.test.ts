@@ -28,13 +28,27 @@ function lineModule(id: string): AgentHistoryModule {
   return {
     id,
     parserVersion: 1,
-    identify: (_h, path) => ({ sessionId: path.replace(/^.*\//, '').replace(/\.jsonl$/, '') }),
+    // `<id>-resumed.jsonl` is a second file of session <id> (a resume).
+    identify: (_h, path) => ({
+      sessionId: path
+        .replace(/^.*\//, '')
+        .replace(/\.jsonl$/, '')
+        .replace(/-resumed$/, ''),
+    }),
     parse(chunk, state) {
       const text = (state.partial as string | undefined) ?? '';
       const lines = (text + Buffer.from(chunk.bytes).toString('utf8')).split('\n');
       const partial = lines.pop() ?? '';
       const records: HistoryRecord[] = lines.map((raw) => {
         const l = JSON.parse(raw) as Record<string, string | number>;
+        if (l.auth) {
+          return {
+            kind: 'auth',
+            error: String(l.auth),
+            ...(l.ts ? { ts: String(l.ts) } : {}),
+            at: chunk.offset,
+          };
+        }
         if (l.limits) {
           return {
             kind: 'limits',
@@ -75,7 +89,7 @@ async function setup(accounts: Record<string, string> = {}) {
       boxId in accounts ? `${agent}/${accounts[boxId] || 'default'}` : null,
   });
   const ship = async (
-    o: { boxId: string; boxName?: string; hostId?: string; repo?: string },
+    o: { boxId: string; boxName?: string; hostId?: string; repo?: string; file?: string },
     agent: string,
     sessionId: string,
     rows: object[],
@@ -90,7 +104,7 @@ async function setup(accounts: Record<string, string> = {}) {
         ...(o.repo ? { projectRepoUrl: o.repo } : {}),
       },
       agent,
-      path: `sessions/${sessionId}.jsonl`,
+      path: `sessions/${o.file ?? sessionId}.jsonl`,
       offset: 0,
       sha256Prefix: '',
       sha256: createHash('sha256').update(data).digest('hex'),
@@ -282,6 +296,55 @@ describe('usage (Phase 7)', () => {
     expect(await repo.accountLimits('codex/none')).toBeNull();
     // Limits are not turns or usage.
     expect((await svc.usage({ by: [], tzOffsetMin: 0, limit: 10 })).totals.messages).toBe(0);
+  });
+
+  it('keeps the newest refused credential and real reply per subscription and box', async () => {
+    const { ship, repo } = await setup({ b1: 'work', b2: 'work', b3: '' });
+    expect(await repo.accountAuth('claude/work')).toEqual({ boxes: [] });
+    await ship({ boxId: 'b1', boxName: 'one' }, 'claude', 'a1', [
+      { id: 'm1', ts: day1, model: 'x', in: 1, out: 3 },
+    ]);
+    await ship({ boxId: 'b2', boxName: 'two' }, 'claude', 'a2', [
+      { auth: 'authentication_failed', ts: day1late },
+    ]);
+    // A zero-output reply (claude's synthetic error line) proves nothing.
+    await ship({ boxId: 'b2', boxName: 'two' }, 'claude', 'a3', [
+      { id: 'e1', ts: day2, model: '<synthetic>', in: 0, out: 0 },
+    ]);
+    expect(await repo.accountAuth('claude/work')).toEqual({
+      boxes: [
+        { box: 'one', failedAt: null, error: null, okAt: day1 },
+        { box: 'two', failedAt: day1late, error: 'authentication_failed', okAt: null },
+      ],
+    });
+    // Another subscription is untouched.
+    expect(await repo.accountAuth('claude/default')).toEqual({ boxes: [] });
+    // A real reply in box one later does not count for box two.
+    await ship({ boxId: 'b1', boxName: 'one' }, 'claude', 'a4', [
+      { id: 'm2', ts: day2, model: 'x', in: 1, out: 2 },
+    ]);
+    const two = (await repo.accountAuth('claude/work')).boxes.find((x) => x.box === 'two');
+    expect(two).toMatchObject({ failedAt: day1late, okAt: null });
+  });
+
+  it('records a resumed session under the account the box switched to', async () => {
+    const accounts: Record<string, string> = { b1: 'work' };
+    const { ship, repo } = await setup(accounts);
+    await ship({ boxId: 'b1', boxName: 'one' }, 'claude', 's1', [
+      { auth: 'authentication_failed', ts: day1 },
+    ]);
+    // `credentials switch`: same session id, resumed on another account.
+    accounts.b1 = 'personal';
+    await ship({ boxId: 'b1', boxName: 'one', file: 's1-resumed' }, 'claude', 's1', [
+      { id: 'm1', ts: day2, model: 'x', in: 1, out: 3 },
+    ]);
+    expect((await repo.getSession('claude:s1'))!.account).toBe('claude/work');
+    expect(await repo.accountAuth('claude/work')).toEqual({
+      boxes: [{ box: 'one', failedAt: day1, error: 'authentication_failed', okAt: null }],
+    });
+    expect(await repo.accountAuth('claude/personal')).toEqual({
+      boxes: [{ box: 'one', failedAt: null, error: null, okAt: day2 }],
+    });
   });
 
   it('migrates a pre-Phase-7 store: message times filled from ts', async () => {

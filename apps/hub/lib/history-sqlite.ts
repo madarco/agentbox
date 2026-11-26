@@ -109,6 +109,14 @@ CREATE TABLE IF NOT EXISTS history_usage (
   ts TEXT,
   PRIMARY KEY (session_key, message_id)
 );
+CREATE TABLE IF NOT EXISTS history_auth (
+  account TEXT NOT NULL,
+  box TEXT NOT NULL,
+  fail_ts TEXT,
+  fail_error TEXT,
+  ok_ts TEXT,
+  PRIMARY KEY (account, box)
+);
 CREATE TABLE IF NOT EXISTS history_spans (
   session_key TEXT NOT NULL,
   start_ms INTEGER NOT NULL,
@@ -151,7 +159,9 @@ type LiveRecord = Extract<HistoryRecord, { kind: 'activity' | 'totals' | 'contex
  * own time (a subagent's file can land after the main one); a record without
  * one wins outright. A plan line is set or cleared independently of the rest.
  */
-function liveStatements(db: Db): { apply(key: string, r: LiveRecord, now: number): void } {
+function liveStatements(db: Db): {
+  apply(key: string, r: LiveRecord, now: number): void;
+} {
   const ensure = db.prepare(
     'INSERT OR IGNORE INTO history_live (session_key, updated_at) VALUES (?, ?)',
   );
@@ -334,6 +344,8 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   const live = columns(db, 'history_live');
   if (!live.has('limits')) db.exec('ALTER TABLE history_live ADD COLUMN limits TEXT');
   if (!live.has('limits_ts')) db.exec('ALTER TABLE history_live ADD COLUMN limits_ts TEXT');
+  // Per-account reads (limits, auth) filter on it on every accounts listing.
+  db.exec('CREATE INDEX IF NOT EXISTS history_sessions_account ON history_sessions(account)');
   // Hub settings 3a: an account is stamped as its subscription, `agent/account`.
   // A bare id from before is the session agent's own, unless the agent can
   // borrow a login: that one is cleared for the backfill (which only fills
@@ -600,6 +612,22 @@ export async function openSqliteHistoryRepo(
        JOIN history_sessions s ON s.key = l.session_key
      WHERE s.account = ? AND l.limits IS NOT NULL
      ORDER BY COALESCE(l.limits_ts, '') DESC, l.updated_at DESC LIMIT 1`,
+  );
+  // Auth evidence is per (account, box), stamped at ingest with the account
+  // the box ran on then: a session resumed on another account after a switch
+  // keeps its first `history_sessions.account`, its new events do not.
+  const authFail = db.prepare(
+    `INSERT INTO history_auth (account, box, fail_ts, fail_error) VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT(account, box) DO UPDATE SET fail_ts = ?3, fail_error = ?4
+     WHERE history_auth.fail_ts IS NULL OR history_auth.fail_ts <= ?3`,
+  );
+  const authOk = db.prepare(
+    `INSERT INTO history_auth (account, box, ok_ts) VALUES (?1, ?2, ?3)
+     ON CONFLICT(account, box) DO UPDATE SET ok_ts = ?3
+     WHERE history_auth.ok_ts IS NULL OR history_auth.ok_ts <= ?3`,
+  );
+  const authGet = db.prepare(
+    'SELECT box, fail_ts, fail_error, ok_ts FROM history_auth WHERE account = ? ORDER BY box',
   );
   const liveSums = db.prepare(
     `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
@@ -888,6 +916,8 @@ export async function openSqliteHistoryRepo(
             live.apply(sessionKey, r, nowMs());
             continue;
           }
+          // Auth evidence goes through `recordAuth`, keyed by the box's account.
+          if (r.kind === 'auth') continue;
           if (r.kind === 'meta') {
             if (r.title) meta.run(r.title, sessionKey);
             continue;
@@ -1113,6 +1143,20 @@ export async function openSqliteHistoryRepo(
       } catch {
         return null;
       }
+    },
+    async recordAuth(e) {
+      if (e.kind === 'fail') authFail.run(e.account, e.box, e.ts, e.error ?? null);
+      else authOk.run(e.account, e.box, e.ts);
+    },
+    async accountAuth(account) {
+      return {
+        boxes: (authGet.all(account) as Row[]).map((r) => ({
+          box: String(r.box),
+          failedAt: s(r.fail_ts),
+          error: s(r.fail_error),
+          okAt: s(r.ok_ts),
+        })),
+      };
     },
     async liveRow(key) {
       const r = liveGet.get(key) as Row | undefined;

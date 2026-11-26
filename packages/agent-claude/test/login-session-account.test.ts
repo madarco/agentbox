@@ -22,7 +22,7 @@ describe('sessionAccountMismatch', () => {
   it('refuses a default login against a pending named session, naming how to finish it', () => {
     const msg = sessionAccountMismatch({ id: 'work' }, undefined);
     expect(msg).toMatch(/pending headless login is for account 'work', not the default account/);
-    expect(msg).toContain('--code <CODE> --account work');
+    expect(msg).toContain('agentbox credentials add claude/work --login --code <CODE>');
   });
 
   it('refuses two different named accounts', () => {

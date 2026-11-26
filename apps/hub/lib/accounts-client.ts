@@ -22,6 +22,9 @@ export interface Account {
   hasSecret: boolean;
   boxes: string[];
   limits?: AccountLimits;
+  auth?: { state: 'ok' | 'expiring' | 'revoked'; since?: string; box?: string; detail?: string };
+  /** `global`: the agent's default for new boxes (its own login when none is set). */
+  default?: { global?: boolean; project?: boolean };
 }
 
 export interface AgentKinds {

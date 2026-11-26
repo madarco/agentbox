@@ -141,3 +141,62 @@ describe('claude parse', () => {
     expect(b.state.partial).toBeUndefined();
   });
 });
+
+describe('claude refused credential (credentials-tui Phase 1)', () => {
+  // The line claude 2.1.326 writes for a dead login, setup token or API key
+  // (measured with bogus tokens; docs/credentials-tui-plan.md).
+  const refused = {
+    type: 'assistant',
+    error: 'authentication_failed',
+    isApiErrorMessage: true,
+    timestamp: '2026-11-26T15:58:36.000Z',
+    sessionId: S,
+    message: {
+      id: 'b4d5049b',
+      model: '<synthetic>',
+      role: 'assistant',
+      usage: { input_tokens: 0, output_tokens: 0 },
+      content: [
+        {
+          type: 'text',
+          text: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+        },
+      ],
+    },
+  };
+
+  it('emits an auth record next to the turn', () => {
+    const { records } = m.parse(
+      { bytes: enc([refused]), offset: 0, path: `${S}.jsonl` } as never,
+      {},
+    );
+    expect(records.filter((r) => r.kind === 'auth')).toEqual([
+      { kind: 'auth', error: 'authentication_failed', ts: '2026-11-26T15:58:36.000Z', at: 0 },
+    ]);
+  });
+
+  it("no auth record for another session's refusal copied in (/branch, fork)", () => {
+    const { records } = m.parse(
+      {
+        bytes: enc([
+          { ...refused, sessionId: 'old' },
+          { ...refused, forkedFrom: { sessionId: 'old' } },
+        ]),
+        offset: 0,
+        path: `${S}.jsonl`,
+      } as never,
+      {},
+    );
+    expect(records.some((r) => r.kind === 'auth')).toBe(false);
+  });
+
+  it('no auth record for another API error or a normal reply', () => {
+    const other = { ...refused, error: 'rate_limit' };
+    const normal = { ...refused, error: undefined, isApiErrorMessage: undefined };
+    const { records } = m.parse(
+      { bytes: enc([other, normal]), offset: 0, path: `${S}.jsonl` } as never,
+      {},
+    );
+    expect(records.some((r) => r.kind === 'auth')).toBe(false);
+  });
+});

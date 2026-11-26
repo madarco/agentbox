@@ -31,6 +31,29 @@ const USAGE_TOTALS = {
   sessions: { type: 'integer' },
 };
 
+/** `defaults` on GET /accounts and GET/PUT /accounts/default. */
+const ACCOUNT_DEFAULTS_SCHEMA = {
+  type: 'object',
+  description:
+    "Per agent, the account a new box gets with no `--account` and where that comes from: the project's `<agent>.account` (only with `?project=`), else the global one, else `default` (the agent's own login).",
+  additionalProperties: {
+    type: 'object',
+    properties: {
+      account: { type: 'string' },
+      source: { type: 'string', enum: ['project', 'global', 'default'] },
+      project: {
+        type: 'string',
+        description: 'The project setting, when set.',
+      },
+      global: {
+        type: 'string',
+        description: 'The global setting, when set.',
+      },
+    },
+    required: ['account', 'source'],
+  },
+};
+
 const errorResponse = {
   description: 'Error',
   content: {
@@ -656,7 +679,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: "Switch the box's agent to another LLM account",
           description:
-            "A setup token or API key: the box record moves and the agent's session restarts with that token set and the other auth var cleared, resuming its conversation (every provider; a cloud box gets its agent env file rewritten first). The stored token's shape is checked first. A login: a docker box is rebuilt on that account's config volume (committed, recreated with the same name, mounts, ports and env), the session's files copied across, and the agent resumes; a cloud box is refused (409) for now. A box that is not running is recorded only and takes the account at its next start. Backs `agentbox accounts switch`.",
+            "A setup token or API key: the box record moves and the agent's session restarts with that token set and the other auth var cleared, resuming its conversation (every provider; a cloud box gets its agent env file rewritten first). The stored token's shape is checked first. A login: a docker box is rebuilt on that account's config volume (committed, recreated with the same name, mounts, ports and env), the session's files copied across, and the agent resumes; a cloud box is refused (409) for now. A box that is not running is recorded only and takes the account at its next start. Backs `agentbox credentials switch`.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: true,
@@ -1200,7 +1223,17 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Accounts'],
           summary: "List this machine's LLM accounts",
           description:
-            'The named LLM accounts of the machine whose store this hub owns (`~/.agentbox/accounts.json`), plus the agents that can hold them. A remote control box lists its own store. Never a secret.',
+            "The named LLM accounts of the machine whose store this hub owns (`~/.agentbox/accounts.json`), plus the agents that can hold them and each agent's default for new boxes. A remote control box lists its own store. Never a secret.",
+          parameters: [
+            {
+              name: 'project',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description:
+                "An absolute project folder on this machine: `defaults` and each account's `default` then include that project's `<agent>.account`. An unknown folder is ignored.",
+            },
+          ],
           responses: {
             '200': {
               description: 'Accounts',
@@ -1281,8 +1314,40 @@ export function buildOpenApi(): Record<string, unknown> {
                               },
                               required: ['windows', 'atLimit', 'updatedAt', 'source'],
                             },
+                            auth: {
+                              type: 'object',
+                              description:
+                                "Whether the credential works, from what the boxes saw. `revoked`: a box on this account had its credential refused (claude's `authentication_failed` transcript line, for a login, setup token or API key alike) and neither a real reply in that same box nor a new stored secret since; another box's reply does not clear it. Renew it. `expiring`: a setup token in the last 30 days of its one-year life. `ok`: no evidence against it.",
+                              properties: {
+                                state: { type: 'string', enum: ['ok', 'expiring', 'revoked'] },
+                                since: {
+                                  type: 'string',
+                                  format: 'date-time',
+                                  description: 'The refusal, or the setup token expiry.',
+                                },
+                                box: {
+                                  type: 'string',
+                                  description:
+                                    'The box still failing (the newest, when several are).',
+                                },
+                                detail: {
+                                  type: 'string',
+                                  description: "The agent's error code (`authentication_failed`).",
+                                },
+                              },
+                              required: ['state'],
+                            },
+                            default: {
+                              type: 'object',
+                              description:
+                                "Present when this account is the agent's default for new boxes: `global` (the global `<agent>.account`, or `default` when unset), `project` (the project's, with `?project=`).",
+                              properties: {
+                                global: { type: 'boolean', enum: [true] },
+                                project: { type: 'boolean', enum: [true] },
+                              },
+                            },
                           },
-                          required: ['agent', 'id', 'kind', 'hasSecret', 'boxes'],
+                          required: ['agent', 'id', 'kind', 'hasSecret', 'boxes', 'auth'],
                         },
                       },
                       agents: {
@@ -1303,6 +1368,12 @@ export function buildOpenApi(): Record<string, unknown> {
                         description:
                           "This hub machine's id. Custody holds a named account's login under `agents/<agent>/accounts/<machine>/<id>/`, so a client joins those entries to these accounts only when the machine matches.",
                       },
+                      defaults: ACCOUNT_DEFAULTS_SCHEMA,
+                      defaultsError: {
+                        type: 'string',
+                        description:
+                          'Set instead of `defaults` (and no account carries `default`) when the hub cannot read the config.',
+                      },
                     },
                     required: ['accounts', 'agents'],
                   },
@@ -1316,7 +1387,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Accounts'],
           summary: 'Add a setup token or API key account',
           description:
-            'Store a pasteable account (`api-key` / `setup-token`). A `login` is interactive and runs on the machine (`agentbox <agent> login --account <id>`), so it is refused here. The token is never echoed back.',
+            'Store a pasteable account (`api-key` / `setup-token`). A `login` is interactive and runs on the machine (`agentbox credentials add <agent>/<id> --login`), so it is refused here. With `replace: true` the token goes over an existing account of the same kind (a rotated or expiring setup token), keeping its label; the boxes on it stay on it. `409` when the id exists and `replace` is not set, or the existing account is of another kind; `404` for `replace` on no account. The token is never echoed back.',
           requestBody: {
             required: true,
             content: {
@@ -1329,6 +1400,11 @@ export function buildOpenApi(): Record<string, unknown> {
                     kind: { type: 'string', enum: ['api-key', 'setup-token'] },
                     token: { type: 'string', writeOnly: true },
                     label: { type: 'string' },
+                    replace: {
+                      type: 'boolean',
+                      description:
+                        'A new token for an existing account of the same kind (backs `credentials add --replace` and renewing a pasted kind)',
+                    },
                   },
                   required: ['agent', 'id', 'kind', 'token'],
                 },
@@ -1339,6 +1415,92 @@ export function buildOpenApi(): Record<string, unknown> {
             '200': { description: 'The stored account (no secret)' },
             '400': errorResponse,
             '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+          },
+        },
+      },
+      '/accounts/default': {
+        get: {
+          tags: ['Accounts'],
+          summary: 'The default account per agent',
+          description:
+            'Per agent, the account a new box gets and where that comes from (backs `agentbox credentials use`). Without `project` only the global setting counts.',
+          parameters: [
+            {
+              name: 'project',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: 'An absolute project folder on this machine.',
+            },
+          ],
+          responses: {
+            '200': {
+              description: '`{ defaults }`',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      defaults: ACCOUNT_DEFAULTS_SCHEMA,
+                    },
+                    required: ['defaults'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Accounts'],
+          summary: 'Set or clear the default account of an agent',
+          description:
+            "Writes `<agent>.account` in this machine's global config (`scope: 'global'`, the default) or in a project's config (`scope: 'project'` with `project`, an absolute folder). `account: null` clears that layer's setting. The account must exist in the store (`default` always does). Answers the new `defaults` (of that project, for a project write). Backs `agentbox credentials use`, the web Subscriptions page's Make default, and the tray.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    agent: { type: 'string' },
+                    account: { type: 'string', nullable: true },
+                    scope: { type: 'string', enum: ['global', 'project'] },
+                    project: { type: 'string' },
+                  },
+                  required: ['agent', 'account'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: '`{ defaults }`' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/accounts/{agent}/{id}/renew': {
+        parameters: [
+          { name: 'agent', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        post: {
+          tags: ['Accounts'],
+          summary: "Fan an account's login out to its boxes",
+          description:
+            "Pushes the account's stored login into every box on it: docker config volumes, and each running cloud box over its transport (a stopped one is reconciled on resume). Run after signing the login in again (`agentbox credentials renew`, which signs in on the machine first). A setup token or API key is refused (400): remove it and add the new one.",
+          responses: {
+            '200': {
+              description: '`{ pushed, failed, output: string[] }` (one output line per target)',
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
             '409': errorResponse,
           },
         },
@@ -1375,7 +1537,10 @@ export function buildOpenApi(): Record<string, unknown> {
           description:
             "Removes the stored secret and the account's docker config volume. Refused (409) while a box records the account; the `default` account cannot be removed.",
           responses: {
-            '200': { description: '`{ ok: true, volumeRemoved }`' },
+            '200': {
+              description:
+                '`{ ok: true, volumeRemoved, volumeError?, defaultsCleared? }`: `defaultsCleared` lists the `<agent>.account` settings that named the account and were dropped (`global`, or a project folder).',
+            },
             '400': errorResponse,
             '401': errorResponse,
             '404': errorResponse,
@@ -6983,6 +7148,12 @@ export function buildOpenApi(): Record<string, unknown> {
                 },
                 required: ['at', 'agent', 'from', 'to', 'how', 'reason'],
               },
+            },
+            subscriptions: {
+              type: 'object',
+              additionalProperties: { type: 'string' },
+              description:
+                'The subscription each of the box\'s agents runs on, `<agent>/<account>` (e.g. `{ "claude": "claude/work", "openclaw": "codex/default" }`; an agent on a borrowed login counts under its lender). Derived from `accounts` and the borrowed logins.',
             },
             accountsInfo: {
               type: 'array',

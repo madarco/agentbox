@@ -126,6 +126,12 @@ export function claudeLineRecords(
       sessionId !== undefined &&
       ((forkedFrom !== undefined && forkedFrom !== sessionId) ||
         (lineSession !== undefined && lineSession !== sessionId));
+    // A refused credential: the line claude writes for a dead login, setup
+    // token or API key alike (measured, docs/credentials-tui-plan.md). A copy
+    // of another session's refusal says nothing about this one's credential.
+    if (line.isApiErrorMessage === true && line.error === 'authentication_failed' && !copied) {
+      out.push({ kind: 'auth', error: 'authentication_failed', ...(ts ? { ts } : {}), at });
+    }
     if (usage && messageId && !copied) {
       const model = str(message.model);
       out.push({
@@ -156,7 +162,8 @@ export const claudeHistoryModule: AgentHistoryModule = {
   id: 'claude',
   // 2: usage on lines copied from another session is no longer counted.
   // 3: `ai-title`, the working-on line and context fill (live status).
-  parserVersion: 3,
+  // 4: `auth` records (a refused credential, never on a copied line).
+  parserVersion: 4,
 
   identify(head, path) {
     const sub = SUBAGENT_PATH.exec(path);

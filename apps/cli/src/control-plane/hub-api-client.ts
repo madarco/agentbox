@@ -29,6 +29,8 @@ export interface HubApiBox {
   id: string;
   /** Named LLM account per agent (`{ claude: 'work' }`); absent = default logins. */
   accounts?: Record<string, string>;
+  /** Each agent's subscription, `<agent>/<account>` (a borrower under its lender). */
+  subscriptions?: Record<string, string>;
   /** Label + kind for each entry of `accounts`, from the hub machine's store. */
   accountsInfo?: Array<{ agent: string; account: string; label?: string; kind?: string }>;
   /** The hub egress proxy the box was created with (llm-accounts Phase 7). */
@@ -575,11 +577,32 @@ export interface HubApiAccount {
   hasSecret: boolean;
   /** The boxes that record this account (running it, or borrowing it). */
   boxes: string[];
+  /** Plan limits, one window per limit the source reports; absent = no data. */
+  limits?: {
+    windows: Array<{ id: string; label: string; pct: number; resetsAt?: string }>;
+    atLimit: boolean;
+    updatedAt: string;
+    stale?: boolean;
+  };
+  /** Absent from an older hub. */
+  auth?: { state: 'ok' | 'expiring' | 'revoked'; since?: string; box?: string; detail?: string };
+  default?: { global?: boolean; project?: boolean };
+}
+
+/** Where a new box's account for one agent comes from (`GET /accounts/default`). */
+export interface HubApiAccountDefault {
+  account: string;
+  source: 'project' | 'global' | 'default';
+  project?: string;
+  global?: string;
 }
 
 export interface HubApiAccountList {
   accounts: HubApiAccount[];
   agents: Array<{ id: string; kinds: Array<'login' | 'setup-token' | 'api-key'> }>;
+  /** Absent from an older hub, or when the config can't be read (`defaultsError`). */
+  defaults?: Record<string, HubApiAccountDefault>;
+  defaultsError?: string;
 }
 
 export interface HubApiCheckoutReport {
@@ -2170,8 +2193,49 @@ export class HubApiClient {
   }
 
   /** The named LLM accounts of the hub's machine (`GET /api/v1/accounts`). Never a secret. */
-  async listAccounts(): Promise<HubApiAccountList> {
-    return this.request<HubApiAccountList>('GET', '/accounts');
+  async listAccounts(opts: { project?: string } = {}): Promise<HubApiAccountList> {
+    const q = opts.project ? `?project=${encodeURIComponent(opts.project)}` : '';
+    return this.request<HubApiAccountList>('GET', `/accounts${q}`);
+  }
+
+  /** Store a setup token or API key account (`POST /api/v1/accounts`). */
+  async addPastedAccount(body: {
+    agent: string;
+    id: string;
+    kind: 'setup-token' | 'api-key';
+    token: string;
+    label?: string;
+    /** A new token for an existing account of the same kind. */
+    replace?: boolean;
+  }): Promise<HubApiAccount> {
+    const res = await this.request<{ account: HubApiAccount }>('POST', '/accounts', body);
+    return res.account;
+  }
+
+  /** Set (or with `account: null` clear) an agent's default account in one config layer. */
+  async setAccountDefault(body: {
+    agent: string;
+    account: string | null;
+    scope: 'global' | 'project';
+    project?: string;
+  }): Promise<Record<string, HubApiAccountDefault>> {
+    const res = await this.request<{ defaults: Record<string, HubApiAccountDefault> }>(
+      'PUT',
+      '/accounts/default',
+      body,
+    );
+    return res.defaults;
+  }
+
+  /** Fan an account's stored login out to the boxes on it. */
+  async renewAccount(
+    agent: string,
+    id: string,
+  ): Promise<{ pushed: number; failed: number; output: string[] }> {
+    return this.request<{ pushed: number; failed: number; output: string[] }>(
+      'POST',
+      `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}/renew`,
+    );
   }
 
   async labelAccount(agent: string, id: string, label: string | null): Promise<HubApiAccount> {
@@ -2186,11 +2250,21 @@ export class HubApiClient {
   async removeAccount(
     agent: string,
     id: string,
-  ): Promise<{ volumeRemoved: boolean; volumeError?: string }> {
-    return this.request<{ ok: true; volumeRemoved: boolean; volumeError?: string }>(
-      'DELETE',
-      `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`,
-    );
+  ): Promise<{
+    volumeRemoved: boolean;
+    volumeError?: string;
+    defaultsCleared?: string[];
+    defaultsError?: string;
+  }> {
+    return this.request<{
+      ok: true;
+      volumeRemoved: boolean;
+      volumeError?: string;
+      /** The `<agent>.account` settings that named it: `global` or a project folder. */
+      defaultsCleared?: string[];
+      /** Those it could not check (an unreadable config). */
+      defaultsError?: string;
+    }>('DELETE', `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`);
   }
 
   async reportCheckouts(report: HubApiCheckoutReport): Promise<HubApiCheckout[]> {

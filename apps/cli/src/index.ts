@@ -94,7 +94,6 @@ import { hubCommand } from './commands/hub.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
-import { accountsCommand } from './commands/accounts.js';
 import { postUpdateRefreshCommand } from './commands/_post-update-refresh.js';
 import { runPostUpdateRefresh } from './lib/post-update-refresh.js';
 import { readInstalledTrayVersion } from './commands/install-app.js';
@@ -252,8 +251,7 @@ program.addCommand(prepareCommand);
 program.addCommand(pruneCommand);
 program.addCommand(checkpointCommand);
 // Hidden: spawned by the relay's credential fan-out (also a manual recovery tool).
-program.addCommand(credentialsCommand, { hidden: true });
-program.addCommand(accountsCommand);
+program.addCommand(credentialsCommand);
 program.addCommand(configCommand);
 program.addCommand(queueCommand);
 program.addCommand(workspaceCommand);

@@ -230,6 +230,13 @@ export interface Box {
     kind?: 'login' | 'setup-token' | 'api-key';
   }>;
   /**
+   * The subscription each of the box's agents runs on, `<agent>/<account>`
+   * (`{ claude: 'claude/work', openclaw: 'codex/default' }`; a borrower counts
+   * under its lender). Derived from `accounts` + `borrowedCredentials` with no
+   * extra read, so `agentbox ls` can show it. Read-only. (credentials-tui Phase 1.)
+   */
+  subscriptions?: Record<string, string>;
+  /**
    * The box's account switches, newest last, at most 10 (hub settings 3c):
    * `how` is `env` (restarted with the token) or `recreate` (rebuilt on the
    * login's volume); `reason` is `manual` or `limit`. Read-only.
