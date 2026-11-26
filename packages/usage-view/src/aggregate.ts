@@ -41,8 +41,13 @@ export interface SessionTurns {
   agent: AgentId;
   provider: ProviderId;
   managerId?: string | null;
-  /** Epoch ms of each turn, any order. */
+  /** Epoch ms of each turn, any order. Ignored when `spans` is given. */
   turns: number[];
+  /**
+   * The session's active intervals, already cut at the idle gap (a store that
+   * computes them in SQL sends these instead of every turn).
+   */
+  spans?: Span[];
 }
 
 export interface BoxInfo {
@@ -195,14 +200,67 @@ export function timeAtLeast(spans: readonly Span[], k: number): number {
 // ---------------------------------------------------------------------------
 // Days and time zones
 
-/** Local `YYYY-MM-DD` of an instant, for a zone `tzOffset` minutes ahead of UTC. */
-export function dayKey(ms: number, tzOffset: number): string {
-  return new Date(ms + tzOffset * MIN).toISOString().slice(0, 10);
+const offsetFormats = new Map<string, Intl.DateTimeFormat>();
+const offsetCache = new Map<string, Map<number, number>>();
+/** Offsets in use change on a quarter hour (UTC), so one lookup covers a quarter. */
+const QUARTER = 15 * MIN;
+
+/**
+ * Local time minus UTC, in ms, of zone `tz` at instant `ms`. `Intl` is slow next to the
+ * arithmetic around it, so each quarter hour is looked up once per zone.
+ */
+export function zoneOffset(ms: number, tz: string): number {
+  let cache = offsetCache.get(tz);
+  if (!cache) {
+    cache = new Map();
+    offsetCache.set(tz, cache);
+  }
+  const q = Math.floor(ms / QUARTER);
+  const hit = cache.get(q);
+  if (hit !== undefined) return hit;
+  let fmt = offsetFormats.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    offsetFormats.set(tz, fmt);
+  }
+  const at = q * QUARTER;
+  const p: Record<string, number> = {};
+  for (const part of fmt.formatToParts(at)) {
+    if (part.type !== 'literal') p[part.type] = Number(part.value);
+  }
+  const local = Date.UTC(p.year!, p.month! - 1, p.day!, p.hour!, p.minute!, p.second!);
+  const off = Math.round((local - at) / MIN) * MIN;
+  if (cache.size > 200_000) cache.clear();
+  cache.set(q, off);
+  return off;
 }
 
-/** Epoch ms of local midnight starting `day`. */
-export function dayStart(day: string, tzOffset: number): number {
-  return Date.parse(`${day}T00:00:00Z`) - tzOffset * MIN;
+/** Local `YYYY-MM-DD` of an instant in zone `tz`. */
+export function dayKey(ms: number, tz: string): string {
+  return new Date(ms + zoneOffset(ms, tz)).toISOString().slice(0, 10);
+}
+
+/**
+ * Epoch ms of the local midnight starting `day` in zone `tz`. A day with no midnight (a
+ * DST change at 00:00) starts at the first local instant it has.
+ */
+export function dayStart(day: string, tz: string): number {
+  const utcMidnight = Date.parse(`${day}T00:00:00Z`);
+  // The offset before midnight, then the one at the candidate: two steps settle it
+  // whichever side of a DST change midnight falls on.
+  let t = utcMidnight - zoneOffset(utcMidnight - DAY / 2, tz);
+  t = utcMidnight - zoneOffset(t, tz);
+  if (dayKey(t, tz) < day) t += HOUR;
+  return t;
 }
 
 export function addDays(day: string, n: number): string {
@@ -242,13 +300,13 @@ export function maxOf(xs: Iterable<number>, empty = -Infinity): number {
 }
 
 /** Split spans at local midnights. */
-export function spansByDay(spans: readonly Span[], tzOffset: number): Map<string, Span[]> {
+export function spansByDay(spans: readonly Span[], tz: string): Map<string, Span[]> {
   const out = new Map<string, Span[]>();
   for (const s of spans) {
     let start = s.start;
     while (start < s.end) {
-      const key = dayKey(start, tzOffset);
-      const next = dayStart(addDays(key, 1), tzOffset);
+      const key = dayKey(start, tz);
+      const next = dayStart(addDays(key, 1), tz);
       const end = Math.min(s.end, next);
       const list = out.get(key) ?? [];
       list.push({ start, end });
@@ -291,7 +349,7 @@ export function lanesFromSessions(
       spans: [],
     };
     if (!lane.managerId && s.managerId) lane.managerId = s.managerId;
-    lane.spans.push(...activeIntervals(s.turns, opts));
+    for (const sp of s.spans ?? activeIntervals(s.turns, opts)) lane.spans.push(sp);
     byKey.set(key, lane);
   }
   for (const lane of byKey.values()) lane.spans = unionSpans(lane.spans);
@@ -330,15 +388,12 @@ export interface DayConcurrency {
   avgAtOnce: number;
 }
 
-export function concurrencyByDay(
-  lanes: readonly Lane[],
-  tzOffset: number,
-): Map<string, DayConcurrency> {
+export function concurrencyByDay(lanes: readonly Lane[], tz: string): Map<string, DayConcurrency> {
   // One profile over every span, its segments split at local midnights: the same numbers as
   // clipping per day, in one pass.
   const acc = new Map<string, { agentMs: number; wallMs: number; peak: number }>();
   for (const seg of overlapProfile(lanes.flatMap((l) => l.spans))) {
-    for (const [d, parts] of spansByDay([seg], tzOffset)) {
+    for (const [d, parts] of spansByDay([seg], tz)) {
       const a = acc.get(d) ?? { agentMs: 0, wallMs: 0, peak: 0 };
       const ms = totalMs(parts);
       a.agentMs += ms * seg.n;
@@ -503,11 +558,11 @@ const emptyShipped = (): ShippedDay => ({
  */
 export function shippedByDay(
   events: readonly ActivityEvent[],
-  tzOffset: number,
+  tz: string,
 ): Map<string, ShippedDay> {
   const out = new Map<string, ShippedDay>();
   for (const e of events) {
-    const key = dayKey(e.at, tzOffset);
+    const key = dayKey(e.at, tz);
     const d = out.get(key) ?? emptyShipped();
     if (e.type === 'git.push') {
       d.commits += e.commits;
@@ -548,7 +603,7 @@ export function streaks(
 // Everything: the UsageStats of a window
 
 export interface BuildInput {
-  range: { id: RangeId; since: string; until: string; today: string; tzOffset: number };
+  range: { id: RangeId; since: string; until: string; today: string; tz: string };
   now: number;
   /** Sessions covering the wall window (a year back from `today`), not only the range. */
   sessions: readonly SessionTurns[];
@@ -601,7 +656,7 @@ function roundSplits<K extends string>(
 
 export function buildUsageStats(input: BuildInput): UsageStats {
   const { range } = input;
-  const tz = range.tzOffset;
+  const tz = range.tz;
   const lastDay = range.today < range.until ? range.today : range.until;
   const from = dayStart(range.since, tz);
   const to = dayStart(addDays(lastDay, 1), tz);
@@ -811,7 +866,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     for (const s of l.spans) {
       let t = s.start;
       while (t < s.end) {
-        const local = new Date(t + tz * MIN);
+        const local = new Date(t + zoneOffset(t, tz));
         const hourEnd =
           t +
           (HOUR -

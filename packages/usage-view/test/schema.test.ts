@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_IDS,
   PROVIDER_IDS,
+  UsageRange,
   UsageShare,
   UsageStats,
   SHARE_LIMITS,
   SHARE_MAX_BYTES,
   addDays,
+  canonicalTimeZone,
   daysBetween,
+  isTimeZone,
   decodeDaily,
   parseShareBody,
   decodeWall,
@@ -67,7 +70,7 @@ describe('toShare', () => {
     ]);
   });
 
-  it('only free strings are dates and the handle', () => {
+  it('only free strings are dates, the handle and a listed time zone', () => {
     const strings: string[] = [];
     const walk = (v: unknown, key: string): void => {
       if (typeof v === 'string') strings.push(`${key}=${v}`);
@@ -94,7 +97,11 @@ describe('toShare', () => {
     ]);
     for (const s of strings) {
       const value = s.slice(s.indexOf('=') + 1);
-      const ok = /^\d{4}-\d{2}-\d{2}$/.test(value) || enums.has(value) || s === 'handle=marco-d';
+      const ok =
+        /^\d{4}-\d{2}-\d{2}$/.test(value) ||
+        enums.has(value) ||
+        s === 'handle=marco-d' ||
+        (s.startsWith('tz=') && isTimeZone(value));
       expect(ok, s).toBe(true);
     }
   });
@@ -240,6 +247,39 @@ describe('range bounds', () => {
   });
 });
 
+describe('time zone', () => {
+  const range = { id: '7d', since: '2026-11-20', until: '2026-11-26', today: '2026-11-26' };
+
+  it('accepts listed IANA zones and UTC', () => {
+    for (const tz of ['Europe/Rome', 'America/New_York', 'UTC', 'Asia/Tokyo']) {
+      expect(UsageRange.safeParse({ ...range, tz }).success, tz).toBe(true);
+    }
+  });
+
+  it('refuses free text, offsets, a wrong case and an oversized name', () => {
+    for (const tz of [
+      '',
+      'europe/rome',
+      '+01:00',
+      'CET-1',
+      'hello world',
+      'Europe/' + 'x'.repeat(80),
+    ]) {
+      expect(isTimeZone(tz), tz).toBe(false);
+    }
+    expect(UsageRange.safeParse({ ...range, tz: 'Mars/Olympus' }).success).toBe(false);
+    expect(UsageRange.safeParse({ ...range, tzOffset: 60 }).success).toBe(false);
+  });
+
+  it('canonicalizes what Intl accepts, and nothing else', () => {
+    expect(canonicalTimeZone('utc')).toBe('UTC');
+    expect(canonicalTimeZone('Europe/Rome')).toBe('Europe/Rome');
+    expect(isTimeZone(canonicalTimeZone('Asia/Kolkata')!)).toBe(true);
+    expect(canonicalTimeZone('Mars/Olympus')).toBeNull();
+    expect(canonicalTimeZone('x'.repeat(65))).toBeNull();
+  });
+});
+
 describe('daysBetween', () => {
   it('builds the days, and refuses a run that would never end', () => {
     expect(daysBetween('2026-02-27', '2026-03-01')).toEqual([
@@ -276,7 +316,8 @@ describe('share size', () => {
         since: '2025-11-27',
         until: '2026-11-26',
         today: '2026-11-26',
-        tzOffset: -840,
+        // The longest zone name the runtime lists: the share at its largest.
+        tz: Intl.supportedValuesOf('timeZone').reduce((a, b) => (b.length > a.length ? b : a)),
       },
       daily: {
         start: '2026-09-26',

@@ -377,6 +377,45 @@ export const SubscriptionRow = z.strictObject({
 });
 export type SubscriptionRow = z.infer<typeof SubscriptionRow>;
 
+/** Longest zone name accepted; the IANA list's longest is about 30. */
+export const TZ_MAX_LENGTH = 64;
+const zoneList = (): ReadonlySet<string> => {
+  const set = new Set(Intl.supportedValuesOf('timeZone'));
+  // Node lists `UTC` under no name of its own; the share must still be able to say it.
+  set.add('UTC');
+  return set;
+};
+let zones: ReadonlySet<string> | null = null;
+
+/**
+ * Whether `tz` is a zone name this runtime's `Intl` lists: a closed set, so a share's
+ * only zone string can never carry free text.
+ */
+export function isTimeZone(tz: string): boolean {
+  if (tz.length === 0 || tz.length > TZ_MAX_LENGTH) return false;
+  zones ??= zoneList();
+  return zones.has(tz);
+}
+
+/**
+ * The runtime's canonical spelling of a zone `Intl` accepts (`utc` is `UTC`, and an
+ * alias such as `Asia/Kolkata` may come back as `Asia/Calcutta`); null for anything else.
+ */
+export function canonicalTimeZone(raw: string): string | null {
+  if (raw.length === 0 || raw.length > TZ_MAX_LENGTH) return null;
+  try {
+    const tz = new Intl.DateTimeFormat('en-US', { timeZone: raw }).resolvedOptions().timeZone;
+    return isTimeZone(tz) ? tz : null;
+  } catch {
+    return null;
+  }
+}
+
+export const TimeZone = z
+  .string()
+  .max(TZ_MAX_LENGTH)
+  .refine(isTimeZone, { message: 'unknown time zone' });
+
 export const UsageRange = z
   .strictObject({
     id: RangeId,
@@ -384,12 +423,8 @@ export const UsageRange = z
     until: day,
     /** The last day with data; days after it up to `until` are forecast. */
     today: day,
-    /** Local time minus UTC, in minutes (CET is 60). Days are bucketed with it. */
-    tzOffset: z
-      .number()
-      .int()
-      .min(-14 * 60)
-      .max(14 * 60),
+    /** The IANA time zone days are bucketed in (`Europe/Rome`). */
+    tz: TimeZone,
   })
   .refine((r) => r.since <= r.today && r.today <= r.until, {
     message: 'range must satisfy since <= today <= until',

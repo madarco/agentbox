@@ -3,6 +3,7 @@ import {
   activeIntervals,
   buildUsageStats,
   concurrency,
+  addDays,
   concurrencyByDay,
   dayKey,
   dayStart,
@@ -21,7 +22,7 @@ import {
   unionSpans,
   UsageStats,
 } from '../src/index.js';
-import type { ActivityEvent, Lane, SessionTurns } from '../src/index.js';
+import type { ActivityEvent, Lane, SessionTurns, Span } from '../src/index.js';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -138,22 +139,22 @@ describe('lanes', () => {
 describe('time zones', () => {
   it('buckets an instant into its local day', () => {
     const lateUtc = Date.UTC(2026, 10, 19, 23, 30);
-    expect(dayKey(lateUtc, 0)).toBe('2026-11-19');
-    expect(dayKey(lateUtc, 60)).toBe('2026-11-20');
-    expect(dayKey(Date.UTC(2026, 10, 20, 2, 0), -300)).toBe('2026-11-19');
+    expect(dayKey(lateUtc, 'UTC')).toBe('2026-11-19');
+    expect(dayKey(lateUtc, 'Europe/Rome')).toBe('2026-11-20');
+    expect(dayKey(Date.UTC(2026, 10, 20, 2, 0), 'America/New_York')).toBe('2026-11-19');
   });
 
   it('day start is local midnight', () => {
-    expect(dayStart('2026-11-20', 60)).toBe(Date.UTC(2026, 10, 19, 23, 0));
-    expect(dayStart('2026-11-20', -300)).toBe(Date.UTC(2026, 10, 20, 5, 0));
+    expect(dayStart('2026-11-20', 'Europe/Rome')).toBe(Date.UTC(2026, 10, 19, 23, 0));
+    expect(dayStart('2026-11-20', 'America/New_York')).toBe(Date.UTC(2026, 10, 20, 5, 0));
   });
 
   it('splits a span at local midnight', () => {
     const span = { start: Date.UTC(2026, 10, 19, 22, 0), end: Date.UTC(2026, 10, 20, 1, 0) };
-    const utc = spansByDay([span], 0);
+    const utc = spansByDay([span], 'UTC');
     expect([...utc.keys()]).toEqual(['2026-11-19', '2026-11-20']);
     expect(totalMs(utc.get('2026-11-19')!)).toBe(2 * HOUR);
-    const cet = spansByDay([span], 60);
+    const cet = spansByDay([span], 'Europe/Rome');
     expect(totalMs(cet.get('2026-11-19')!)).toBe(HOUR);
     expect(totalMs(cet.get('2026-11-20')!)).toBe(2 * HOUR);
   });
@@ -163,8 +164,8 @@ describe('time zones', () => {
       session('a', 'a', every(22.5, 23.5)),
       session('b', 'b', every(23, 23.5)),
     ]);
-    expect(concurrencyByDay(lanes, 0).get('2026-11-19')!.peak).toBe(2);
-    const cet = concurrencyByDay(lanes, 60);
+    expect(concurrencyByDay(lanes, 'UTC').get('2026-11-19')!.peak).toBe(2);
+    const cet = concurrencyByDay(lanes, 'Europe/Rome');
     expect(cet.get('2026-11-19')!.peak).toBe(1);
     expect(cet.get('2026-11-20')!.peak).toBe(2);
   });
@@ -215,9 +216,9 @@ describe('shipped and streaks', () => {
       { type: 'git.push', at: at(23.5), commits: 1, files: 1, additions: 10, deletions: 0 },
       { type: 'pr.merged', at: at(11), additions: 110, deletions: 20 },
     ];
-    const utc = shippedByDay(events, 0).get('2026-11-19')!;
+    const utc = shippedByDay(events, 'UTC').get('2026-11-19')!;
     expect(utc).toEqual({ commits: 4, files: 6, additions: 110, deletions: 20, prsMerged: 1 });
-    const cet = shippedByDay(events, 60);
+    const cet = shippedByDay(events, 'Europe/Rome');
     expect(cet.get('2026-11-19')!.commits).toBe(3);
     expect(cet.get('2026-11-20')!.commits).toBe(1);
   });
@@ -281,7 +282,7 @@ describe('buildUsageStats', () => {
     },
   ];
   const stats = buildUsageStats({
-    range: { id: '7d', since: '2026-11-19', until: '2026-11-19', today: '2026-11-19', tzOffset: 0 },
+    range: { id: '7d', since: '2026-11-19', until: '2026-11-19', today: '2026-11-19', tz: 'UTC' },
     now: at(13),
     sessions,
     events,
@@ -355,7 +356,7 @@ describe('buildUsageStats edge cases', () => {
     since: '2026-11-17',
     until: '2026-11-19',
     today: '2026-11-19',
-    tzOffset: 0,
+    tz: 'UTC',
   };
 
   it("marks each Gantt day with the PR merged that day, not the box's last one", () => {
@@ -420,13 +421,104 @@ describe('buildUsageStats edge cases', () => {
       session('b', 'b', every(23, 25)),
       session('c', 'c', every(-3, 1)),
     ]);
-    const byDay = concurrencyByDay(lanes, 60);
+    const byDay = concurrencyByDay(lanes, 'Europe/Rome');
     for (const [d, v] of byDay) {
-      const c = concurrency(lanes, dayStart(d, 60), dayStart(d, 60) + 24 * HOUR);
+      const c = concurrency(
+        lanes,
+        dayStart(d, 'Europe/Rome'),
+        dayStart(addDays(d, 1), 'Europe/Rome'),
+      );
       expect(v.peak).toBe(c.peak);
       expect(v.agentHours).toBeCloseTo(c.agentMs / HOUR, 6);
       expect(v.wallHours).toBeCloseTo(c.wallMs / HOUR, 6);
     }
+  });
+});
+
+describe('time zones across DST', () => {
+  // Europe/Rome: CET (+1) to CEST (+2) at 01:00 UTC on 29 Mar 2026, back at 01:00 UTC
+  // on 25 Oct 2026. America/New_York: EST (-5) to EDT (-4) at 07:00 UTC on 8 Mar 2026,
+  // back at 06:00 UTC on 1 Nov 2026.
+  it('days have 23 and 25 hours on the change days', () => {
+    const len = (d: string, tz: string): number =>
+      (dayStart(addDays(d, 1), tz) - dayStart(d, tz)) / HOUR;
+    expect(len('2026-03-29', 'Europe/Rome')).toBe(23);
+    expect(len('2026-10-25', 'Europe/Rome')).toBe(25);
+    expect(len('2026-03-28', 'Europe/Rome')).toBe(24);
+    expect(len('2026-03-08', 'America/New_York')).toBe(23);
+    expect(len('2026-11-01', 'America/New_York')).toBe(25);
+    expect(dayStart('2026-03-30', 'Europe/Rome')).toBe(Date.UTC(2026, 2, 29, 22, 0));
+    expect(dayStart('2026-11-02', 'America/New_York')).toBe(Date.UTC(2026, 10, 2, 5, 0));
+  });
+
+  it('buckets a 00:30 turn on the right day on both sides of the change', () => {
+    // 00:30 local, the day after each change.
+    expect(dayKey(Date.UTC(2026, 2, 29, 22, 30), 'Europe/Rome')).toBe('2026-03-30');
+    expect(dayKey(Date.UTC(2026, 9, 25, 23, 30), 'Europe/Rome')).toBe('2026-10-26');
+    expect(dayKey(Date.UTC(2026, 2, 9, 4, 30), 'America/New_York')).toBe('2026-03-09');
+    expect(dayKey(Date.UTC(2026, 10, 2, 5, 30), 'America/New_York')).toBe('2026-11-02');
+    // 23:30 local the evening before: still that day.
+    expect(dayKey(Date.UTC(2026, 2, 29, 21, 30), 'Europe/Rome')).toBe('2026-03-29');
+    expect(dayKey(Date.UTC(2026, 10, 2, 4, 30), 'America/New_York')).toBe('2026-11-01');
+  });
+
+  it('a window across the change keeps each day whole', () => {
+    // Active 22:00-02:00 local every night for a week around the spring change.
+    const spans: Span[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = addDays('2026-03-26', i);
+      const s = dayStart(d, 'Europe/Rome') + 22 * HOUR;
+      spans.push({ start: s, end: s + 4 * HOUR });
+    }
+    const byDay = spansByDay(spans, 'Europe/Rome');
+    for (const [d, parts] of byDay) {
+      for (const p of parts) {
+        expect(dayKey(p.start, 'Europe/Rome')).toBe(d);
+        expect(dayKey(p.end - 1, 'Europe/Rome')).toBe(d);
+      }
+    }
+    // 22:00 local is 21:00 UTC before the change and 20:00 UTC after it.
+    expect(spans[0]!.start).toBe(Date.UTC(2026, 2, 26, 21, 0));
+    expect(spans[4]!.start).toBe(Date.UTC(2026, 2, 30, 20, 0));
+  });
+
+  it('the punchcard counts local hours on both sides of the change', () => {
+    // One hour at 09:00 local, the Friday before and the Monday after the spring change.
+    const nine = (d: string): number => dayStart(d, 'America/New_York') + 9 * HOUR;
+    const turns = (d: string): number[] => {
+      const s = nine(d);
+      return Array.from({ length: 60 }, (_, i) => s + i * MIN);
+    };
+    const stats = buildUsageStats({
+      range: {
+        id: '7d',
+        since: '2026-03-06',
+        until: '2026-03-12',
+        today: '2026-03-12',
+        tz: 'America/New_York',
+      },
+      now: Date.UTC(2026, 2, 12, 12),
+      sessions: [
+        { ...session('a', 'a', []), turns: turns('2026-03-06') },
+        { ...session('b', 'b', []), turns: turns('2026-03-09') },
+      ],
+      events: [],
+      intervals: { tailMs: 60_000 },
+    });
+    // Friday (5) and Monday (1), both in the 09:00 column only.
+    expect(stats.punchcard[5]![9]).toBeCloseTo(1, 6);
+    expect(stats.punchcard[1]![9]).toBeCloseTo(1, 6);
+    expect(stats.punchcard.flat().reduce((a, b) => a + b, 0)).toBeCloseTo(2, 6);
+    expect(stats.daily.find((d) => d.date === '2026-03-09')!.agentHours).toBeCloseTo(1, 2);
+  });
+
+  it('precomputed spans give the same lanes as the turns', () => {
+    const turns = every(0, 3);
+    const a = lanesFromSessions([session('a', 'a', turns)]);
+    const b = lanesFromSessions([
+      { ...session('a', 'a', []), spans: lanesFromSessions([session('a', 'a', turns)])[0]!.spans },
+    ]);
+    expect(b).toEqual(a);
   });
 });
 
@@ -457,7 +549,7 @@ describe('Gantt lanes across midnight', () => {
         since: '2026-11-17',
         until: '2026-11-19',
         today: '2026-11-19',
-        tzOffset: 0,
+        tz: 'UTC',
       },
       now: at(20),
       sessions: [session('s', 'b', every(-3, 2))],
