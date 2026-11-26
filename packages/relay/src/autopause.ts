@@ -176,10 +176,14 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
       const persistentIds = await readPersistentBoxIds();
 
       const entries: BoxScanEntry[] = [];
+      // What each box's agents reported when it was picked, to tell after a
+      // flush whether anything happened meanwhile.
+      const seen = new Map<string, AgentSnap>();
       for (const reg of registry.list()) {
         if (!reg.containerName) continue; // pre-feature box; can't pause it
         const state = await inspectStatus(reg.containerName);
         const active = readPauseState(statusStore.get(reg.boxId));
+        seen.set(reg.boxId, active);
         const idleMs =
           active.state === 'idle' && active.updatedAt ? msSince(active.updatedAt) : null;
         entries.push({
@@ -209,9 +213,12 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
               log,
               deps.beforePauseTimeoutMs ?? BEFORE_PAUSE_TIMEOUT_MS,
             );
-            // The flush took time: an agent that started working meanwhile
-            // (the user came back) keeps its box running.
-            if (readPauseState(statusStore.get(boxId)).state !== e.agentState) continue;
+            // The flush took time: an agent that did anything meanwhile (the
+            // user came back, even for a turn that is already over again) keeps
+            // its box running, so a turn the flush did not ship is not frozen.
+            const now = readPauseState(statusStore.get(boxId));
+            const before = seen.get(boxId);
+            if (now.state !== before?.state || now.updatedAt !== before?.updatedAt) continue;
           }
           await pause(e.containerName);
           void recordActivity({

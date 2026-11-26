@@ -8,11 +8,29 @@ export const MEMORY_MAX_FILES = 1000;
 /** ctl's per-box memory baseline (on the writable layer; checkpoint cleanup deletes it). */
 export const MEMORY_STATE_FILE = '/home/vscode/.local/state/agentbox/memory-state.json';
 
-/** The `<projectKey>` an agent uses for a host project folder. */
+/** Longest `dashed-path` key before claude truncates it and appends a hash. */
+export const DASHED_PATH_MAX = 200;
+
+/** Java's `String#hashCode` over UTF-16 code units, as a signed 32-bit int. */
+function stringHash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h;
+}
+
+/**
+ * The `<projectKey>` an agent uses for a host project folder. `dashed-path` is
+ * Claude Code's: every non-alphanumeric char as `-`; past 200 chars, the first
+ * 200 plus `-` and the path's hash in base 36 (checked against Claude Code
+ * 2.1.326 with a 273-char path).
+ */
 export function hostProjectKey(kind: AgentHistoryMemory['hostKey'], absPath: string): string {
   switch (kind) {
-    case 'dashed-path':
-      return absPath.replace(/[^a-zA-Z0-9]/g, '-');
+    case 'dashed-path': {
+      const dashed = absPath.replace(/[^a-zA-Z0-9]/g, '-');
+      if (dashed.length <= DASHED_PATH_MAX) return dashed;
+      return `${dashed.slice(0, DASHED_PATH_MAX)}-${Math.abs(stringHash(absPath)).toString(36)}`;
+    }
   }
 }
 

@@ -8,7 +8,7 @@
 // A file at the target that the materializer did not write, or that changed
 // after it wrote it (the host's claude resumed the session and appended), is
 // never touched: the first is a session id collision, logged once.
-import { appendFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -195,124 +195,187 @@ export function createSessionMaterializer(deps: MaterializeDeps): SessionMateria
   };
 
   const sameAsWritten = (
-    s: { size: number; mtimeMs: number },
+    s: { size: number; mtimeMs: number; ino?: number },
     e: MaterializedEntry | undefined,
-  ): boolean => !!e && s.size === e.size && Math.trunc(s.mtimeMs) === Math.trunc(e.mtimeMs);
+  ): boolean =>
+    !!e &&
+    s.size === e.size &&
+    Math.trunc(s.mtimeMs) === Math.trunc(e.mtimeMs) &&
+    (e.ino === undefined || s.ino === undefined || s.ino === e.ino);
 
-  async function writeFileCopy(
-    manifest: MaterializedManifest,
-    session: HistorySessionRow,
-    file: HistoryFileRow,
-    path: string,
-  ): Promise<'written' | 'skipped'> {
-    const entry = manifest.files[path];
-    const onDisk = await stat(path).catch(() => null);
-    if (onDisk) {
-      if (!entry) {
-        warnOnce(
-          path,
-          `history: materialize: ${path} exists and was not written by the hub (session id collision with ${session.key}); left alone`,
-        );
-        return 'skipped';
-      }
-      if (!sameAsWritten(onDisk, entry)) {
-        warnOnce(
-          path,
-          `history: materialize: ${path} changed on this PC since the hub wrote it; left alone`,
-        );
-        return 'skipped';
-      }
-      if (
-        entry.fileId === file.id &&
-        entry.generation === file.generation &&
-        entry.offset === file.offset
-      ) {
-        return 'skipped';
-      }
-    }
-    // Our copy of the same bytes, and the hub's file only grew: append the new
-    // lines instead of rewriting the session.
-    const appendFrom =
-      onDisk &&
-      entry &&
-      entry.fileId === file.id &&
-      entry.generation === file.generation &&
-      file.offset > entry.size
-        ? entry.size
-        : 0;
-    const parts: Buffer[] = [];
-    let pos = 0;
-    for await (const b of deps.history.rawStream(file.id, file.offset)) {
-      const from = Math.max(0, appendFrom - pos);
-      if (from < b.length) parts.push(b.subarray(from));
-      pos += b.length;
-    }
-    const raw = Buffer.concat(parts);
-    // Complete lines only: a final flush can ship a line the box was still writing.
-    const end = raw.lastIndexOf(0x0a) + 1;
-    if (end === 0) return 'skipped';
-    const bytes = raw.subarray(0, end);
-
-    // Listed before the file lands, so the host-session watcher never sees an
-    // unlisted copy. A crash before the final stat leaves an entry that no
-    // longer matches the file: it is then left alone, and still never shipped.
-    manifest.files[path] = {
-      session: session.key,
-      fileId: file.id,
-      generation: file.generation,
-      offset: file.offset,
-      size: appendFrom + end,
-      mtimeMs: -1,
-    };
-    await writeMaterialized(manifest, manifestFile);
-    const undo = async (why: string): Promise<'skipped'> => {
-      if (entry) manifest.files[path] = entry;
-      else delete manifest.files[path];
-      await writeMaterialized(manifest, manifestFile);
-      warnOnce(path, `history: materialize: ${path} ${why}; left alone`);
-      return 'skipped';
-    };
-    // Re-checked right before the write: the host's claude may have created or
-    // resumed it meanwhile.
-    const stillOurs = async (): Promise<boolean> => {
-      const now = await stat(path).catch(() => null);
-      return now ? sameAsWritten(now, entry) : !entry || !onDisk;
-    };
-    if (appendFrom > 0) {
-      if (!(await stillOurs())) return undo('changed on this PC while the hub was writing it');
-      await appendFile(path, bytes);
-    } else {
-      await mkdir(dirname(path), { recursive: true });
-      const tmp = join(dirname(path), `.${String(file.id)}.agentbox-materialize.tmp`);
-      try {
-        await writeFile(tmp, bytes, { mode: 0o600 });
-        if (!(await stillOurs()))
-          return await undo('appeared or changed while the hub was writing it');
-        await rename(tmp, path);
-      } finally {
-        await rm(tmp, { force: true }).catch(() => undefined);
-      }
-    }
-    const written = await stat(path);
-    manifest.files[path] = {
-      ...manifest.files[path]!,
-      size: written.size,
-      mtimeMs: written.mtimeMs,
-    };
-    await writeMaterialized(manifest, manifestFile);
-    return 'written';
+  /** One file to write, decided before anything is written. */
+  interface Job {
+    session: HistorySessionRow;
+    file: HistoryFileRow;
+    path: string;
+    /** The manifest entry before this run (undefined: none). */
+    before: MaterializedEntry | undefined;
+    /** `new`: nothing on disk; `rewrite`: our copy of other bytes; `append`: our copy, grown. */
+    mode: 'new' | 'rewrite' | 'append';
   }
 
-  async function doSession(
+  /**
+   * The job for one host path, or null. Two hub files of one session can map to
+   * the same path (a box resuming another box's session on the shared docker
+   * volume, a file named after another session): one of them owns the path, the
+   * manifest's if it is still there, else the longest, and the others are skipped,
+   * so the copy is not rewritten by each in turn.
+   */
+  async function plan(
+    manifest: MaterializedManifest,
+    session: HistorySessionRow,
+    candidates: HistoryFileRow[],
+    path: string,
+  ): Promise<Job | null> {
+    const before = manifest.files[path];
+    if (before && before.session !== session.key) {
+      warnOnce(
+        path,
+        `history: materialize: ${path} belongs to ${before.session}; ${session.key} not written there`,
+      );
+      return null;
+    }
+    const file =
+      candidates.find((f) => f.id === before?.fileId) ??
+      [...candidates].sort((a, b) => b.offset - a.offset || a.id - b.id)[0]!;
+    const onDisk = await stat(path).catch(() => null);
+    if (!onDisk) return { session, file, path, before, mode: 'new' };
+    if (!before) {
+      warnOnce(
+        path,
+        `history: materialize: ${path} exists and was not written by the hub (session id collision with ${session.key}); left alone`,
+      );
+      return null;
+    }
+    if (!sameAsWritten(onDisk, before)) {
+      warnOnce(
+        path,
+        `history: materialize: ${path} changed on this PC since the hub wrote it; left alone`,
+      );
+      return null;
+    }
+    const sameBytes = before.fileId === file.id && before.generation === file.generation;
+    if (sameBytes && before.offset === file.offset) return null;
+    return { session, file, path, before, mode: sameBytes ? 'append' : 'rewrite' };
+  }
+
+  /**
+   * Stream the file into a fresh `fh` without holding it in memory, keeping
+   * complete lines only (a final flush can ship a line the box was still
+   * writing). Returns the bytes kept; the file is cut there.
+   */
+  async function streamLines(fh: FileHandle, file: HistoryFileRow): Promise<number> {
+    let written = 0;
+    let lastLine = 0;
+    for await (const b of deps.history.rawStream(file.id, file.offset)) {
+      await fh.write(b);
+      const nl = b.lastIndexOf(0x0a);
+      if (nl >= 0) lastLine = written + nl + 1;
+      written += b.length;
+    }
+    if (lastLine < written) await fh.truncate(lastLine);
+    return lastLine;
+  }
+
+  /** Write one job's copy. `true` when it landed. */
+  async function execute(manifest: MaterializedManifest, job: Job): Promise<boolean> {
+    const { file, path, before } = job;
+    const undo = (why: string): false => {
+      if (before) manifest.files[path] = before;
+      else delete manifest.files[path];
+      warnOnce(path, `history: materialize: ${path} ${why}; left alone`);
+      return false;
+    };
+    const record = (st: { size: number; mtimeMs: number; ino: number }): true => {
+      manifest.files[path] = {
+        session: job.session.key,
+        fileId: file.id,
+        generation: file.generation,
+        offset: file.offset,
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        ino: st.ino,
+      };
+      return true;
+    };
+
+    if (job.mode === 'append') {
+      // Only the bytes past the copy, read from the chunk that holds them: the
+      // growth since the last write, so it is held in memory.
+      const parts: Buffer[] = [];
+      for await (const c of deps.history.rawStream(file.id, file.offset, before!.size))
+        parts.push(c);
+      const raw = Buffer.concat(parts);
+      const bytes = raw.subarray(0, raw.lastIndexOf(0x0a) + 1);
+      if (bytes.length === 0) return false;
+      // O_APPEND: never over bytes someone else added. The window to the host's
+      // claude is the one write, checked on the handle right before and after.
+      const fh = await open(path, 'a');
+      try {
+        const pre = await fh.stat();
+        if (!sameAsWritten(pre, before))
+          return undo('changed on this PC while the hub was writing it');
+        await fh.write(bytes);
+        const post = await fh.stat();
+        if (post.size !== pre.size + bytes.length) {
+          // Written alongside: recorded as it would have been, so the next pass
+          // sees the difference and leaves the copy alone.
+          manifest.files[path] = { ...before!, size: pre.size + bytes.length, mtimeMs: -1 };
+          warnOnce(
+            path,
+            `history: materialize: ${path} was written on this PC during an append; left alone from now on`,
+          );
+          return false;
+        }
+        return record(post);
+      } finally {
+        await fh.close();
+      }
+    }
+
+    await mkdir(dirname(path), { recursive: true });
+    const tmp = join(dirname(path), `.${String(file.id)}.agentbox-materialize.tmp`);
+    try {
+      const fh = await open(tmp, 'w', 0o600);
+      let kept: number;
+      try {
+        kept = await streamLines(fh, file);
+      } finally {
+        await fh.close();
+      }
+      if (kept === 0) return undo('has no complete line yet');
+      if (job.mode === 'new') {
+        // `link` fails when the path exists: a copy the host's claude created
+        // since the plan is never replaced.
+        try {
+          await link(tmp, path);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === 'EEXIST')
+            return undo('appeared while the hub was writing it');
+          throw e;
+        }
+      } else {
+        const now = await stat(path).catch(() => null);
+        if (!now || !sameAsWritten(now, before))
+          return undo('changed on this PC while the hub was writing it');
+        await rename(tmp, path);
+      }
+      return record(await stat(path));
+    } finally {
+      await rm(tmp, { force: true }).catch(() => undefined);
+    }
+  }
+
+  async function plansFor(
     manifest: MaterializedManifest,
     key: string,
     stats: MaterializeStats,
     folders: Map<string, Promise<string | null>>,
-  ): Promise<void> {
+  ): Promise<Job[]> {
     const session = await deps.history.repo.getSession(key);
-    if (!session?.boxId) return; // host sessions are already on their PC
+    if (!session?.boxId) return []; // host sessions are already on their PC
     const target = targets.get(session.agent);
-    if (!target) return;
+    if (!target) return [];
     // One lookup per box and repo per run: a pass walks every session.
     const memo = `${session.boxId}\0${session.projectRepoUrl ?? ''}`;
     let found = folders.get(memo);
@@ -321,36 +384,96 @@ export function createSessionMaterializer(deps: MaterializeDeps): SessionMateria
       folders.set(memo, found);
     }
     const folder = await found;
-    if (!folder || !(await folderExists(folder))) return;
-    if (!(await (deps.enabled ?? materializeEnabled)(folder))) return;
+    if (!folder || !(await folderExists(folder))) return [];
+    if (!(await (deps.enabled ?? materializeEnabled)(folder))) return [];
     stats.sessions++;
+    const byPath = new Map<string, HistoryFileRow[]>();
     for (const file of await deps.history.repo.filesOfSession(key)) {
       if (file.offset === 0) continue;
       const path = hostPathFor(target, file.path, folder);
       if (!path) continue;
-      try {
-        if ((await writeFileCopy(manifest, session, file, path)) === 'written') stats.written++;
-        else stats.skipped++;
-      } catch (e) {
-        stats.skipped++;
-        deps.log(
-          `history: materialize ${key} to ${path}: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
+      byPath.set(path, [...(byPath.get(path) ?? []), file]);
     }
+    const jobs: Job[] = [];
+    for (const [path, files] of byPath) {
+      const job = await plan(manifest, session, files, path);
+      if (job) jobs.push(job);
+      else stats.skipped++;
+    }
+    return jobs;
   }
 
-  async function run(keys: () => Promise<string[]>): Promise<MaterializeStats> {
+  /**
+   * Forget entries whose hub file is gone (purged by retention) and whose copy
+   * is gone too. A copy still on disk keeps its entry: the host-session watcher
+   * must go on skipping it.
+   */
+  async function prune(manifest: MaterializedManifest): Promise<boolean> {
+    let changed = false;
+    for (const [path, e] of Object.entries(manifest.files)) {
+      if (await stat(path).catch(() => null)) continue;
+      if (await deps.history.repo.getFileById(e.fileId)) continue;
+      delete manifest.files[path];
+      changed = true;
+    }
+    return changed;
+  }
+
+  async function run(
+    keys: () => Promise<string[]>,
+    opts: { prune?: boolean } = {},
+  ): Promise<MaterializeStats> {
     const stats: MaterializeStats = { sessions: 0, written: 0, skipped: 0 };
     const manifest = await readMaterialized(manifestFile);
     const folders = new Map<string, Promise<string | null>>();
+    const jobs: Job[] = [];
+    const claimed = new Set<string>();
     for (const key of await keys()) {
       try {
-        await doSession(manifest, key, stats, folders);
+        for (const job of await plansFor(manifest, key, stats, folders)) {
+          if (claimed.has(job.path)) continue;
+          claimed.add(job.path);
+          jobs.push(job);
+        }
       } catch (e) {
         deps.log(`history: materialize ${key}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    let changed = opts.prune ? await prune(manifest) : false;
+    if (jobs.length > 0) {
+      // Listed before any copy lands (one manifest write per run), so the
+      // host-session watcher never sees an unlisted copy. An entry that does not
+      // match the file after a crash makes the copy "changed on this PC": left
+      // alone, and still never shipped as a host session.
+      for (const j of jobs) {
+        manifest.files[j.path] = j.before
+          ? { ...j.before }
+          : {
+              session: j.session.key,
+              fileId: j.file.id,
+              generation: j.file.generation,
+              offset: j.file.offset,
+              size: 0,
+              mtimeMs: -1,
+            };
+      }
+      await writeMaterialized(manifest, manifestFile);
+      for (const j of jobs) {
+        try {
+          if (await execute(manifest, j)) stats.written++;
+          else stats.skipped++;
+        } catch (e) {
+          stats.skipped++;
+          if (j.before) manifest.files[j.path] = j.before;
+          else delete manifest.files[j.path];
+          deps.log(
+            `history: materialize ${j.session.key} to ${j.path}: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+      changed = true;
+    }
+    if (changed) await writeMaterialized(manifest, manifestFile);
     return stats;
   }
 
@@ -363,10 +486,12 @@ export function createSessionMaterializer(deps: MaterializeDeps): SessionMateria
 
     pass: () =>
       serialized(() =>
-        run(async () =>
-          (await deps.history.repo.listSessions())
-            .filter((s) => s.boxId && targets.has(s.agent))
-            .map((s) => s.key),
+        run(
+          async () =>
+            (await deps.history.repo.listSessions())
+              .filter((s) => s.boxId && targets.has(s.agent))
+              .map((s) => s.key),
+          { prune: true },
         ),
       ),
 

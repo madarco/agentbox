@@ -234,6 +234,45 @@ describe('startAutopauseLoop', () => {
     expect(paused).toBe(0);
   });
 
+  it('does not pause a box whose agent took a whole turn during the flush (idle, working, idle)', async () => {
+    const registry = new BoxRegistry();
+    registry.register({
+      boxId: 'b1',
+      token: 't',
+      name: 'b1',
+      registeredAt: new Date().toISOString(),
+      containerName: 'agentbox-b1',
+      createdAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+    });
+    let updatedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    const statusStore = {
+      get: (): BoxStatusSnapshot => ({
+        schema: 1,
+        boxId: 'b1',
+        claude: { state: 'idle', updatedAt },
+      }),
+    } as unknown as BoxStatusStore;
+    const flushed = deferred<void>();
+    let paused = 0;
+    const loop = startAutopauseLoop({
+      registry,
+      statusStore,
+      events: new EventBuffer(),
+      log: () => {},
+      intervalMs: 5,
+      loadConfig: async () => ({ enabled: true, maxRunningBoxes: 0, idleMinutes: 5 }),
+      inspectStatus: async (): Promise<ContainerState> => 'running',
+      beforePause: async () => {
+        updatedAt = new Date().toISOString(); // a turn started and ended meanwhile
+        flushed.resolve();
+      },
+      pause: async () => void paused++,
+    });
+    await flushed.promise;
+    await loop.stop();
+    expect(paused).toBe(0);
+  });
+
   it('does not pause when another agent (codex) is working even if claude is idle', async () => {
     const registry = new BoxRegistry();
     registry.register({

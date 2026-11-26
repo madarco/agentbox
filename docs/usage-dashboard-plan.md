@@ -305,9 +305,18 @@ and 4b (contributions to a remote hub).
   project folder is the box record's `projectRoot`, else this machine's checkouts
   of the session's repo, else a registered project with that origin. Key:
   `hostProjectKey('dashed-path', folder)`, the same as claude's (checked against
-  a real `~/.claude/projects` entry). Runs 15 s after a session ships (debounced),
+  a real `~/.claude/projects` entry; past 200 chars claude keeps the first 200
+  and appends `-` plus the path's 32-bit string hash in base 36, matched against
+  Claude Code 2.1.326 with a 273-char path). Runs 15 s after a session ships (debounced),
   60 s after the hub starts and daily. Writes complete lines only: a new copy
-  atomically (tmp + rename), a grown one by appending the new lines.
+  streamed to a tmp file and `link`ed into place (fails if the path appeared), a
+  grown one by one `O_APPEND` write of the new lines, read from the archive
+  chunk that holds them, with the file checked (size, mtime, inode) on the
+  handle before and after. Two hub files of one session that land on one path
+  (a box resuming another's session on the shared docker volume) get one owner,
+  the manifest's, else the longest. The manifest is written twice per run (all
+  entries before any copy lands, then the results) and the daily pass drops
+  entries whose hub file and copy are both gone.
   `~/.agentbox/hub/history-materialized.json` records each copy (hub file row,
   offset, size, mtime): an unchanged copy is skipped, a missing one written back,
   a file the hub did not write (a session id collision) or one changed since it

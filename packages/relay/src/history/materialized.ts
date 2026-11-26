@@ -21,6 +21,8 @@ export interface MaterializedEntry {
   /** The copy as written, to notice the host's agent appending to it. */
   size: number;
   mtimeMs: number;
+  /** Inode of the copy, when known: a file swapped in by someone else is not ours. */
+  ino?: number;
 }
 
 export interface MaterializedManifest {

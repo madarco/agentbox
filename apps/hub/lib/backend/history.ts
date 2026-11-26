@@ -434,9 +434,12 @@ export type ResolvedSession =
 export interface HistoryService extends HistoryIngestSink {
   /** Reassemble a file's current generation byte for byte. */
   readRaw(fileId: number): Promise<Buffer>;
-  /** The same bytes, chunk by chunk, for a streamed download. */
-  /** The same bytes, chunk by chunk, up to `endOffset` (default: what is ingested now). */
-  rawStream(fileId: number, endOffset?: number): AsyncGenerator<Buffer>;
+  /**
+   * The same bytes, chunk by chunk, from `startOffset` (default 0) up to
+   * `endOffset` (default: what is ingested now). Starts at the chunk holding
+   * `startOffset`, so a tail read does not decompress the whole file.
+   */
+  rawStream(fileId: number, endOffset?: number, startOffset?: number): AsyncGenerator<Buffer>;
   listSessions(filter: HistorySessionFilter): Promise<HistorySessionRow[]>;
   resolveSession(ref: string): Promise<ResolvedSession>;
   sessionDetail(key: string): Promise<HistorySessionDetail | null>;
@@ -765,14 +768,14 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       return Buffer.concat(parts);
     },
 
-    async *rawStream(fileId, endOffset) {
+    async *rawStream(fileId, endOffset, startOffset) {
       const file = await repo.getFileById(fileId);
       if (!file) throw new Error(`history file ${String(fileId)} not found`);
       // A fixed end: a file still being appended to would otherwise stream
       // past the length the caller announced (content-length).
       const end = Math.min(endOffset ?? file.offset, file.offset);
       let chunks = await repo.listChunks(fileId, file.generation);
-      let pos = 0;
+      let pos = Math.max(0, Math.min(startOffset ?? 0, end));
       let retries = 0;
       while (pos < end) {
         const c = chunks.find((x) => x.start <= pos && pos < x.end);

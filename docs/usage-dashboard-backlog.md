@@ -12,6 +12,10 @@ Open items found while building the phases of
   alone once claude appends to it, and the host-session watcher skips it, so the
   PC-side turns never reach the hub. Shipping them would need the watcher to send
   only the bytes past the materialized offset under the box session.
+- **A rewrite of our own copy is a check then a `rename`.** A new copy is
+  `link`ed (fails if claude created it meanwhile) and an append is checked on the
+  open handle, but replacing a copy whose hub file changed generation (the box
+  rewrote it) leaves a short window between the check and the rename.
 - **A re-created copy gets a fresh mtime**, so the resume picker shows an old box
   session as recent, and claude's cleanup deletes it again 30 days later (the
   daily pass writes it back). Setting the mtime to the session's last turn would
