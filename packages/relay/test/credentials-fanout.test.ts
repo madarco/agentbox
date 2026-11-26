@@ -249,7 +249,12 @@ describe('CredentialsFanout — custody write-back', () => {
   it('refuses another login under the account and puts the account`s back into that box, once a minute', async () => {
     const owned = (account: string, exp: number): string =>
       JSON.stringify({
-        claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: exp, accountUuid: account },
+        claudeAiOauth: {
+          accessToken: 'a',
+          refreshToken: 'r',
+          expiresAt: exp,
+          accountUuid: account,
+        },
       });
     const repushes: string[] = [];
     const runs: string[] = [];

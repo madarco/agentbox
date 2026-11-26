@@ -175,7 +175,6 @@ describe('switchBoxAccount', () => {
       (await switchBoxAccount({ ...d, findBox: async () => null }, 'x', { account: 'tok' })).kind,
     ).toBe('not_found');
   });
-
 });
 
 describe('switchBoxAccount failures', () => {

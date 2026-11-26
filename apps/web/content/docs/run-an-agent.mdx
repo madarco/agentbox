@@ -223,7 +223,9 @@ to be a login account).
 
 When a box renews an account's login, AgentBox copies the new token to that
 account's other boxes (and to your control box, if you have one), never to
-boxes on another account. Each renewal still signs the other copies out until
+boxes on another account. Signing a login in again does the same:
+`agentbox <agent> login` pushes the new default login to the boxes on
+`default`, and `agentbox credentials renew` to the boxes on that account. Each renewal still signs the other copies out until
 they receive it, so give an account that several cloud boxes use at once a
 setup token: it never renews.
 
@@ -231,29 +233,33 @@ setup token: it never renews.
 
 ```bash
 agentbox credentials switch my-box claude/ci      # a setup token or API key
-agentbox credentials switch my-box claude/work    # a login (docker boxes)
+agentbox credentials switch my-box claude/work    # a login
 ```
 
 The box page in the hub has the same choice: an account selector on the agent's
 row in **Details**, with the box's last switches under it. Either way the agent
-picks its conversation back up on the new account:
+keeps its conversation on the new account:
 
+- To a **login**, on any provider: the account's login is written into the
+  box's own copy of the credential file, and nothing is rebuilt. Claude reads
+  that file before every request, so it keeps running and its next turn uses
+  the new account. Other boxes on either account are not touched. A docker box
+  can switch while running, paused or stopped. A cloud box must be running.
+  An agent that does not re-read its file (codex) is restarted.
 - To a **setup token** or **API key**, on any provider: the agent's session
   restarts with that token set and the other auth variable cleared, and resumes
   the same conversation. A token that does not have the agent's shape is
   refused before anything changes (Claude ignores a malformed setup token and
-  reads as logged out).
-- To a **login**, on docker: the box is rebuilt on that account's config volume,
-  with the same name, mounts, ports, workspace and inner docker data, and the
-  conversation's files are copied across. The old account's credentials never
-  enter the new volume or the other way round. It takes a few seconds.
-- A **cloud** box cannot switch to a login yet; use a setup token or API key.
-  The exception is going back to `default` when the box was created on it.
-  Codex boxes switch to an API key only.
+  reads as logged out). Leaving a token for a login restarts the agent too,
+  since the token's variable has to go.
+- A docker box created before boxes had their own credential file can't switch
+  to a login: destroy it and create it again.
 
-A box that is not running records the new account and uses it at its next
-start. Its later sessions keep landing in the volume it runs on, and usage is
-counted under the account the box records.
+If the box's agent was renewing the old account's login at the moment of the
+switch, that renewal can land in the box afterwards. AgentBox spots it (the
+login names its own account) and puts the new account's login back, so the
+switch holds. A box that is not running records a token switch and uses it at
+its next start. Usage is counted under the account the box records.
 
 When an account hits its plan limit, the hub can do this for you. The
 `accounts.onLimit` key (global, or **Settings → General** in the hub) is `ask`

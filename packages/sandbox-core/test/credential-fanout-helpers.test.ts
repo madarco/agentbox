@@ -167,7 +167,12 @@ describe('pushCredentialToBox', () => {
 describe('credential identity', () => {
   const owned = (account: string, exp = 1): string =>
     JSON.stringify({
-      claudeAiOauth: { refreshToken: 'r', expiresAt: exp, accountUuid: account, organizationUuid: 'o' },
+      claudeAiOauth: {
+        refreshToken: 'r',
+        expiresAt: exp,
+        accountUuid: account,
+        organizationUuid: 'o',
+      },
     });
 
   it('refuses a newer blob of another login, and names why', () => {
