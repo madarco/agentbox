@@ -99,6 +99,7 @@ import { readGitOriginUrl } from '@agentbox/sandbox-cloud';
 import { reportCheckoutInBackground } from '../../lib/checkouts-report.js';
 import { skillSelectionFromFlags } from '../../lib/skills/selection.js';
 import { autoSeedSkills } from '../../lib/skills/auto-seed.js';
+import { checkSkillsDrift, printSkillsNotice } from '../../lib/skills/drift.js';
 
 /** Config overrides the create flags produce; the per-agent keys are delegated. */
 function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<UserConfig> {
@@ -418,7 +419,7 @@ export async function runAgentCreate(
   reportCheckoutInBackground(projectRoot);
   // The first create against a never-seeded skills library uploads this PC's
   // skills; after that a local memo makes it return without a network call.
-  await autoSeedSkills({
+  const seedScan = await autoSeedSkills({
     announce: (line) => {
       log.info(line);
       cmdLog.write(`skills seed: ${line}`);
@@ -501,6 +502,14 @@ export async function runAgentCreate(
     // Captured as a const so the narrowing survives into the status-line
     // callback below (TS drops property narrowing inside a closure).
     const seedPrompt = opts.initialPrompt;
+    // Started before the enqueue so its round trip overlaps it; printed with the
+    // "queued" line, which is what an orchestrating session reads.
+    const skillsDrift = checkSkillsDrift({
+      url: opts.url,
+      ...(seedScan ? { local: seedScan } : {}),
+      cwd: opts.workspace,
+      debug: (line) => cmdLog.write(line),
+    });
     // --dangerously-with-credentials is foreground-only (the queue worker doesn't
     // thread git.pushMode=direct, and copying a credential needs a human).
     if (cfg.git.pushMode === 'direct') {
@@ -597,6 +606,7 @@ export async function runAgentCreate(
           );
         }
         if (res.boxId) await recordCreate({ boxId: res.boxId });
+        printSkillsNotice(await skillsDrift);
         outro(`${a.id} is running on the control plane: box ${res.boxId ?? '(id pending)'}`);
         cmdLog.close();
         return;
@@ -661,6 +671,7 @@ export async function runAgentCreate(
       openTerminal: captureOpenTerminalContext(cfg.queue.openIn),
     });
     await recordCreate({ boxJobId: result.job.id });
+    printSkillsNotice(await skillsDrift);
     outro(
       `job ${result.job.id} queued (${String(result.runningCount)}/${String(result.maxConcurrent)} running); log: ${result.job.logPath}`,
     );

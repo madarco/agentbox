@@ -14,9 +14,11 @@ import {
 import { resolveBoxOrExit } from '../box-ref.js';
 import { providerForBox } from '../provider/registry.js';
 import type { HubApiJob } from '../control-plane/hub-api-client.js';
+import { checkSkillsDrift, driftJson, printSkillsNotice } from '../lib/skills/drift.js';
 
 interface QueueListOpts {
   all?: boolean;
+  json?: boolean;
 }
 
 const HIDDEN_LIST_STATUSES: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled']);
@@ -28,11 +30,29 @@ export const queueCommand = new Command('queue').description(
 const queueListCommand = new Command('list')
   .description('List queued, running, and (with --all) terminal background jobs')
   .option('--all', 'include done/failed/cancelled jobs (default: hide terminal)')
+  .option(
+    '--json',
+    'emit { jobs, maxConcurrent, enabled, skills } (skills: {outOfSync, names} or null)',
+  )
   .action(async (opts: QueueListOpts) => {
+    // In parallel with the manifest read: this is where an orchestrating session
+    // polls, so it's where a skill missing from new boxes is worth naming.
+    const skillsDrift = checkSkillsDrift();
     const cfg = await loadQueueConfig();
     const jobs = await listJobsForQueueView();
     const visible =
       opts.all === true ? jobs : jobs.filter((j) => !HIDDEN_LIST_STATUSES.has(j.status));
+    if (opts.json === true) {
+      process.stdout.write(
+        JSON.stringify({
+          jobs: visible,
+          maxConcurrent: cfg.maxConcurrent,
+          enabled: cfg.enabled,
+          skills: driftJson(await skillsDrift),
+        }) + '\n',
+      );
+      return;
+    }
     if (visible.length === 0) {
       log.info(opts.all ? 'no jobs.' : 'no active jobs (--all to see terminal).');
     } else {
@@ -41,6 +61,7 @@ const queueListCommand = new Command('list')
     log.info(
       `queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`,
     );
+    printSkillsNotice(await skillsDrift);
   });
 
 /**
@@ -325,7 +346,8 @@ function parsePositiveInt(raw: string, label: string): number {
   return n;
 }
 
-queueCommand.addCommand(queueListCommand);
+// Bare `agentbox queue` lists, which is what an orchestrating session polls.
+queueCommand.addCommand(queueListCommand, { isDefault: true });
 queueCommand.addCommand(queueShowCommand);
 queueCommand.addCommand(queueCancelCommand);
 queueCommand.addCommand(queueClearCommand);

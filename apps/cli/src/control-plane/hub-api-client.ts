@@ -1622,8 +1622,8 @@ export class HubApiClient {
 
   // ── skills library (custody `skills` scope) ──
 
-  listSkills(): Promise<HubApiSkillsListing> {
-    return this.request<HubApiSkillsListing>('GET', '/skills');
+  listSkills(opts: { timeoutMs?: number } = {}): Promise<HubApiSkillsListing> {
+    return this.request<HubApiSkillsListing>('GET', '/skills', undefined, opts);
   }
 
   /** Store one version of a skill: a gzip tarball body, metadata in a header. */
