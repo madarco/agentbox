@@ -179,19 +179,76 @@ from Phase 1 on.
   the design repo is not in the workspace.
 - Update the tray if it links to Usage; update the public docs page for Usage.
 
-### Phase 4 — numbers survive a box closing
+### Phase 4 — where sessions live, and how they reach the usage page
 
-- Destroy and stop: record the ledger event and run the final history flush on
-  every provider, including a paused cloud box (resume it briefly, or ship from
-  its stopped disk where the provider allows it; Phase 0 decides per provider).
-- Remote hub: a box on a control box writes to that hub's stores. A laptop that
-  has local docker boxes **and** a configured control box sees both: the laptop's
-  `/usage/stats` fetches the control box's stats and merges them (daily buckets
-  add, intervals union). Host sessions stay on the PC's hub and are merged the
-  same way.
-- Close the related history backlog items (remote forwarding, split stores).
-- Live check on docker, hetzner and one SDK provider (e2b or vercel): destroy a
-  box mid-run and see its hours and pushes on the page.
+Proposed 2026-11-26 with the owner; decisions marked **(to confirm)**.
+
+**What happens today** (measured 2026-11-26):
+- Docker boxes: the relay reads their transcripts host-side from the box's
+  config volume (`agentbox-claude-config`, shared by every docker box, or a
+  per-box volume with `--isolate-claude-config`, which `destroy` deletes) in
+  any box state. Cloud boxes: `agentbox-ctl` ships new transcript bytes every
+  30 s over the relay channel to the hub that owns the box.
+- The only final flush is on `destroy` (`history-flush.ts`, 90 s, best effort).
+  `stop` and `pause` flush nothing; a cloud box already paused or stopped at
+  destroy is skipped, so its last <30 s is lost.
+- A laptop hub with a configured control box keeps two stores: cloud boxes
+  built through the control box ship there, local docker boxes and host
+  sessions stay in the laptop's `history.db`. No forwarding, no merged view
+  (agent-history backlog: "Remote control box forwarding", "Split stores").
+- `history.db` is not a plain copy of `~/.claude/projects`: it holds the raw
+  bytes zstd-chunked and deduplicated (251 MB of raw transcripts stored as
+  about 70 MB on disk), redacted of secret values, plus the parsed turns,
+  per-message usage, FTS search and memory, for every agent (codex, opencode,
+  pi and openclaw included, whose native stores are not JSONL trees). Claude
+  Code itself deletes transcripts older than `cleanupPeriodDays` (default 30),
+  so the agents' native folders are not a durable archive.
+
+**No remote hub (default install).**
+- Every box's sessions come back to the PC's hub, continuously and on close:
+  add a final flush on `stop` and `pause` (not only `destroy`), and for a
+  cloud box already paused at destroy, ship from it on the next resume or wake
+  it briefly **(to confirm: wake or accept the loss)**.
+- `history.db` stays the one durable store and the usage page reads only it.
+- New: **materialize box sessions where the agents look.** After a session
+  ships, write it into the PC's native location for the box's project
+  (`~/.claude/projects/<host project key>/<session>.jsonl`, codex/opencode/pi
+  equivalents later), so the host agent finds past box sessions the way it
+  finds its own (`/resume`, reading old transcripts). Written from
+  `history.db` (one source), rewritten only when it changes, and re-created
+  after the agent's own cleanup removes it only if the user asks
+  (`agentbox sessions download`). **(to confirm: automatic per project, or
+  opt-in `history.materialize`)**. Redaction stays: the materialized copy is
+  the redacted one.
+- Not proposed: dropping `history.db` for the native folders. It would lose
+  compression, redaction, the other agents' formats, search and the usage
+  index, and Claude's 30-day cleanup would delete the history.
+
+**With a remote hub.**
+- Cloud boxes built through the control box sync to it exactly as above.
+- Local docker boxes and host sessions stay in the PC's hub. Their **sessions
+  are not uploaded**; their **metrics are**: the PC's hub pushes a usage
+  contribution to the control box, `POST /api/v1/usage/contributions`, keyed
+  by machine id, holding only what the dashboard needs (active intervals with
+  agent, provider and box id; token totals per day and agent; ledger counts).
+  No transcript text. Pushed every few minutes while anything changed, and on
+  demand by `agentbox usage` and a "Sync this PC" button on the local hub's
+  page. The control box's `/usage/stats` merges contributions with its own
+  rows (intervals union, so concurrency is right across machines).
+- Downloading sessions to the PC stays optional (`agentbox sessions download`,
+  plus the materialize step above when the user turns it on).
+- Considered and rejected: the remote hub's page calling the local relay from
+  the browser. It works only in a browser on that PC (not the CLI or tray), and
+  an https page calling `http://127.0.0.1` hits private-network-access and CORS
+  rules.
+
+**Live check:** docker, hetzner and one SDK provider (e2b or vercel): stop,
+pause and destroy boxes mid-run and see their hours, pushes and tokens on the
+page; on a laptop + control box pair (`hub expose`), see a local docker box's
+hours on the control box's page with no transcript on the control box.
+
+This phase is large enough to split into 4a (flush on stop/pause, materialize)
+and 4b (contributions to a remote hub).
 
 ### Phase 5 — agent-box.sh share endpoint and page
 
