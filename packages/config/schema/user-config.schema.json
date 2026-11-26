@@ -659,6 +659,10 @@
         "hostSessions": {
           "type": "boolean",
           "description": "Ship this PC's own (non-box) agent sessions to the hub (default false). Global: the toggle; project: allow (true) / deny (false)."
+        },
+        "contributeUsage": {
+          "type": "boolean",
+          "description": "With a remote control box configured, push this PC's usage metrics (ids and numbers, never transcripts) to it so its Usage page counts this PC's boxes and sessions (default true)."
         }
       }
     },
