@@ -659,6 +659,10 @@
         "hostSessions": {
           "type": "boolean",
           "description": "Ship this PC's own (non-box) agent sessions to the hub (default false). Global: the toggle; project: allow (true) / deny (false)."
+        },
+        "materialize": {
+          "type": "boolean",
+          "description": "Write box claude sessions from the hub into this PC's ~/.claude/projects/<project>/ so claude --resume lists them (default true). Global, or per project."
         }
       }
     },
