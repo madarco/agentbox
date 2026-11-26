@@ -19,6 +19,7 @@ import {
   usageIsEmpty,
   usageStatsQuery,
 } from '@/lib/usage-page';
+import { ShareDialog } from './share-dialog';
 import { useSubscriptionFilter } from './subscription-filter';
 
 const REFRESH_MS = 60_000;
@@ -68,6 +69,7 @@ export function UsageDashboard({ tokensHref }: { tokensHref: string }) {
   const { subscription, setSubscription, options, unknown } = useSubscriptionFilter();
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
   // The answer to an older query must not replace a newer one.
   const seq = useRef(0);
 
@@ -131,6 +133,17 @@ export function UsageDashboard({ tokensHref }: { tokensHref: string }) {
         </svg>
         Export CSV
       </button>
+      <button
+        type="button"
+        className="btn"
+        disabled={!stats || usageIsEmpty(stats)}
+        onClick={() => setSharing(true)}
+      >
+        <svg {...svg}>
+          <path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13" />
+        </svg>
+        Share
+      </button>
       <Link className="btn" href={tokensHref}>
         <svg {...svg}>
           <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
@@ -175,7 +188,19 @@ export function UsageDashboard({ tokensHref }: { tokensHref: string }) {
   const footer = error
     ? `Couldn’t refresh (${error}). Showing the numbers from ${new Date(stats.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
     : undefined;
-  return <UsageView data={stats} onRangeChange={setRange} actions={actions} footer={footer} />;
+  return (
+    <>
+      <UsageView data={stats} onRangeChange={setRange} actions={actions} footer={footer} />
+      {sharing && (
+        <ShareDialog
+          range={range}
+          tz={browserZone()}
+          subscription={subscription}
+          onClose={() => setSharing(false)}
+        />
+      )}
+    </>
+  );
 }
 
 /** The view's own header, for the loading, empty and error states. */

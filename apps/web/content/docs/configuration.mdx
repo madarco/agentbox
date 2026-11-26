@@ -402,6 +402,16 @@ The hub's [skills library](/docs/skills#your-skills-library-on-the-hub).
 
 The hub's own limit is its custody blob cap (`AGENTBOX_CUSTODY_MAX_BLOB_BYTES`, 100 MiB).
 
+## share
+
+Public [usage shares](/docs/hub#sharing-your-usage-on-agent-boxsh).
+
+| Key              | Type   | Default                          | Meaning                                                                                                                                                                  |
+| ---------------- | ------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `share.endpoint` | string | `https://agent-box.sh/api/share` | where the hub posts a usage share. Point it at a preview deployment's `/api/share` to test. https only (http for `localhost`). Read from the hub machine's global config |
+
+Claim secrets are kept per site, so a share to a test deployment never sends your agent-box.sh secret.
+
 ## queue & autopause
 
 `queue.*` schedules background `-i` jobs; `autopause.*` pauses idle boxes.

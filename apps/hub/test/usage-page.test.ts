@@ -1,6 +1,12 @@
 import { usageFixture } from '@agentbox/usage-view';
 import { describe, expect, it } from 'vitest';
-import { parseUsageRange, usageCsv, usageIsEmpty, usageStatsQuery } from '../lib/usage-page';
+import {
+  parseUsageRange,
+  usageCsv,
+  usageIsEmpty,
+  usageShareBody,
+  usageStatsQuery,
+} from '../lib/usage-page';
 
 describe('usageStatsQuery', () => {
   it('runs this month to its last day, so the rest is forecast', () => {
@@ -63,5 +69,27 @@ describe('usageIsEmpty', () => {
       daily: stats.daily.map((d) => ({ ...d, agentHours: 0, tokens: 0, commits: 0, prsMerged: 0 })),
     };
     expect(usageIsEmpty(zero)).toBe(true);
+  });
+});
+
+describe('usageShareBody', () => {
+  it('names the same window as the stats query, plus the handle', () => {
+    expect(
+      usageShareBody('month', '2028-02-10', 'Europe/Rome', 'claude/work', 'marco', true),
+    ).toEqual({
+      tz: 'Europe/Rome',
+      range: 'month',
+      since: '2028-02-01',
+      until: '2028-02-29',
+      subscription: 'claude/work',
+      handle: 'marco',
+      preview: true,
+    });
+    expect(usageShareBody('7d', '2028-02-10', 'UTC', undefined, 'marco', false)).toEqual({
+      tz: 'UTC',
+      range: '7d',
+      since: '7d',
+      handle: 'marco',
+    });
   });
 });

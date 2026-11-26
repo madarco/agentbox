@@ -105,3 +105,23 @@ export function usageIsEmpty(stats: UsageStats): boolean {
     (d) => d.agentHours === 0 && d.tokens === 0 && d.commits === 0 && d.prsMerged === 0,
   );
 }
+
+/**
+ * The `POST /api/v1/usage/share` body for the window the page shows: the same
+ * fields `usageStatsQuery` puts in the stats URL, plus the handle.
+ */
+export function usageShareBody(
+  range: RangeId,
+  today: string,
+  tz: string,
+  subscription: string | undefined,
+  handle: string,
+  preview: boolean,
+): Record<string, string | boolean> {
+  const body: Record<string, string | boolean> = Object.fromEntries(
+    usageStatsQuery(range, today, tz, subscription),
+  );
+  body.handle = handle;
+  if (preview) body.preview = true;
+  return body;
+}
