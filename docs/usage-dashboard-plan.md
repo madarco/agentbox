@@ -1,6 +1,6 @@
 # Usage dashboard and public share — plan
 
-Status: Phase 0, Phase 1 and Phase 2 done (2026-11-26). Design mockup approved: the Usage view in
+Status: Phase 0, Phase 1, Phase 2 and Phase 4b done (2026-11-26). Design mockup approved: the Usage view in
 `../agentbox-design/AgentBox Control Plane (shadcn).html#/usage`
 (`control-shadcn/views-usage.jsx` + `control-shadcn/usage.css`).
 
@@ -273,6 +273,46 @@ Decided 2026-11-26 with the owner.
   demand by `agentbox usage` and a "Sync this PC" button on the local hub's
   page. The control box's `/usage/stats` merges contributions with its own
   rows (intervals union, so concurrency is right across machines).
+- **Done (4b, 2026-11-26)**, feat/usage-contrib:
+  - The shape is `UsageContribution` in `@agentbox/usage-view`
+    (`src/contribution.ts`): `machineId`, a window of local days and its zone,
+    `intervals` (start, end, agent, provider, box id, or the session id of a
+    host session), `tokens` per day/agent/provider/box (per session for a host
+    session, so a control box that holds it counts its tokens once), `shipped` per day/box
+    (pushes, commits, files, lines, merged PRs), `boxes` (agent, provider,
+    manager id) and `boxRuns`. Strict zod, ids from `[A-Za-z0-9._:-]`, 8 MB and
+    per-array caps, a window of at most 400 days, no prototype keys. No names,
+    projects, branches or PR titles, so a PC's box reads by its id on the
+    control box and the "by project" split misses PC rows.
+  - `toContribution` projects the PC hub's own stats input (`loadUsageRows`,
+    split out of `computeUsageStats`), so the PC sends exactly what its own page
+    counts. `mergeContribution` replaces the pushed window in what that machine
+    sent before; `contributionRows` turns a stored contribution back into
+    `buildUsageStats` rows (a day's counts at noon of that day in the PC's zone).
+  - Control box: `apps/hub/lib/backend/usage-contrib.ts` `ContributionStore`,
+    one JSON file per machine in `~/.agentbox/hub/usage-contributions/` (64
+    machines max, at most the schema's 400-day window kept; a merge that would not
+    parse is refused, never written). The stats cache lives on `globalThis`: the
+    custom server (which stores a push) and Next's route bundle (which reads stats)
+    each load their own copy of the module. `POST /api/v1/usage/contributions` (size-checked
+    while reading), `GET` lists counts per machine. `/usage/stats` merges every
+    machine's rows except its own machine id's, and none under `?subscription=`.
+    A device token may only post its own machine id. `/usage/share` (Phase 6)
+    builds from the same inputs (`hubUsageStatsDeps`), so a share from the control
+    box carries the PCs' numbers too, and the two routes never cache different
+    answers for one window.
+    Double counting is avoided per kind: a box whose sessions the control box
+    holds drops the PC's intervals and tokens for it, a box with `git.push` rows
+    there drops the PC's push counts, the same for merged PRs and lifecycle rows,
+    and a host session id the control box holds drops the PC's copy.
+  - PC: `createContributionPusher` in the hub process, every 5 minutes, only when
+    the body's hash changed; the first push to a hub sends a year, later ones 35
+    days (and the year again after a zone change). A body over the cap is not
+    sent. `POST /api/v1/usage/contributions/sync` pushes now (`?full=1`: the year);
+    `agentbox usage` calls it on the local hub before reading a remote one.
+    `history.contributeUsage: false` turns it off.
+  - The "Sync this PC" button on the Usage page is not wired yet; the route is
+    there for it. See the backlog.
 - Downloading sessions to the PC stays optional (`agentbox sessions download`,
   plus the materialize step above when the user turns it on).
 - Considered and rejected: the remote hub's page calling the local relay from

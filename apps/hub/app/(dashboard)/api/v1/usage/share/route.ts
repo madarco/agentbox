@@ -12,6 +12,7 @@
 import { homedir } from 'node:os';
 import { loadEffectiveConfig } from '@agentbox/config';
 import { parseUsageStatsQuery, usageStats } from '@/lib/backend/usage-stats';
+import { hubUsageStatsDeps } from '@/lib/usage-stats-deps';
 import {
   ShareError,
   listUsageShares,
@@ -98,8 +99,8 @@ export async function POST(req: Request): Promise<Response> {
   );
   if (!parsed.ok) return fail('invalid_request', parsed.message);
   const deps = {
-    stats: () =>
-      usageStats({ history: history?.repo ?? null, ledger: ledger ?? null }, parsed.query),
+    // Other PCs' contributions included, as on the page: a share is the page's numbers.
+    stats: () => usageStats(hubUsageStatsDeps(), parsed.query),
     endpoint,
     store: shareStore,
   };

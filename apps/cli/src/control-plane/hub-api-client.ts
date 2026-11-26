@@ -1037,6 +1037,12 @@ export interface HubApiHistoryFilter {
 
 // ── usage (/api/v1/usage) ──
 
+/** `POST /api/v1/usage/contributions/sync`'s answer (a failure is an error envelope). */
+export type HubApiUsageSyncResult =
+  | { status: 'pushed'; target: string; days: number; intervals: number; bytes: number }
+  | { status: 'unchanged'; target: string }
+  | { status: 'disabled' | 'no-remote' | 'no-machine-id' };
+
 export interface HubApiUsageStatsQuery {
   /** A local day, or `<n>d`. */
   since?: string;
@@ -1829,6 +1835,14 @@ export class HubApiClient {
   }
 
   // ── usage ──
+
+  /**
+   * Push this hub's usage contribution to its configured remote hub now
+   * (usage dashboard Phase 4b). Called on the LOCAL hub.
+   */
+  syncUsageContribution(): Promise<HubApiUsageSyncResult> {
+    return this.request<HubApiUsageSyncResult>('POST', '/usage/contributions/sync');
+  }
 
   usageStats(q: HubApiUsageStatsQuery = {}): Promise<UsageStats> {
     const qs = new URLSearchParams();

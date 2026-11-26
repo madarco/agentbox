@@ -5,6 +5,7 @@ import type { HistoryService } from './lib/backend/history';
 import type { MemoryService } from './lib/backend/history-memory';
 import type { SkillProposals } from './lib/backend/skill-proposals';
 import type { ShareStore } from './lib/backend/usage-share';
+import type { ContributionPusher, ContributionStore } from './lib/backend/usage-contrib';
 
 declare global {
   // Set by the custom server (server.ts) after the relay daemon is constructed,
@@ -34,6 +35,13 @@ declare global {
   // may be bundled with separate copies of the store module.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_SHARE_STORE: ShareStore | undefined;
+
+  // Other machines' usage contributions (usage dashboard Phase 4b), and this PC's
+  // pusher to its configured remote hub. Both set by the custom server.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_USAGE_CONTRIBUTIONS: ContributionStore | undefined;
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_USAGE_PUSHER: ContributionPusher | undefined;
 
   // Agent memory versions (docs/agent-history-plan.md, Phase 4), in history.db.
   // eslint-disable-next-line no-var

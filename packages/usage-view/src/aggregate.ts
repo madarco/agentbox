@@ -90,6 +90,8 @@ export interface TokenRow {
   provider: ProviderId;
   project?: string | null;
   boxId?: string | null;
+  /** The agent session, for a host session's rows (no box). */
+  sessionId?: string;
   tokens: number;
 }
 
