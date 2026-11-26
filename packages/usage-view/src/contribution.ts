@@ -80,9 +80,12 @@ export const ContribTokens = z
     agent: AgentId,
     provider: ProviderId,
     boxId: Id.nullable(),
+    /** A host session's id, so a reader that holds that session counts its tokens once. */
+    sessionId: Id.optional(),
     tokens: Count,
   })
-  .strict();
+  .strict()
+  .refine((t) => t.boxId !== null || t.sessionId !== undefined, 'host tokens name their session');
 
 /** What one box (or no box) shipped on one local day, from the activity ledger. */
 export const ContribShipped = z
@@ -209,13 +212,17 @@ export function toContribution(
     if (!inDays(t.at) || t.tokens <= 0) continue;
     const boxId = t.boxId ?? null;
     if (boxId !== null && !idOk(boxId)) continue;
+    // A host session's tokens stay per session (the reader dedupes them by its id).
+    const sessionId = boxId === null ? t.sessionId : undefined;
+    if (boxId === null && !idOk(sessionId)) continue;
     const day = dayKey(t.at, tz);
-    const key = JSON.stringify([day, t.agent, t.provider, boxId]);
+    const key = JSON.stringify([day, t.agent, t.provider, boxId, sessionId ?? null]);
     const row = tokenMap.get(key) ?? {
       day,
       agent: t.agent,
       provider: t.provider,
       boxId,
+      ...(sessionId ? { sessionId } : {}),
       tokens: 0,
     };
     row.tokens += Math.round(t.tokens);
@@ -322,7 +329,11 @@ export function mergeContribution(
   const tz = next.tz;
   const from = dayStart(next.window.since, tz);
   const to = dayStart(addDays(next.window.until, 1), tz);
-  const keepDay = dayKey(keepSinceMs, tz);
+  // The kept span must still fit the schema's window limit, whatever `keepSinceMs` says.
+  const until = prev.window.until > next.window.until ? prev.window.until : next.window.until;
+  const limitDay = addDays(until, -(CONTRIBUTION_LIMITS.windowDays - 1));
+  const keepDay = dayKey(keepSinceMs, tz) > limitDay ? dayKey(keepSinceMs, tz) : limitDay;
+  keepSinceMs = Math.max(keepSinceMs, dayStart(keepDay, tz));
   // A row starting inside the window is replaced by the push. One that started
   // before it is kept (the push's read may not reach its start: a box run whose
   // start row is older than the window), unless the push sends the same row again.
@@ -357,7 +368,6 @@ export function mergeContribution(
   const boxes = new Map<string, ContribBox>();
   for (const b of [...prev.boxes, ...next.boxes]) if (used.has(b.boxId)) boxes.set(b.boxId, b);
   const since = prev.window.since < next.window.since ? prev.window.since : next.window.since;
-  const until = prev.window.until > next.window.until ? prev.window.until : next.window.until;
   return {
     v: 1,
     machineId: next.machineId,
@@ -435,6 +445,7 @@ export function contributionRows(
   const tokens: TokenRow[] = [];
   for (const t of c.tokens) {
     if (!not(own.sessionBoxIds, t.boxId)) continue;
+    if (t.boxId === null && t.sessionId !== undefined && own.sessionIds.has(t.sessionId)) continue;
     const at = noon(t.day);
     if (at < fromMs || at >= toMs) continue;
     tokens.push({ at, agent: t.agent, provider: t.provider, boxId: t.boxId, tokens: t.tokens });

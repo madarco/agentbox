@@ -273,7 +273,8 @@ Decided 2026-11-26 with the owner.
   - The shape is `UsageContribution` in `@agentbox/usage-view`
     (`src/contribution.ts`): `machineId`, a window of local days and its zone,
     `intervals` (start, end, agent, provider, box id, or the session id of a
-    host session), `tokens` per day/agent/provider/box, `shipped` per day/box
+    host session), `tokens` per day/agent/provider/box (per session for a host
+    session, so a control box that holds it counts its tokens once), `shipped` per day/box
     (pushes, commits, files, lines, merged PRs), `boxes` (agent, provider,
     manager id) and `boxRuns`. Strict zod, ids from `[A-Za-z0-9._:-]`, 8 MB and
     per-array caps, a window of at most 400 days, no prototype keys. No names,
@@ -286,7 +287,10 @@ Decided 2026-11-26 with the owner.
     `buildUsageStats` rows (a day's counts at noon of that day in the PC's zone).
   - Control box: `apps/hub/lib/backend/usage-contrib.ts` `ContributionStore`,
     one JSON file per machine in `~/.agentbox/hub/usage-contributions/` (64
-    machines max, 400 days kept). `POST /api/v1/usage/contributions` (size-checked
+    machines max, at most the schema's 400-day window kept; a merge that would not
+    parse is refused, never written). The stats cache lives on `globalThis`: the
+    custom server (which stores a push) and Next's route bundle (which reads stats)
+    each load their own copy of the module. `POST /api/v1/usage/contributions` (size-checked
     while reading), `GET` lists counts per machine. `/usage/stats` merges every
     machine's rows except its own machine id's, and none under `?subscription=`.
     A device token may only post its own machine id.

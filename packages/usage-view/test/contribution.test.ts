@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { addDays, dayStart } from '../src/aggregate.js';
 import {
   CONTRIBUTION_LIMITS,
+  UsageContribution,
   contributionRows,
   mergeContribution,
   parseContributionBody,
   toContribution,
-  type UsageContribution,
 } from '../src/index.js';
 
 const at = (h: number): number => Date.UTC(2026, 10, 20) + h * 3_600_000;
@@ -192,5 +193,90 @@ describe('mergeContribution / contributionRows', () => {
     const prOnly = contributionRows(base, { ...none, prBoxIds: b1 }, at(-24), at(48));
     expect(prOnly.sessions).toHaveLength(1);
     expect(prOnly.events.map((e) => e.type)).toEqual(['git.push']);
+  });
+});
+
+describe('mergeContribution over time', () => {
+  const DAY = 86_400_000;
+  const tokenDays = (since: string, n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      day: addDays(since, i),
+      agent: 'claude' as const,
+      provider: 'docker' as const,
+      boxId: 'b1',
+      tokens: 1,
+    }));
+
+  it('40 daily periodic merges after a year push stay valid and keep the year', () => {
+    const today = '2026-11-21';
+    const first = addDays(today, -365);
+    let stored: UsageContribution = {
+      ...base,
+      tz: 'UTC',
+      window: { since: first, until: today },
+      intervals: [],
+      tokens: tokenDays(first, 366),
+      shipped: [],
+      boxRuns: [],
+    };
+    for (let i = 1; i <= 40; i++) {
+      const day = addDays(today, i);
+      const since = addDays(day, -34);
+      const now = dayStart(day, 'UTC') + 12 * 3_600_000;
+      stored = mergeContribution(
+        stored,
+        { ...stored, window: { since, until: day }, tokens: tokenDays(since, 35) },
+        now - 400 * DAY,
+      );
+      const parsed = UsageContribution.safeParse(stored);
+      expect(parsed.success, `day ${String(i)}: ${JSON.stringify(parsed.error?.issues)}`).toBe(
+        true,
+      );
+    }
+    // 366 + 40 days pushed, capped at the 400-day window.
+    expect(stored.tokens).toHaveLength(CONTRIBUTION_LIMITS.windowDays);
+    expect(stored.window).toEqual({ since: addDays(today, 40 - 399), until: addDays(today, 40) });
+  });
+});
+
+describe('host-session tokens', () => {
+  it('carry the session id and are dropped when the reader holds that session', () => {
+    const c = toContribution(
+      {
+        sessions: [],
+        tokens: [
+          { at: at(9), agent: 'claude', provider: 'host', boxId: null, sessionId: 'h1', tokens: 5 },
+          { at: at(9), agent: 'claude', provider: 'host', boxId: null, sessionId: 'h2', tokens: 7 },
+          { at: at(9), agent: 'claude', provider: 'host', boxId: null, tokens: 9 },
+        ],
+        events: [],
+        boxes: [],
+        boxRuns: [],
+      },
+      { machineId: 'pc-1', since: '2026-11-20', until: '2026-11-20', tz: 'UTC' },
+    );
+    expect(c.tokens.map((t) => [t.sessionId, t.tokens])).toEqual([
+      ['h1', 5],
+      ['h2', 7],
+    ]);
+    expect(() => parseContributionBody(JSON.stringify(c))).not.toThrow();
+    const rows = contributionRows(
+      c,
+      {
+        sessionBoxIds: new Set(),
+        sessionIds: new Set(['h1']),
+        pushBoxIds: new Set(),
+        prBoxIds: new Set(),
+        runBoxIds: new Set(),
+      },
+      at(-24),
+      at(48),
+    );
+    expect(rows.tokens.map((t) => t.tokens)).toEqual([7]);
+    expect(() =>
+      parseContributionBody(
+        JSON.stringify({ ...c, tokens: [{ ...c.tokens[0], sessionId: undefined }] }),
+      ),
+    ).toThrow();
   });
 });

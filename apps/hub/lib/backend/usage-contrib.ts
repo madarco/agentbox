@@ -101,6 +101,14 @@ export class ContributionStore {
       const now = this.now();
       const prev = await this.read(c.machineId);
       const merged = mergeContribution(prev?.contribution ?? null, c, now - KEEP_DAYS * DAY_MS);
+      // Never write what a later read would refuse: that machine would drop out of the
+      // stats and its next push would merge into nothing.
+      const valid = UsageContribution.safeParse(merged);
+      if (!valid.success) {
+        throw new Error(
+          `merged contribution is invalid: ${valid.error.issues.map((i) => i.message).join('; ')}`,
+        );
+      }
       const target = this.file(c.machineId);
       const tmp = `${target}.${String(process.pid)}.${String(now)}.tmp`;
       await writeFile(tmp, JSON.stringify({ receivedAt: now, contribution: merged }), {

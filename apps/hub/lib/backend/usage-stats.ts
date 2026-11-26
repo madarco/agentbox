@@ -364,6 +364,7 @@ export async function loadUsageRows(
       provider: m.boxId ? (box?.provider ?? asProvider(m.provider)) : 'host',
       project: box?.project ?? projectName(m.projectKey),
       boxId: m.boxId,
+      ...(m.boxId ? {} : { sessionId: m.sessionId }),
       tokens: t.tokens,
     });
     if (tAt >= from && tAt < to && m.account) {
@@ -566,7 +567,12 @@ export async function computeUsageStats(
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 32;
-const cache = new Map<string, { at: number; value: Promise<UsageStats> }>();
+// On globalThis: the custom server and Next's route bundle each carry their own copy
+// of this module, and a contribution stored by one must clear the cache the other reads.
+const shared = globalThis as typeof globalThis & {
+  __AGENTBOX_USAGE_STATS_CACHE?: Map<string, { at: number; value: Promise<UsageStats> }>;
+};
+const cache = (shared.__AGENTBOX_USAGE_STATS_CACHE ??= new Map());
 
 /** `computeUsageStats`, shared for a minute per (window, zone, subscription). */
 export function usageStats(deps: UsageStatsDeps, q: UsageStatsQuery): Promise<UsageStats> {
@@ -587,7 +593,7 @@ export function usageStats(deps: UsageStatsDeps, q: UsageStatsQuery): Promise<Us
   return value;
 }
 
-/** For tests. */
+/** Drop every cached answer (a stored contribution changes them; tests). */
 export function clearUsageStatsCache(): void {
   cache.clear();
 }

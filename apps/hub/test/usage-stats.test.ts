@@ -479,3 +479,15 @@ describe('usage contributions (Phase 4b)', () => {
     expect(self.hero.agentHours).toBeCloseTo(2.0, 1);
   });
 });
+
+describe('the stats cache', () => {
+  it('lives on globalThis, so the server bundle clears what the route bundle reads', async () => {
+    const repo = await openSqliteHistoryRepo(':memory:');
+    await usageStats({ history: repo, ledger: fakeLedger([]), now: () => NOW }, window);
+    const shared = (globalThis as { __AGENTBOX_USAGE_STATS_CACHE?: Map<string, unknown> })
+      .__AGENTBOX_USAGE_STATS_CACHE;
+    expect(shared?.size).toBe(1);
+    clearUsageStatsCache();
+    expect(shared?.size).toBe(0);
+  });
+});

@@ -88,6 +88,38 @@ describe('ContributionStore', () => {
   });
 });
 
+describe('ContributionStore over time', () => {
+  it('a year push then 40 daily pushes: every read parses, the year stays', async () => {
+    const DAY = 86_400_000;
+    const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+    let now = NOW;
+    const store = new ContributionStore(tmp(), () => now);
+    const tokens = (since: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        day: dayOf(Date.parse(`${since}T00:00:00Z`) + i * DAY),
+        agent: 'claude' as const,
+        provider: 'docker' as const,
+        boxId: 'b1',
+        tokens: 1,
+      }));
+    const first = dayOf(NOW - 365 * DAY);
+    await store.upsert(
+      contrib({ window: { since: first, until: dayOf(NOW) }, tokens: tokens(first, 366) }),
+    );
+    for (let i = 1; i <= 40; i++) {
+      now = NOW + i * DAY;
+      const since = dayOf(now - 34 * DAY);
+      await store.upsert(
+        contrib({ window: { since, until: dayOf(now) }, tokens: tokens(since, 35) }),
+      );
+      const list = await new ContributionStore(store['dir'] as string, () => now).list();
+      expect(list, `day ${String(i)}`).toHaveLength(1);
+    }
+    const [c] = await store.list();
+    expect(c!.tokens).toHaveLength(400);
+  });
+});
+
 describe('createContributionPusher', () => {
   function harness(o: { enabled?: boolean; target?: boolean; status?: number } = {}) {
     const posts: { url: string; auth: string; body: UsageContribution }[] = [];
