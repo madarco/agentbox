@@ -51,7 +51,7 @@ import { createLiveStatus } from './backend/live-status';
 import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
-import { activityBoxContext, withBoxActivity } from './backend/activity';
+import { installActivityBoxContext, withBoxActivity } from './backend/activity';
 import { createWorkspaceBackend } from './backend/workspaces';
 import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
@@ -64,7 +64,6 @@ import { createPcSkillsBackend } from './backend/skills-pc';
 import { pcSkillsDeps } from './backend/skills-pc-wiring';
 import type { BackendDeps } from './backend/deps';
 import {
-  configureActivityBoxContext,
   configureBoxPushStat,
   deleteJob,
   enqueuePrepareJob,
@@ -2223,18 +2222,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // `direct` push), and has no provider modules to measure it with — it never
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
-  // Every ledger row a box id names is filled from this hub's record of it.
-  configureActivityBoxContext(
-    activityBoxContext(backendDeps, async (boxId) => {
-      const reg = await handle.store.getBox(boxId);
-      if (!reg) return undefined;
-      return {
-        name: reg.name,
-        ...(reg.originUrl ? { originUrl: reg.originUrl } : {}),
-        provider: reg.kind === 'cloud' && reg.backend ? reg.backend : 'docker',
-      };
-    }),
-  );
+  installActivityBoxContext(backendDeps, handle.store);
   const checkouts = createCheckoutBackend(backendDeps);
   const skills = createSkillsBackend({
     store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
@@ -3302,7 +3290,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     gitPull: (id, input = {}) =>
       gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id)), hydrate),
     gitPushHost: (id, input = {}) =>
-      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input), hydrate),
+      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input, hubGitDeps(id)), hydrate),
     async getGit(id): Promise<GitInfo> {
       try {
         const rp = await resolveBoxProvider(id, hydrate);

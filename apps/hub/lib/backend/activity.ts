@@ -6,8 +6,10 @@
 import { repoKey } from '@agentbox/config';
 import {
   activityLedger,
+  configureActivityBoxContext,
   GH_PR_JSON_FIELDS,
   ghRepoArg,
+  listWorkspaces,
   managerIdForTarget,
   parsePrUrl,
   prTimelineEvents,
@@ -19,10 +21,10 @@ import {
   type ActivityType,
   type GhPrJson,
 } from '@agentbox/relay';
-import type { ActionResult, HubBackend, TimelineMeta } from '../boxes/backend-types';
+import type { ActionResult, BoxOpResult, HubBackend, TimelineMeta } from '../boxes/backend-types';
 import { inBackground } from './background';
 import type { BackendDeps, GhExec, TimelineBoxFact } from './deps';
-import { measurePush, pushStatSourceBefore, type PushTarget } from './push-measure';
+import { measurePushResult, pushedBranch, type PushTarget } from './push-measure';
 
 // ── box context ──
 
@@ -74,6 +76,33 @@ export function activityBoxContext(
   };
 }
 
+/** The slice of the relay's Store a registration is read from. */
+export interface RegistrationStore {
+  getBox(
+    boxId: string,
+  ): Promise<
+    { name: string; originUrl?: string; kind?: string; backend?: string } | null | undefined
+  >;
+}
+
+/** Fill every ledger row a box id names from this hub's record of it, else its Store registration. */
+export function installActivityBoxContext(
+  deps: Pick<BackendDeps, 'boxFact'>,
+  store: RegistrationStore,
+): void {
+  configureActivityBoxContext(
+    activityBoxContext(deps, async (boxId) => {
+      const reg = await store.getBox(boxId);
+      if (!reg) return undefined;
+      return {
+        name: reg.name,
+        ...(reg.originUrl ? { originUrl: reg.originUrl } : {}),
+        provider: reg.kind === 'cloud' && reg.backend ? reg.backend : 'docker',
+      };
+    }),
+  );
+}
+
 // ── the box routes ──
 
 function actorOf(meta: TimelineMeta | undefined): ActivityActor {
@@ -103,31 +132,38 @@ export function withBoxActivity(hub: HubBackend, deps: BackendDeps): HubBackend 
       return res;
     };
 
-  async function pushAround<R extends { ok: boolean }>(
+  async function pushAround<R extends BoxOpResult>(
     id: string,
     meta: TimelineMeta | undefined,
     push: PushTarget,
     op: () => Promise<R>,
   ): Promise<R> {
-    // The ref's tip is read before the push moves it.
-    const fact =
-      activityLedger() && real(id) ? await deps.boxFact?.(id).catch(() => undefined) : undefined;
-    const src = fact
-      ? await pushStatSourceBefore(deps, fact, push).catch(() => undefined)
-      : undefined;
+    // Nothing is read before the push: git's own output says what it moved.
     const res = await op();
-    if (!res.ok || !fact) return res;
+    if (!res.ok || !real(id) || !activityLedger()) return res;
     inBackground(async () => {
-      const diff = src ? await measurePush(deps, src).catch(() => undefined) : undefined;
-      const branch = push.hostOnly && push.as ? push.as : fact.branches[0];
+      const fact = await deps.boxFact?.(id).catch(() => undefined);
+      if (!fact) return;
+      const m = await measurePushResult(deps, fact, push, res);
+      // A landing that moved nothing landed nothing.
+      if (push.hostOnly && m.unmoved) return;
+      // A box that pushes with its own credentials (direct, or a control-plane
+      // lease) reports the push too, keyed by its new tip; the same key here
+      // keeps one row whichever arrives first.
+      const after =
+        !push.hostOnly && m.tips
+          ? await deps.boxRefTip?.(id, m.tips.after ?? 'HEAD').catch(() => undefined)
+          : undefined;
+      const branch = pushedBranch(fact, push);
       await recordActivity({
+        ...(after ? { id: `push:${id}:${after}` } : {}),
         type: 'git.push',
         boxId: id,
         actor: actorOf(meta),
         ...contextOfFact(fact),
         ...(branch ? { branch } : {}),
         ...(push.hostOnly ? { hostOnly: true } : {}),
-        ...(diff ?? {}),
+        ...(m.diff ?? {}),
       });
     });
     return res;
@@ -193,9 +229,8 @@ export const ACTIVITY_PR_SWEEP_INTERVAL_MS = 5 * 60_000;
 const PR_SWEEP_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const PR_SWEEP_LIST_LIMIT = 100;
 
-const PR_TYPES = new Set<ActivityType>(['pr.opened', 'pr.ready', 'pr.merged', 'pr.closed']);
-/** The rows that name a box's branch, and the PR states that close one. */
-const SWEEP_TYPES: ActivityType[] = ['box.created', 'box.ready', 'git.push', ...PR_TYPES];
+/** Open branches asked about per sweep, newest first. */
+const PR_SWEEP_BRANCH_LIMIT = 500;
 
 interface SweepBranch {
   boxId?: string;
@@ -204,71 +239,55 @@ interface SweepBranch {
   managerId?: string;
 }
 
+/** The repos a workspace names: the workspace GitHub sync already polls them. */
+export async function workspaceRepoKeys(): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const ws of await listWorkspaces().catch(() => [])) {
+    for (const p of ws.projects) {
+      const key = repoKey(p.repoUrl);
+      if (key) out.add(key);
+    }
+  }
+  return out;
+}
+
 /**
  * The workspace GitHub sync only polls the repos a workspace names. Every other
  * box's PR — opened from the host, merged on github.com — is found here, by the
- * (repo, branch) pairs the ledger already holds for boxes and pushes. The keys
- * are the sync's (`pr:<repo>#<n>:<kind>`), so a PR both see lands once.
+ * open (repo, branch) pairs the ledger holds for boxes and pushes. The keys are
+ * the sync's (`pr:<repo>#<n>:<kind>`), so a PR both see lands once.
  */
 export async function sweepActivityPrs(opts: {
   ledger: ActivityStore;
   gh: GhExec;
   now?: number;
+  /** Repo keys (`repoKey`) to leave to the workspace sync. */
+  skipRepos?: ReadonlySet<string>;
 }): Promise<number> {
   const now = opts.now ?? Date.now();
   const since = now - PR_SWEEP_WINDOW_MS;
-  // Newest first when the window is over the cap: a recent box matters more.
-  const rows = await opts.ledger.list({
-    sinceMs: since,
-    types: SWEEP_TYPES,
-    order: 'desc',
-    limit: 50_000,
-  });
-  const seen = new Set<string>();
-  /** `<projectKey>\n<branch>` -> the latest merge/close, and the latest work, in ms. */
-  const lastClosed = new Map<string, number>();
-  const lastWork = new Map<string, number>();
-  const later = (m: Map<string, number>, k: string, at: number): void => {
-    if (at > (m.get(k) ?? 0)) m.set(k, at);
-  };
-  /** projectKey -> repoUrl, branch -> who worked on it. */
+  // A branch whose PR was merged or closed after its last work is not open;
+  // work after that (a new PR from the same branch) opens it again.
+  const rows = await opts.ledger.openBranches(since, PR_SWEEP_BRANCH_LIMIT);
+  /** projectKey -> repoUrl, branch -> its newest box. */
   const repos = new Map<string, { repoUrl: string; branches: Map<string, SweepBranch> }>();
   for (const r of rows) {
-    const at = Date.parse(r.at);
-    if (PR_TYPES.has(r.type)) {
-      seen.add(r.id);
-      if ((r.type === 'pr.merged' || r.type === 'pr.closed') && r.projectKey && r.branch) {
-        later(lastClosed, `${r.projectKey}\n${r.branch}`, at);
-      }
-      continue;
-    }
-    if (!r.repoUrl || !r.branch) continue;
-    const key = r.projectKey ?? repoKey(r.repoUrl);
-    if (!key) continue;
-    later(lastWork, `${key}\n${r.branch}`, at);
-    let repo = repos.get(key);
+    if (!r.repoUrl || !r.branch || !r.projectKey || opts.skipRepos?.has(r.projectKey)) continue;
+    let repo = repos.get(r.projectKey);
     if (!repo) {
       repo = { repoUrl: r.repoUrl, branches: new Map() };
-      repos.set(key, repo);
+      repos.set(r.projectKey, repo);
     }
-    // Rows come newest first, so the newest box on a branch is the one kept.
-    const prev = repo.branches.get(r.branch) ?? {};
     repo.branches.set(r.branch, {
       ...(r.boxId ? { boxId: r.boxId } : {}),
       ...(r.boxName ? { boxName: r.boxName } : {}),
       ...(r.workspaceId ? { workspaceId: r.workspaceId } : {}),
       ...(r.managerId ? { managerId: r.managerId } : {}),
-      ...prev,
     });
   }
-  // A branch whose PR was merged or closed after its last push is done; work
-  // after that (a new PR from the same branch) asks again.
-  const done = (k: string): boolean => (lastClosed.get(k) ?? 0) >= (lastWork.get(k) ?? 0);
   const sinceDay = new Date(since).toISOString().slice(0, 10);
   let recorded = 0;
-  for (const [key, repo] of repos) {
-    const open = [...repo.branches.keys()].filter((b) => !done(`${key}\n${b}`));
-    if (open.length === 0) continue;
+  for (const repo of repos.values()) {
     const arg = ghRepoArg(repo.repoUrl);
     if (!arg) continue;
     const r = await opts
@@ -294,15 +313,16 @@ export async function sweepActivityPrs(opts: {
     } catch {
       continue;
     }
+    const inputs: ActivityInput[] = [];
     for (const pr of prs) {
-      const who = open.includes(pr.headRefName) ? repo.branches.get(pr.headRefName) : undefined;
+      const who = repo.branches.get(pr.headRefName);
       if (!who) continue;
       // The canonical `owner/name` from GitHub's own URL: the sync keys by it.
       const parsed = parsePrUrl(pr.url);
       if (!parsed) continue;
       for (const ev of prTimelineEvents(pr, parsed.repo, { actor: 'github' })) {
-        if (!ev.key || seen.has(ev.key)) continue;
-        const row = await recordActivity({
+        if (!ev.key) continue;
+        inputs.push({
           id: ev.key,
           type: ev.type as ActivityType,
           actor: 'github',
@@ -312,8 +332,13 @@ export async function sweepActivityPrs(opts: {
           pr: { repo: parsed.repo, number: pr.number, url: pr.url },
           ...who,
         });
-        if (row) recorded += 1;
       }
+    }
+    if (inputs.length === 0) continue;
+    const held = await opts.ledger.has(inputs.map((i) => i.id!));
+    for (const input of inputs) {
+      if (held.has(input.id!)) continue;
+      if (await recordActivity(input)) recorded += 1;
     }
   }
   return recorded;
@@ -330,7 +355,8 @@ export function startActivityPrSweep(opts: {
     const ledger = activityLedger();
     if (running || !ledger) return;
     running = true;
-    void sweepActivityPrs({ ledger, gh: opts.gh })
+    void workspaceRepoKeys()
+      .then((skipRepos) => sweepActivityPrs({ ledger, gh: opts.gh, skipRepos }))
       .then((n) => {
         if (n > 0)
           opts.log?.(`activity: recorded ${String(n)} PR event(s) for boxes outside a workspace`);

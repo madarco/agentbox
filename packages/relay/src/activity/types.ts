@@ -102,6 +102,12 @@ export interface ActivityStore {
   list(query?: ActivityQuery): Promise<ActivityEvent[]>;
   /** Which of these ids the ledger already holds. */
   has(ids: readonly string[]): Promise<Set<string>>;
+  /**
+   * The newest box/push row of each (project, branch) with work since
+   * `sinceMs` and no merge or close after that work: the branches whose PR is
+   * still worth asking about. Newest first, at most `limit`.
+   */
+  openBranches(sinceMs: number, limit: number): Promise<ActivityEvent[]>;
   getMeta(key: string): Promise<string | undefined>;
   setMeta(key: string, value: string): Promise<void>;
   close(): Promise<void>;

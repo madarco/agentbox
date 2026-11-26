@@ -13,6 +13,7 @@ import {
   recordActivity,
   SqliteActivityStore,
   type ActivityStore,
+  type ActivityEvent,
 } from '../src/activity/index.js';
 import {
   recordBoxGitPush,
@@ -106,6 +107,41 @@ describe('the activity store', () => {
     expect([...(await store.has(['r1', 'nope', 'r3']))].sort()).toEqual(['r1', 'r3']);
     expect((await store.list({ limit: 2, order: 'desc' })).map((e) => e.id)).toEqual(['r2', 'r3']);
     expect((await store.list({ limit: 2 })).map((e) => e.id)).toEqual(['r0', 'r1']);
+  });
+
+  it('lists each open branch once, by its newest work, and drops a merged one', async () => {
+    const at = (m: number): string => new Date(Date.UTC(2026, 10, 1, 0, m)).toISOString();
+    const row = (
+      id: string,
+      type: ActivityEvent['type'],
+      m: number,
+      branch: string,
+      boxId: string,
+    ) => ({
+      id,
+      type,
+      at: at(m),
+      branch,
+      boxId,
+      projectKey: 'github.com/acme/x',
+      repoUrl: 'git@github.com:acme/x.git',
+      source: 'live' as const,
+    });
+    await store.append([
+      row('a1', 'box.ready', 0, 'open', 'old-box'),
+      row('a2', 'git.push', 5, 'open', 'new-box'),
+      row('b1', 'git.push', 1, 'merged', 'box-b'),
+      row('b2', 'pr.merged', 2, 'merged', 'box-b'),
+      row('c1', 'git.push', 3, 'reopened', 'box-c'),
+      row('c2', 'pr.merged', 4, 'reopened', 'box-c'),
+      row('c3', 'git.push', 6, 'reopened', 'box-c'),
+    ]);
+    const open = await store.openBranches(Date.UTC(2026, 10, 1), 10);
+    expect(open.map((e) => [e.branch, e.boxId])).toEqual([
+      ['reopened', 'box-c'],
+      ['open', 'new-box'],
+    ]);
+    expect(await store.openBranches(Date.UTC(2026, 10, 1), 1)).toHaveLength(1);
   });
 
   it('stamps its creation time once', async () => {

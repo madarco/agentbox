@@ -76,13 +76,16 @@ export interface BoxGitPushOptions {
   key?: string;
   /** The pushed ref's tip before the push, as the BOX knows it. */
   boxBefore?: string;
+  /** Git printed no ref update: the push moved nothing, so there is no diff to read. */
+  unmoved?: boolean;
 }
 
 /**
  * A push the box itself asked for. A host-initiated one came from the hub's git
  * route (or the CLI through it), which records it with the real caller. A
  * host-only landing publishes nothing: it reaches the ledger, flagged, and not
- * the workspace timeline.
+ * the workspace timeline. The hub's route marks its landings with a token too,
+ * so each push or landing has exactly one writer.
  */
 export async function recordBoxGitPush(
   ctx: BoxTimelineContext,
@@ -103,7 +106,7 @@ export async function recordBoxGitPush(
           .workspaceFor(boxWorkspaceKey(ctx))
           .catch(() => null);
     if (!ws && !activityLedger()) return;
-    const diff = await pushDiff(ctx.boxId, stat, opts.boxBefore);
+    const diff = opts.unmoved ? undefined : await pushDiff(ctx.boxId, stat, opts.boxBefore);
     await recordActivity({
       type: 'git.push',
       actor: 'box',
@@ -142,6 +145,8 @@ export interface BoxPushNotice {
   branch?: string;
   before?: string;
   after?: string;
+  /** The push ran for the hub's git route (ctl held its token). */
+  hostInitiated?: boolean;
 }
 
 const PUSHED_SHA_RE = /^[0-9a-f]{7,64}$/u;
@@ -160,6 +165,10 @@ export async function recordBoxPushed(
 ): Promise<void> {
   const after = notice.after?.trim().toLowerCase();
   if (!after || !PUSHED_SHA_RE.test(after)) return;
+  // The hub's git route drove this push and records it itself. Only a box can
+  // claim it, and a box that lies only hides its own push, which it could do by
+  // not reporting at all.
+  if (notice.hostInitiated === true) return;
   const before = notice.before?.trim().toLowerCase();
   const branch = notice.branch?.trim();
   await recordBoxGitPush(

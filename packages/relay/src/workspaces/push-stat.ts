@@ -87,6 +87,36 @@ export function pushedRef(branch: string, opts: { remote?: string; hostOnly?: bo
   return `refs/remotes/${remote}/${branch}`;
 }
 
+/** What a `git push` (or a `git fetch <src>:<dest>` landing) moved one ref from and to. */
+export interface PushedTips {
+  /** The old tip, abbreviated; absent for a new branch. */
+  before?: string;
+  /** The new tip, abbreviated; absent for a new branch. */
+  after?: string;
+  created?: true;
+}
+
+const MOVED_LINE_RE = /^\s*[+ ]?\s*([0-9a-f]{7,64})\.{2,3}([0-9a-f]{7,64})\s+(\S+)\s+->\s+(\S+)/u;
+const NEW_LINE_RE = /^\s*\*\s+\[new (?:branch|ref)\]\s+(\S+)\s+->\s+(\S+)/u;
+
+/**
+ * The ref update git printed for a push or a landing: `   a1..b2  src -> dst`,
+ * ` + a1...b2 src -> dst (forced update)` or ` * [new branch] src -> dst`.
+ * The remote's own answer of where the ref was, so nothing has to be read
+ * before the push. `dest` picks the line for that branch when several moved.
+ * Undefined when git printed no ref update (`Everything up-to-date`).
+ */
+export function parsePushedTips(output: string, dest?: string): PushedTips | undefined {
+  const named = (d: string): boolean => !dest || d === dest || d === `refs/heads/${dest}`;
+  for (const line of output.split('\n')) {
+    const moved = MOVED_LINE_RE.exec(line);
+    if (moved && named(moved[4]!)) return { before: moved[1]!, after: moved[2]! };
+    const fresh = NEW_LINE_RE.exec(line);
+    if (fresh && named(fresh[2]!)) return { created: true };
+  }
+  return undefined;
+}
+
 type Git = (args: string[]) => Promise<string | undefined>;
 
 function gitWithin(repo: string, deadline: number): Git {

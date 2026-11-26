@@ -137,6 +137,8 @@ async function notifyPushed(
     branch,
     ...(tips.before ? { before: tips.before } : {}),
     after: tips.after,
+    // The hub's route records its own push; the token itself stays here.
+    ...(opts.hostInitiatedToken ? { hostInitiated: true } : {}),
   };
   await Promise.race([
     postRpc('git.pushed', params, { errorPrefix: 'agentbox-ctl git', quiet: true }).catch(

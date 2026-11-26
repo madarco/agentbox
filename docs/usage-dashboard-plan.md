@@ -114,15 +114,24 @@ from Phase 1 on.
     changed.
   - The `gh` shim.
   - Docker autopause and the cloud keepalive's idle pause.
-  - The workspace GitHub sync, plus a PR sweep (every 5 minutes) for the branches
-    the ledger knows that no workspace covers.
+  - The workspace GitHub sync, plus a PR sweep (every 5 minutes) for the open
+    branches the ledger knows (`ActivityStore.openBranches`, one aggregate
+    query) in repos no workspace names.
+- One writer per push. A push or landing the hub's route drives carries a
+  host-initiated token (host-only landings now too), and the relay skips it;
+  the box's own pushes and landings are the relay's. A direct or leased box's
+  report of a hub-route push says so (`git.pushed` `hostInitiated`), and both
+  sides key that push `push:<box>:<tip>`. Every path measures the push from
+  the old tip in git's own ref update line, so nothing is read before a push,
+  and the timeline and the ledger share one measurement per route call.
 - Dedupe: a row reuses the timeline's key when its source has one
   (`job:<id>:ready`, `pr:<repo>#<n>:merged`, `push:<box>:<sha>`). The backfill
   imports a workspace `timeline.jsonl` line under its key (or `tl:<id>`), and only
   if it is older than the ledger's `created_at`: anything later was written
   live. The hub runs the backfill once at start (`timeline_backfill_at` meta);
   rerunning it is a no-op.
-- Read: `listActivity` (the slice) and `GET /api/v1/activity?since=&until=&type=&box=`.
+- Read: `ActivityStore.list` and
+  `GET /api/v1/activity?since=&until=&type=&box=&order=&limit=`.
 - Open items: [`usage-dashboard-backlog.md`](./usage-dashboard-backlog.md).
 
 ### Phase 2 — `UsageStats` and the stats API

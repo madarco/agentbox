@@ -146,7 +146,40 @@ describe('boxGitPull', () => {
 });
 
 describe('boxGitPushHost', () => {
-  it('uses --host-only and never mints a token', async () => {
+  it('mints a token for the params ctl will send, and passes it', async () => {
+    const { provider, calls } = recorder();
+    const seen: { method: string; params: GitRpcParams }[] = [];
+    await boxGitPushHost(
+      provider,
+      box,
+      { as: 'saved', force: true },
+      {
+        hostInitiatedArgs: (method, params) => {
+          seen.push({ method, params });
+          return Promise.resolve(['--host-initiated-token', 'tok']);
+        },
+      },
+    );
+    expect(seen).toEqual([
+      {
+        method: 'git.push',
+        params: { path: '/workspace', hostOnly: true, as: 'saved', force: true },
+      },
+    ]);
+    expect(calls[0]).toEqual([
+      'agentbox-ctl',
+      'git',
+      'push',
+      '--host-only',
+      '--host-initiated-token',
+      'tok',
+      '--as',
+      'saved',
+      '--force',
+    ]);
+  });
+
+  it('uses --host-only with no token when none is minted', async () => {
     const { provider, calls } = recorder();
     await boxGitPushHost(provider, box, { as: 'saved', force: true });
     expect(calls[0]).toEqual([

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS activity_events (
 CREATE INDEX IF NOT EXISTS activity_events_at ON activity_events(at);
 CREATE INDEX IF NOT EXISTS activity_events_box ON activity_events(box_id, at);
 CREATE INDEX IF NOT EXISTS activity_events_type ON activity_events(type, at);
+CREATE INDEX IF NOT EXISTS activity_events_branch ON activity_events(project_key, branch, at);
 CREATE TABLE IF NOT EXISTS activity_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -183,6 +184,41 @@ function rowsOf(rows: Record<string, unknown>[], q: ActivityQuery): ActivityEven
   return q.order === 'desc' ? events.reverse() : events;
 }
 
+const WORK_TYPES = "('box.created', 'box.ready', 'git.push')";
+const CLOSED_TYPES = "('pr.merged', 'pr.closed')";
+
+/**
+ * `openBranches`: each branch's newest work row, unless a merge or close came
+ * at or after it. A tie on `at` can return two rows for one branch; the caller
+ * keeps the first.
+ */
+function openBranchesSql(ph: (i: number) => string): string {
+  return `SELECT e.* FROM activity_events e
+    JOIN (SELECT project_key, branch, MAX(at) AS last_work FROM activity_events
+          WHERE type IN ${WORK_TYPES} AND at >= ${ph(1)}
+            AND project_key IS NOT NULL AND branch IS NOT NULL
+          GROUP BY project_key, branch) w
+      ON e.project_key = w.project_key AND e.branch = w.branch AND e.at = w.last_work
+    WHERE e.type IN ${WORK_TYPES}
+      AND NOT EXISTS (SELECT 1 FROM activity_events c
+        WHERE c.project_key = e.project_key AND c.branch = e.branch
+          AND c.type IN ${CLOSED_TYPES} AND c.at >= w.last_work)
+    ORDER BY e.at DESC, e.id DESC LIMIT ${ph(2)}`;
+}
+
+function firstPerBranch(rows: Record<string, unknown>[]): ActivityEvent[] {
+  const seen = new Set<string>();
+  const out: ActivityEvent[] = [];
+  for (const ev of rows.map(fromRow)) {
+    if (!ev) continue;
+    const k = `${ev.projectKey ?? ''}\n${ev.branch ?? ''}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(ev);
+  }
+  return out;
+}
+
 const CREATED_AT = 'created_at';
 
 // ── sqlite ──
@@ -268,6 +304,13 @@ export class SqliteActivityStore implements ActivityStore {
       for (const r of rows) out.add(r.id);
     }
     return Promise.resolve(out);
+  }
+
+  openBranches(sinceMs: number, limit: number): Promise<ActivityEvent[]> {
+    const rows = this.open()
+      .prepare(openBranchesSql(() => '?'))
+      .all(sinceMs, limit) as Record<string, unknown>[];
+    return Promise.resolve(firstPerBranch(rows));
   }
 
   getMeta(key: string): Promise<string | undefined> {
@@ -380,6 +423,15 @@ export class PostgresActivityStore implements ActivityStore {
     const r = await pool.query('SELECT id FROM activity_events WHERE id = ANY($1)', [[...ids]]);
     for (const row of r.rows as { id: string }[]) out.add(row.id);
     return out;
+  }
+
+  async openBranches(sinceMs: number, limit: number): Promise<ActivityEvent[]> {
+    const pool = await this.ready();
+    const r = await pool.query(
+      openBranchesSql((i) => `$${String(i)}`),
+      [sinceMs, limit],
+    );
+    return firstPerBranch(r.rows as Record<string, unknown>[]);
   }
 
   async getMeta(key: string): Promise<string | undefined> {

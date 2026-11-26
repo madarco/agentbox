@@ -3,6 +3,7 @@ import {
   ACTIVITY_TYPES,
   configureActivityBoxContext,
   configureActivityLedger,
+  recordBoxPushed,
   SqliteActivityStore,
   type ActivityStore,
 } from '@agentbox/relay';
@@ -10,6 +11,7 @@ import { ACTIVITY_EVENT_TYPES } from '../app/(dashboard)/api/v1/lib/openapi';
 import { activityBoxContext, sweepActivityPrs, withBoxActivity } from '../lib/backend/activity';
 import { GET as getActivity } from '../app/(dashboard)/api/v1/activity/route';
 import { backgroundSettled } from '../lib/backend/background';
+import { measurePushResult } from '../lib/backend/push-measure';
 import type { BackendDeps, GhExec, TimelineBoxFact } from '../lib/backend/deps';
 import type { HubBackend } from '../lib/boxes/backend-types';
 
@@ -40,7 +42,14 @@ function deps(over: Partial<BackendDeps> = {}): BackendDeps {
 }
 
 /** The routes the ledger wraps, all succeeding; `destroy` drops the record like the real one. */
-function fakeHub(onDestroy?: () => void): HubBackend {
+/** What git prints for a push of the box's branch from `a1b2c3d` to `e4f5a6b`. */
+const PUSHED =
+  'To github.com:acme/storefront.git\n   a1b2c3d..e4f5a6b  agentbox/smoke -> agentbox/smoke\n';
+
+function fakeHub(
+  onDestroy?: () => void,
+  output: { push?: string; land?: string } = {},
+): HubBackend {
   const ok = async () => ({ ok: true as const });
   return {
     create: async () => ({ ok: true as const, jobId: 'j42' }),
@@ -52,8 +61,8 @@ function fakeHub(onDestroy?: () => void): HubBackend {
       onDestroy?.();
       return { ok: true as const };
     },
-    gitPush: async () => ({ ok: true as const, output: '' }),
-    gitPushHost: async () => ({ ok: true as const, output: '' }),
+    gitPush: async () => ({ ok: true as const, stdout: '', stderr: output.push ?? PUSHED }),
+    gitPushHost: async () => ({ ok: true as const, stdout: '', stderr: output.land ?? '' }),
   } as unknown as HubBackend;
 }
 
@@ -125,7 +134,10 @@ describe('the box routes, recorded for a box in no workspace', () => {
     const d = deps({
       boxPushStat: async () => ({ additions: 5, deletions: 1, commits: 2, filesChanged: 3 }),
     });
-    const hub = withBoxActivity(fakeHub(), d);
+    const hub = withBoxActivity(
+      fakeHub(undefined, { land: ' * [new branch]      agentbox/smoke -> review/one\n' }),
+      d,
+    );
     await hub.create({
       agent: 'codex',
       name: 'n1',
@@ -270,6 +282,34 @@ describe('the PR sweep for boxes outside a workspace', () => {
     expect(await sweepActivityPrs({ ledger: store, gh })).toBe(0);
     expect(calls).toHaveLength(1);
   });
+
+  it('leaves a repo a workspace names to the workspace sync', async () => {
+    await store.append([
+      {
+        id: 'r1',
+        type: 'git.push',
+        at: new Date().toISOString(),
+        boxId: 'box1',
+        branch: 'agentbox/smoke',
+        repoUrl: 'git@github.com:acme/storefront.git',
+        projectKey: 'github.com/acme/storefront',
+        source: 'live',
+      },
+    ]);
+    let calls = 0;
+    const gh: GhExec = async () => {
+      calls += 1;
+      return { exitCode: 0, stderr: '', stdout: '[]' };
+    };
+    await sweepActivityPrs({
+      ledger: store,
+      gh,
+      skipRepos: new Set(['github.com/acme/storefront']),
+    });
+    expect(calls).toBe(0);
+    await sweepActivityPrs({ ledger: store, gh });
+    expect(calls).toBe(1);
+  });
 });
 
 describe('a reopened branch', () => {
@@ -305,26 +345,78 @@ describe('a reopened branch', () => {
   });
 });
 
-describe('a host-initiated push measured in the box', () => {
-  it('measures from the box tracking ref read before the push', async () => {
-    const asked: { ref?: string; before?: string }[] = [];
+describe('a push through the hub route', () => {
+  const FULL = 'e4f5a6b'.padEnd(40, '0');
+
+  it('measures from the old tip git printed, reading nothing before the push', async () => {
+    const calls: string[] = [];
     const d = deps({
       boxRefTip: async (_id, ref) => {
-        asked.push({ ref });
-        return 'c'.repeat(40);
+        calls.push(`tip ${ref}`);
+        return FULL;
       },
       boxPushStat: async (_id, opts) => {
-        asked.push({ ...(opts?.before ? { before: opts.before } : {}) });
+        calls.push(`stat ${opts?.before ?? '-'}`);
         return { additions: 1, deletions: 0, commits: 1, filesChanged: 1 };
       },
     });
+    const hub = withBoxActivity(
+      {
+        ...fakeHub(),
+        gitPush: async () => {
+          calls.push('push');
+          return { ok: true as const, stdout: '', stderr: PUSHED };
+        },
+      } as HubBackend,
+      d,
+    );
+    await hub.gitPush('box1');
+    await backgroundSettled();
+    expect(calls).toEqual(['push', 'stat a1b2c3d', 'tip e4f5a6b']);
+    const rows = await store.list({ types: ['git.push'] });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: `push:box1:${FULL}`, commits: 1, actor: 'human' });
+  });
+
+  it('keeps one row when a direct box also reports the push itself', async () => {
+    const d = deps({ boxRefTip: async () => FULL });
     const hub = withBoxActivity(fakeHub(), d);
     await hub.gitPush('box1');
     await backgroundSettled();
-    expect(asked).toEqual([
-      { ref: 'refs/remotes/origin/agentbox/smoke' },
-      { before: 'c'.repeat(40) },
+    // The relay's row for the box's own report of the same push (`recordBoxPushed`).
+    await recordBoxPushed(
+      { boxId: 'box1', boxName: 'smoke', hostPath: '' },
+      { branch: 'agentbox/smoke', after: FULL },
+    );
+    // A new ctl marks the report; the relay drops it.
+    await recordBoxPushed(
+      { boxId: 'box1', boxName: 'smoke', hostPath: '' },
+      { branch: 'agentbox/smoke', after: 'f'.repeat(40), hostInitiated: true },
+    );
+    expect(await store.list({ types: ['git.push'] })).toHaveLength(1);
+  });
+
+  it('records no landing when git landed nothing', async () => {
+    const hub = withBoxActivity(fakeHub(undefined, { land: '' }), deps());
+    await hub.gitPushHost('box1');
+    await backgroundSettled();
+    expect(await store.list({ types: ['git.push'] })).toHaveLength(0);
+  });
+
+  it('measures once for the timeline and the ledger', async () => {
+    let stats = 0;
+    const d = deps({
+      boxPushStat: async () => {
+        stats += 1;
+        return { additions: 1, deletions: 0, commits: 1, filesChanged: 1 };
+      },
+    });
+    const res = { ok: true as const, stderr: PUSHED };
+    const [a, b] = await Promise.all([
+      measurePushResult(d, FACT, {}, res),
+      measurePushResult(d, FACT, {}, res),
     ]);
-    expect((await store.list({ types: ['git.push'] }))[0]).toMatchObject({ commits: 1 });
+    expect(stats).toBe(1);
+    expect(a).toBe(b);
   });
 });

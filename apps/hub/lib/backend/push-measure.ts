@@ -3,18 +3,13 @@
 import { stat } from 'node:fs/promises';
 import { sameMachineRef } from '@agentbox/config';
 import {
+  parsePushedTips,
   pushedRef,
   pushLineStat,
-  readRefTip,
+  type PushedTips,
   type PushLineStat,
-  type PushStatInput,
 } from '@agentbox/relay';
 import { hubMachine, type BackendDeps, type TimelineBoxFact } from './deps';
-
-/** Where one push's stat is read from; see {@link pushStatSourceBefore}. */
-export type PushStatSource =
-  | { kind: 'host'; input: PushStatInput }
-  | { kind: 'box'; boxId: string; before?: string };
 
 /** How a push route addresses the host ref it moves. */
 export interface PushTarget {
@@ -24,6 +19,14 @@ export interface PushTarget {
   as?: string;
 }
 
+/** What one push route moved. */
+export interface PushMeasure {
+  /** Git printed no ref update: nothing was pushed or landed. */
+  unmoved: boolean;
+  tips?: PushedTips;
+  diff?: PushLineStat;
+}
+
 /** A folder on THIS machine, still there. A fact with no host names one here (Phase 1's rule). */
 async function hostRepoHere(deps: BackendDeps, fact: TimelineBoxFact): Promise<boolean> {
   if (fact.host && !sameMachineRef(fact.host, hubMachine(deps))) return false;
@@ -31,47 +34,54 @@ async function hostRepoHere(deps: BackendDeps, fact: TimelineBoxFact): Promise<b
   return (await stat(fact.projectRoot).catch(() => null)) !== null;
 }
 
-/**
- * Where a push's stat comes from. The host repo when this hub holds it — the
- * ref's tip has to be read before the push moves it — else the box itself,
- * which is the only reader a control box has: its record of a box points at
- * the create job's temp clone, deleted long before the push.
- */
-export async function pushStatSourceBefore(
-  deps: BackendDeps,
-  fact: TimelineBoxFact | undefined,
-  push: PushTarget,
-): Promise<PushStatSource | undefined> {
-  const boxBranch = fact?.branches[0];
-  if (!fact || !boxBranch) return undefined;
-  if (await hostRepoHere(deps, fact)) {
-    const branch = push.hostOnly && push.as ? push.as : boxBranch;
-    const ref = pushedRef(branch, push);
-    const before = await readRefTip(fact.projectRoot, ref);
-    return {
-      kind: 'host',
-      input: { repo: fact.projectRoot, ref, branch, ...(before ? { before } : {}) },
-    };
-  }
-  if (!deps.boxPushStat) return undefined;
-  // Without the old tip the box measures from the default branch: the whole
-  // branch, not this push. A host-only landing moves no ref in the box.
-  const remote = push.remote ?? 'origin';
-  const before =
-    !push.hostOnly && /^[A-Za-z0-9._-]+$/u.test(remote)
-      ? await deps
-          .boxRefTip?.(fact.id, `refs/remotes/${remote}/${boxBranch}`)
-          .catch(() => undefined)
-      : undefined;
-  return { kind: 'box', boxId: fact.id, ...(before ? { before } : {}) };
+/** The branch a push route moves: the box's, or a host-only landing's `--as`. */
+export function pushedBranch(fact: TimelineBoxFact, push: PushTarget): string | undefined {
+  return push.hostOnly && push.as ? push.as : fact.branches[0];
 }
 
-export function measurePush(
+async function measure(
   deps: BackendDeps,
-  src: PushStatSource,
-): Promise<PushLineStat | undefined> {
-  return src.kind === 'host'
-    ? pushLineStat(src.input)
-    : (deps.boxPushStat?.(src.boxId, src.before ? { before: src.before } : {}) ??
-        Promise.resolve(undefined));
+  fact: TimelineBoxFact,
+  push: PushTarget,
+  output: string,
+): Promise<PushMeasure> {
+  const branch = pushedBranch(fact, push);
+  const tips = branch ? parsePushedTips(output, branch) : undefined;
+  if (!branch || !tips) return { unmoved: true };
+  const before = tips.before ? { before: tips.before } : {};
+  // The host repo when this hub holds it, else the box itself: the only reader a
+  // control box has, since its record points at the create job's deleted clone.
+  const diff = (await hostRepoHere(deps, fact))
+    ? await pushLineStat({
+        repo: fact.projectRoot,
+        ref: pushedRef(branch, push),
+        branch,
+        ...before,
+      })
+    : await deps.boxPushStat?.(fact.id, before);
+  return { unmoved: false, tips, ...(diff ? { diff } : {}) };
+}
+
+const measured = new WeakMap<object, Promise<PushMeasure>>();
+
+/**
+ * What a successful push route moved, from the ref update git printed (the
+ * remote's own old and new tip), so nothing is read before the push. Measured
+ * once per result: the timeline and the ledger wrap the same route and both
+ * ask with the same result object.
+ */
+export function measurePushResult(
+  deps: BackendDeps,
+  fact: TimelineBoxFact,
+  push: PushTarget,
+  res: { stdout?: string; stderr?: string },
+): Promise<PushMeasure> {
+  let m = measured.get(res);
+  if (!m) {
+    m = measure(deps, fact, push, `${res.stderr ?? ''}\n${res.stdout ?? ''}`).catch(
+      (): PushMeasure => ({ unmoved: false }),
+    );
+    measured.set(res, m);
+  }
+  return m;
 }

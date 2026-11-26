@@ -34,12 +34,7 @@ import {
   type TimelineBoxFact,
 } from './deps';
 import { createGithubPrSync, type GithubPrSync } from './github-prs';
-import {
-  measurePush,
-  pushStatSourceBefore,
-  type PushStatSource,
-  type PushTarget,
-} from './push-measure';
+import { measurePushResult, type PushTarget } from './push-measure';
 import { assignLanes, jobIdOfKey } from './timeline-lanes';
 import type {
   HubBackend,
@@ -619,10 +614,6 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     return deps.boxFact(id);
   }
 
-  const pushStatBefore = (fact: TimelineBoxFact | undefined, push: PushTarget) =>
-    pushStatSourceBefore(deps, fact, push);
-  const pushDiff = (src: PushStatSource) => measurePush(deps, src);
-
   /** Did the destroy leave the box gone? A record this hub still has says no. */
   async function boxIsGone(id: string, ok: boolean): Promise<boolean> {
     if (ok) return true;
@@ -637,16 +628,13 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
     op: () => Promise<R>,
     { push, branchSwitch = false }: { push?: PushTarget; branchSwitch?: boolean } = {},
   ): Promise<R> {
-    // A destroyed box has no record left to name it by, a push moves the ref
-    // its diff is measured from, and a branch switch replaces the branch it
-    // switches away from, so all three are read first. A push still reads the
-    // fact again afterwards: the op may have hydrated the box from its Store
-    // registration, and then the row is logged without a diff.
-    const early = type === 'box.destroyed' || push !== undefined || branchSwitch;
+    // A destroyed box has no record left to name it by, and a branch switch
+    // replaces the branch it switches away from, so both are read first. A push
+    // is measured afterwards from what git printed (see `measurePushResult`).
+    const early = type === 'box.destroyed' || branchSwitch;
     const before = early ? await factOf(id).catch(() => undefined) : undefined;
     // Kept apart from `before`: a record can be updated in place by the op.
     const previous = before?.branches[0];
-    const pushStat = push ? await pushStatBefore(before, push).catch(() => undefined) : undefined;
     const res = await op();
     // A destroy that answered `not found`, or one whose record is gone afterwards,
     // means the box IS gone, and its tasks and managers must let go of it either
@@ -669,7 +657,11 @@ export function withBoxTimeline(hub: HubBackend, seams: BoxTimelineSeams): HubBa
       const [stamp, base, diff] = await Promise.all([
         stampInWorkspace(meta, ws.id, seams.stampFor),
         boxEventBase(fact, ws.id),
-        pushStat ? pushDiff(pushStat).catch(() => undefined) : undefined,
+        push
+          ? measurePushResult(deps, fact, push, res as { stdout?: string; stderr?: string }).then(
+              (m) => m.diff,
+            )
+          : undefined,
       ]);
       await timelineSink().record(ws.id, {
         type,

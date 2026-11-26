@@ -131,17 +131,35 @@ export async function boxGitPull(
   return run(provider, box, argv);
 }
 
+/** The params ctl sends for `git push --host-only` (its `buildParams`). */
+export function hostOnlyRpcParams(opts: {
+  as?: string;
+  force?: boolean;
+  args?: string[];
+}): GitRpcParams {
+  const params: GitRpcParams = { path: BOX_WORKSPACE, hostOnly: true };
+  if (opts.as) params.as = opts.as;
+  if (opts.force) params.force = true;
+  if (opts.args?.length) params.args = [...opts.args];
+  return params;
+}
+
 /**
  * `agentbox-ctl git push --host-only` — land the box's branch in the host's
- * *local* repo, publishing nothing. The relay skips its confirm/token gate
- * (that gate guards remote pushes), so no host-initiated token is needed.
+ * *local* repo, publishing nothing. The relay does not gate it (its gate guards
+ * remote pushes); the token only tells it the host drove this landing, so it is
+ * recorded once, by the caller.
  */
-export function boxGitPushHost(
+export async function boxGitPushHost(
   provider: Provider,
   box: BoxRecord,
   opts: { as?: string; force?: boolean; args?: string[] } = {},
+  deps: BoxGitDeps = {},
 ): Promise<ExecResult> {
-  const argv = ['agentbox-ctl', 'git', 'push', '--host-only'];
+  const tokenArgs = deps.hostInitiatedArgs
+    ? await deps.hostInitiatedArgs('git.push', hostOnlyRpcParams(opts))
+    : [];
+  const argv = ['agentbox-ctl', 'git', 'push', '--host-only', ...tokenArgs];
   if (opts.as) argv.push('--as', opts.as);
   if (opts.force) argv.push('--force');
   argv.push(...(opts.args ?? []));

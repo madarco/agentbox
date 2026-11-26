@@ -13,18 +13,18 @@ Open items found while building the phases of
   resumes it but is recorded as `box.started`. Box-hours in Phase 2 should treat
   `box.started` after `box.paused` as a resume, and read any running/paused
   state change from the box status loop as a fallback.
-- **The timeline and the ledger wrap the same box routes separately.** Each
-  reads the box record before a destroy or push, and each measures the push
-  (`push-measure.ts`). Locally that is cheap (a state file read, two `git`
-  runs). On a control box with no checkout, the box-side stat's exec round
-  trips run twice per push. The fix is one wrapper that reads and measures
-  once and hands the result to both writers.
-- **A box-side push stat depends on the box's tracking ref.** A hub-route push
-  on a box with no host checkout reads `refs/remotes/origin/<branch>` in the
-  box before pushing and measures from it. If the box's push path does not
-  update that ref, the next push still counts from the older tip. That
-  overcounts commits, though by less than the old whole-branch measure.
-  Verify on a control box (Phase 4's live check).
+- **A push's stat comes from the ref update git prints.** Every push path
+  (hub route, relay docker, relay cloud, scratch repo) measures from the old
+  tip in git's own `a1..b2  src -> dst` line, so nothing is read before a push.
+  If that line is missing (a quiet push, or output from a git that words it
+  differently), the row is written without counts rather than counting the
+  whole branch. A push git reports as up to date is still a row, with no
+  counts; Phase 2 should count commits, not rows.
+- **An old in-box ctl does not mark a hub-route push it reports itself.** A
+  direct or leased box running an image from before this change sends
+  `git.pushed` without `hostInitiated`. Both rows are then keyed
+  `push:<box>:<tip>`, so one survives, but it may be the box's (actor `box`)
+  instead of the hub's.
 - **`hostOnly` pushes are counted rows.** A `push --host-only` landing is
   recorded with `hostOnly: true`. If the same commits are pushed later, Phase 2
   must not count them twice. Count published pushes for "shipped", and

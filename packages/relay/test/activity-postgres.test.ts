@@ -79,6 +79,33 @@ if (!url) {
       expect([...(await store.has(['e1', 'push', 'nope']))].sort()).toEqual(['e1', 'push']);
       const newest = await store.list({ limit: 2, order: 'desc' });
       expect(newest.map((e) => e.id)).toEqual(['e1199', 'push']);
+      await store.append([
+        {
+          id: 'w1',
+          type: 'git.push',
+          at: new Date(base).toISOString(),
+          branch: 'x',
+          projectKey: 'k',
+          source: 'live',
+        },
+        {
+          id: 'w2',
+          type: 'pr.merged',
+          at: new Date(base + 1).toISOString(),
+          branch: 'x',
+          projectKey: 'k',
+          source: 'live',
+        },
+        {
+          id: 'w3',
+          type: 'git.push',
+          at: new Date(base + 2).toISOString(),
+          branch: 'y',
+          projectKey: 'k',
+          source: 'live',
+        },
+      ]);
+      expect((await store.openBranches(base, 10)).map((e) => e.id)).toEqual(['w3']);
     });
   });
 }

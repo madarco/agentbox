@@ -113,10 +113,7 @@ export interface BackendDeps {
    * the repo to read them from. Undefined on any failure — a row with no diff.
    */
   boxPushStat?(boxId: string, opts?: { before?: string }): Promise<PushLineStat | undefined>;
-  /**
-   * A ref's commit inside the box (`refs/remotes/origin/<branch>`), read before a
-   * push so the box-side stat counts only what the push added.
-   */
+  /** A ref's full commit inside the box (`HEAD`, or an abbreviated sha git printed). */
   boxRefTip?(boxId: string, ref: string): Promise<string | undefined>;
   /** Box ids with a pending host-action approval. */
   pendingApprovalBoxIds?(): string[];

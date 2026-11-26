@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { hostOnlyRpcParams } from '@agentbox/sandbox-core';
 import { buildParams, partitionPullArgs } from '../src/commands/git.js';
 
 const CWD = '/workspace';
@@ -79,5 +80,15 @@ describe('partitionPullArgs', () => {
 
   it('is a no-op on empty args', () => {
     expect(partitionPullArgs([])).toEqual({ fetchArgs: [], mergeArgs: [] });
+  });
+});
+
+describe('host-only params the hub mints a token for', () => {
+  it('are exactly what ctl sends, so the token validates', () => {
+    for (const opts of [{}, { as: 'saved' }, { as: 'saved', force: true }]) {
+      expect(hostOnlyRpcParams(opts)).toEqual(
+        buildParams({ cwd: CWD, hostOnly: true, ...opts }, []),
+      );
+    }
   });
 });
