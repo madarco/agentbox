@@ -74,9 +74,17 @@ describe('the +/- lines of a push, measured in the box', () => {
           stderr: '',
         };
       }
+      if (joined === `git rev-list --count ${'a'.repeat(40)}..${'f'.repeat(40)}`) {
+        return { exitCode: 0, stdout: '3', stderr: '' };
+      }
       return { exitCode: 1, stdout: '', stderr: '' };
     });
-    expect(await s.boxPushStat('box1')).toEqual({ additions: 6, deletions: 1 });
+    expect(await s.boxPushStat('box1')).toEqual({
+      additions: 6,
+      deletions: 1,
+      commits: 3,
+      filesChanged: 2,
+    });
     expect(argvs.every((a) => a[0] === 'git')).toBe(true);
     expect(new Set(cwds)).toEqual(new Set(['/workspace']));
   });

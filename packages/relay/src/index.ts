@@ -354,6 +354,8 @@ export {
 // slice is the only consumer and it needs all three together.
 export * from './workspaces/index.js';
 export * from './checkouts/index.js';
+// The activity ledger (usage dashboard Phase 1): every box's lifecycle, pushes and PRs.
+export * from './activity/index.js';
 export { mergeRegistrationOrigin } from './registration-origin.js';
 export {
   prMergeRepo,

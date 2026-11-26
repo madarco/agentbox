@@ -23,7 +23,13 @@ import {
   type BoxPushNotice,
   type BoxTimelineContext,
 } from './timeline-hooks.js';
-import { pushedRef, readRefTip, type PushStatInput } from './workspaces/push-stat.js';
+import {
+  parsePushedTips,
+  pushedRef,
+  readRefTip,
+  type PushedTips,
+  type PushStatInput,
+} from './workspaces/push-stat.js';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -446,13 +452,19 @@ export async function executeCloudAction(
     return runGitRpc(action, deps, push).then((result) => {
       if (action.method === 'git.push' && result.exitCode === 0) {
         const hostOnly = Boolean((action.params as GitRpcParams | undefined)?.hostOnly);
+        // A landing that moved nothing landed nothing; one that did is on its
+        // destination branch, as on docker.
         void cloudTimelineContext(deps).then((ctx) =>
-          ctx
+          ctx && !(hostOnly && push.unmoved)
             ? recordBoxGitPush(
-                ctx,
+                hostOnly && push.stat ? { ...ctx, branch: push.stat.branch } : ctx,
                 { hostInitiated: push.hostInitiated, hostOnly },
                 result,
                 push.stat,
+                {
+                  ...(push.tips?.before ? { boxBefore: push.tips.before } : {}),
+                  ...(push.unmoved ? { unmoved: true } : {}),
+                },
               )
             : undefined,
         );
@@ -1417,6 +1429,10 @@ interface GitPushTrace {
   hostInitiated: boolean;
   /** Where the push's +/- lines can be read; set only for a real host checkout. */
   stat?: PushStatInput;
+  /** What git printed it moved; the box measures from `before` when there is no `stat`. */
+  tips?: PushedTips;
+  /** Git printed no ref update, so the push moved nothing. */
+  unmoved?: boolean;
 }
 
 /**
@@ -1541,6 +1557,19 @@ async function runGitRpc(
       };
     }
     const dest = resolveLandDest(branch, params.as);
+    // Ungated, so a token never rejects here; it only tells the ledger the hub's
+    // route drove this landing and records it.
+    trace.hostInitiated = decideHostInitiatedPush({
+      bypassPushGate: true,
+      tokenClaimed: typeof params.hostInitiated === 'string',
+      consume: () =>
+        deps.hostInitiatedTokens?.consume(
+          params.hostInitiated,
+          deps.boxId,
+          'git.push',
+          hashRpcParams(params),
+        ) ?? false,
+    }).hostInitiated;
     const stageSave = await mkdtemp(join(tmpdir(), 'agentbox-git-save-'));
     const hostBundleSave = join(stageSave, 'op.bundle');
     const remoteBundleSave = '/tmp/agentbox-rpc-save.bundle';
@@ -1567,6 +1596,18 @@ async function runGitRpc(
           stdout: landed.stdout ?? '',
           stderr: `host git fetch from bundle failed: ${landed.stderr ?? ''}`,
         };
+      }
+      const tips = parsePushedTips(landed.stderr ?? '', dest);
+      if (tips) {
+        trace.tips = tips;
+        trace.stat = {
+          repo: hostRepoDir,
+          ref: `refs/heads/${dest}`,
+          branch: dest,
+          ...(tips.before ? { before: tips.before } : {}),
+        };
+      } else {
+        trace.unmoved = true;
       }
       return {
         exitCode: 0,
@@ -1771,6 +1812,12 @@ async function runGitRpc(
       argv.push(...sanitizeGitArgs(params.args));
       const push = await execa('git', argv, { reject: false });
       let pushStderr = push.stderr ?? '';
+      // A scratch repo has no old tip to read, but git says what it moved; the
+      // box measures from that instead of from its default branch.
+      if ((push.exitCode ?? 1) === 0) {
+        trace.tips = parsePushedTips(pushStderr, branch);
+        if (!trace.tips) trace.unmoved = true;
+      }
       // After a successful push, sync the box's view of origin to match what
       // a normal local `git push -u` would have left behind: write the pushed
       // tip into the box's `refs/remotes/origin/<branch>` and set the branch

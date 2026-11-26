@@ -47,7 +47,11 @@ import {
   configureManagerStoreFromConfig,
   configureTimelineSinkFromConfig,
   type RelayServerHandle,
+  ensureActivityBackfill,
+  openActivityLedger,
 } from '@agentbox/relay';
+import { startActivityPrSweep } from './lib/backend/activity';
+import { defaultGhExec } from './lib/backend/github-prs';
 import { collectHostCarried } from './lib/host-carried';
 import { collectAgentCatalog } from './lib/agent-catalog';
 import { configureHubGitCredentials } from './lib/git-auth';
@@ -304,6 +308,31 @@ async function main(): Promise<void> {
   );
   globalThis.__AGENTBOX_HUB_HISTORY = history;
   history?.start();
+  // The activity ledger (usage dashboard Phase 1). Opened before the relay,
+  // whose push and create-job hooks and autopause loop write to it. Like
+  // history, a failure costs the hub its ledger, never its boot.
+  const activity = await openActivityLedger().catch((e: unknown) => {
+    process.stdout.write(
+      `agentbox-hub: activity ledger disabled — ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    return undefined;
+  });
+  globalThis.__AGENTBOX_HUB_ACTIVITY = activity;
+  if (activity) {
+    void ensureActivityBackfill(activity)
+      .then((r) => {
+        if (r) {
+          process.stdout.write(
+            `agentbox-hub: activity ledger backfilled ${String(r.inserted)} event(s) from ${String(r.workspaces)} workspace timeline(s)\n`,
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        process.stdout.write(
+          `agentbox-hub: activity backfill failed — ${e instanceof Error ? e.message : String(e)}\n`,
+        );
+      });
+  }
   // Agent memory (Phase 4), same db file, own connection.
   const memory = history
     ? await openMemoryService(HISTORY_DB_PATH).catch((e: unknown) => {
@@ -447,6 +476,9 @@ async function main(): Promise<void> {
   const sink = await configureTimelineSinkFromConfig({ warn });
   const managerRecords = await configureManagerStoreFromConfig({ warn });
   globalThis.__AGENTBOX_HUB_BACKEND = createHubBackend(daemon.handle);
+  if (activity) {
+    startActivityPrSweep({ gh: defaultGhExec, log: warn });
+  }
   if (sink.kind === 'remote') {
     process.stdout.write('agentbox-hub: timeline events forward to the control box\n');
   }

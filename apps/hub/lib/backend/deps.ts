@@ -18,6 +18,10 @@ export interface TimelineBoxFact {
   /** Persisted runtime state (`running`, `paused`, ...); absent when unknown. */
   state?: string;
   agent?: string;
+  /** `docker` when the record names none. */
+  provider?: string;
+  /** The subscription the agent runs on (`agent/account`), when the box has an agent. */
+  account?: string;
   projectRoot: string;
   projectId: string;
   /**
@@ -109,6 +113,8 @@ export interface BackendDeps {
    * the repo to read them from. Undefined on any failure — a row with no diff.
    */
   boxPushStat?(boxId: string, opts?: { before?: string }): Promise<PushLineStat | undefined>;
+  /** A ref's full commit inside the box (`HEAD`, or an abbreviated sha git printed). */
+  boxRefTip?(boxId: string, ref: string): Promise<string | undefined>;
   /** Box ids with a pending host-action approval. */
   pendingApprovalBoxIds?(): string[];
   /** How the GitHub sync runs `gh`; tests fake it, production spawns the host's gh. */

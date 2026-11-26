@@ -4,7 +4,7 @@ import {
   recordBoxPushed,
   type BoxPushNotice,
 } from './timeline-hooks.js';
-import { pushedRef, readRefTip } from './workspaces/push-stat.js';
+import { parsePushedTips, pushedRef, readRefTip } from './workspaces/push-stat.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -1429,7 +1429,47 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           if (hostOnlyParams?.hostOnly) {
             // Landing the branch in the host's local repo publishes nothing,
             // so the push-confirm gate doesn't apply. Land and return.
+            // Ungated, so a token never rejects here; it only says the hub's
+            // route drove this landing and records it itself.
+            const landHostInitiated = decideHostInitiatedPush({
+              bypassPushGate: true,
+              tokenClaimed: typeof hostOnlyParams.hostInitiated === 'string',
+              consume: () =>
+                hostInitiatedTokens.consume(
+                  hostOnlyParams.hostInitiated,
+                  reg.boxId,
+                  'git.push',
+                  hashRpcParams(hostOnlyParams),
+                ),
+            }).hostInitiated;
             const saveResult = await handleGitSaveToHost(reg, hostOnlyParams);
+            const landTree = resolveWorktree(reg, hostOnlyParams.path ?? '/workspace');
+            const landSrc = landTree ? (landTree.sanctionedBranch ?? landTree.branch) : undefined;
+            const landDest = landSrc ? resolveLandDest(landSrc, hostOnlyParams.as) : undefined;
+            // Landing a branch on itself moves nothing: the box's commits are in
+            // the shared .git already.
+            const landTips =
+              landTree && landDest && landDest !== landSrc
+                ? parsePushedTips(saveResult.stderr ?? '', landDest)
+                : undefined;
+            if (saveResult.exitCode === 0 && landTree && landDest && landTips) {
+              void recordBoxGitPush(
+                {
+                  boxId: reg.boxId,
+                  boxName: reg.name,
+                  hostPath: landTree.hostMainRepo,
+                  branch: landDest,
+                },
+                { hostInitiated: landHostInitiated, hostOnly: true },
+                saveResult,
+                {
+                  repo: landTree.hostMainRepo,
+                  ref: `refs/heads/${landDest}`,
+                  branch: landDest,
+                  ...(landTips.before ? { before: landTips.before } : {}),
+                },
+              );
+            }
             send(res, saveResult.exitCode === 0 ? 200 : 500, saveResult);
             return;
           }

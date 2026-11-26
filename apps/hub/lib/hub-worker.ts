@@ -34,7 +34,7 @@ import {
 } from '@agentbox/relay/control-plane';
 // The full library entry: the timeline sink is host-side state, not part of the
 // lean control-plane surface the Next app imports.
-import { timelineSink } from '@agentbox/relay';
+import { recordActivity, timelineSink } from '@agentbox/relay';
 import {
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
@@ -565,12 +565,28 @@ export async function recordCreateJobRowTimeline(
   try {
     const job = await store.getCreateJob?.(id);
     if (!job) return;
-    const ws = await timelineSink().workspaceFor({ originUrl: job.request.repoUrl });
-    if (!ws) return;
+    const ws = await timelineSink()
+      .workspaceFor({ originUrl: job.request.repoUrl })
+      .catch(() => null);
     const reg = result.boxId ? await store.getBox(result.boxId).catch(() => undefined) : undefined;
     const ready = status === 'done';
     const name = reg?.name ?? job.request.name;
     const branch = reg?.worktrees?.[0]?.branch;
+    // Every box, in a workspace or not; the timeline only the first.
+    await recordActivity({
+      id: `job:${id}:${ready ? 'ready' : 'failed'}`,
+      type: ready ? 'box.ready' : 'box.failed',
+      actor: 'hub',
+      jobId: id,
+      ...(result.boxId ? { boxId: result.boxId } : {}),
+      ...(name ? { boxName: name } : {}),
+      ...(job.request.agent && job.request.agent !== 'none' ? { agent: job.request.agent } : {}),
+      ...(branch ? { branch } : {}),
+      ...(job.request.provider ? { provider: job.request.provider } : {}),
+      ...(job.request.repoUrl ? { repoUrl: job.request.repoUrl } : {}),
+      ...(ws ? { workspaceId: ws.id } : {}),
+    });
+    if (!ws) return;
     await timelineSink().record(ws.id, {
       type: ready ? 'box.ready' : 'box.failed',
       actor: 'hub',

@@ -156,7 +156,7 @@ describe('a push the box made itself (`git.pushed`)', () => {
     const asked: { boxId: string; before?: string }[] = [];
     configureBoxPushStat(async (boxId, opts) => {
       asked.push({ boxId, ...(opts?.before ? { before: opts.before } : {}) });
-      return { additions: 12, deletions: 3 };
+      return { additions: 12, deletions: 3, commits: 2, filesChanged: 4 };
     });
     await recordBoxPushed(
       { boxId: 'box1', hostPath: '', originUrl: 'git@github.com:acme/storefront.git' },

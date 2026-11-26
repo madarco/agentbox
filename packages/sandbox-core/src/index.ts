@@ -153,6 +153,7 @@ export {
   boxGitPull,
   boxGitPush,
   boxGitPushHost,
+  hostOnlyRpcParams,
   boxLogsArgv,
   boxLogsRaw,
   boxRestartService,

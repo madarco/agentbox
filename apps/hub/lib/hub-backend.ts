@@ -51,6 +51,7 @@ import { createLiveStatus } from './backend/live-status';
 import { createGithubPrSync } from './backend/github-prs';
 import { createManagerBackend } from './backend/managers';
 import { createTimelineBackend, withBoxTimeline } from './backend/timeline';
+import { installActivityBoxContext, withBoxActivity } from './backend/activity';
 import { createWorkspaceBackend } from './backend/workspaces';
 import { flushBoxHistory } from './backend/history-flush';
 import { createCheckoutBackend } from './backend/checkouts';
@@ -2221,6 +2222,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // `direct` push), and has no provider modules to measure it with — it never
   // creates or drives a box. It runs in THIS process, so hand it the reader.
   configureBoxPushStat(backendDeps.boxPushStat ?? null);
+  installActivityBoxContext(backendDeps, handle.store);
   const checkouts = createCheckoutBackend(backendDeps);
   const skills = createSkillsBackend({
     store: () => globalThis.__AGENTBOX_HUB_CUSTODY ?? null,
@@ -3288,7 +3290,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     gitPull: (id, input = {}) =>
       gitOp(id, (box, provider) => boxGitPull(provider, box, input, hubGitDeps(id)), hydrate),
     gitPushHost: (id, input = {}) =>
-      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input), hydrate),
+      gitOp(id, (box, provider) => boxGitPushHost(provider, box, input, hubGitDeps(id)), hydrate),
     async getGit(id): Promise<GitInfo> {
       try {
         const rp = await resolveBoxProvider(id, hydrate);
@@ -4225,7 +4227,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     }
     return res;
   };
-  return withBoxTimeline(hub, {
+  return withBoxTimeline(withBoxActivity(hub, backendDeps), {
     deps: backendDeps,
     stampFor: (ref, wsId) => managers.timelineStamp(ref, wsId),
     boxGone: (boxId) => workspaces.boxGone(boxId),
