@@ -243,6 +243,15 @@ the same Usage layout from a snapshot of your numbers, with a link preview image
 built from them. `agent-box.sh/u/<handle>` lists a handle's shares, and
 [`/u/example`](https://agent-box.sh/u/example) shows one made from sample data.
 
+To share, click **Share** on the Usage page. The dialog shows a preview of
+exactly what will be sent (the window and subscription the page shows, drawn by
+the same layout, without any name), and asks for a handle. **Share** then posts
+it and shows the public URL with a **Copy link** button. From a terminal,
+[`agentbox usage share`](/docs/cli#usage-share) does the same. The hub itself
+posts to agent-box.sh: your browser and the CLI only talk to the hub. To test
+against another deployment, set [`share.endpoint`](/docs/configuration#share)
+on the hub's machine.
+
 - **What is sent**: numbers, dates, and agent and provider ids (`claude`,
   `hetzner`, …): agents at once, agent-hours and wall hours (the card's hours saved is one minus the other), PRs merged, commits,
   lines and files changed, the daily chart, the activity wall, the three Gantt
@@ -256,9 +265,11 @@ built from them. `agent-box.sh/u/<handle>` lists a handle's shares, and
 - **The handle**: a few names that would read as official (`agentbox`,
   `anthropic`, `admin`, …) are reserved. The first share for a handle claims it and returns a claim
   secret, once. Every later share for that handle must send the secret
-  (`Authorization: Bearer <secret>`), or it is refused. There is no account: keep
-  the secret, a lost one can't be recovered. A share can't be edited after it is
-  posted.
+  (`Authorization: Bearer <secret>`), or it is refused. The hub keeps the secret
+  in `~/.agentbox/hub/share.json` (readable only by you) and sends it for you; it
+  never reaches the browser, the CLI or a log. There is no account: back up that
+  file, a lost secret can't be recovered, and another hub can't share under a
+  handle this one claimed. A share can't be edited after it is posted.
 
 A password-profile hub also has a **Settings → Devices** page (`/settings/devices`): the computers enrolled with
 `agentbox hub login`, each with its own token, plus the codes waiting for your

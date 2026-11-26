@@ -32,9 +32,10 @@ interface Call {
   body: string;
 }
 
-function fakeFetch(
-  respond: (call: Call, i: number) => Response | Promise<Response>,
-): { fetch: typeof fetch; calls: Call[] } {
+function fakeFetch(respond: (call: Call, i: number) => Response | Promise<Response>): {
+  fetch: typeof fetch;
+  calls: Call[];
+} {
   const calls: Call[] = [];
   const f = (async (input: string | URL | Request, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
@@ -168,9 +169,7 @@ describe('postUsageShare', () => {
       const f = fakeFetch(() =>
         Response.json({ error: 'site text' }, { status, headers: headers ?? {} }),
       );
-      const err = await postUsageShare(deps({ fetch: f.fetch }), 'marco').catch(
-        (e: unknown) => e,
-      );
+      const err = await postUsageShare(deps({ fetch: f.fetch }), 'marco').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ShareError);
       expect((err as ShareError).code).toBe(code);
       if (status === 429) {

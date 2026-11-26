@@ -5,7 +5,8 @@
  * (docs/agent-history-plan.md, Phase 7), from `/api/v1/usage`. Both are hub
  * clients; the CLI reads no store of its own.
  */
-import { log } from '@agentbox/cli-kit';
+import { confirm, isCancel, log, text } from '@agentbox/cli-kit';
+import { HANDLE_RE } from '@agentbox/usage-view';
 import { Command } from 'commander';
 import { withHubClient } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
@@ -95,6 +96,89 @@ const tokensCommand = new Command('tokens')
     },
   );
 
+const shareCommand = new Command('share')
+  .description(
+    "Publish the window's usage on agent-box.sh (share.endpoint) and print its public URL. Only metrics leave the hub, with the handle: no box, project, branch, PR or session name",
+  )
+  .option(
+    '--handle <handle>',
+    'public handle, lowercase letters, digits and dashes (default: the last one shared)',
+  )
+  .option(
+    '--since <when>',
+    'first day: YYYY-MM-DD, or a number of days or weeks ending at --until (30d, 2w, 365d)',
+    '30d',
+  )
+  .option('--until <day>', 'last day, YYYY-MM-DD (default today)')
+  .option('--tz <zone>', "IANA time zone the days are in (default this machine's)")
+  .option('--subscription <agent/account>', 'only sessions and boxes on this subscription')
+  .option('--dry-run', 'print the JSON that would be sent and post nothing')
+  .option('-y, --yes', 'do not ask before publishing')
+  .option('--local', "use this machine's hub instead of the configured one")
+  .action(
+    async (opts: {
+      handle?: string;
+      since: string;
+      until?: string;
+      tz?: string;
+      subscription?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+      local?: boolean;
+    }) => {
+      const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
+        const settings = await client.usageShareSettings();
+        let handle = opts.handle?.trim() ?? settings.lastHandle ?? '';
+        if (!handle && interactive && !opts.dryRun) {
+          const answer = await text({
+            message: 'Public handle',
+            placeholder: 'your-name',
+            validate: (v) =>
+              HANDLE_RE.test(v ?? '')
+                ? undefined
+                : 'lowercase letters, digits and dashes, up to 39',
+          });
+          if (isCancel(answer)) return;
+          handle = answer;
+        }
+        if (!handle) handle = opts.dryRun ? 'you' : '';
+        if (!HANDLE_RE.test(handle)) {
+          throw new Error(
+            handle
+              ? `invalid handle "${handle}": lowercase letters, digits and dashes, up to 39`
+              : 'no handle: pass --handle <handle>',
+          );
+        }
+        const window = {
+          since: opts.since,
+          until: opts.until,
+          tz: opts.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+          subscription: opts.subscription,
+          handle,
+        };
+        const site = new URL(settings.endpoint).host;
+        if (opts.dryRun) {
+          const p = await client.usageSharePreview(window);
+          process.stdout.write(`${JSON.stringify(p.share, null, 2)}\n`);
+          log.info(`${String(p.bytes)} bytes would be posted to ${p.endpoint}`);
+          return;
+        }
+        if (interactive && !opts.yes) {
+          const ok = await confirm({
+            message: `Publish this window's usage as ${site}/u/${handle}? (--dry-run shows exactly what is sent)`,
+          });
+          if (isCancel(ok) || !ok) return;
+        }
+        const posted = await client.usageShare(window);
+        process.stdout.write(`${posted.url}\n`);
+        if (posted.claimedNow) {
+          log.info(`This hub now holds the handle "${posted.handle}" on ${site}.`);
+        }
+      });
+    },
+  );
+
 export const usageCommand = new Command('usage')
   .description(
     'Agent-hours, how many agents ran at once, and what they shipped (PRs, commits, lines), from the hub',
@@ -137,4 +221,5 @@ export const usageCommand = new Command('usage')
       });
     },
   )
-  .addCommand(tokensCommand);
+  .addCommand(tokensCommand)
+  .addCommand(shareCommand);

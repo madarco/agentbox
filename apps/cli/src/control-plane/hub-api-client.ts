@@ -14,7 +14,7 @@ import { parseAgentStatusEntry } from '@agentbox/core';
 import { openOnHost } from '@agentbox/sandbox-core';
 import type { AgentId, AgentLiveUsageView, AgentMode, AgentStatusMap } from '@agentbox/core';
 import type { CreateJobRequestOpts } from '@agentbox/relay';
-import type { UsageStats } from '@agentbox/usage-view';
+import type { UsageShare, UsageStats } from '@agentbox/usage-view';
 
 /**
  * A hub box as the `/api/v1` list/get returns it (the UI view + raw host fields).
@@ -1047,6 +1047,26 @@ export interface HubApiUsageStatsQuery {
   range?: '7d' | '30d' | 'month' | '90d' | 'year';
 }
 
+export interface HubApiUsageShareSettings {
+  endpoint: string;
+  handles: string[];
+  lastHandle: string | null;
+}
+
+export interface HubApiUsageSharePreview {
+  share: UsageShare;
+  endpoint: string;
+  bytes: number;
+  claimed: boolean;
+}
+
+export interface HubApiUsageSharePosted {
+  url: string;
+  handle: string;
+  n: number;
+  claimedNow: boolean;
+}
+
 export type HubApiUsageDimension =
   | 'day'
   | 'agent'
@@ -1806,6 +1826,21 @@ export class HubApiClient {
     for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') qs.set(k, v);
     const s = qs.toString();
     return this.request<UsageStats>('GET', `/usage/stats${s ? `?${s}` : ''}`);
+  }
+
+  usageShareSettings(): Promise<HubApiUsageShareSettings> {
+    return this.request<HubApiUsageShareSettings>('GET', '/usage/share');
+  }
+
+  usageSharePreview(
+    q: HubApiUsageStatsQuery & { handle: string },
+  ): Promise<HubApiUsageSharePreview> {
+    return this.request<HubApiUsageSharePreview>('POST', '/usage/share', { ...q, preview: true });
+  }
+
+  /** Posts the window's public share to the hub's `share.endpoint`; returns the URL. */
+  usageShare(q: HubApiUsageStatsQuery & { handle: string }): Promise<HubApiUsageSharePosted> {
+    return this.request<HubApiUsageSharePosted>('POST', '/usage/share', q);
   }
 
   usage(q: HubApiUsageQuery = {}): Promise<HubApiUsageReport> {

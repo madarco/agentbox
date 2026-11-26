@@ -473,6 +473,15 @@
         }
       }
     },
+    "share": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        }
+      }
+    },
     "skills": {
       "type": "object",
       "additionalProperties": false,
