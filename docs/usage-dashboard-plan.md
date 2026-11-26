@@ -1,6 +1,6 @@
 # Usage dashboard and public share — plan
 
-Status: Phase 0 and Phase 1 done (2026-11-26). Design mockup approved: the Usage view in
+Status: Phase 0, Phase 1 and Phase 2 done (2026-11-26). Design mockup approved: the Usage view in
 `../agentbox-design/AgentBox Control Plane (shadcn).html#/usage`
 (`control-shadcn/views-usage.jsx` + `control-shadcn/usage.css`).
 
@@ -142,8 +142,11 @@ from Phase 1 on.
   takes plain arrays (`SessionTurns`, `git.push` / `pr.merged` events, token rows,
   box info, box runs) that the hub adapts its rows to; `toShare(stats, handle)`
   builds the public subset. Decisions made there:
-  - `tzOffset` is local time minus UTC in minutes (CET is `60`, the opposite sign
-    of `Date#getTimezoneOffset`). A fixed offset is wrong across DST; see the backlog.
+  - Days are local days in a named IANA zone (`range.tz`, e.g. `Europe/Rome`),
+    bucketed with `Intl`, so a window across a DST change keeps 23- and 25-hour days
+    whole. The zone is a closed value: `isTimeZone` accepts only a name the
+    runtime's `Intl.supportedValuesOf('timeZone')` lists (plus `UTC`), at most 64
+    characters. (It replaced the first cut's fixed `tzOffset`.)
   - A box's sessions are unioned into one lane, so two sessions in one box count
     once in "boxes at once" and in agent-hours. Host sessions are one lane each.
   - Lines and files come from `git.push` only; a merged PR's lines were already
@@ -156,12 +159,33 @@ from Phase 1 on.
     at its longest is about 55 KB (tested); `toShare` rounds, clamps and cuts to fit.
     Every date is 2020-2100 and the range must hold `since <= today <= until` within
     367 days, so no renderer walks an unbounded run of days.
-- `apps/hub/lib/backend/usage-stats.ts` reads `history.db` + the ledger and
-  returns `UsageStats` for a window, a tz offset and an optional subscription.
-- `GET /api/v1/usage/stats?since=&until=&tzOffset=&subscription=`; the existing
-  `GET /api/v1/usage` stays for the token breakdowns.
-- `agentbox usage` CLI prints the hero numbers (an `/api/v1` client, local or
-  remote hub alike).
+- **Done** (feat/usage-stats): `apps/hub/lib/backend/usage-stats.ts` reads
+  `history.db` + the ledger and returns `UsageStats` for a window, an IANA zone
+  and an optional subscription (`agent/account`).
+  - Active intervals are cut in SQL (window functions over `history_turns.ts_ms`)
+    and kept per session in `history_spans`; a write marks the session dirty, and
+    the history service recomputes dirty sessions in small batches at start and
+    with its minute sweep, never on a request (the relay and the web server share
+    the hub process). A read uses the spans stored, so a turn shows up within a
+    minute. Retention keeps a purged
+    session's spans, so a year view keeps its hours past `history.retentionDays`.
+  - Tokens are summed per session per local day in SQL, from the zone's offset
+    segments over the window (`zoneSegments`), so the store needs no zone support.
+  - Measured on 1M turns and 200k usage rows (2000 sessions over a year): a year
+    view in about 0.4 s, a week in 0.2 s, most of it `buildUsageStats` in JS;  after
+    the migration the hub backfills every session's spans in the background once
+    (2.5 s of sqlite work per 1M turns, in batches of 50 sessions).
+    Answers are cached for a minute per (window, zone, subscription).
+  - Sessions group by the `managerId` the ledger records per box, else by overlap.
+    Commits come from `git.push` counts, never rows; a `hostOnly` landing counts
+    only when no published push of the same box follows it. Box-hours run from
+    `box.created`/`ready`/`started`/`resumed` to `stopped`/`paused`/`destroyed`/`failed`.
+- `GET /api/v1/usage/stats?since=&until=&tz=&range=&subscription=`: `since` is a
+  day or `<n>d`; the window is checked with `UsageRange` (2020-2100, at most a
+  year) before any day is walked. The existing `GET /api/v1/usage` stays for the
+  token breakdowns.
+- `agentbox usage` prints the hero numbers (`--json` the whole `UsageStats`); the
+  token breakdown that was `agentbox usage` is now `agentbox usage tokens`.
 
 ### Phase 3 — the hub Usage page
 
@@ -179,19 +203,79 @@ from Phase 1 on.
   the design repo is not in the workspace.
 - Update the tray if it links to Usage; update the public docs page for Usage.
 
-### Phase 4 — numbers survive a box closing
+### Phase 4 — where sessions live, and how they reach the usage page
 
-- Destroy and stop: record the ledger event and run the final history flush on
-  every provider, including a paused cloud box (resume it briefly, or ship from
-  its stopped disk where the provider allows it; Phase 0 decides per provider).
-- Remote hub: a box on a control box writes to that hub's stores. A laptop that
-  has local docker boxes **and** a configured control box sees both: the laptop's
-  `/usage/stats` fetches the control box's stats and merges them (daily buckets
-  add, intervals union). Host sessions stay on the PC's hub and are merged the
-  same way.
-- Close the related history backlog items (remote forwarding, split stores).
-- Live check on docker, hetzner and one SDK provider (e2b or vercel): destroy a
-  box mid-run and see its hours and pushes on the page.
+Decided 2026-11-26 with the owner.
+
+**What happens today** (measured 2026-11-26):
+- Docker boxes: the relay reads their transcripts host-side from the box's
+  config volume (`agentbox-claude-config`, shared by every docker box, or a
+  per-box volume with `--isolate-claude-config`, which `destroy` deletes) in
+  any box state. Cloud boxes: `agentbox-ctl` ships new transcript bytes every
+  30 s over the relay channel to the hub that owns the box.
+- The only final flush is on `destroy` (`history-flush.ts`, 90 s, best effort).
+  `stop` and `pause` flush nothing; a cloud box already paused or stopped at
+  destroy is skipped, so its last <30 s is lost.
+- A laptop hub with a configured control box keeps two stores: cloud boxes
+  built through the control box ship there, local docker boxes and host
+  sessions stay in the laptop's `history.db`. No forwarding, no merged view
+  (agent-history backlog: "Remote control box forwarding", "Split stores").
+- `history.db` is not a plain copy of `~/.claude/projects`: it holds the raw
+  bytes zstd-chunked and deduplicated (251 MB of raw transcripts stored as
+  about 70 MB on disk), redacted of secret values, plus the parsed turns,
+  per-message usage, FTS search and memory, for every agent (codex, opencode,
+  pi and openclaw included, whose native stores are not JSONL trees). Claude
+  Code itself deletes transcripts older than `cleanupPeriodDays` (default 30),
+  so the agents' native folders are not a durable archive.
+
+**No remote hub (default install).**
+- Every box's sessions come back to the PC's hub, continuously and on close:
+  add a final flush on `stop` and `pause` (not only `destroy`). A cloud box
+  already paused or stopped at destroy is not woken: its last <30 s is an
+  accepted loss.
+- `history.db` stays the one durable store and the usage page reads only it.
+- New: **materialize box sessions where the agents look.** After a session
+  ships, write it into the PC's native location for the box's project
+  (`~/.claude/projects/<host project key>/<session>.jsonl`, codex/opencode/pi
+  equivalents later), so the host agent finds past box sessions the way it
+  finds its own (`/resume`, reading old transcripts). **Automatic**, on by
+  default for every box session of a project with a known host checkout.
+  Written from `history.db` (one source), rewritten only when it changes, and
+  **re-created when missing**, including after the agent's own cleanup
+  deleted it: everything `history.db` holds is materialized. A re-created file
+  gets a fresh mtime, so Claude's `cleanupPeriodDays` removes it again after
+  30 days and the next pass writes it back; that churn is cheap (missing
+  files only, one pass a day plus after each ship). Redaction stays: the
+  materialized copy is the redacted one. A config key turns it off.
+- Not proposed: dropping `history.db` for the native folders. It would lose
+  compression, redaction, the other agents' formats, search and the usage
+  index, and Claude's 30-day cleanup would delete the history.
+
+**With a remote hub.**
+- Cloud boxes built through the control box sync to it exactly as above.
+- Local docker boxes and host sessions stay in the PC's hub. Their **sessions
+  are not uploaded**; their **metrics are**: the PC's hub pushes a usage
+  contribution to the control box, `POST /api/v1/usage/contributions`, keyed
+  by machine id, holding only what the dashboard needs (active intervals with
+  agent, provider and box id; token totals per day and agent; ledger counts).
+  No transcript text. Pushed every few minutes while anything changed, and on
+  demand by `agentbox usage` and a "Sync this PC" button on the local hub's
+  page. The control box's `/usage/stats` merges contributions with its own
+  rows (intervals union, so concurrency is right across machines).
+- Downloading sessions to the PC stays optional (`agentbox sessions download`,
+  plus the materialize step above when the user turns it on).
+- Considered and rejected: the remote hub's page calling the local relay from
+  the browser. It works only in a browser on that PC (not the CLI or tray), and
+  an https page calling `http://127.0.0.1` hits private-network-access and CORS
+  rules.
+
+**Live check:** docker, hetzner and one SDK provider (e2b or vercel): stop,
+pause and destroy boxes mid-run and see their hours, pushes and tokens on the
+page; on a laptop + control box pair (`hub expose`), see a local docker box's
+hours on the control box's page with no transcript on the control box.
+
+This phase is large enough to split into 4a (flush on stop/pause, materialize)
+and 4b (contributions to a remote hub).
 
 ### Phase 5 — agent-box.sh share endpoint and page
 

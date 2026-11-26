@@ -98,6 +98,7 @@
     "@agentbox/sandbox-hetzner": "workspace:*",
     "@agentbox/sandbox-remote-docker": "workspace:*",
     "@agentbox/sandbox-vercel": "workspace:*",
+    "@agentbox/usage-view": "workspace:*",
     "@types/node": "^22.10.1",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",

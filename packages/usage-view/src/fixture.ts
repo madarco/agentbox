@@ -209,7 +209,7 @@ export function usageFixture(): UsageStats {
       since: '2026-11-01',
       until: '2026-11-30',
       today: '2026-11-26',
-      tzOffset: 60,
+      tz: 'Europe/Rome',
     },
     hero: {
       agentHours: 612,
