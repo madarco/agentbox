@@ -148,13 +148,20 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           />
           <Kbd>esc</Kbd>
         </div>
-        <div id="cmdk-list" ref={listRef} role="listbox" className="max-h-[360px] overflow-y-auto p-1.5">
+        <div
+          id="cmdk-list"
+          ref={listRef}
+          role="listbox"
+          className="max-h-[360px] overflow-y-auto p-1.5"
+        >
           {flat.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">No results found.</div>
           ) : null}
           {groups.map((g) => (
             <div key={g.heading} className="mb-1">
-              <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">{g.heading}</div>
+              <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                {g.heading}
+              </div>
               {g.items.map((it) => {
                 idx += 1;
                 const i = idx;

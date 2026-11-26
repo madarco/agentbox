@@ -517,7 +517,10 @@ function CarriedRow({ c }: { c: CarriedEntry }) {
             {c.skills.length} skill{c.skills.length === 1 ? '' : 's'}
           </Badge>
         ) : null}
-        <span className="ml-auto truncate font-mono text-[11px] text-[var(--faint)]" title={c.hostPath}>
+        <span
+          className="ml-auto truncate font-mono text-[11px] text-[var(--faint)]"
+          title={c.hostPath}
+        >
           {c.hostPath}
         </span>
       </div>

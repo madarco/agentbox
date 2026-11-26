@@ -477,7 +477,7 @@ button {
 }
 
 /* sidebar: full width, an icon rail when collapsed (.sb-collapsed on <html>),
-   a drawer under 760px */
+   a drawer under Tailwind's md (768px) */
 .app-grid {
   grid-template-columns: var(--sb-w) minmax(0, 1fr);
   transition: grid-template-columns 0.2s ease;
@@ -486,13 +486,15 @@ button {
   width: var(--sb-w);
   transition: width 0.2s ease;
 }
-.sb-collapsed .shad-side .sb-hide {
-  display: none !important;
+@media (min-width: 768px) {
+  .sb-collapsed .shad-side .sb-hide {
+    display: none !important;
+  }
+  .sb-collapsed .shad-side .sb-center {
+    justify-content: center;
+  }
 }
-.sb-collapsed .shad-side .sb-center {
-  justify-content: center;
-}
-@media (max-width: 760px) {
+@media (max-width: 767.98px) {
   .app-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -504,12 +506,6 @@ button {
     width: 16rem !important;
     transform: translateX(-100%);
     transition: transform 0.24s ease;
-  }
-  .sb-collapsed .shad-side .sb-hide {
-    display: revert !important;
-  }
-  .sb-collapsed .shad-side .sb-center {
-    justify-content: flex-start;
   }
   body.nav-open .shad-side {
     transform: none;

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { Separator } from '@/components/ui/separator';
 import { useStore } from '@/lib/boxes/store';
+import { safeDecode } from '@/lib/utils';
 
 interface Crumb {
   label: string;
@@ -35,7 +36,7 @@ function useCrumbs(): Crumb[] {
     return [{ label: 'projects' }, { label: p ? p.name : 'project' }];
   }
   if (seg[0] === 'boxes' && seg[1]) {
-    const b = box(decodeURIComponent(seg[1]));
+    const b = box(safeDecode(seg[1]));
     const p = b ? project(b.projectId) : undefined;
     return [
       { label: 'boxes', to: '/' },
@@ -73,7 +74,10 @@ function Breadcrumbs() {
                 {c.label}
               </span>
             ) : c.to ? (
-              <Link className="truncate transition-colors hover:text-primary max-sm:hidden" href={c.to}>
+              <Link
+                className="truncate transition-colors hover:text-primary max-sm:hidden"
+                href={c.to}
+              >
                 {c.label}
               </Link>
             ) : (
@@ -113,6 +117,9 @@ export function Topbar() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      // In a text field these are editing keys (bold, delete to end of line).
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       const k = e.key.toLowerCase();
       if (k === 'k') {
         e.preventDefault();

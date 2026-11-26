@@ -18,14 +18,14 @@ import { useStore } from '@/lib/boxes/store';
 import type { Box, BoxStatus } from '@/lib/boxes/types';
 import {
   buildLanes,
-  changePct,
+  plural,
   feedEntries,
   lastDays,
   runningAtOnce,
   type FeedEntry,
 } from '@/lib/dashboard-view';
 import { formatTokenCount, liveActivity, primaryLive, usageTotal } from '@/lib/live-status-view';
-import { subscriptionKey } from '@/lib/subscriptions';
+import { subscriptionKey, usageKeyLabel } from '@/lib/subscriptions';
 import { cn } from '@/lib/utils';
 import { ApprovalBanner } from '../approvals/components/approval-banner';
 import { AddProjectButton } from '../boxes/components/add-project-modal';
@@ -40,7 +40,6 @@ const SPAN_H = 12;
 const VIEW_KEY = 'hub-boxes-view';
 type View = 'table' | 'projects';
 
-const plural = (n: number, one: string, many = `${one}s`) => `${String(n)} ${n === 1 ? one : many}`;
 const fmtHours = (h: number) => (h >= 10 ? Math.round(h).toString() : h.toFixed(1));
 
 function relShort(ms: number, now: number): string {
@@ -72,7 +71,9 @@ function Kpi({
     <>
       <div className="eyebrow">{label}</div>
       <div className="mt-2 flex items-baseline gap-1.5">
-        <span className="text-[26px] font-semibold leading-none tabular-nums tracking-[-0.02em]">{value}</span>
+        <span className="text-[26px] font-semibold leading-none tabular-nums tracking-[-0.02em]">
+          {value}
+        </span>
         {unit ? <span className="text-sm text-muted-foreground">{unit}</span> : null}
       </div>
       <div className="mt-1 min-h-4 text-xs text-muted-foreground">{sub}</div>
@@ -198,9 +199,11 @@ export function Dashboard() {
       (accounts ?? []).filter((a) => a.limits?.atLimit).map((a) => subscriptionKey(a)),
     );
     const out = new Map<string, string>();
+    // Only a box with an agent to stall: a stopped one at a limit needs nothing.
     for (const b of boxes) {
+      if (b.status !== 'running' && b.status !== 'paused') continue;
       const sub = Object.values(b.subscriptions ?? {}).find((s) => at.has(s));
-      if (sub) out.set(b.id, sub);
+      if (sub) out.set(b.id, usageKeyLabel(sub, accounts ?? []));
     }
     return out;
   }, [accounts, boxes]);
@@ -224,7 +227,6 @@ export function Dashboard() {
   }));
 
   const mode = state.authMode === 'password' ? 'remote hub' : 'local hub';
-  const tokensChange = today && yesterday ? changePct(today.tokens, yesterday.tokens) : null;
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-6 pb-16 pt-6 max-sm:px-4">
@@ -339,7 +341,11 @@ export function Dashboard() {
           }
           chart={
             week ? (
-              <MiniBars data={week.map((d) => d.commits)} color="var(--c2)" label="Commits per day, last 7 days" />
+              <MiniBars
+                data={week.map((d) => d.commits)}
+                color="var(--c2)"
+                label="Commits per day, last 7 days"
+              />
             ) : (
               <div className="h-[34px]" />
             )
@@ -350,26 +356,23 @@ export function Dashboard() {
           value={today ? formatTokenCount(today.tokens) : '—'}
           href="/usage?view=tokens"
           sub={
-            today ? (
-              tokensChange ? (
-                <>
-                  <span className={tokensChange.startsWith('+') ? 'text-[var(--green-ink)]' : 'text-[var(--red)]'}>
-                    {tokensChange}
-                  </span>{' '}
-                  from yesterday
-                </>
-              ) : (
-                'across every agent session'
-              )
-            ) : stats.error ? (
-              'usage stats unavailable'
-            ) : (
-              ' '
-            )
+            today
+              ? // A plain reference, not a change: today is only part of a day.
+                yesterday && yesterday.tokens > 0
+                ? `${formatTokenCount(yesterday.tokens)} yesterday`
+                : 'across every agent session'
+              : stats.error
+                ? 'usage stats unavailable'
+                : ' '
           }
           chart={
             week ? (
-              <Sparkline data={week.map((d) => d.tokens)} height={34} color="var(--c4)" label="Tokens per day, last 7 days" />
+              <Sparkline
+                data={week.map((d) => d.tokens)}
+                height={34}
+                color="var(--c4)"
+                label="Tokens per day, last 7 days"
+              />
             ) : (
               <div className="h-[34px]" />
             )
@@ -454,7 +457,9 @@ export function Dashboard() {
                   ))}
                 </div>
               ) : (
-                <div className="px-4 pb-4 text-sm text-muted-foreground">Nothing in the last two days.</div>
+                <div className="px-4 pb-4 text-sm text-muted-foreground">
+                  Nothing in the last two days.
+                </div>
               )
             ) : (
               <Unavailable what="Activity" error={activity.error} />
@@ -522,7 +527,11 @@ export function Dashboard() {
         <Card className="overflow-hidden">
           <CardHead
             title="Needs a hand"
-            right={<span className="font-mono text-[11px] text-muted-foreground">{attention.length}</span>}
+            right={
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {attention.length}
+              </span>
+            }
           />
           {attention.length ? (
             <div className="divide-y divide-border">
@@ -539,7 +548,9 @@ export function Dashboard() {
                         b.status === 'error' ? 'bg-[var(--red)]' : 'bg-[var(--amber)]',
                       )}
                     />
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{b.task}</span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                      {b.task}
+                    </span>
                   </div>
                   <div className="mt-0.5 truncate pl-3.5 text-xs text-muted-foreground">
                     {b.status === 'error'
@@ -623,7 +634,9 @@ export function Dashboard() {
       ) : state.projects.length === 0 ? (
         <EmptyBox icon={Icons.folder}>
           <div className="font-medium text-foreground">No projects yet</div>
-          <div className="mt-1">Add one with New project, or run `agentbox create` in a folder.</div>
+          <div className="mt-1">
+            Add one with New project, or run `agentbox create` in a folder.
+          </div>
         </EmptyBox>
       ) : (
         state.projects
@@ -672,16 +685,22 @@ function LiveRow({ box }: { box: Box }) {
   const line = doing ?? (title && title.trim() !== box.task.trim() ? title : undefined);
   const Glyph = agentIcon(box.agent, Icons.terminal);
   return (
-    <Link href={'/boxes/' + box.id} className="block px-4 py-2.5 transition-colors hover:bg-muted/50">
+    <Link
+      href={'/boxes/' + box.id}
+      className="block px-4 py-2.5 transition-colors hover:bg-muted/50"
+    >
       <div className="flex items-center gap-2">
         <Glyph className="size-3.5 flex-none" />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{box.task}</span>
         {tokens !== undefined ? (
-          <span className="font-mono text-[11px] text-muted-foreground">{formatTokenCount(tokens)}</span>
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {formatTokenCount(tokens)}
+          </span>
         ) : null}
       </div>
       <div className="mt-1 truncate text-xs text-muted-foreground">
-        <span className="text-[var(--green-ink)]">›</span> {line ?? `${box.name || box.id} · ${box.host}`}
+        <span className="text-[var(--green-ink)]">›</span>{' '}
+        {line ?? `${box.name || box.id} · ${box.host}`}
       </div>
     </Link>
   );
@@ -705,7 +724,9 @@ function FeedRow({ entry, now, known }: { entry: FeedEntry; now: number; known: 
           ) : null}
         </span>
       </span>
-      <span className="flex-none font-mono text-[10.5px] text-muted-foreground">{relShort(entry.at, now)}</span>
+      <span className="flex-none font-mono text-[10.5px] text-muted-foreground">
+        {relShort(entry.at, now)}
+      </span>
     </>
   );
   const cls = 'flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left';

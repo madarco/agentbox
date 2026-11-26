@@ -315,7 +315,9 @@ function Tile({
 }) {
   return (
     <Card className="p-4 px-5" title={exact ?? value?.toLocaleString()}>
-      <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[var(--faint)]">{label}</div>
+      <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[var(--faint)]">
+        {label}
+      </div>
       <div className="mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.02em]">
         {text ?? fmt(value ?? 0)}
       </div>

@@ -4,7 +4,9 @@ import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 export function StatGrid({ children }: { children: ReactNode }) {
-  return <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">{children}</div>;
+  return (
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">{children}</div>
+  );
 }
 
 export function Stat({

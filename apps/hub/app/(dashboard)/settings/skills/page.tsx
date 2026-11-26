@@ -758,7 +758,10 @@ function SkillTableRow({
               · updated <Ago ms={Date.parse(s.updatedAt)} /> · {short(s.current)}
             </div>
           ) : cmp?.pc ? (
-            <div className="mt-1 truncate font-mono text-[11px] text-[var(--faint)]" title={cmp.pc.path}>
+            <div
+              className="mt-1 truncate font-mono text-[11px] text-[var(--faint)]"
+              title={cmp.pc.path}
+            >
               {fmtBytes(cmp.pc.size)} · {cmp.pc.files} file{cmp.pc.files === 1 ? '' : 's'} ·{' '}
               {cmp.pc.path}
             </div>

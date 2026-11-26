@@ -52,13 +52,25 @@ export function Dialog({
 }
 
 export function DialogHeader({ className, ...props }: DivProps) {
-  return <div className={cn('flex items-start gap-3 border-b border-border/70 px-5 pb-4 pt-5', className)} {...props} />;
+  return (
+    <div
+      className={cn('flex items-start gap-3 border-b border-border/70 px-5 pb-4 pt-5', className)}
+      {...props}
+    />
+  );
 }
 export function DialogTitle({ className, ...props }: DivProps) {
-  return <div className={cn('text-base font-semibold leading-tight tracking-tight', className)} {...props} />;
+  return (
+    <div
+      className={cn('text-base font-semibold leading-tight tracking-tight', className)}
+      {...props}
+    />
+  );
 }
 export function DialogDescription({ className, ...props }: DivProps) {
-  return <div className={cn('mt-1 font-mono text-xs text-muted-foreground', className)} {...props} />;
+  return (
+    <div className={cn('mt-1 font-mono text-xs text-muted-foreground', className)} {...props} />
+  );
 }
 export function DialogBody({ className, ...props }: DivProps) {
   return <div className={cn('px-5 py-4', className)} {...props} />;
@@ -66,7 +78,10 @@ export function DialogBody({ className, ...props }: DivProps) {
 export function DialogFooter({ className, ...props }: DivProps) {
   return (
     <div
-      className={cn('flex justify-end gap-2.5 rounded-b-2xl border-t border-border/70 bg-background px-5 py-3.5', className)}
+      className={cn(
+        'flex justify-end gap-2.5 rounded-b-2xl border-t border-border/70 bg-background px-5 py-3.5',
+        className,
+      )}
       {...props}
     />
   );

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLanes,
-  changePct,
   feedEntries,
   lastDays,
   runningAtOnce,
@@ -106,6 +105,20 @@ describe('buildLanes', () => {
     expect(bad.box?.id).toBe('job:j1');
   });
 
+  it('gives a name-only row to the box of that name that followed it, not a later one', () => {
+    const lanes = buildLanes(
+      [
+        ev('1', 'box.started', 8, { boxName: 'smoke' }),
+        ev('2', 'box.stopped', 7, { boxId: 'A', boxName: 'smoke' }),
+        ev('3', 'box.ready', 3, { boxId: 'B', boxName: 'smoke' }),
+      ],
+      [box('B', 'running', { name: 'smoke' })],
+      NOW,
+    );
+    expect(lanes.find((l) => l.key === 'A')!.segs).toEqual([[8, 7, 'running']]);
+    expect(lanes.find((l) => l.key === 'B')!.segs).toEqual([[3, 0, 'running']]);
+  });
+
   it('counts boxes running at once', () => {
     const lanes = buildLanes(
       [ev('1', 'box.ready', 8, { boxId: 'x' }), ev('2', 'box.ready', 2, { boxId: 'y' })],
@@ -124,11 +137,21 @@ describe('feedEntries', () => {
   it('words pushes, PRs and lifecycle rows, newest first', () => {
     const f = feedEntries([
       ev('1', 'box.ready', 5, { boxId: 'a', boxName: 'a' }),
-      ev('2', 'git.push', 3, { boxName: 'a', branch: 'feat/x', commits: 1, additions: 4, deletions: 1 }),
+      ev('2', 'git.push', 3, {
+        boxName: 'a',
+        branch: 'feat/x',
+        commits: 1,
+        additions: 4,
+        deletions: 1,
+      }),
       ev('3', 'pr.merged', 1, { boxName: 'a', pr: { repo: 'o/r', number: 7 } }),
       ev('4', 'box.unknown', 0.5, { boxName: 'a' }),
     ]);
-    expect(f.map((e) => e.text)).toEqual(['Merged o/r#7', 'Pushed 1 commit to feat/x', 'Box ready']);
+    expect(f.map((e) => e.text)).toEqual([
+      'Merged o/r#7',
+      'Pushed 1 commit to feat/x',
+      'Box ready',
+    ]);
     expect(f[1]!.additions).toBe(4);
   });
 });
@@ -160,13 +183,5 @@ describe('lastDays', () => {
     expect(days[0]!.date).toBe('2026-11-20');
     expect(days[6]).toMatchObject({ date: '2026-11-26', label: 'Thu', commits: 3, prs: 1 });
     expect(days[5]!.commits).toBe(0);
-  });
-});
-
-describe('changePct', () => {
-  it('signs the change and declines a zero base', () => {
-    expect(changePct(118, 100)).toBe('+18%');
-    expect(changePct(96, 100)).toBe('−4%');
-    expect(changePct(5, 0)).toBeNull();
   });
 });

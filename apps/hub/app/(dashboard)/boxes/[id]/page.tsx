@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card';
 import { useStore } from '@/lib/boxes/store';
 import type { Box } from '@/lib/boxes/types';
 import { boxRunning, formatTokenCount, primaryLive, usageTotal } from '@/lib/live-status-view';
+import { safeDecode } from '@/lib/utils';
 import { BoxApprovals } from '../../approvals/components/box-approvals';
 import { AccountRows } from '../components/account-switcher';
 import { Access } from '../components/access';
@@ -30,7 +31,7 @@ import { SkillsPanel } from '../components/skills-panel';
 export default function BoxDetailPage() {
   // The segment comes back still percent-encoded, so a failed create's
   // synthetic `job:<id>` row would never match.
-  const id = decodeURIComponent(useParams<{ id: string }>().id);
+  const id = safeDecode(useParams<{ id: string }>().id);
   const { box: getBox, project } = useStore();
   const box = getBox(id);
 
@@ -161,7 +162,9 @@ export default function BoxDetailPage() {
               {box.hasGit === false ? null : <DRow k="Branch" v={box.branch} mono />}
               <DRow k="Agent" v={<AgentLabel agent={box.agent} />} />
               <DRow k="Host" v={box.host} mono />
-              {box.status === 'creating' || box.status === 'error' ? null : <AccountRows box={box} />}
+              {box.status === 'creating' || box.status === 'error' ? null : (
+                <AccountRows box={box} />
+              )}
               <DRow k="Created" v={new Date(box.createdAt).toLocaleString()} />
             </div>
           </Card>

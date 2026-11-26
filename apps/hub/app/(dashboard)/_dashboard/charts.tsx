@@ -63,11 +63,21 @@ export function Sparkline({
         ])
       : [];
   const line = step
-    ? pts.map((p, i) => (i ? `H${String(p[0])}V${String(p[1])}` : `M${String(p[0])},${String(p[1])}`)).join('')
+    ? pts
+        .map((p, i) =>
+          i ? `H${String(p[0])}V${String(p[1])}` : `M${String(p[0])},${String(p[1])}`,
+        )
+        .join('')
     : smooth(pts);
   const last = pts[pts.length - 1];
   return (
-    <div ref={ref} className={cn('w-full', className)} style={{ height }} role="img" aria-label={label}>
+    <div
+      ref={ref}
+      className={cn('w-full', className)}
+      style={{ height }}
+      role="img"
+      aria-label={label}
+    >
       {w && last ? (
         <svg width={w} height={height} className="block overflow-visible" aria-hidden="true">
           <defs>
@@ -80,9 +90,23 @@ export function Sparkline({
             d={`${line} L${String(last[0])},${String(height)} L${String(pts[0]![0])},${String(height)} Z`}
             fill={`url(#${id})`}
           />
-          <path d={line} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+          <path
+            d={line}
+            fill="none"
+            stroke={color}
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
           {dot ? (
-            <circle cx={last[0]} cy={last[1]} r="2.6" fill={color} stroke="hsl(var(--card))" strokeWidth="1.5" />
+            <circle
+              cx={last[0]}
+              cy={last[1]}
+              r="2.6"
+              fill={color}
+              stroke="hsl(var(--card))"
+              strokeWidth="1.5"
+            />
           ) : null}
         </svg>
       ) : null}
@@ -108,7 +132,13 @@ export function MiniBars({
   const gap = 3;
   const bw = w ? (w - gap * (data.length - 1)) / data.length : 0;
   return (
-    <div ref={ref} className={cn('w-full', className)} style={{ height }} role="img" aria-label={label}>
+    <div
+      ref={ref}
+      className={cn('w-full', className)}
+      style={{ height }}
+      role="img"
+      aria-label={label}
+    >
       {w ? (
         <svg width={w} height={height} className="block" aria-hidden="true">
           {data.map((v, i) => {
@@ -160,7 +190,12 @@ export function WeekBars({
   const plotTop = top + Math.min(dots, 6) * 8;
   const y = (v: number) => plotTop + (1 - v / max) * (height - plotTop - bottom);
   return (
-    <div ref={ref} className="relative w-full" style={{ height }} onMouseLeave={() => setHover(null)}>
+    <div
+      ref={ref}
+      className="relative w-full"
+      style={{ height }}
+      onMouseLeave={() => setHover(null)}
+    >
       {w ? (
         <svg width={w} height={height} className="block" role="img" aria-label="Commits per day">
           {[0.5, 1].map((f) => (
@@ -174,7 +209,13 @@ export function WeekBars({
               strokeDasharray="2 4"
             />
           ))}
-          <line x1="0" x2={w} y1={height - bottom} y2={height - bottom} stroke="hsl(var(--border))" />
+          <line
+            x1="0"
+            x2={w}
+            y1={height - bottom}
+            y2={height - bottom}
+            stroke="hsl(var(--border))"
+          />
           {values.map((v, i) => {
             const x = i * (bw + gap);
             const last = i === values.length - 1;
@@ -192,7 +233,13 @@ export function WeekBars({
                   opacity={hover === i || (hover === null && last) ? 1 : 0.38}
                 />
                 {Array.from({ length: n }).map((_, k) => (
-                  <circle key={k} cx={x + bw / 2} cy={y(v) - 7 - k * 8} r="2.6" fill="var(--violet)" />
+                  <circle
+                    key={k}
+                    cx={x + bw / 2}
+                    cy={y(v) - 7 - k * 8}
+                    r="2.6"
+                    fill="var(--violet)"
+                  />
                 ))}
                 <text
                   x={x + bw / 2}
@@ -247,7 +294,13 @@ export function Lanes({
   return (
     <div ref={ref} className="relative w-full" onMouseLeave={() => setHover(null)}>
       {w ? (
-        <svg width={w} height={H} className="block" role="img" aria-label={`Boxes over the last ${String(span)} hours`}>
+        <svg
+          width={w}
+          height={H}
+          className="block"
+          role="img"
+          aria-label={`Boxes over the last ${String(span)} hours`}
+        >
           {ticks.map((t) => (
             <g key={t}>
               <line
@@ -312,7 +365,14 @@ export function Lanes({
                   );
                 })}
                 {live ? (
-                  <circle cx={x(0)} cy={cy} r="4" fill="var(--c1)" stroke="hsl(var(--card))" strokeWidth="2" />
+                  <circle
+                    cx={x(0)}
+                    cy={cy}
+                    r="4"
+                    fill="var(--c1)"
+                    stroke="hsl(var(--card))"
+                    strokeWidth="2"
+                  />
                 ) : null}
                 {l.pushes.map((c, j) => (
                   <circle
@@ -343,7 +403,12 @@ export function Lanes({
                 {l.failed !== undefined ? (
                   <g transform={`translate(${String(x(l.failed))},${String(cy)})`}>
                     <circle r="5.5" fill="var(--red)" />
-                    <path d="M-2,-2 L2,2 M2,-2 L-2,2" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
+                    <path
+                      d="M-2,-2 L2,2 M2,-2 L-2,2"
+                      stroke="#fff"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                    />
                   </g>
                 ) : null}
                 <title>{l.label}</title>
@@ -368,9 +433,15 @@ export function Legend({
           {it.shape === 'dot' ? (
             <span className="size-[7px] rounded-full border-[1.4px] border-[var(--green-ink)] bg-card" />
           ) : it.shape === 'diamond' ? (
-            <span className="size-[7px] rotate-45 rounded-[1.5px]" style={{ background: it.color }} />
+            <span
+              className="size-[7px] rotate-45 rounded-[1.5px]"
+              style={{ background: it.color }}
+            />
           ) : (
-            <span className="h-[6px] w-3 rounded-full" style={{ background: it.color, opacity: it.op ?? 0.9 }} />
+            <span
+              className="h-[6px] w-3 rounded-full"
+              style={{ background: it.color, opacity: it.op ?? 0.9 }}
+            />
           )}
           {it.label}
         </span>

@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import type { Icon } from '@/components/icons';
 import { cn } from '@/lib/utils';
@@ -36,9 +43,7 @@ export function Popover({
     if (!r) return null;
     return {
       position: 'fixed',
-      ...(side === 'top'
-        ? { bottom: window.innerHeight - r.top + 6 }
-        : { top: r.bottom + 6 }),
+      ...(side === 'top' ? { bottom: window.innerHeight - r.top + 6 } : { top: r.bottom + 6 }),
       ...(align === 'end' ? { right: window.innerWidth - r.right } : { left: r.left }),
     };
   };
@@ -54,15 +59,20 @@ export function Popover({
       if (e.key === 'Escape') setPos(null);
     };
     const onMove = () => setPos(null);
+    // Scrolling the panel's own list is not leaving it.
+    const onScroll = (e: Event) => {
+      if (panel.current?.contains(e.target as Node)) return;
+      setPos(null);
+    };
     document.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey);
     window.addEventListener('resize', onMove);
-    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('scroll', onScroll, true);
     return () => {
       document.removeEventListener('mousedown', onDown);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onMove);
-      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('scroll', onScroll, true);
     };
   }, [open]);
 
@@ -140,7 +150,13 @@ export function MenuItem({
     );
   }
   return (
-    <button role="menuitem" type="button" disabled={disabled} onClick={onClick} className={className}>
+    <button
+      role="menuitem"
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={className}
+    >
       {inner}
     </button>
   );

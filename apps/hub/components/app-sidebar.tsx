@@ -63,7 +63,13 @@ function SideItem({
   );
   if (href) {
     return (
-      <a className={itemClass(active, sub)} href={href} target="_blank" rel="noopener" title={label}>
+      <a
+        className={itemClass(active, sub)}
+        href={href}
+        target="_blank"
+        rel="noopener"
+        title={label}
+      >
         {inner}
       </a>
     );

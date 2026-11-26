@@ -19,9 +19,9 @@ export function toggleSidebar(): void {
   window.dispatchEvent(new Event(EVENT));
 }
 
-/** The header button: a drawer under 760px, the rail toggle above. */
+/** The header button: a drawer under Tailwind's md (768px), the rail toggle above. */
 export function toggleNav(): void {
-  if (window.matchMedia('(max-width: 760px)').matches) {
+  if (window.matchMedia('(max-width: 767.98px)').matches) {
     document.body.classList.toggle('nav-open');
   } else {
     toggleSidebar();

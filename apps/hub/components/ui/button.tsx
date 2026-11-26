@@ -29,7 +29,13 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> &
     size?: keyof typeof buttonSizes;
   };
 
-export function Button({ className, variant = 'default', size = 'default', href, ...props }: ButtonProps) {
+export function Button({
+  className,
+  variant = 'default',
+  size = 'default',
+  href,
+  ...props
+}: ButtonProps) {
   const classes = cn(
     'inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
     buttonVariants[variant],
@@ -37,7 +43,9 @@ export function Button({ className, variant = 'default', size = 'default', href,
     className,
   );
   if (href !== undefined) {
-    return <a className={classes} href={href} {...(props as AnchorHTMLAttributes<HTMLAnchorElement>)} />;
+    return (
+      <a className={classes} href={href} {...(props as AnchorHTMLAttributes<HTMLAnchorElement>)} />
+    );
   }
   return <button className={classes} {...(props as ButtonHTMLAttributes<HTMLButtonElement>)} />;
 }

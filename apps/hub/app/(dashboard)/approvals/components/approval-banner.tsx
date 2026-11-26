@@ -23,22 +23,36 @@ export function ApprovalBanner() {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           {box ? (
-            <Link className="text-[13.5px] font-semibold hover:text-[var(--green-ink)]" href={'/boxes/' + box.id}>
+            <Link
+              className="text-[13.5px] font-semibold hover:text-[var(--green-ink)]"
+              href={'/boxes/' + box.id}
+            >
               {box.task}
             </Link>
           ) : (
             <span className="text-[13.5px] font-semibold">{a.boxId}</span>
           )}
-          <span className="truncate font-mono text-[12.5px] text-secondary-foreground">{a.command ?? a.message}</span>
+          <span className="truncate font-mono text-[12.5px] text-secondary-foreground">
+            {a.command ?? a.message}
+          </span>
         </div>
-        {a.detail ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{a.detail}</div> : null}
-        {a.cwd ? <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--faint)]">{a.cwd}</div> : null}
+        {a.detail ? (
+          <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{a.detail}</div>
+        ) : null}
+        {a.cwd ? (
+          <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--faint)]">{a.cwd}</div>
+        ) : null}
       </div>
       <div className="flex flex-none items-center gap-3">
         {approvals.length > 1 ? (
           <div className="hidden items-center gap-2 sm:flex">
-            <span className="font-mono text-[11.5px] text-[var(--amber)]">{approvals.length} pending</span>
-            <Link className="font-mono text-[11.5px] text-muted-foreground hover:text-[var(--green-ink)]" href="/approvals">
+            <span className="font-mono text-[11.5px] text-[var(--amber)]">
+              {approvals.length} pending
+            </span>
+            <Link
+              className="font-mono text-[11.5px] text-muted-foreground hover:text-[var(--green-ink)]"
+              href="/approvals"
+            >
               View all
             </Link>
           </div>

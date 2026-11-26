@@ -50,7 +50,11 @@ export function Facet({
                 </Badge>
               ) : (
                 selected.map((s) => (
-                  <Badge key={s} variant="secondary" className="rounded-sm px-1 font-sans font-normal">
+                  <Badge
+                    key={s}
+                    variant="secondary"
+                    className="rounded-sm px-1 font-sans font-normal"
+                  >
                     {options.find((o) => o.value === s)?.label ?? s}
                   </Badge>
                 ))
@@ -61,9 +65,11 @@ export function Facet({
       )}
     >
       {() => (
-        <div className="p-1">
+        <div className="max-h-[min(20rem,60vh)] overflow-y-auto p-1">
           {options.length === 0 ? (
-            <div className="px-2 py-3 text-center text-sm text-muted-foreground">Nothing to filter</div>
+            <div className="px-2 py-3 text-center text-sm text-muted-foreground">
+              Nothing to filter
+            </div>
           ) : null}
           {options.map((o) => {
             const on = selected.includes(o.value);

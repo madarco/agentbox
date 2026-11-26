@@ -111,7 +111,10 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
                 Open
               </MenuItem>
             )}
-            <MenuItem icon={Icons.copy} onClick={pick(() => void navigator.clipboard?.writeText(box.id))}>
+            <MenuItem
+              icon={Icons.copy}
+              onClick={pick(() => void navigator.clipboard?.writeText(box.id))}
+            >
               Copy box id
             </MenuItem>
             <MenuItem icon={Icons.pencil} disabled={pending} onClick={pick(rename)}>
@@ -121,7 +124,11 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
               <>
                 <MenuSeparator />
                 {paused ? (
-                  <MenuItem icon={Icons.play} disabled={pending} onClick={pick(() => run(resumeBoxAction))}>
+                  <MenuItem
+                    icon={Icons.play}
+                    disabled={pending}
+                    onClick={pick(() => run(resumeBoxAction))}
+                  >
                     Resume
                   </MenuItem>
                 ) : (
@@ -133,7 +140,11 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
                     Pause
                   </MenuItem>
                 )}
-                <MenuItem icon={Icons.stop} disabled={pending || stopped} onClick={pick(() => run(stopBoxAction))}>
+                <MenuItem
+                  icon={Icons.stop}
+                  disabled={pending || stopped}
+                  onClick={pick(() => run(stopBoxAction))}
+                >
                   Stop
                 </MenuItem>
               </>
@@ -168,7 +179,11 @@ export function BoxActions({ box, size }: { box: Box; size?: 'lg' }) {
           Resume
         </Button>
       ) : (
-        <Button variant="outline" disabled={pending || !running} onClick={() => run(pauseBoxAction)}>
+        <Button
+          variant="outline"
+          disabled={pending || !running}
+          onClick={() => run(pauseBoxAction)}
+        >
           <Icons.pause />
           Pause
         </Button>

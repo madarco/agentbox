@@ -1,4 +1,9 @@
-import type { HTMLAttributes, TableHTMLAttributes, ThHTMLAttributes, TdHTMLAttributes } from 'react';
+import type {
+  HTMLAttributes,
+  TableHTMLAttributes,
+  ThHTMLAttributes,
+  TdHTMLAttributes,
+} from 'react';
 import { cn } from '@/lib/utils';
 
 export function Table({ className, ...props }: TableHTMLAttributes<HTMLTableElement>) {
@@ -9,7 +14,12 @@ export function Table({ className, ...props }: TableHTMLAttributes<HTMLTableElem
   );
 }
 export function TableHeader({ className, ...props }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn('bg-muted/40 [&_tr]:border-b [&_tr]:border-border', className)} {...props} />;
+  return (
+    <thead
+      className={cn('bg-muted/40 [&_tr]:border-b [&_tr]:border-border', className)}
+      {...props}
+    />
+  );
 }
 export function TableBody({ className, ...props }: HTMLAttributes<HTMLTableSectionElement>) {
   return <tbody className={cn('[&_tr:last-child]:border-0', className)} {...props} />;

@@ -80,12 +80,19 @@ export function buildLanes(
   // so a retry under the same name does not inherit the failure.
   const jobToId = new Map<string, string>();
   for (const e of events) if (e.boxId && e.jobId) jobToId.set(e.jobId, e.boxId);
-  const nameToId = new Map<string, string>();
-  for (const e of events) if (e.boxId && e.boxName) nameToId.set(e.boxName, e.boxId);
+  // A row with only a name belongs to the first box of that name seen at or
+  // after it: a later box that reused the name must not inherit it.
+  const named = events
+    .filter((e) => e.boxId && e.boxName)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const idForName = (name: string, at: string): string | undefined =>
+    named.find((e) => e.boxName === name && Date.parse(e.at) >= Date.parse(at))?.boxId;
   const keyOf = (e: DashActivity): string | undefined => {
     if (e.boxId) return e.boxId;
     if (e.jobId) return jobToId.get(e.jobId) ?? `job:${e.jobId}`;
-    if (e.boxName) return nameToId.get(e.boxName) ?? byName.get(e.boxName)?.id ?? `name:${e.boxName}`;
+    if (e.boxName) {
+      return idForName(e.boxName, e.at) ?? byName.get(e.boxName)?.id ?? `name:${e.boxName}`;
+    }
     return undefined;
   };
   const groups = new Map<string, DashActivity[]>();
@@ -184,7 +191,9 @@ const LIFECYCLE_TEXT: Record<string, string> = {
   'box.destroyed': 'Box destroyed',
 };
 
-const plural = (n: number, one: string) => `${String(n)} ${one}${n === 1 ? '' : 's'}`;
+/** `1 box`, `2 boxes`. */
+export const plural = (n: number, one: string, many = `${one}s`): string =>
+  `${String(n)} ${n === 1 ? one : many}`;
 
 /** The newest ledger rows as feed lines, newest first. */
 export function feedEntries(events: readonly DashActivity[], limit = 6): FeedEntry[] {
@@ -275,11 +284,4 @@ export function lastDays(stats: Pick<UsageStats, 'daily' | 'range'>, n = 7): Wee
     });
   }
   return out;
-}
-
-/** `+18%` / `−4%` from yesterday; null when yesterday had nothing to compare with. */
-export function changePct(today: number, yesterday: number): string | null {
-  if (yesterday <= 0) return null;
-  const pct = Math.round(((today - yesterday) / yesterday) * 100);
-  return `${pct >= 0 ? '+' : '−'}${String(Math.abs(pct))}%`;
 }

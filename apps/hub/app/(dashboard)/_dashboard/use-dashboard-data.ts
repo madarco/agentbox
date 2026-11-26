@@ -7,7 +7,7 @@
 // off) and the cards that need it say so instead of drawing zeros.
 
 import type { UsageStats } from '@agentbox/usage-view';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DashActivity } from '@/lib/dashboard-view';
 
 const REFRESH_MS = 60_000;
@@ -43,8 +43,12 @@ export function useDashboardData(): {
   const [stats, setStats] = useState<Loaded<UsageStats>>({ data: null, error: null });
   const [activity, setActivity] = useState<Loaded<DashActivity[]>>({ data: null, error: null });
   const [readAt, setReadAt] = useState(() => Date.now());
+  // Loads overlap (mount, the interval, a tab coming back); only the newest
+  // one may land, and none after unmount.
+  const seq = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     const tz = browserZone();
     const q = new URLSearchParams({ range: '7d', since: '7d', tz });
     const [s, a] = await Promise.allSettled([
@@ -52,6 +56,7 @@ export function useDashboardData(): {
       // 48 h back so the lanes know the state the 12 h window opens in.
       getJson<{ events: DashActivity[] }>('/api/v1/activity?since=48h&order=desc&limit=2000'),
     ]);
+    if (mine !== seq.current) return;
     setStats(
       s.status === 'fulfilled'
         ? { data: s.value, error: null }
@@ -77,6 +82,7 @@ export function useDashboardData(): {
     return () => {
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVis);
+      seq.current++;
     };
   }, [load]);
 

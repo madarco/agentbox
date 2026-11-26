@@ -23,7 +23,10 @@ export function DRow({
         )}
       >
         {link ? (
-          <Link className="cursor-pointer font-medium underline-offset-4 hover:underline" href={link}>
+          <Link
+            className="cursor-pointer font-medium underline-offset-4 hover:underline"
+            href={link}
+          >
             {v}
           </Link>
         ) : (

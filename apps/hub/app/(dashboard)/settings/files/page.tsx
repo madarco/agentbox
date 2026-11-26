@@ -318,7 +318,9 @@ function Pill({
       )}
     >
       {label}
-      <span className={cn('font-mono text-[11px]', active ? 'text-primary' : 'text-[var(--faint)]')}>
+      <span
+        className={cn('font-mono text-[11px]', active ? 'text-primary' : 'text-[var(--faint)]')}
+      >
         {count}
       </span>
     </button>
