@@ -7,7 +7,9 @@
 //   range:        7d | month | 90d | year, the page's label (default from the length)
 //   subscription: only sessions and boxes on this `<agent>/<account>`
 // The window is checked against the schema's bounds (2020-2100, at most a year)
-// before any day is walked.
+// before any day is walked. Other PCs' usage contributions (Phase 4b) are merged
+// in, except under a subscription filter (a contribution carries no account).
+import { tryGetMachineId } from '@agentbox/config';
 import { parseUsageStatsQuery, usageStats } from '@/lib/backend/usage-stats';
 import { fail, ok } from '../../lib/envelope';
 
@@ -17,7 +19,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request): Promise<Response> {
   const history = globalThis.__AGENTBOX_HUB_HISTORY;
   const ledger = globalThis.__AGENTBOX_HUB_ACTIVITY;
-  if (!history && !ledger) {
+  const contributions = globalThis.__AGENTBOX_HUB_USAGE_CONTRIBUTIONS;
+  if (!history && !ledger && !contributions) {
     return fail(
       'backend_unavailable',
       'neither session history nor the activity ledger is enabled',
@@ -38,7 +41,12 @@ export async function GET(req: Request): Promise<Response> {
     );
     if (!parsed.ok) return fail('invalid_request', parsed.message);
     const stats = await usageStats(
-      { history: history?.repo ?? null, ledger: ledger ?? null },
+      {
+        history: history?.repo ?? null,
+        ledger: ledger ?? null,
+        contributions: contributions ?? null,
+        ...(selfMachineId() ? { selfMachineId: selfMachineId() } : {}),
+      },
       parsed.query,
     );
     return ok(stats);
@@ -49,3 +57,5 @@ export async function GET(req: Request): Promise<Response> {
     );
   }
 }
+
+const selfMachineId = (): string | undefined => tryGetMachineId();

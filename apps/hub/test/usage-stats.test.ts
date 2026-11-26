@@ -375,3 +375,107 @@ describe('computeUsageStats', () => {
     expect(ledger.calls.length).toBeGreaterThan(calls);
   });
 });
+
+describe('usage contributions (Phase 4b)', () => {
+  it("merges another PC's metrics: intervals union, sums, no transcript or name leaves the PC", async () => {
+    // The PC: docker box `pc-box` 09:00-11:00, a host session 10:00-10:30, a push.
+    const pc = await openSqliteHistoryRepo(':memory:');
+    await session(pc, {
+      id: 'pc-s1',
+      boxId: 'pc-box',
+      turns: every(9, 11),
+      tokens: [{ at: at(9.5), n: 700 }],
+      project: 'https://github.com/acme/secret-project.git',
+    });
+    await session(pc, { id: 'pc-host', boxId: null, turns: every(10, 10.5) });
+    // A box the control box also holds: the PC's copy must not count twice.
+    await session(pc, {
+      id: 'pc-s2',
+      boxId: 'cloud-box',
+      provider: 'hetzner',
+      turns: every(9, 10),
+    });
+    await pc.refreshSpans(1000);
+    const pcLedger = fakeLedger([
+      ev('box.ready', at(8.9), {
+        boxId: 'pc-box',
+        provider: 'docker',
+        agent: 'claude',
+        boxName: 'my-secret-box',
+        projectKey: 'github.com/acme/secret-project',
+        branch: 'secret-branch',
+      }),
+      ev('git.push', at(10), {
+        boxId: 'pc-box',
+        commits: 3,
+        filesChanged: 2,
+        additions: 40,
+        deletions: 5,
+        branch: 'secret-branch',
+      }),
+      ev('pr.merged', at(10.5), {
+        boxId: 'pc-box',
+        pr: { repo: 'acme/secret-project', number: 9 },
+      }),
+      ev('box.stopped', at(11.5), { boxId: 'pc-box' }),
+    ]);
+    const { buildContribution } = await import('../lib/backend/usage-contrib');
+    const contribution = await buildContribution(
+      { history: pc, ledger: pcLedger },
+      { machineId: 'pc-machine-1', days: 35, tz: 'UTC', now: NOW },
+    );
+    const body = JSON.stringify(contribution);
+    for (const secret of [
+      'secret prompt text',
+      'my-secret-box',
+      'secret-project',
+      'secret-branch',
+      'acme',
+    ])
+      expect(body).not.toContain(secret);
+    expect(contribution.intervals.filter((i) => i.boxId === null)).toHaveLength(1);
+
+    // The control box: its own hetzner box 10:00-12:00, which it holds the sessions of.
+    const control = await openSqliteHistoryRepo(':memory:');
+    await session(control, {
+      id: 'cb-s1',
+      boxId: 'cloud-box',
+      provider: 'hetzner',
+      turns: every(10, 12),
+    });
+    await control.refreshSpans(1000);
+    const stats = await computeUsageStats(
+      {
+        history: control,
+        ledger: fakeLedger([]),
+        contributions: { list: async () => [contribution] },
+        selfMachineId: 'control-machine',
+        now: () => NOW,
+      },
+      window,
+    );
+    expect(() => UsageStats.parse(stats)).not.toThrow();
+    // cloud-box 2h1m (its PC copy dropped) + pc-box 2h1m + host 31m.
+    expect(stats.hero.agentHours).toBeCloseTo(4.6, 1);
+    // 09:00 to 12:01.
+    expect(stats.hero.wallHours).toBeCloseTo(3.0, 1);
+    expect(stats.hero.peakAtOnce).toBe(3);
+    expect(stats.hero.commits).toBe(3);
+    expect(stats.daily.find((d) => d.date === '2026-11-20')!.tokens).toBe(700);
+    expect(stats.daily.find((d) => d.date === '2026-11-20')!.prsMerged).toBe(1);
+
+    // Its own machine id, and a subscription view, take no contributions.
+    clearUsageStatsCache();
+    const self = await computeUsageStats(
+      {
+        history: control,
+        ledger: fakeLedger([]),
+        contributions: { list: async () => [{ ...contribution, machineId: 'control-machine' }] },
+        selfMachineId: 'control-machine',
+        now: () => NOW,
+      },
+      window,
+    );
+    expect(self.hero.agentHours).toBeCloseTo(2.0, 1);
+  });
+});

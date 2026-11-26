@@ -3,6 +3,33 @@
 Open items found while building the phases of
 [`usage-dashboard-plan.md`](./usage-dashboard-plan.md). Newest phase first.
 
+## From Phase 4b (usage contributions to a remote hub)
+
+- **"Sync this PC" button**: the Usage page (feat/usage-page, Phase 3) is in a
+  parallel PR. Once it is merged, add a button on the local hub's page that calls
+  `POST /api/v1/usage/contributions/sync` and shows its `status`, shown only when a
+  remote hub is configured (`no-remote` hides it).
+- **A contribution is not tied to its sender.** Any `/api/v1` credential may post
+  under any machine id. A device token could pin the id to its device (the
+  multi-PC Stage 2 item about devices claiming each other's ids applies here too).
+- **No subscription view of PC rows.** A contribution carries no account (an
+  account name is free text), so `?subscription=` shows the control box's rows
+  only. Sending a hash of the account would allow it.
+- **PC boxes read by id, and no project split.** Names and project keys stay on the
+  PC by design; the control box's boxes table, Gantt labels and "by project" split
+  show a PC box by its id and leave its rows out of the project split.
+- **`runningNow` ignores PC boxes.** The live counter is the control box's own
+  ledger; a PC box running now is in the box-hours (its run ends at the push
+  time) but not in "running now".
+- **Day buckets are the PC's zone.** Tokens and shipped counts travel per local day
+  in the PC hub's zone and land at noon of that day; a reader in a zone more than
+  12 hours away moves them by a day. Intervals and box runs are exact.
+- **File store.** Contributions are JSON files on the control box's disk, read
+  whole on each stats miss (memoized 10 s). A postgres control box would want a
+  table; a year of a busy PC is a few MB.
+- **Removing a PC.** There is no route to drop one machine's contribution; delete
+  `~/.agentbox/hub/usage-contributions/<machineId>.json` on the control box.
+
 ## From Phase 5 (agent-box.sh share endpoint and page)
 
 - **Owner setup before it works in production**: add Neon to the Vercel project

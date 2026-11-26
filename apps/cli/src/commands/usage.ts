@@ -7,7 +7,7 @@
  */
 import { log } from '@agentbox/cli-kit';
 import { Command } from 'commander';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
 import { parseUsageBy, usageHeroLines, usageTable } from '../lib/usage-format.js';
 
@@ -122,6 +122,17 @@ export const usageCommand = new Command('usage')
       local?: boolean;
       json?: boolean;
     }) => {
+      // With a remote hub configured, this PC's local boxes and sessions reach it as
+      // a usage contribution (metrics only): push it first so the numbers are current.
+      // No-op without a remote hub; never auto-starts the local one.
+      if (!opts.local) {
+        const r = await withHubClientQuiet({ preferLocal: true }, (c) =>
+          c.syncUsageContribution(),
+        );
+        if (!r.ok && !/no hub is configured or running/.test(r.error)) {
+          log.warn(`This PC's usage was not sent to the remote hub: ${r.error}`);
+        }
+      }
       await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
         const stats = await client.usageStats({
           since: opts.since,
