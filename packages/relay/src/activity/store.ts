@@ -173,6 +173,16 @@ function limitOf(q: ActivityQuery): number {
   return Math.max(1, Math.min(ACTIVITY_QUERY_MAX, Math.floor(n)));
 }
 
+function orderOf(q: ActivityQuery): string {
+  return q.order === 'desc' ? 'ORDER BY at DESC, id DESC' : 'ORDER BY at ASC, id ASC';
+}
+
+/** Rows as events, oldest first whichever end of the window the query took. */
+function rowsOf(rows: Record<string, unknown>[], q: ActivityQuery): ActivityEvent[] {
+  const events = rows.map(fromRow).filter((e): e is ActivityEvent => e !== null);
+  return q.order === 'desc' ? events.reverse() : events;
+}
+
 const CREATED_AT = 'created_at';
 
 // ── sqlite ──
@@ -242,9 +252,22 @@ export class SqliteActivityStore implements ActivityStore {
     const db = this.open();
     const { sql, params } = whereOf(query, () => '?');
     const rows = db
-      .prepare(`SELECT * FROM activity_events ${sql} ORDER BY at ASC, id ASC LIMIT ?`)
+      .prepare(`SELECT * FROM activity_events ${sql} ${orderOf(query)} LIMIT ?`)
       .all(...params, limitOf(query)) as Record<string, unknown>[];
-    return Promise.resolve(rows.map(fromRow).filter((e): e is ActivityEvent => e !== null));
+    return Promise.resolve(rowsOf(rows, query));
+  }
+
+  has(ids: readonly string[]): Promise<Set<string>> {
+    const db = this.open();
+    const out = new Set<string>();
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const rows = db
+        .prepare(`SELECT id FROM activity_events WHERE id IN (${chunk.map(() => '?').join(', ')})`)
+        .all(...chunk) as { id: string }[];
+      for (const r of rows) out.add(r.id);
+    }
+    return Promise.resolve(out);
   }
 
   getMeta(key: string): Promise<string | undefined> {
@@ -344,12 +367,19 @@ export class PostgresActivityStore implements ActivityStore {
     const pool = await this.ready();
     const { sql, params } = whereOf(query, (i) => `$${String(i)}`);
     const r = await pool.query(
-      `SELECT * FROM activity_events ${sql} ORDER BY at ASC, id ASC LIMIT $${String(params.length + 1)}`,
+      `SELECT * FROM activity_events ${sql} ${orderOf(query)} LIMIT $${String(params.length + 1)}`,
       [...params, limitOf(query)],
     );
-    return (r.rows as Record<string, unknown>[])
-      .map(fromRow)
-      .filter((e): e is ActivityEvent => e !== null);
+    return rowsOf(r.rows as Record<string, unknown>[], query);
+  }
+
+  async has(ids: readonly string[]): Promise<Set<string>> {
+    const out = new Set<string>();
+    if (ids.length === 0) return out;
+    const pool = await this.ready();
+    const r = await pool.query('SELECT id FROM activity_events WHERE id = ANY($1)', [[...ids]]);
+    for (const row of r.rows as { id: string }[]) out.add(row.id);
+    return out;
   }
 
   async getMeta(key: string): Promise<string | undefined> {

@@ -7,12 +7,8 @@ import {
   type ActivityStore,
 } from '@agentbox/relay';
 import { ACTIVITY_EVENT_TYPES } from '../app/(dashboard)/api/v1/lib/openapi';
-import {
-  activityBoxContext,
-  listActivity,
-  sweepActivityPrs,
-  withBoxActivity,
-} from '../lib/backend/activity';
+import { activityBoxContext, sweepActivityPrs, withBoxActivity } from '../lib/backend/activity';
+import { GET as getActivity } from '../app/(dashboard)/api/v1/activity/route';
 import { backgroundSettled } from '../lib/backend/background';
 import type { BackendDeps, GhExec, TimelineBoxFact } from '../lib/backend/deps';
 import type { HubBackend } from '../lib/boxes/backend-types';
@@ -158,15 +154,59 @@ describe('the box routes, recorded for a box in no workspace', () => {
   });
 });
 
-describe('reading the ledger', () => {
-  it('answers unavailable with no ledger, and filters otherwise', async () => {
-    expect(await listActivity({}, null)).toEqual({ ok: false, error: 'unavailable' });
+describe('GET /api/v1/activity', () => {
+  const get = (q: string): Promise<Response> =>
+    getActivity(new Request(`http://hub/api/v1/activity${q}`));
+
+  afterEach(() => {
+    globalThis.__AGENTBOX_HUB_ACTIVITY = undefined;
+  });
+
+  it('answers 503 with no ledger, filters by type, and keeps the newest with order=desc', async () => {
+    expect((await get('')).status).toBe(503);
+    globalThis.__AGENTBOX_HUB_ACTIVITY = store;
     const hub = withBoxActivity(fakeHub(), deps());
-    await hub.pause('box1');
-    await hub.resume('box1');
-    await backgroundSettled();
-    const res = await listActivity({ types: ['box.resumed'] });
-    expect(res.ok && res.events.map((e) => e.type)).toEqual(['box.resumed']);
+    for (const op of ['pause', 'resume', 'pause', 'resume'] as const) {
+      await hub[op]('box1');
+      await backgroundSettled();
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    const resumed = (await (await get('?type=box.resumed')).json()) as {
+      events: { type: string; at: string }[];
+    };
+    expect(resumed.events.map((e) => e.type)).toEqual(['box.resumed', 'box.resumed']);
+    const all = (await (await get('?limit=2')).json()) as { events: { at: string }[] };
+    const newest = (await (await get('?limit=2&order=desc')).json()) as {
+      events: { at: string; type: string }[];
+      truncated: boolean;
+    };
+    expect(newest.truncated).toBe(true);
+    expect(newest.events.map((e) => e.type)).toEqual(['box.paused', 'box.resumed']);
+    expect(newest.events[0]!.at > all.events[1]!.at).toBe(true);
+  });
+
+  it('refuses a malformed time, type, order or limit', async () => {
+    globalThis.__AGENTBOX_HUB_ACTIVITY = store;
+    for (const q of [
+      '?since=7',
+      '?until=yesterday',
+      '?type=box.exploded',
+      '?order=up',
+      '?limit=0',
+    ]) {
+      expect((await get(q)).status, q).toBe(400);
+    }
+    expect((await get('?since=7d&until=2099-01-01')).status).toBe(200);
+  });
+
+  it('answers a failing store with the error envelope', async () => {
+    globalThis.__AGENTBOX_HUB_ACTIVITY = {
+      ...store,
+      list: () => Promise.reject(new Error('pg down')),
+    } as ActivityStore;
+    const res = await get('');
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: { message: string } }).error.message).toMatch(/pg down/);
   });
 
   it('documents exactly the ledger types', () => {
@@ -180,7 +220,8 @@ describe('the PR sweep for boxes outside a workspace', () => {
       {
         id: 'r1',
         type: 'box.ready',
-        at: new Date().toISOString(),
+        // Before the PR below is opened and merged, as a box's work is.
+        at: new Date(Date.now() - 10 * 86_400_000).toISOString(),
         boxId: 'box1',
         boxName: 'smoke',
         branch: 'agentbox/smoke',
@@ -203,8 +244,8 @@ describe('the PR sweep for boxes outside a workspace', () => {
             headRefName: 'agentbox/smoke',
             baseRefName: 'main',
             state: 'MERGED',
-            createdAt: '2026-11-20T10:00:00Z',
-            mergedAt: '2026-11-21T10:00:00Z',
+            createdAt: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+            mergedAt: new Date(Date.now() - 4 * 86_400_000).toISOString(),
           },
           {
             number: 8,
@@ -228,5 +269,62 @@ describe('the PR sweep for boxes outside a workspace', () => {
     // Merged: the branch is done, and gh is not asked again.
     expect(await sweepActivityPrs({ ledger: store, gh })).toBe(0);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('a reopened branch', () => {
+  it('is asked about again once work follows its merge', async () => {
+    const at = (d: number): string => new Date(Date.now() - d * 3_600_000).toISOString();
+    const common = {
+      boxId: 'box1',
+      branch: 'agentbox/smoke',
+      repoUrl: 'git@github.com:acme/storefront.git',
+      projectKey: 'github.com/acme/storefront',
+      source: 'live' as const,
+    };
+    await store.append([
+      { ...common, id: 'p1', type: 'git.push', at: at(5) },
+      {
+        ...common,
+        id: 'pr:acme/storefront#7:merged',
+        type: 'pr.merged',
+        at: at(4),
+        pr: { repo: 'acme/storefront', number: 7 },
+      },
+    ]);
+    let calls = 0;
+    const gh: GhExec = async () => {
+      calls += 1;
+      return { exitCode: 0, stderr: '', stdout: '[]' };
+    };
+    await sweepActivityPrs({ ledger: store, gh });
+    expect(calls).toBe(0);
+    await store.append([{ ...common, id: 'p2', type: 'git.push', at: at(1) }]);
+    await sweepActivityPrs({ ledger: store, gh });
+    expect(calls).toBe(1);
+  });
+});
+
+describe('a host-initiated push measured in the box', () => {
+  it('measures from the box tracking ref read before the push', async () => {
+    const asked: { ref?: string; before?: string }[] = [];
+    const d = deps({
+      boxRefTip: async (_id, ref) => {
+        asked.push({ ref });
+        return 'c'.repeat(40);
+      },
+      boxPushStat: async (_id, opts) => {
+        asked.push({ ...(opts?.before ? { before: opts.before } : {}) });
+        return { additions: 1, deletions: 0, commits: 1, filesChanged: 1 };
+      },
+    });
+    const hub = withBoxActivity(fakeHub(), d);
+    await hub.gitPush('box1');
+    await backgroundSettled();
+    expect(asked).toEqual([
+      { ref: 'refs/remotes/origin/agentbox/smoke' },
+      { before: 'c'.repeat(40) },
+    ]);
+    expect((await store.list({ types: ['git.push'] }))[0]).toMatchObject({ commits: 1 });
   });
 });

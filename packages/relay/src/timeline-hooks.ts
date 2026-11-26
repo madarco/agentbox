@@ -80,8 +80,9 @@ export interface BoxGitPushOptions {
 
 /**
  * A push the box itself asked for. A host-initiated one came from the hub's git
- * route (or the CLI through it), which records it with the real caller; a
- * host-only landing publishes nothing and is recorded by that route too.
+ * route (or the CLI through it), which records it with the real caller. A
+ * host-only landing publishes nothing: it reaches the ledger, flagged, and not
+ * the workspace timeline.
  */
 export async function recordBoxGitPush(
   ctx: BoxTimelineContext,
@@ -91,12 +92,16 @@ export async function recordBoxGitPush(
   stat?: PushStatInput,
   opts: BoxGitPushOptions = {},
 ): Promise<void> {
-  if (result.exitCode !== 0 || origin.hostInitiated || origin.hostOnly) return;
+  if (result.exitCode !== 0 || origin.hostInitiated) return;
   try {
-    // The ledger takes every box's push; the timeline only one in a workspace.
-    const ws = await timelineSink()
-      .workspaceFor(boxWorkspaceKey(ctx))
-      .catch(() => null);
+    // The ledger takes every box's push, a host-only landing included (flagged,
+    // as the hub's route flags its own); the timeline only a published push of
+    // a box in a workspace.
+    const ws = origin.hostOnly
+      ? null
+      : await timelineSink()
+          .workspaceFor(boxWorkspaceKey(ctx))
+          .catch(() => null);
     if (!ws && !activityLedger()) return;
     const diff = await pushDiff(ctx.boxId, stat, opts.boxBefore);
     await recordActivity({
@@ -108,6 +113,7 @@ export async function recordBoxGitPush(
       ...(ctx.branch ? { branch: ctx.branch } : {}),
       ...(ctx.originUrl ? { repoUrl: ctx.originUrl } : {}),
       ...(ws ? { workspaceId: ws.id } : {}),
+      ...(origin.hostOnly ? { hostOnly: true } : {}),
       ...(diff ?? {}),
     });
     if (!ws) return;

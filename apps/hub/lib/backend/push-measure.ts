@@ -14,7 +14,7 @@ import { hubMachine, type BackendDeps, type TimelineBoxFact } from './deps';
 /** Where one push's stat is read from; see {@link pushStatSourceBefore}. */
 export type PushStatSource =
   | { kind: 'host'; input: PushStatInput }
-  | { kind: 'box'; boxId: string };
+  | { kind: 'box'; boxId: string; before?: string };
 
 /** How a push route addresses the host ref it moves. */
 export interface PushTarget {
@@ -53,7 +53,17 @@ export async function pushStatSourceBefore(
       input: { repo: fact.projectRoot, ref, branch, ...(before ? { before } : {}) },
     };
   }
-  return deps.boxPushStat ? { kind: 'box', boxId: fact.id } : undefined;
+  if (!deps.boxPushStat) return undefined;
+  // Without the old tip the box measures from the default branch: the whole
+  // branch, not this push. A host-only landing moves no ref in the box.
+  const remote = push.remote ?? 'origin';
+  const before =
+    !push.hostOnly && /^[A-Za-z0-9._-]+$/u.test(remote)
+      ? await deps
+          .boxRefTip?.(fact.id, `refs/remotes/${remote}/${boxBranch}`)
+          .catch(() => undefined)
+      : undefined;
+  return { kind: 'box', boxId: fact.id, ...(before ? { before } : {}) };
 }
 
 export function measurePush(
@@ -62,5 +72,6 @@ export function measurePush(
 ): Promise<PushLineStat | undefined> {
   return src.kind === 'host'
     ? pushLineStat(src.input)
-    : (deps.boxPushStat?.(src.boxId) ?? Promise.resolve(undefined));
+    : (deps.boxPushStat?.(src.boxId, src.before ? { before: src.before } : {}) ??
+        Promise.resolve(undefined));
 }

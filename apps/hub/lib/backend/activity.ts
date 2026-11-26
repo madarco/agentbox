@@ -1,7 +1,7 @@
 // The activity ledger, hub side (docs/usage-dashboard-plan.md, Phase 1): the
 // box routes' writer, the box context every other writer's rows are filled
-// from, the read the usage stats will build on, and a PR sweep for the boxes no
-// workspace's GitHub sync covers. The store and the relay-side writers (box
+// from, and a PR sweep for the boxes no workspace's GitHub sync covers. Reads
+// go to the store itself (`ActivityStore.list`), as `GET /api/v1/activity` does. The store and the relay-side writers (box
 // pushes, the `gh` shim, create jobs, autopause) live in `@agentbox/relay`.
 import { repoKey } from '@agentbox/config';
 import {
@@ -14,9 +14,7 @@ import {
   recordActivity,
   type ActivityActor,
   type ActivityBoxContext,
-  type ActivityEvent,
   type ActivityInput,
-  type ActivityQuery,
   type ActivityStore,
   type ActivityType,
   type GhPrJson,
@@ -188,21 +186,6 @@ export function withBoxActivity(hub: HubBackend, deps: BackendDeps): HubBackend 
   return hub;
 }
 
-// ── reading ──
-
-export type ActivityReadResult =
-  | { ok: true; events: ActivityEvent[] }
-  | { ok: false; error: 'unavailable' };
-
-/** Events in a window, oldest first, filterable by type and box. The usage stats read this. */
-export async function listActivity(
-  query: ActivityQuery,
-  ledger: ActivityStore | null = activityLedger(),
-): Promise<ActivityReadResult> {
-  if (!ledger) return { ok: false, error: 'unavailable' };
-  return { ok: true, events: await ledger.list(query) };
-}
-
 // ── PRs for boxes outside a workspace ──
 
 export const ACTIVITY_PR_SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -211,6 +194,8 @@ const PR_SWEEP_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const PR_SWEEP_LIST_LIMIT = 100;
 
 const PR_TYPES = new Set<ActivityType>(['pr.opened', 'pr.ready', 'pr.merged', 'pr.closed']);
+/** The rows that name a box's branch, and the PR states that close one. */
+const SWEEP_TYPES: ActivityType[] = ['box.created', 'box.ready', 'git.push', ...PR_TYPES];
 
 interface SweepBranch {
   boxId?: string;
@@ -232,40 +217,57 @@ export async function sweepActivityPrs(opts: {
 }): Promise<number> {
   const now = opts.now ?? Date.now();
   const since = now - PR_SWEEP_WINDOW_MS;
-  const rows = await opts.ledger.list({ sinceMs: since, limit: 50_000 });
+  // Newest first when the window is over the cap: a recent box matters more.
+  const rows = await opts.ledger.list({
+    sinceMs: since,
+    types: SWEEP_TYPES,
+    order: 'desc',
+    limit: 50_000,
+  });
   const seen = new Set<string>();
-  const done = new Set<string>();
+  /** `<projectKey>\n<branch>` -> the latest merge/close, and the latest work, in ms. */
+  const lastClosed = new Map<string, number>();
+  const lastWork = new Map<string, number>();
+  const later = (m: Map<string, number>, k: string, at: number): void => {
+    if (at > (m.get(k) ?? 0)) m.set(k, at);
+  };
   /** projectKey -> repoUrl, branch -> who worked on it. */
   const repos = new Map<string, { repoUrl: string; branches: Map<string, SweepBranch> }>();
   for (const r of rows) {
+    const at = Date.parse(r.at);
     if (PR_TYPES.has(r.type)) {
       seen.add(r.id);
       if ((r.type === 'pr.merged' || r.type === 'pr.closed') && r.projectKey && r.branch) {
-        done.add(`${r.projectKey}\n${r.branch}`);
+        later(lastClosed, `${r.projectKey}\n${r.branch}`, at);
       }
       continue;
     }
     if (!r.repoUrl || !r.branch) continue;
     const key = r.projectKey ?? repoKey(r.repoUrl);
     if (!key) continue;
+    later(lastWork, `${key}\n${r.branch}`, at);
     let repo = repos.get(key);
     if (!repo) {
       repo = { repoUrl: r.repoUrl, branches: new Map() };
       repos.set(key, repo);
     }
+    // Rows come newest first, so the newest box on a branch is the one kept.
     const prev = repo.branches.get(r.branch) ?? {};
     repo.branches.set(r.branch, {
-      ...prev,
       ...(r.boxId ? { boxId: r.boxId } : {}),
       ...(r.boxName ? { boxName: r.boxName } : {}),
       ...(r.workspaceId ? { workspaceId: r.workspaceId } : {}),
       ...(r.managerId ? { managerId: r.managerId } : {}),
+      ...prev,
     });
   }
+  // A branch whose PR was merged or closed after its last push is done; work
+  // after that (a new PR from the same branch) asks again.
+  const done = (k: string): boolean => (lastClosed.get(k) ?? 0) >= (lastWork.get(k) ?? 0);
   const sinceDay = new Date(since).toISOString().slice(0, 10);
   let recorded = 0;
   for (const [key, repo] of repos) {
-    const open = [...repo.branches.keys()].filter((b) => !done.has(`${key}\n${b}`));
+    const open = [...repo.branches.keys()].filter((b) => !done(`${key}\n${b}`));
     if (open.length === 0) continue;
     const arg = ghRepoArg(repo.repoUrl);
     if (!arg) continue;

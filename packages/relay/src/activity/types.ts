@@ -86,6 +86,8 @@ export interface ActivityQuery {
   boxId?: string;
   /** Default 1000, capped at 50 000. */
   limit?: number;
+  /** `desc` takes the newest `limit` rows (still returned oldest first). Default `asc`. */
+  order?: 'asc' | 'desc';
 }
 
 export const ACTIVITY_QUERY_MAX = 50_000;
@@ -98,6 +100,8 @@ export interface ActivityStore {
   append(events: readonly ActivityEvent[]): Promise<number>;
   /** Oldest first. */
   list(query?: ActivityQuery): Promise<ActivityEvent[]>;
+  /** Which of these ids the ledger already holds. */
+  has(ids: readonly string[]): Promise<Set<string>>;
   getMeta(key: string): Promise<string | undefined>;
   setMeta(key: string, value: string): Promise<void>;
   close(): Promise<void>;

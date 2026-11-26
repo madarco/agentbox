@@ -93,6 +93,21 @@ describe('the activity store', () => {
     expect(push?.hostOnly).toBe(false);
   });
 
+  it('answers which ids it holds, and takes the newest rows with order desc', async () => {
+    const at = (m: number): string => new Date(Date.UTC(2026, 10, 1, 0, m)).toISOString();
+    await store.append(
+      [0, 1, 2, 3].map((m) => ({
+        id: `r${String(m)}`,
+        type: 'box.started' as const,
+        at: at(m),
+        source: 'live' as const,
+      })),
+    );
+    expect([...(await store.has(['r1', 'nope', 'r3']))].sort()).toEqual(['r1', 'r3']);
+    expect((await store.list({ limit: 2, order: 'desc' })).map((e) => e.id)).toEqual(['r2', 'r3']);
+    expect((await store.list({ limit: 2 })).map((e) => e.id)).toEqual(['r0', 'r1']);
+  });
+
   it('stamps its creation time once', async () => {
     const first = await store.getMeta('created_at');
     expect(Number(first)).toBeGreaterThan(0);
@@ -205,6 +220,19 @@ describe('a push from a box outside any workspace', () => {
       additions: 12,
       deletions: 3,
     });
+  });
+
+  it('records a host-only landing flagged, and keeps it off the timeline', async () => {
+    const { sink } = noWorkspaceSink();
+    let asked = 0;
+    configureTimelineSink({ ...sink, workspaceFor: async () => (asked++, { id: 'ws1' }) });
+    configureBoxPushStat(async () => ({ additions: 1, deletions: 0, commits: 1, filesChanged: 1 }));
+    await recordBoxGitPush(ctx, { hostInitiated: false, hostOnly: true }, { exitCode: 0 });
+    const rows = await store.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ type: 'git.push', hostOnly: true, commits: 1 });
+    expect(rows[0]?.workspaceId).toBeUndefined();
+    expect(asked).toBe(0);
   });
 
   it('skips a failed push and a host-initiated one (the hub route records that)', async () => {

@@ -1870,6 +1870,13 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             { name: 'box', in: 'query', schema: { type: 'string' }, description: 'Box id.' },
             {
+              name: 'order',
+              in: 'query',
+              schema: { type: 'string', enum: ['asc', 'desc'] },
+              description:
+                '`asc` (default) keeps the oldest `limit` events of the window, `desc` the newest. Either way they are returned oldest first.',
+            },
+            {
               name: 'limit',
               in: 'query',
               schema: { type: 'integer' },
@@ -1886,6 +1893,10 @@ export function buildOpenApi(): Record<string, unknown> {
                     properties: {
                       since: { type: 'string', nullable: true },
                       until: { type: 'string', nullable: true },
+                      truncated: {
+                        type: 'boolean',
+                        description: 'The window held at least `limit` events.',
+                      },
                       events: {
                         type: 'array',
                         items: {

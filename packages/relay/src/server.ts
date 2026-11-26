@@ -1535,7 +1535,10 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           pushTree && pushBranch && !pushHostInitiated
             ? {
                 repo: pushTree.hostMainRepo,
-                ref: pushedRef(pushBranch, { remote: resolveRemote(pushParams?.remote) }),
+                ref: pushedRef(pushBranch, {
+                  remote: resolveRemote(pushParams?.remote),
+                  hostOnly: Boolean(pushParams?.hostOnly),
+                }),
                 branch: pushBranch,
               }
             : undefined;

@@ -77,6 +77,7 @@ export function createBoxFactSeams(src: BoxFactSources): {
   boxFact(id: string, opts?: { withState?: boolean }): Promise<TimelineBoxFact | undefined>;
   boxDiffStat(box: TimelineBoxFact): Promise<DiffStat | null>;
   boxPushStat(boxId: string, opts?: { before?: string }): Promise<PushLineStat | undefined>;
+  boxRefTip(boxId: string, ref: string): Promise<string | undefined>;
 } {
   // The record a fact was built from, so a diff of a box that was just listed
   // does not list the whole fleet again to find it.
@@ -156,6 +157,19 @@ export function createBoxFactSeams(src: BoxFactSources): {
         (args) => provider.exec(box, ['git', ...args], { cwd: BOX_WORKSPACE }),
         opts ?? {},
       );
+    },
+    async boxRefTip(boxId, ref) {
+      const box = await src.readBoxRecord(boxId);
+      if (!box) return undefined;
+      const provider = await src.providerForBox(box);
+      const r = await withTimeout(
+        provider.exec(box, ['git', 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+          cwd: BOX_WORKSPACE,
+        }),
+        STATE_PROBE_TIMEOUT_MS,
+      );
+      const sha = r && r.exitCode === 0 ? r.stdout.trim() : '';
+      return /^[0-9a-f]{7,64}$/u.test(sha) ? sha : undefined;
     },
   };
 }
