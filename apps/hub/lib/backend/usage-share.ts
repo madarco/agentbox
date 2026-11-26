@@ -13,6 +13,8 @@ export const DEFAULT_SHARE_ENDPOINT = 'https://agent-box.sh/api/share';
 const POST_TIMEOUT_MS = 20_000;
 /** What the site mints: lowercase letters and digits, long enough to be unguessable. */
 const SHARE_ID_RE = /^[a-z0-9]{20,64}$/;
+/** The share API's 404 body error (`apps/web/lib/share/post.ts`). */
+const SITE_NOT_FOUND = 'no such share';
 
 export type ShareErrorCode =
   | 'invalid_request'
@@ -252,6 +254,12 @@ function retryAfterOf(res: Response): number | undefined {
 }
 
 function failedStatus(res: Response, site: string, verb: 'share' | 'delete'): never {
+  if (verb === 'delete' && (res.status === 400 || res.status === 413)) {
+    throw new ShareError(
+      'upstream_error',
+      `${site} answered ${String(res.status)} to the delete; the share is kept here`,
+    );
+  }
   switch (res.status) {
     case 400:
       throw new ShareError(
@@ -390,7 +398,11 @@ export async function deleteUsageShare(
   if (!record) throw new ShareError('not_found', `this hub made no share ${id}`);
   const endpoint = parseShareEndpoint(record.endpoint);
   const site = endpoint.host;
-  const target = `${endpoint.href.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
+  const base = new URL(endpoint.href);
+  base.search = '';
+  base.hash = '';
+  base.pathname = `${base.pathname.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
+  const target = base.href;
   let res: Response;
   try {
     res = await (deps.fetch ?? fetch)(target, {
@@ -406,7 +418,21 @@ export async function deleteUsageShare(
       `${site} ${timedOut ? `did not answer within ${String(POST_TIMEOUT_MS / 1000)}s` : `could not be reached (${e instanceof Error ? e.message : String(e)})`}; the share is kept here, try again`,
     );
   }
-  await res.body?.cancel().catch(() => undefined);
+  // Only the share API's own 404 means the share is gone. Any other 404 (a site build
+  // without the DELETE route, a moved path) must not cost the only delete secret.
+  let gone = false;
+  if (res.status === 404) {
+    const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+    gone = body?.error === SITE_NOT_FOUND;
+    if (!gone) {
+      throw new ShareError(
+        'upstream_error',
+        `${site} has no share delete route at ${target}; the share is kept here`,
+      );
+    }
+  } else {
+    await res.body?.cancel().catch(() => undefined);
+  }
   if (res.status === 401 || res.status === 403) {
     throw new ShareError(
       'conflict',
@@ -417,5 +443,5 @@ export async function deleteUsageShare(
     failedStatus(res, site, 'delete');
   }
   await deps.store.remove(id);
-  return { id, deleted: res.status !== 404 };
+  return { id, deleted: !gone };
 }

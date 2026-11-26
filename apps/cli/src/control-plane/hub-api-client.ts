@@ -1056,7 +1056,9 @@ export interface HubApiUsageShareListing {
 }
 
 export interface HubApiUsageShareSettings {
-  endpoint: string;
+  /** Null when the hub's share.endpoint is invalid; `endpointError` says why. */
+  endpoint: string | null;
+  endpointError?: string;
   /** The shares this hub made, newest first (never their delete secrets). */
   shares: HubApiUsageShareListing[];
   lastName: string | null;

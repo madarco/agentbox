@@ -136,6 +136,8 @@ const shareRmCommand = new Command('rm')
   });
 
 const shareCommand = new Command('share')
+  // `list` / `rm` take their own --local; without this the parent would consume it.
+  .enablePositionalOptions()
   .description(
     "Publish the window's usage on agent-box.sh (share.endpoint) at a new random link and print it. Only metrics leave the hub, with the optional --name: no box, project, branch, PR or session name",
   )
@@ -185,7 +187,8 @@ const shareCommand = new Command('share')
           return;
         }
         if (interactive && !opts.yes) {
-          const { endpoint } = await client.usageShareSettings();
+          const { endpoint, endpointError } = await client.usageShareSettings();
+          if (!endpoint) throw new Error(endpointError ?? 'share.endpoint is not usable');
           const ok = await confirm({
             message: `Publish this window's usage on ${new URL(endpoint).host} at a new public link? (--dry-run shows exactly what is sent)`,
           });

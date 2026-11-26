@@ -32,7 +32,8 @@ interface PastShare {
   createdAt: string;
 }
 interface Settings {
-  endpoint: string;
+  endpoint: string | null;
+  endpointError?: string;
   shares: PastShare[];
   lastName: string | null;
 }
@@ -78,6 +79,8 @@ export function ShareDialog({
   const [posting, setPosting] = useState(false);
   const [posted, setPosted] = useState<Posted | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  // A delete takes a public page down for good: the first click arms it.
+  const [armed, setArmed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const today = useRef(localDay()).current;
@@ -135,6 +138,11 @@ export function ShareDialog({
 
   const remove = async (id: string): Promise<void> => {
     if (deleting) return;
+    if (armed !== id) {
+      setArmed(id);
+      return;
+    }
+    setArmed(null);
     setDeleting(id);
     setError(null);
     try {
@@ -294,7 +302,7 @@ export function ShareDialog({
                   aria-label={`Delete share ${s.id}`}
                 >
                   <Icons.trash />
-                  {deleting === s.id ? 'Deleting…' : 'Delete'}
+                  {deleting === s.id ? 'Deleting…' : armed === s.id ? 'Delete for good?' : 'Delete'}
                 </Button>
               </li>
             ))}

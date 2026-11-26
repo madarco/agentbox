@@ -314,12 +314,43 @@ describe('deleteUsageShare', () => {
 
   it('forgets a share the site no longer has', async () => {
     await shared();
-    const f = fakeFetch(() => Response.json({}, { status: 404 }));
+    const f = fakeFetch(() => Response.json({ error: 'no such share' }, { status: 404 }));
     expect(await deleteUsageShare({ store, fetch: f.fetch }, ID1)).toEqual({
       id: ID1,
       deleted: false,
     });
     expect(await store.list()).toEqual([]);
+  });
+
+  it('keeps the share on a 404 that is not the share API saying so', async () => {
+    await shared();
+    for (const res of [
+      () => new Response('<html>404</html>', { status: 404 }),
+      () => Response.json({}, { status: 404 }),
+    ]) {
+      const f = fakeFetch(res);
+      await expect(deleteUsageShare({ store, fetch: f.fetch }, ID1)).rejects.toThrow(
+        /no share delete route/,
+      );
+    }
+    expect((await store.list()).map((s) => s.id)).toEqual([ID1]);
+  });
+
+  it('builds the delete URL without the endpoint query or fragment', async () => {
+    await shared('https://agent-box.sh/api/share/?v=1#x');
+    const f = fakeFetch(() => new Response(null, { status: 204 }));
+    await deleteUsageShare({ store, fetch: f.fetch }, ID1);
+    expect(f.calls[0]!.url).toBe(`https://agent-box.sh/api/share/${ID1}`);
+  });
+
+  it('words a refused delete as a delete', async () => {
+    await shared();
+    const f = fakeFetch(() => Response.json({}, { status: 400 }));
+    const err = (await deleteUsageShare({ store, fetch: f.fetch }, ID1).catch(
+      (e: unknown) => e,
+    )) as ShareError;
+    expect(err.message).toMatch(/answered 400 to the delete/);
+    expect(err.message).not.toMatch(/schema/);
   });
 
   it('keeps the share when the site refuses or cannot be reached', async () => {

@@ -1,7 +1,8 @@
 // /api/v1/usage/share — publish the usage dashboard on agent-box.sh
 // (docs/usage-dashboard-plan.md, Phase 6). The hub builds the public `UsageShare`
 // and posts it to `share.endpoint` itself; the caller never talks to that site.
-//   GET:  { endpoint, shares, lastName } — the site, and the shares this hub made
+//   GET:  { endpoint, endpointError?, shares, lastName } — the site (null with the
+//         reason when share.endpoint is invalid), and the shares this hub made
 //         (never their delete secrets).
 //   POST: { name?, preview?, since?, until?, tz?, range?, subscription? } — the
 //         window takes the same values as GET /usage/stats. `preview: true`
@@ -44,9 +45,18 @@ async function endpoint(): Promise<string | undefined> {
 
 export async function GET(): Promise<Response> {
   try {
-    const url = parseShareEndpoint(await endpoint());
+    // Listing and deleting past shares needs no endpoint: a bad share.endpoint is
+    // reported, not allowed to hide the shares already published.
+    let url: string | null = null;
+    let endpointError: string | null = null;
+    try {
+      url = parseShareEndpoint(await endpoint()).href;
+    } catch (e) {
+      endpointError = e instanceof Error ? e.message : String(e);
+    }
     return ok({
-      endpoint: url.href,
+      endpoint: url,
+      ...(endpointError ? { endpointError } : {}),
       shares: await listUsageShares(shareStore),
       lastName: await shareStore.lastName(),
     });

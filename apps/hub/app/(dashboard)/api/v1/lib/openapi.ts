@@ -2051,7 +2051,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['History'],
           summary: 'Usage shares',
           description:
-            'The site a usage share is posted to (`share.endpoint`), the shares this hub made (newest first, on any site) and the display name of the last one. Delete secrets are never returned.',
+            'The site a usage share is posted to (`share.endpoint`), the shares this hub made (newest first, on any site) and the display name of the last one. An invalid `share.endpoint` gives `endpoint: null` and `endpointError`, and the shares are still listed. Delete secrets are never returned.',
           responses: {
             '200': {
               description: 'Endpoint, past shares and the last name',
@@ -2060,7 +2060,8 @@ export function buildOpenApi(): Record<string, unknown> {
                   schema: {
                     type: 'object',
                     properties: {
-                      endpoint: { type: 'string' },
+                      endpoint: { type: 'string', nullable: true },
+                      endpointError: { type: 'string' },
                       shares: {
                         type: 'array',
                         items: {

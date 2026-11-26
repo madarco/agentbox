@@ -11,6 +11,15 @@ Open items found while building the phases of
 - **Shares from before an endpoint change** keep the endpoint they were posted to, so
   Delete still reaches the right site; a preview deployment whose database was reset
   answers 404, and the hub then forgets the share.
+- **A salvaged record is not read back.** When `share.json` can't be written after the
+  site stored a share, the record goes to `share.json.share-<id>.json` and the error
+  names it, but `list` and `rm` read only `share.json`: move the record into its
+  `shares` array by hand, or delete with curl and the secret.
+- **A version-1 `share.json` (handle claims) is replaced on the first write.** Its claim
+  secrets have no use once the handle namespace is gone, so nothing migrates them.
+- **The schema refuses to drop handle-keyed rows.** If the old `shares` table is not
+  empty, every POST and page load fails until the rows are migrated or dropped by hand
+  (production was verified empty before this change).
 - **No update of a posted share.** A new share is a new id; delete the old one.
 - **The display name can still mislead.** It is plain text with the handle's old
   character rule, shown as "shared by …" and in the page/OG title, and nothing
