@@ -27,45 +27,47 @@ export const queueCommand = new Command('queue').description(
   'Inspect and manage background `agentbox claude|codex|opencode -i` jobs',
 );
 
+/** How long `queue list` reuses a skills drift answer: a poll loop asks the hub once a minute. */
+const SKILLS_DRIFT_TTL_MS = 60_000;
+
 const queueListCommand = new Command('list')
   .description('List queued, running, and (with --all) terminal background jobs')
-  // It is the default subcommand: without this, a typo (`queue cancle <id>`)
-  // would land here as excess args and list instead of failing.
-  .allowExcessArguments(false)
   .option('--all', 'include done/failed/cancelled jobs (default: hide terminal)')
   .option(
     '--json',
-    'emit { jobs, maxConcurrent, enabled, skills } (skills: {outOfSync, names} or null)',
+    'emit { jobs, maxConcurrent, enabled, skills } (skills: {outOfSync, names, unuploadable} or null)',
   )
-  .action(async (opts: QueueListOpts) => {
-    // In parallel with the manifest read: this is where an orchestrating session
-    // polls, so it's where a skill missing from new boxes is worth naming.
-    const skillsDrift = checkSkillsDrift();
-    const cfg = await loadQueueConfig();
-    const jobs = await listJobsForQueueView();
-    const visible =
-      opts.all === true ? jobs : jobs.filter((j) => !HIDDEN_LIST_STATUSES.has(j.status));
-    if (opts.json === true) {
-      process.stdout.write(
-        JSON.stringify({
-          jobs: visible,
-          maxConcurrent: cfg.maxConcurrent,
-          enabled: cfg.enabled,
-          skills: driftJson(await skillsDrift),
-        }) + '\n',
-      );
-      return;
-    }
-    if (visible.length === 0) {
-      log.info(opts.all ? 'no jobs.' : 'no active jobs (--all to see terminal).');
-    } else {
-      renderJobTable(visible);
-    }
-    log.info(
-      `queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`,
+  .action(runQueueList);
+
+async function runQueueList(opts: QueueListOpts): Promise<void> {
+  // In parallel with the manifest read: this is where an orchestrating session
+  // polls, so it's where a skill missing from new boxes is worth naming.
+  const skillsDrift = checkSkillsDrift({ cacheTtlMs: SKILLS_DRIFT_TTL_MS });
+  const cfg = await loadQueueConfig();
+  const jobs = await listJobsForQueueView();
+  const visible =
+    opts.all === true ? jobs : jobs.filter((j) => !HIDDEN_LIST_STATUSES.has(j.status));
+  if (opts.json === true) {
+    process.stdout.write(
+      JSON.stringify({
+        jobs: visible,
+        maxConcurrent: cfg.maxConcurrent,
+        enabled: cfg.enabled,
+        skills: driftJson(await skillsDrift),
+      }) + '\n',
     );
-    printSkillsNotice(await skillsDrift);
-  });
+    return;
+  }
+  if (visible.length === 0) {
+    log.info(opts.all ? 'no jobs.' : 'no active jobs (--all to see terminal).');
+  } else {
+    renderJobTable(visible);
+  }
+  log.info(
+    `queue.maxConcurrent = ${String(cfg.maxConcurrent)} (queue.enabled=${String(cfg.enabled)})`,
+  );
+  printSkillsNotice(await skillsDrift);
+}
 
 /**
  * The job view for `queue list` — THIS laptop's local `-i` queue, read straight
@@ -349,8 +351,18 @@ function parsePositiveInt(raw: string, label: string): number {
   return n;
 }
 
-// Bare `agentbox queue` lists, which is what an orchestrating session polls.
-queueCommand.addCommand(queueListCommand, { isDefault: true });
+queueCommand.addCommand(queueListCommand);
+// Bare `agentbox queue` lists, which is what an orchestrating session polls. An
+// action rather than `isDefault`, so a typo (`queue cancle <id>`) still gets
+// commander's "unknown command ... Did you mean cancel?" instead of listing.
+queueCommand.action(async (_opts: unknown, cmd: Command) => {
+  if (cmd.args.length > 0) {
+    // Commander's own unknown-command error (with the suggestion); public in its
+    // implementation, just not in the type declarations.
+    (cmd as unknown as { unknownCommand(): never }).unknownCommand();
+  }
+  await runQueueList({});
+});
 queueCommand.addCommand(queueShowCommand);
 queueCommand.addCommand(queueCancelCommand);
 queueCommand.addCommand(queueClearCommand);

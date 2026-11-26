@@ -14,7 +14,12 @@ const resolveHubApiTarget = vi.fn(() => Promise.resolve(LOCAL));
 vi.mock('../src/commands/control-plane.js', () => ({ resolveHubApiTarget }));
 
 import { discoverLocalSkills } from '@agentbox/sandbox-core';
-import { checkSkillsDrift, describeDrift, driftFromRows } from '../src/lib/skills/drift.js';
+import {
+  checkSkillsDrift,
+  describeDrift,
+  driftFromRows,
+  takeNewUnuploadable,
+} from '../src/lib/skills/drift.js';
 
 const HOME = process.env.HOME!;
 
@@ -77,6 +82,28 @@ describe('describeDrift', () => {
       'skills: 4 not in sync with the hub (on this PC only: bar, foo; changed: baz; on the hub only: qux). ' +
         "Boxes get the hub's copy. Run `agentbox skills` to sync.",
     );
+  });
+
+  it("leaves out a PC skill that can't be uploaded, and names it once", () => {
+    const blocked = { problems: [], findings: [{ rule: 'secret-file', path: '.env', line: 1 }] };
+    const ok = { problems: [], findings: [] };
+    const d = driftFromRows([
+      { name: 'leaky', status: 'local-only', local: blocked },
+      { name: 'broken', status: 'differs', local: { problems: ['no description'], findings: [] } },
+      { name: 'fine', status: 'local-only', local: ok },
+    ]);
+    expect(d).toMatchObject({ outOfSync: 1, names: ['fine'], unuploadable: ['broken', 'leaky'] });
+    expect(takeNewUnuploadable(d.unuploadable)).toEqual(['broken', 'leaky']);
+    expect(describeDrift(d, ['broken', 'leaky'])).toBe(
+      'skills: 1 not in sync with the hub (on this PC only: fine). ' +
+        "Boxes get the hub's copy. Run `agentbox skills` to sync. " +
+        "Also 2 can't be uploaded as is (broken, leaky); see `agentbox skills`.",
+    );
+    // Announced: the next notice doesn't repeat them, and with nothing else to say
+    // there is no notice at all.
+    expect(takeNewUnuploadable(d.unuploadable)).toEqual([]);
+    const onlyBlocked = driftFromRows([{ name: 'leaky', status: 'local-only', local: blocked }]);
+    expect(describeDrift(onlyBlocked, takeNewUnuploadable(onlyBlocked.unuploadable))).toBeNull();
   });
 
   it('caps the names at five and adds +N more', () => {
@@ -167,6 +194,60 @@ describe('checkSkillsDrift', () => {
     ).toBeNull();
     expect(Date.now() - t0).toBeLessThan(1500);
     expect(logged).toEqual([expect.stringContaining('within 200ms')]);
+  });
+
+  it('counts a skill with a secret as unuploadable, also from the hash cache', async () => {
+    writeSkill('leaky');
+    writeFileSync(join(HOME, '.claude', 'skills', 'leaky', '.env'), 'TOKEN=x\n');
+    stubHub({ seeded: true, skills: [] });
+    const first = await checkSkillsDrift({ cwd: HOME, timeoutMs: 15_000 });
+    expect(first).toMatchObject({ outOfSync: 0, unuploadable: ['leaky'] });
+    stubHub({ seeded: true, skills: [] });
+    expect(await checkSkillsDrift({ cwd: HOME })).toMatchObject({ unuploadable: ['leaky'] });
+  });
+
+  it('reuses an answer within cacheTtlMs, and misses on a local change', async () => {
+    writeSkill('mine');
+    let fetch = stubHub({ seeded: true, skills: [] });
+    expect(
+      (await checkSkillsDrift({ cwd: HOME, cacheTtlMs: 60_000, timeoutMs: 15_000 }))?.outOfSync,
+    ).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    fetch = stubHub({ seeded: true, skills: [] });
+    expect((await checkSkillsDrift({ cwd: HOME, cacheTtlMs: 60_000 }))?.outOfSync).toBe(1);
+    expect(fetch).not.toHaveBeenCalled();
+    writeSkill('another');
+    fetch = stubHub({ seeded: true, skills: [] });
+    expect((await checkSkillsDrift({ cwd: HOME, cacheTtlMs: 60_000 }))?.outOfSync).toBe(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches a failure too, so an unreachable hub costs a poll loop once', async () => {
+    writeSkill('mine');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))),
+    );
+    expect(await checkSkillsDrift({ cwd: HOME, cacheTtlMs: 60_000, timeoutMs: 15_000 })).toBeNull();
+    const fetch = stubHub({ seeded: true, skills: [] });
+    expect(await checkSkillsDrift({ cwd: HOME, cacheTtlMs: 60_000 })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('counts the resolve inside the budget', async () => {
+    writeSkill('a');
+    resolveHubApiTarget.mockImplementationOnce(() => new Promise(() => undefined));
+    const t0 = Date.now();
+    expect(await checkSkillsDrift({ cwd: HOME, timeoutMs: 200 })).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
+
+  it('sends no session header (finding the session shells out to ps)', async () => {
+    writeSkill('a');
+    const fetch = stubHub({ seeded: true, skills: [] });
+    await checkSkillsDrift({ cwd: HOME, timeoutMs: 15_000 });
+    const init = fetch.mock.calls[0]![1] as RequestInit;
+    expect(new Headers(init.headers).has('x-agentbox-session')).toBe(false);
   });
 
   it('is off with skills.notice: false', async () => {

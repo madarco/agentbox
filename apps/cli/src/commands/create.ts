@@ -624,16 +624,15 @@ export const createCommand = new Command('create')
       },
       debug: (line) => cmdLog.write(line),
     });
-    // Started now and printed once the box is ready, so its round trip overlaps
-    // the create instead of adding to it. Only read when create doesn't attach.
-    const skillsDrift = opts.attach
-      ? Promise.resolve(null)
-      : checkSkillsDrift({
-          url: opts.url,
-          ...(seedScan ? { local: seedScan } : {}),
-          cwd: opts.workspace,
-          debug: (line) => cmdLog.write(line),
-        });
+    // Started by each path once it knows it won't attach, and printed when the
+    // box is ready, so the round trip overlaps the create instead of adding to it.
+    const startSkillsDrift = (): Promise<SkillsDrift | null> =>
+      checkSkillsDrift({
+        url: opts.url,
+        ...(seedScan ? { local: seedScan } : {}),
+        cwd: opts.workspace,
+        debug: (line) => cmdLog.write(line),
+      });
     // `providerName` stays a bare name — it keys the per-provider config
     // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record; the
     // engine rides alongside it in `remoteHost`.
@@ -780,7 +779,8 @@ export const createCommand = new Command('create')
         cmdLog,
         cfg.effective,
         accounts,
-        skillsDrift,
+        // The control-box path never attaches.
+        startSkillsDrift(),
       );
       return;
     }
@@ -970,6 +970,8 @@ export const createCommand = new Command('create')
     // Cloud + switch-to-claude: provision the cloud box now, then attach
     // claude via the cloud SSH path once the box is ready.
     const attachClaudeAfter = wiz.action === 'switch-to-claude' && !isDocker;
+    const skillsDrift =
+      opts.attach || attachClaudeAfter ? Promise.resolve(null) : startSkillsDrift();
 
     const useSnapshot = resolveUseSnapshot(opts, cfg.effective.box.hostSnapshot);
 
@@ -1186,7 +1188,7 @@ export const createCommand = new Command('create')
     // they stay on screen — this is the last moment before the box is handed
     // over or attached to.
     for (const w of cmdLog.warnings()) log.warn(w);
-    if (!attachClaudeAfter) printSkillsNotice(await skillsDrift);
+    printSkillsNotice(await skillsDrift);
 
     outro('done');
 

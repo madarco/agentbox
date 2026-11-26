@@ -1237,7 +1237,7 @@ export class HubApiClient {
     method: string,
     path: string,
     body?: unknown,
-    opts: { timeoutMs?: number } = {},
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<T> {
     const session = await this.sessionHeader();
     // Only with a session: a turn on its own names nobody.
@@ -1254,7 +1254,11 @@ export class HubApiClient {
       // Opt-in per call: a half-open socket (a killed hub still holding the
       // connection, a laptop that slept) otherwise hangs a caller forever. A
       // poll loop that must re-check its own wall clock passes one.
-      ...(opts.timeoutMs !== undefined ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
+      ...(opts.signal
+        ? { signal: opts.signal }
+        : opts.timeoutMs !== undefined
+          ? { signal: AbortSignal.timeout(opts.timeoutMs) }
+          : {}),
     });
     if (res.status === 204) return undefined as T;
     const text = await res.text();
@@ -1622,7 +1626,9 @@ export class HubApiClient {
 
   // ── skills library (custody `skills` scope) ──
 
-  listSkills(opts: { timeoutMs?: number } = {}): Promise<HubApiSkillsListing> {
+  listSkills(
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<HubApiSkillsListing> {
     return this.request<HubApiSkillsListing>('GET', '/skills', undefined, opts);
   }
 

@@ -109,7 +109,7 @@ async function readSkillMd(dir: string, skill: LocalSkill, maxBytes?: number): P
 export async function readLocalSkill(
   name: string,
   dir: string,
-  /** `hashCache`: a summary read (see {@link SkillHashCache}): no file data, no secret scan. */
+  /** `hashCache`: a summary read (see {@link SkillHashCache}): no file data, scan hits from the cache. */
   opts: { maxBytes?: number; hashCache?: SkillHashCache } = {},
 ): Promise<LocalSkill> {
   const skill: LocalSkill = {
@@ -146,7 +146,7 @@ export async function readLocalSkill(
     for (const l of tree.outOfTreeLinks) {
       skill.problems.push(`symlink points outside the skill: ${l}`);
     }
-    if (!opts.hashCache) skill.findings = scanSkillFiles(tree.files);
+    skill.findings = tree.findings ?? scanSkillFiles(tree.files);
   } catch (err) {
     if (err instanceof SkillTooLargeError) {
       skill.problems.push(

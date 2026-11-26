@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
+import { scanSkillFiles, type SecretFinding } from './scan.js';
 
 /** One normalized file of a skill: POSIX relative path, 0644/0755, bytes and their sha256. */
 export interface SkillFile {
@@ -34,6 +35,8 @@ export interface SkillTree {
   brokenLinks: string[];
   /** Links that resolve OUTSIDE the skill's real root, relative to it; not followed. */
   outOfTreeLinks: string[];
+  /** A summary read's secret-scan hits (see {@link SkillHashCache}); absent otherwise. */
+  findings?: SecretFinding[];
 }
 
 /** Never part of a skill: VCS metadata and Finder droppings. */
@@ -52,14 +55,26 @@ export class SkillTooLargeError extends Error {
 }
 
 /**
- * File hashes remembered across runs, keyed by path + size + mtime. With
- * one, a read is a summary: every file's `data` is empty and only its `sha256`
- * is filled (from the cache when the file is unchanged), so the tree hash comes
- * cheap but the content is not there to upload or scan.
+ * What a summary read remembers of one file, keyed by its path + size + mtime:
+ * the content hash and the secret-scan hits (rule + line; the path is the file's).
+ * A file rewritten with the same size and mtime (`touch -r`, `cp -p`,
+ * `rsync -a`) reads as unchanged; acceptable for its one user, the drift notice.
+ */
+export interface SkillHashEntry {
+  sha256: string;
+  findings: { rule: string; line: number }[];
+}
+
+/**
+ * File hashes remembered across runs. With one, a read is a summary: every
+ * file's `data` is empty and only its `sha256` is filled (from the cache when
+ * the file is unchanged), and the scan hits come back on the tree as
+ * `findings`, so the tree hash and the upload blockers come cheap but the
+ * content is not there to upload.
  */
 export interface SkillHashCache {
-  get(path: string, size: number, mtimeMs: number): string | undefined;
-  set(path: string, size: number, mtimeMs: number, sha256: string): void;
+  get(path: string, size: number, mtimeMs: number): SkillHashEntry | undefined;
+  set(path: string, size: number, mtimeMs: number, entry: SkillHashEntry): void;
 }
 
 const EMPTY = Buffer.alloc(0);
@@ -75,6 +90,7 @@ export async function readSkillTree(
   const inTree = (p: string): boolean => p === rootReal || p.startsWith(rootReal + sep);
   let size = 0;
   let newestMtimeMs = 0;
+  const summaryFindings: SecretFinding[] = [];
   // The real directories on the CURRENT path only: a link back to an ancestor is
   // a cycle and stops, while two links to the same shared directory are both
   // walked, because the host agent reads the content under both names.
@@ -114,14 +130,20 @@ export async function readSkillTree(
         if (cache) {
           // The walked path, not its realpath: size + mtime already prove a hit.
           const key = childAbs;
-          let sha256 = cache.get(key, st.size, st.mtimeMs);
-          if (sha256 === undefined) {
-            sha256 = createHash('sha256')
-              .update(await readFile(childAbs))
-              .digest('hex');
+          let entry = cache.get(key, st.size, st.mtimeMs);
+          if (entry === undefined) {
+            const data = await readFile(childAbs);
+            entry = {
+              sha256: createHash('sha256').update(data).digest('hex'),
+              findings: scanSkillFiles([{ path: childRel, data }]).map((f) => ({
+                rule: f.rule,
+                line: f.line,
+              })),
+            };
           }
-          cache.set(key, st.size, st.mtimeMs, sha256);
-          files.push({ path: childRel, mode, data: EMPTY, sha256 });
+          cache.set(key, st.size, st.mtimeMs, entry);
+          for (const f of entry.findings) summaryFindings.push({ ...f, path: childRel });
+          files.push({ path: childRel, mode, data: EMPTY, sha256: entry.sha256 });
           continue;
         }
         const data = await readFile(childAbs);
@@ -137,7 +159,14 @@ export async function readSkillTree(
   }
 
   await walk(root, '', new Set());
-  return { files, size, newestMtimeMs, brokenLinks, outOfTreeLinks };
+  return {
+    files,
+    size,
+    newestMtimeMs,
+    brokenLinks,
+    outOfTreeLinks,
+    ...(opts.hashCache ? { findings: summaryFindings } : {}),
+  };
 }
 
 /**

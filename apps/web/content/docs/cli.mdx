@@ -834,7 +834,7 @@ agentbox prune --provider remote-docker   # sweeps every engine it knows about
 
 # Background jobs (agentbox claude|codex|opencode|pi -i)
 agentbox queue list                   # your local background -i queue (a control box's create queue is `agentbox hub jobs`); bare `agentbox queue` does the same
-agentbox queue list --json            # { jobs, maxConcurrent, enabled, skills: { outOfSync, names } | null }
+agentbox queue list --json            # { jobs, maxConcurrent, enabled, skills: { outOfSync, names, unuploadable } | null }
 agentbox queue show <id>
 agentbox queue cancel <id>
 agentbox queue clear --all
