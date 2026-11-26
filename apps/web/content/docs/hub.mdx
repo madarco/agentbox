@@ -223,6 +223,30 @@ filters the page to it. The **Subscription** selector narrows the page to one
 subscription and keeps it in the URL (`/usage?subscription=claude/personal`). It reads the same numbers as
 [`agentbox usage tokens`](/docs/cli#usage-tokens).
 
+### Sharing your usage on agent-box.sh
+
+A usage share is a public page at `agent-box.sh/u/<handle>/<n>` that renders
+the same Usage layout from a snapshot of your numbers, with a link preview image
+built from them. `agent-box.sh/u/<handle>` lists a handle's shares, and
+[`/u/example`](https://agent-box.sh/u/example) shows one made from sample data.
+
+- **What is sent**: numbers, dates, and agent and provider ids (`claude`,
+  `hetzner`, …): agents at once, agent-hours and wall hours, PRs merged, commits,
+  lines and files changed, the daily chart, the activity wall, the three Gantt
+  days and the biggest sessions, each labeled only "claude on hetzner". The only
+  text is your handle (lowercase letters, digits and `-`, up to 39 characters).
+- **What is not sent**: project, repo, box, branch, pull request and session
+  names, prompts, transcripts, and the subscription view. agent-box.sh accepts
+  only that schema (at most 64 KB, unknown fields refused) and stores the parsed
+  numbers, never the request as sent. It keeps a salted hash of your IP for rate
+  limiting, not the address.
+- **The handle**: a few names that would read as official (`agentbox`,
+  `anthropic`, `admin`, …) are reserved. The first share for a handle claims it and returns a claim
+  secret, once. Every later share for that handle must send the secret
+  (`Authorization: Bearer <secret>`), or it is refused. There is no account: keep
+  the secret, a lost one can't be recovered. A share can't be edited after it is
+  posted.
+
 A password-profile hub also has a **Settings → Devices** page (`/settings/devices`): the computers enrolled with
 `agentbox hub login`, each with its own token, plus the codes waiting for your
 approval. A local hub needs no login and shows none. See

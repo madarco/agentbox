@@ -3,6 +3,39 @@
 Open items found while building the phases of
 [`usage-dashboard-plan.md`](./usage-dashboard-plan.md). Newest phase first.
 
+## From Phase 5 (agent-box.sh share endpoint and page)
+
+- **Owner setup before it works in production**: add Neon to the Vercel project
+  (`DATABASE_URL`) and set `SHARE_IP_SALT` to a random secret. Until then the
+  endpoint answers 503 and `/u/<handle>/<n>` 404s; `/u/example` works without either.
+  Run `DATABASE_URL=… pnpm --filter @agentbox/web db:migrate` once at setup: the first
+  POST also creates the tables, but two cold functions doing it at once can race.
+- **A lost claim secret can't be recovered**, and a share can't be deleted. Both need an
+  identity later (the plan's GitHub-login option) or a manual SQL delete plus
+  `revalidatePath`.
+- **404s are cached too.** `/u/<handle>/<n>` is ISR with no expiry, so a request for a
+  share that does not exist yet caches the 404 until the POST revalidates that path
+  (it does). `proxy.ts` refuses malformed handles and numbers uncached, but a crawler
+  guessing well-formed paths still fills the ISR cache with 404 entries; a firewall
+  rule on `/u/*` request volume would bound it.
+- **Provider marks are copied a third time** into `apps/web/lib/share/og.tsx` (satori
+  needs plain SVG and usage-view's `ProviderLogo` is client code). The e2b mark is three
+  bars there, since satori does not render SVG text. If usage-view exported its marks
+  as data (bg + SVG children) from the non-client entry, the OG image could import them.
+- **The rate limit counts by the IP Vercel reports** (`x-real-ip`, else the first
+  `x-forwarded-for`). A hub behind one NAT shares the limit with its neighbours; 10
+  shares an hour is plenty for one person.
+- **Refused posts are not counted.** A 403 (wrong claim secret) is checked before any
+  lock and writes nothing, so it does not count toward the per-IP limit: guessing a
+  secret costs one indexed read per try (a 256-bit secret is not guessable). A
+  Vercel Firewall rule on `/api/share` is the throttle for that.
+- **The DB tests need a Postgres.** `apps/web/test/share.test.ts` runs against
+  `SHARE_TEST_DATABASE_URL` and skips without it, so CI does not run the claim,
+  rate-limit and concurrency tests. A `postgres` service container in the CI job
+  would.
+- **Unfurl checks with the real validators** (X card validator, LinkedIn post inspector,
+  a Slack paste) need the production domain; done locally only against the rendered PNGs.
+
 ## From Phase 2 (the stats API)
 
 - **The feed of merged PRs is empty.** `FeedItem` needs a title, and the ledger

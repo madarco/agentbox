@@ -291,8 +291,10 @@ and 4b (contributions to a remote hub).
   `handles (handle pk, claim_hash, created_at)` and
   `shares (handle, n, snapshot jsonb, ip_hash, created_at, pk (handle, n))`.
   `n` is assigned in the insert transaction, so concurrent posts never collide.
-- Rate limit by IP: a Vercel Firewall rate-limit rule on `/api/share` (for
-  example 10 posts per hour per IP), no code.
+- Rate limit by IP, in SQL (built): at most 10 shares per hour and 3 new handles
+  per day per IP hash (HMAC-SHA256 with `SHARE_IP_SALT`; the raw IP is never
+  stored), 429 with `Retry-After`. A Vercel Firewall rate-limit rule on
+  `/api/share` can be added in front of it, no code.
 - Handle claim: the first post for a handle returns a claim secret; the hub
   stores it (`~/.agentbox/hub/share.json`, 0600) and sends it on every later post
   for that handle. A post for a claimed handle without its secret is refused.
@@ -315,6 +317,18 @@ and 4b (contributions to a remote hub).
   paste) and with the shortest and largest plausible numbers (1 box, 6-digit
   hours) so nothing overflows. A light and a dark variant are not needed:
   unfurls show one image, so use the paper background with the green accent.
+
+Built (2026-11-26): `apps/web` with the `postgres` driver (`prepare: false` for
+Neon's pooler). Run `pnpm --filter @agentbox/web db:migrate` once at setup (with
+the production `DATABASE_URL`): the first POST also creates the tables, but two
+cold functions doing it at once can race. Handles that would read as official
+(`agentbox`, `madarco`, `anthropic`, …) are reserved, and the rate limit counts
+an IPv6 client by its /64. `proxy.ts` 404s a malformed `/u/` path before
+anything renders or is cached. The pages are ISR-cached forever and
+revalidated by the POST; `/u/example` renders the fixture without a database.
+The handle `example` is reserved. Env on the Vercel project: `DATABASE_URL`
+(from the Neon integration) and `SHARE_IP_SALT` (a random secret); without them
+`POST /api/share` answers 503 and the share pages 404.
 
 ### Phase 6 — share from the hub
 

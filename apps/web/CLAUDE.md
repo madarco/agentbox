@@ -36,6 +36,14 @@ documentation. Deployed on Vercel as a single Next.js app.
 - `public/` — Next public root: `home.html` (the marketing page) + assets
   (`logo.svg`, favicons, `cover.jpg`, …) + generated `schema/` + `screenshots/`
   (docs figure images).
+- `app/u/**` + `app/api/share` + `lib/share/` — public usage shares
+  (`/u/<handle>/<n>`, `/u/<handle>`, `/u/example`, `POST /api/share`, the OG image
+  in `lib/share/og.tsx`), rendered by `@agentbox/usage-view`. Stored in Neon
+  Postgres (`DATABASE_URL`, `SHARE_IP_SALT`; schema in `db/schema.mjs`, applied
+  once at setup with `pnpm db:migrate`). `proxy.ts` 404s malformed `/u/` paths
+  before ISR caches them. Tests:
+  `SHARE_TEST_DATABASE_URL=postgres://… pnpm test` against a `postgres:16` container
+  (skipped without it). See `docs/usage-dashboard-plan.md` Phase 5.
 - `scripts/copy-schema.mjs` — prebuild step (see Build).
 - `next.config.mjs` — `createMDX()` + rewrites.
 - [`images.md`](./images.md) — **how to (re)capture every docs figure**: the one
@@ -68,6 +76,10 @@ Latest AgentBox version, shown on both home and docs. Source of truth is
 - `pnpm dev` / `pnpm build` run `scripts/copy-schema.mjs` first (`predev` /
   `prebuild`): copies `agentbox.schema.json` + `user-config.schema.json` into
   `public/schema/`, and writes `lib/version-fallback.json` from the CLI version.
+- `scripts/ensure-usage-view.mjs` (also in `predev` / `prebuild`) builds the
+  workspace `@agentbox/usage-view` package when its `dist` is missing, which is
+  the case on Vercel (it runs only this app's build). Locally turbo's `^build`
+  already built it.
 - `postinstall` runs `fumadocs-mdx` to generate the `.source` types.
 
 ## Deploy (Vercel)
