@@ -197,6 +197,23 @@ export async function withHubClientQuiet<T>(
       preferLocal: opts.preferLocal,
     });
     if (!target) return { ok: false, error: 'no hub is configured or running' };
+    return await withHubTargetQuiet(target, fn);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * {@link withHubClientQuiet} against a target the caller already resolved.
+ * Never feed `target.url` back in as `url`: an explicit URL resolves as a remote
+ * hub, which holds no credential for the loopback URL of this machine's own hub
+ * (plain or exposed), so the second lookup comes back empty.
+ */
+export async function withHubTargetQuiet<T>(
+  target: { url: string; apiKey: string },
+  fn: (client: HubApiClient) => Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+  try {
     const client = new HubApiClient(target);
     const health = await client.health();
     if (!isSupportedApiVersion(health.apiVersion)) {

@@ -44,15 +44,15 @@ provider, and the hub doesn't need to own them.
 Skills are not a concept of their own today. They ride inside each agent's
 static config tree plus one shared tree, `~/.agents`:
 
-| What | Host source | Box destination | Where |
-|---|---|---|---|
-| Cross-agent Agent Skills | `~/.agents/` (`skills/<name>/SKILL.md`, `.skill-lock.json` from the open `skills` CLI) | `/home/vscode/.agents` | `concerns/skills.ts` `seedAgentsVolume`; cloud: `host-stage.ts` `stageAgentsStaticForUpload` |
-| claude skills, plugins, marketplaces | `~/.claude/` minus the spec's excludes; `skills/`, `plugins/cache`, `installed_plugins.json`, `known_marketplaces.json` all included | `~/.claude` | `agent-registry/src/specs/claude.ts` `staticPaths` |
-| codex skills | `~/.codex/skills` (on a host with `~/.agents` these are symlinks into it, so excluded and purged in the box except `.system`); `.tmp/marketplaces/` carved in so in-box `codex plugin` works | `~/.codex` | `agent-codex/src/docker-sync.ts` (`skillsExclude` / `skillsPurge`), `specs/codex.ts` |
-| opencode skills | `~/.config/opencode/skills` | volume `config/skills` (`OPENCODE_CONFIG_DIR`) | `specs/opencode.ts` |
-| pi skills | `~/.pi/agent/skills` (symlinks resolved on the host, `rsync -L`) | `~/.pi/agent/skills` | `specs/pi.ts`, `agent-pi/src/host-stage.ts` |
-| openclaw | none from the host; AgentBox's own skill under `/opt/agentbox/skills`, registered via `skills.load.extraDirs` | `/opt/agentbox/skills` | `specs/openclaw.ts` (`openclaw-agentbox-env` task) |
-| AgentBox's own skills | baked `setup-guide.md` / `identity-skill.md` | claude `skills/agentbox-setup` via `seeds`; openclaw extraDirs | `specs/claude.ts` `SEED_SETUP_SKILL`, `seeds` |
+| What                                 | Host source                                                                                                                                                                                  | Box destination                                                | Where                                                                                        |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Cross-agent Agent Skills             | `~/.agents/` (`skills/<name>/SKILL.md`, `.skill-lock.json` from the open `skills` CLI)                                                                                                       | `/home/vscode/.agents`                                         | `concerns/skills.ts` `seedAgentsVolume`; cloud: `host-stage.ts` `stageAgentsStaticForUpload` |
+| claude skills, plugins, marketplaces | `~/.claude/` minus the spec's excludes; `skills/`, `plugins/cache`, `installed_plugins.json`, `known_marketplaces.json` all included                                                         | `~/.claude`                                                    | `agent-registry/src/specs/claude.ts` `staticPaths`                                           |
+| codex skills                         | `~/.codex/skills` (on a host with `~/.agents` these are symlinks into it, so excluded and purged in the box except `.system`); `.tmp/marketplaces/` carved in so in-box `codex plugin` works | `~/.codex`                                                     | `agent-codex/src/docker-sync.ts` (`skillsExclude` / `skillsPurge`), `specs/codex.ts`         |
+| opencode skills                      | `~/.config/opencode/skills`                                                                                                                                                                  | volume `config/skills` (`OPENCODE_CONFIG_DIR`)                 | `specs/opencode.ts`                                                                          |
+| pi skills                            | `~/.pi/agent/skills` (symlinks resolved on the host, `rsync -L`)                                                                                                                             | `~/.pi/agent/skills`                                           | `specs/pi.ts`, `agent-pi/src/host-stage.ts`                                                  |
+| openclaw                             | none from the host; AgentBox's own skill under `/opt/agentbox/skills`, registered via `skills.load.extraDirs`                                                                                | `/opt/agentbox/skills`                                         | `specs/openclaw.ts` (`openclaw-agentbox-env` task)                                           |
+| AgentBox's own skills                | baked `setup-guide.md` / `identity-skill.md`                                                                                                                                                 | claude `skills/agentbox-setup` via `seeds`; openclaw extraDirs | `specs/claude.ts` `SEED_SETUP_SKILL`, `seeds`                                                |
 
 The `agentbox-` prefix is reserved: `SKILL_EXCLUDE_PREFIXES` keeps AgentBox's
 own skills out of the box→host pull. On the host, `agentbox install` writes
@@ -62,12 +62,12 @@ prompt (`~/.codex/prompts/agentbox.md`) and an opencode command
 
 ### Per provider
 
-| Provider | When skills land | Refreshed |
-|---|---|---|
-| docker | every `create` / `agentbox <agent>`: host → shared volume rsync (`agentbox-agents-config`, `agentbox-<agent>-config`), additive, host wins, no `--delete` | on the next create of *any* box sharing the volume, so running boxes change underfoot |
-| daytona, hetzner, vercel, e2b, digitalocean | baked into the base snapshot at `prepare` (`stageAllAgentStatic`) | only by re-running `prepare` |
-| remote-docker | at every create (`seedsAgentStaticAtCreate` → `seedAgentStaticForCreate`), narrowed to the box's agents | per create |
-| community plugins | whatever `createCloudProvider` does for their backend shape | same as their class |
+| Provider                                    | When skills land                                                                                                                                          | Refreshed                                                                             |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| docker                                      | every `create` / `agentbox <agent>`: host → shared volume rsync (`agentbox-agents-config`, `agentbox-<agent>-config`), additive, host wins, no `--delete` | on the next create of _any_ box sharing the volume, so running boxes change underfoot |
+| daytona, hetzner, vercel, e2b, digitalocean | baked into the base snapshot at `prepare` (`stageAllAgentStatic`)                                                                                         | only by re-running `prepare`                                                          |
+| remote-docker                               | at every create (`seedsAgentStaticAtCreate` → `seedAgentStaticForCreate`), narrowed to the box's agents                                                   | per create                                                                            |
+| community plugins                           | whatever `createCloudProvider` does for their backend shape                                                                                               | same as their class                                                                   |
 
 ### Box → host, box → box
 
@@ -132,13 +132,13 @@ disagree, and the phases and decisions have been adjusted to match.
 
 ### What is seeded from the PC today (re-verified)
 
-| What | When | From | Lives at | Code |
-| --- | --- | --- | --- | --- |
-| Agent logins | end of `hub setup` / `hub deploy <provider>` / `hub expose` restart (`finalizeControlBoxState` → `syncAgentCredentials`), and on credential refresh (fan-out) | PC's `~/.agentbox/<agent>-credentials.json` | custody `agents/<agent>/<file>` | `apps/cli/src/commands/control-plane.ts`, `packages/relay/src/credentials-fanout.ts` |
-| Bake records | the same end-of-setup step (`syncBakesWithControlBox` → `pushPreparedToCustody`); also after every hub-queued bake (`sharePreparedBase`) | PC's `~/.agentbox/<provider>-prepared.json` | custody `prepared/<provider>.json` — a **pointer** to a snapshot that lives at the cloud provider | `control-plane.ts`, `apps/cli/src/control-plane/prepared-custody.ts` |
-| Project seed | on a PC-driven create of a project (best-effort, hash-skipped) | the working tree: untracked files + env files | custody `projects/<slug>/seed/{untracked,env}.tar.gz` + `manifest.json` | `packages/sandbox-cloud/src/custody-seed.ts` |
-| `hub project push` | explicit command | named files (default `./.env`) | custody `projects/<slug>/<file>` | `control-plane.ts` |
-| Skills | **never as files.** They ride _inside_ the PC's cloud snapshot, baked by `stageAllAgentStatic` at the PC's `prepare`. The control box adopts that snapshot when the record's `contextSha256` matches its own fingerprint (`hydratePreparedFromCustody`). | the PC's `~/.claude`, `~/.agents`, … at bake time | inside the provider snapshot; nothing in custody names them | `packages/sandbox-cloud/src/sync/agent-static.ts`, `bake-share.ts` |
+| What               | When                                                                                                                                                                                                                                                     | From                                              | Lives at                                                                                          | Code                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Agent logins       | end of `hub setup` / `hub deploy <provider>` / `hub expose` restart (`finalizeControlBoxState` → `syncAgentCredentials`), and on credential refresh (fan-out)                                                                                            | PC's `~/.agentbox/<agent>-credentials.json`       | custody `agents/<agent>/<file>`                                                                   | `apps/cli/src/commands/control-plane.ts`, `packages/relay/src/credentials-fanout.ts` |
+| Bake records       | the same end-of-setup step (`syncBakesWithControlBox` → `pushPreparedToCustody`); also after every hub-queued bake (`sharePreparedBase`)                                                                                                                 | PC's `~/.agentbox/<provider>-prepared.json`       | custody `prepared/<provider>.json` — a **pointer** to a snapshot that lives at the cloud provider | `control-plane.ts`, `apps/cli/src/control-plane/prepared-custody.ts`                 |
+| Project seed       | on a PC-driven create of a project (best-effort, hash-skipped)                                                                                                                                                                                           | the working tree: untracked files + env files     | custody `projects/<slug>/seed/{untracked,env}.tar.gz` + `manifest.json`                           | `packages/sandbox-cloud/src/custody-seed.ts`                                         |
+| `hub project push` | explicit command                                                                                                                                                                                                                                         | named files (default `./.env`)                    | custody `projects/<slug>/<file>`                                                                  | `control-plane.ts`                                                                   |
+| Skills             | **never as files.** They ride _inside_ the PC's cloud snapshot, baked by `stageAllAgentStatic` at the PC's `prepare`. The control box adopts that snapshot when the record's `contextSha256` matches its own fingerprint (`hydratePreparedFromCustody`). | the PC's `~/.claude`, `~/.agents`, … at bake time | inside the provider snapshot; nothing in custody names them                                       | `packages/sandbox-cloud/src/sync/agent-static.ts`, `bake-share.ts`                   |
 
 So the owner's picture is half right. The first hub-created cloud box **does**
 get the PC's skills, through the adopted snapshot. But:
@@ -186,28 +186,28 @@ not grow). Four rules decide most of what follows:
 
 ```ts
 interface Skill {
-  id: string;                 // slug, = SKILL.md `name`; unique per owner
-  description: string;        // from SKILL.md frontmatter, for listings
+  id: string; // slug, = SKILL.md `name`; unique per owner
+  description: string; // from SKILL.md frontmatter, for listings
   source: SkillSource;
-  currentVersion: string;     // sha256 of the normalized tree
-  agents?: string[];          // optional compatibility allowlist; absent = all
-  userId: string | null;      // null until teams (Stage 2)
+  currentVersion: string; // sha256 of the normalized tree
+  agents?: string[]; // optional compatibility allowlist; absent = all
+  userId: string | null; // null until teams (Stage 2)
   createdAt: string;
 }
 
 type SkillSource =
-  | { kind: 'upload' }                                         // web UI / CLI file upload
+  | { kind: 'upload' } // web UI / CLI file upload
   | { kind: 'folder'; hostId: string; path: string; linked: boolean } // a PC folder
   | { kind: 'git'; url: string; path?: string; ref: string; commit: string }
   | { kind: 'marketplace'; marketplace: string; plugin: string; version?: string };
 
 interface SkillVersion {
   skillId: string;
-  sha256: string;             // of the normalized tree: sorted paths, modes, bytes
+  sha256: string; // of the normalized tree: sorted paths, modes, bytes
   files: { path: string; sha256: string; size: number; mode: number }[];
   size: number;
   provenance: { by: 'cli' | 'web' | 'sync'; hostId?: string; userId?: string; commit?: string };
-  scan: SkillScan;            // see Security
+  scan: SkillScan; // see Security
   createdAt: string;
 }
 ```
@@ -245,10 +245,10 @@ instructions next to logins in one store doesn't hand a box either.
 Relational state that custody's key-value shape doesn't fit stays in the hub's
 database (sqlite local, postgres on a control box):
 
-| Table | Key | Holds |
-| --- | --- | --- |
+| Table            | Key                           | Holds                                          |
+| ---------------- | ----------------------------- | ---------------------------------------------- |
 | `skill_bindings` | `(scope, scope_id, skill_id)` | `include` / `exclude`, optional pinned version |
-| `box_skills` | `(box_id, skill_id)` | the version the box last materialized, ts |
+| `box_skills`     | `(box_id, skill_id)`          | the version the box last materialized, ts      |
 
 `scope` is `global | workspace | project | box`. `project` is keyed by repo URL
 (the box-sources repo key), not a host path, so a binding survives a second PC.
@@ -259,13 +259,13 @@ draft's 20 MB would have refused one of the owner's own.
 
 ## Getting a skill in
 
-| Source | Command / surface | What happens |
-|---|---|---|
-| PC folder | `agentbox skills import [path…]` (default: `~/.agents/skills`, then each agent's declared skill dirs) | the CLI normalizes on the PC, uploads one tarball per skill to `POST /api/v1/skills/import` (the larger-body route custody uses). `--link` records a linked folder source: that PC's relay watches the folder and uploads a new version on change, which is the authoring loop. |
-| git repo | `agentbox skills add <url>[#path][@ref]` (also `owner/repo`), web "Add from git" | the **hub** fetches (it already holds gh credentials; a box can't clone through the git shim) and records the commit. Layout-compatible with the open `skills` CLI (`skills/<name>/SKILL.md`, a repo with many skills offers a picker). |
-| marketplace | `agentbox skills add --marketplace <m> --plugin <p>` | reads the plugin's `skills/` from a claude marketplace checkout (`known_marketplaces.json`) or codex `.tmp/marketplaces/`, and imports only the skills. Plugins as a whole keep riding the agent's config tree as today (see Decisions). |
-| web UI | Skills page: upload a zip or folder, or create and edit `SKILL.md` in an editor | new version per save |
-| a box | `agentbox download <agent>` today copies box-created skills to the host | becomes "propose to library": the pulled skill is offered as a new skill/version through the approvals flow, the same shape as the history plan's `memory_propose`. |
+| Source      | Command / surface                                                                                     | What happens                                                                                                                                                                                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PC folder   | `agentbox skills import [path…]` (default: `~/.agents/skills`, then each agent's declared skill dirs) | the CLI normalizes on the PC, uploads one tarball per skill to `POST /api/v1/skills/import` (the larger-body route custody uses). `--link` records a linked folder source: that PC's relay watches the folder and uploads a new version on change, which is the authoring loop. |
+| git repo    | `agentbox skills add <url>[#path][@ref]` (also `owner/repo`), web "Add from git"                      | the **hub** fetches (it already holds gh credentials; a box can't clone through the git shim) and records the commit. Layout-compatible with the open `skills` CLI (`skills/<name>/SKILL.md`, a repo with many skills offers a picker).                                         |
+| marketplace | `agentbox skills add --marketplace <m> --plugin <p>`                                                  | reads the plugin's `skills/` from a claude marketplace checkout (`known_marketplaces.json`) or codex `.tmp/marketplaces/`, and imports only the skills. Plugins as a whole keep riding the agent's config tree as today (see Decisions).                                        |
+| web UI      | Skills page: upload a zip or folder, or create and edit `SKILL.md` in an editor                       | new version per save                                                                                                                                                                                                                                                            |
+| a box       | `agentbox download <agent>` today copies box-created skills to the host                               | becomes "propose to library": the pulled skill is offered as a new skill/version through the approvals flow, the same shape as the history plan's `memory_propose`.                                                                                                             |
 
 **First seed: automatic** (owner direction 2). When the hub's `skills/`
 scope is empty, the PC seeds it with no prompt, at the first of:
@@ -285,6 +285,16 @@ which Claude Code re-syncs itself); and any skill the secret scan flags (see
 the names of skipped skills. A flagged skill is uploaded only by an explicit
 `agentbox skills` upload, after the user confirms the finding. Once the scope
 is non-empty, the automatic seed never runs again, on any PC.
+
+The PC memoizes each hub it has seen seeded (`~/.agentbox/skills-seeded.json`,
+`version: 2`), so later creates skip the round trip. A PC with no skills at all
+is not memoized (its first skill must still seed), and a version-1 memo is
+ignored: those were written by a seed that, until 2026-11-26, never reached
+this machine's own hub (`autoSeedSkills` re-resolved the resolved target's URL
+as an explicit `--url`, which looks it up as a remote control box with no
+credential for loopback, so the plain and the exposed local hub both came back
+empty and the failure went nowhere). Every outcome and failure reason is
+written to the create or queue log, never the terminal.
 
 **After that: explicit.** A new skill on a PC reaches the hub only through the
 `agentbox skills` TUI or its flags, `agentbox skills import`, `add`, or the web
@@ -362,13 +372,13 @@ nothing new), and writes:
   manifest of what it wrote;
 - the agent's injection point, measured in Phase 0 and all box-local:
 
-| Agent | Injection (measured) | Shape | Naming |
-| --- | --- | --- | --- |
-| claude | `/etc/claude-code/.claude/skills/<name>` → symlink per skill | `dir` | unprefixed (`/unslop`); `--plugin-dir` also works but prefixes every skill (`lib:unslop`), `--add-dir` works but also grants file access |
-| codex | `/etc/codex/skills/<name>` → symlink per skill (codex's `admin` scope) | `dir` | unprefixed |
-| opencode | `OPENCODE_CONFIG_CONTENT='{"skills":{"paths":["<dir>"]}}'` on the agent process | `env` | unprefixed |
-| pi | `--skill <dir>` on the launch argv (accepts a dir of skills) | `flag` | `skill:<name>`, same as every pi skill |
-| openclaw | `skills.load.extraDirs` += `<dir>`, merged the way `openclaw-agentbox-env` already merges `/opt/agentbox/skills` | `config` | unprefixed |
+| Agent    | Injection (measured)                                                                                             | Shape    | Naming                                                                                                                                   |
+| -------- | ---------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| claude   | `/etc/claude-code/.claude/skills/<name>` → symlink per skill                                                     | `dir`    | unprefixed (`/unslop`); `--plugin-dir` also works but prefixes every skill (`lib:unslop`), `--add-dir` works but also grants file access |
+| codex    | `/etc/codex/skills/<name>` → symlink per skill (codex's `admin` scope)                                           | `dir`    | unprefixed                                                                                                                               |
+| opencode | `OPENCODE_CONFIG_CONTENT='{"skills":{"paths":["<dir>"]}}'` on the agent process                                  | `env`    | unprefixed                                                                                                                               |
+| pi       | `--skill <dir>` on the launch argv (accepts a dir of skills)                                                     | `flag`   | `skill:<name>`, same as every pi skill                                                                                                   |
+| openclaw | `skills.load.extraDirs` += `<dir>`, merged the way `openclaw-agentbox-env` already merges `/opt/agentbox/skills` | `config` | unprefixed                                                                                                                               |
 
 `/etc/claude-code` already exists in every base image (`Dockerfile.box` puts
 `CLAUDE.md` there). `/etc` is root-owned, so ctl writes there through the same
@@ -458,12 +468,12 @@ context, and they share the propose-through-approvals write path. (Skills
 store in custody per the owner direction; memory's store is the history plan's
 choice.) They differ in shape:
 
-| | memory | skills |
-|---|---|---|
-| written by | the agent, continuously | a person, deliberately |
-| keyed by | `(repo_url, agent, scope, path)` | `(user, skill)` |
-| direction | bidirectional, last-writer-wins | hub → box; box → hub only by proposal |
-| format | per agent, no translation | one canonical format, placed per agent |
+|            | memory                           | skills                                 |
+| ---------- | -------------------------------- | -------------------------------------- |
+| written by | the agent, continuously          | a person, deliberately                 |
+| keyed by   | `(repo_url, agent, scope, path)` | `(user, skill)`                        |
+| direction  | bidirectional, last-writer-wins  | hub → box; box → hub only by proposal  |
+| format     | per agent, no translation        | one canonical format, placed per agent |
 
 Promoting a memory into a skill (e.g. "turn this project's learned
 conventions into a skill") is a later feature, but because both live on the
@@ -706,7 +716,7 @@ a workspace-scoped skill appears only in that workspace's boxes.
    The relay already reads the library from custody to answer `skills.get`, and
    a local hub has no relational store for this; one file keeps the local and
    remote hub identical. Shape: `{ schema: 1, global: {name: mode},
-   workspace: {id: {…}}, project: {repoKey: {…}}, box: {boxId: {…}} }`, mode
+workspace: {id: {…}}, project: {repoKey: {…}}, box: {boxId: {…}} }`, mode
    `include | exclude`. Writes are serialized in the hub process.
 2. **Resolver** (`packages/relay/src/skill-bindings.ts`, pure): per library
    skill, the most specific binding wins (box > project > workspace > global),
@@ -720,7 +730,7 @@ a workspace-scoped skill appears only in that workspace's boxes.
    machine-independent, so two PCs creating boxes of one repo on one hub get
    one set. `skills.get` / `skills.blob` resolve with it on both relay paths.
 4. **API**: `GET /api/v1/skill-bindings[?scope&scopeId]`, `PUT
-   /api/v1/skill-bindings?scope&scopeId` (merge `{bindings: {name: mode|null}}`,
+/api/v1/skill-bindings?scope&scopeId` (merge `{bindings: {name: mode|null}}`,
    `null` clears), `GET /api/v1/skill-bindings/resolve?repo&workspaceId` (the
    set a new box would get, with where each decision came from). Hub slice
    `apps/hub/lib/backend/skill-bindings.ts`. Discarding a skill drops its
@@ -729,7 +739,7 @@ a workspace-scoped skill appears only in that workspace's boxes.
    (default: the cwd repo, keyed on this PC with `repoKeyAtEdge`),
    `--workspace [ref]` (default: the workspace containing the cwd), no scope =
    global, `--clear` to remove the binding at that scope; `agentbox skills
-   bindings [--json]`. Box scope is API-only in this phase.
+bindings [--json]`. Box scope is API-only in this phase.
 6. **Web**: a Skills picker in the create modal's Advanced section, prefilled
    from `/skill-bindings/resolve` for the chosen project; sent as
    `opts.skills.include` (or `none`) only when the user changed it.
@@ -765,7 +775,7 @@ only after approval.
 
 1. **Meta grows an origin, a policy and a pending version.** `SkillMeta.origin`
    is `upload | folder (linked, machineId, path) | git (url, ref, path, commit)
-   | marketplace (marketplace, url, plugin, commit)`. `policy` is `auto | manual`
+| marketplace (marketplace, url, plugin, commit)`. `policy` is `auto | manual`
    and defaults by origin (git and marketplace `manual`). A new version of a
    `manual` skill is stored as `pending`; `current`, what boxes get, does not
    move until it is approved. Retention never drops `current` or `pending`.
@@ -778,7 +788,7 @@ only after approval.
 3. **Marketplaces** are a git source with one more hop: the hub fetches the
    marketplace repo, reads `.claude-plugin/marketplace.json`, resolves the
    plugin's source (relative path, `github`, `url`, `git-subdir`) and imports
-   only the plugin's skills. The CLI resolves a marketplace *name* through this
+   only the plugin's skills. The CLI resolves a marketplace _name_ through this
    PC's `known_marketplaces.json`; a URL or `owner/repo` works anywhere.
 4. **`behind`.** Per skill: a pending version exists. Per box: the relay records
    the set it served on each `skills.get` in custody
@@ -801,11 +811,11 @@ only after approval.
    `origin`, `policy`, `pending`.
 7. **CLI**: `agentbox skills add <url>|--marketplace`, `refresh`, `update`
    (approve pending, then sync; `--box` syncs one box), `diff`, `import
-   <path…> [--link]`, `unlink`.
+<path…> [--link]`, `unlink`.
 8. **Linked folders**: `import --link` records `{name, path, hub}` in
    `~/.agentbox/skill-links.json`. The PC's relay (never a control box) watches
    each linked folder and, debounced, runs `agentbox skills import <path>
-   --linked`, which uploads a new version; the hub's auto policy then syncs the
+--linked`, which uploads a new version; the hub's auto policy then syncs the
    running boxes that have it.
 
 **Status: implemented 2026-11-23**, live-checked on a docker box (isolated hub,
@@ -832,17 +842,17 @@ coordinator's, against the routes below.
 1. **Skills page** (`app/(dashboard)/skills`, pure `/api/v1` client). Each row
    shows its origin (upload, linked folder, git, marketplace), the update
    policy (a toggle, `PATCH /skills/{name}`), and a pending update. Header
-   actions: *Add from git* and *Add from marketplace* (`POST /skills` with
+   actions: _Add from git_ and _Add from marketplace_ (`POST /skills` with
    `dryRun` first, so the user picks from what the source holds and sees each
-   one's scan findings and problems, then the import), *Refresh all*
-   (`POST /skills/refresh`, already there for the CLI), *New skill*.
+   one's scan findings and problems, then the import), _Refresh all_
+   (`POST /skills/refresh`, already there for the CLI), _New skill_.
 2. **Pending update view**, per row: `GET /skills/{name}/diff`, rendered file
    by file with a line diff, plus the hub's secret scan of the pending tree, then
-   *Approve* (`POST /skills/{name}/approve`). Per-row *Refresh* for git and
-   marketplace skills; a refresh the scan blocked offers *Fetch anyway*
+   _Approve_ (`POST /skills/{name}/approve`). Per-row _Refresh_ for git and
+   marketplace skills; a refresh the scan blocked offers _Fetch anyway_
    (`allowFindings`).
 3. **SKILL.md editor**: open a skill's SKILL.md, edit, save as a new `upload`
-   version; *New skill* starts from a frontmatter template. The browser can't
+   version; _New skill_ starts from a frontmatter template. The browser can't
    build a tarball and its tree hash, so one new route does it hub-side:
    `GET|PUT /api/v1/skills/{name}/skill-md`. `GET` takes the elevated read like
    `/diff` (it returns content); `PUT {content, base?, allowFindings?}` copies
@@ -855,9 +865,9 @@ coordinator's, against the routes below.
    `skills_propose_install` approvals with the existing approval buttons, and
    each version's source (`box <name>`) shows where a proposed version came from.
 5. **Box detail Skills section**: `GET /boxes/{id}/skills` (what the box
-   holds, `behind`, `pending`), *Sync now* (`POST /boxes/{id}/skills/sync`),
+   holds, `behind`, `pending`), _Sync now_ (`POST /boxes/{id}/skills/sync`),
    and a per-skill box-scope enable/disable/inherit (`PUT
-   /skill-bindings?scope=box`), with the library skills the box doesn't hold
+/skill-bindings?scope=box`), with the library skills the box doesn't hold
    listed as off.
 6. **Tray badge route**: `GET /api/v1/skill-status` → pending updates plus
    the boxes behind, one call instead of one `GET /boxes/{id}/skills` per box.
@@ -892,7 +902,7 @@ one approval and appears in the next box.
 **Implementation plan (2026-11-23):**
 
 1. **Proposals, hub side** (`apps/hub/lib/backend/skill-proposals.ts`). `POST
-   /api/v1/skills/{name}/propose`: the same tarball body + meta header as the
+/api/v1/skills/{name}/propose`: the same tarball body + meta header as the
    `PUT`, plus the box it came from. Unlike the `PUT`, the hub reads the tarball
    itself (the sandbox-core tar reader, in the hub server process): it
    re-derives the tree hash, reads `SKILL.md` frontmatter (name must match,
@@ -961,13 +971,13 @@ npm: claude 2.1.330, codex 0.171.0, opencode 1.19.6, pi 0.73.1, openclaw
 2026.11.6. Discovery was read from each agent's own model-free listing, so no
 turn was spent on it:
 
-| Agent | Listing used |
-| --- | --- |
-| claude | the `system/init` event of `claude -p --output-format stream-json --verbose` (`skills`, `slash_commands`), emitted before auth (`Not logged in`, cost 0) |
-| codex | `codex app-server` JSON-RPC `skills/list` (`forceReload` for re-scans) |
-| opencode | `opencode debug skill` |
-| pi | `pi --mode rpc --offline` → `get_commands` |
-| openclaw | `openclaw skills list --json` |
+| Agent    | Listing used                                                                                                                                             |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| claude   | the `system/init` event of `claude -p --output-format stream-json --verbose` (`skills`, `slash_commands`), emitted before auth (`Not logged in`, cost 0) |
+| codex    | `codex app-server` JSON-RPC `skills/list` (`forceReload` for re-scans)                                                                                   |
+| opencode | `opencode debug skill`                                                                                                                                   |
+| pi       | `pi --mode rpc --offline` → `get_commands`                                                                                                               |
+| openclaw | `openclaw skills list --json`                                                                                                                            |
 
 Probe skills were planted in every candidate dir, as a real dir and as a
 symlinked dir pointing outside the tree, plus project-level dirs in the cwd.
@@ -976,14 +986,14 @@ injected skill is actually used and not just listed (below).
 
 ### Discovery
 
-| Read? | claude | codex | opencode | pi | openclaw |
-| --- | --- | --- | --- | --- | --- |
-| `~/.agents/skills` | no | yes | yes | yes | yes |
-| `~/.claude/skills` | yes | no | yes | no | no |
-| own user dir | `~/.claude/skills` | `~/.codex/skills` | `~/.config/opencode/skills` | `~/.pi/agent/skills` | `~/.openclaw/skills` |
-| project `.agents/skills` | no | yes | yes | yes | n/a (workspace is its own dir) |
-| project `.claude/skills` | yes | no | yes | no | n/a |
-| symlinked skill dir | followed | followed (reports the resolved path) | followed | followed | followed |
+| Read?                          | claude                                      | codex                                                                                                                           | opencode                                                                                          | pi                           | openclaw                                                           |
+| ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------ |
+| `~/.agents/skills`             | no                                          | yes                                                                                                                             | yes                                                                                               | yes                          | yes                                                                |
+| `~/.claude/skills`             | yes                                         | no                                                                                                                              | yes                                                                                               | no                           | no                                                                 |
+| own user dir                   | `~/.claude/skills`                          | `~/.codex/skills`                                                                                                               | `~/.config/opencode/skills`                                                                       | `~/.pi/agent/skills`         | `~/.openclaw/skills`                                               |
+| project `.agents/skills`       | no                                          | yes                                                                                                                             | yes                                                                                               | yes                          | n/a (workspace is its own dir)                                     |
+| project `.claude/skills`       | yes                                         | no                                                                                                                              | yes                                                                                               | no                           | n/a                                                                |
+| symlinked skill dir            | followed                                    | followed (reports the resolved path)                                                                                            | followed                                                                                          | followed                     | followed                                                           |
 | new skill in a running process | not measured (needs an interactive session) | **no**: a skill added mid-process is absent from the cached list after 5 s and appears only with `forceReload` or a new process | no: its built-in `customize-opencode` skill states config and skills load once and need a restart | no: needs `/reload` (README) | yes: `skills.load.watch` filesystem watch (openclaw's config docs) |
 
 Two consequences beyond the plan. **(a)** Today's docker carry already
@@ -995,15 +1005,15 @@ one has a box-local injection point (next table), so the docker fallback
 
 ### Per-box injection
 
-| Agent | Mechanism | Result |
-| --- | --- | --- |
-| claude | `/etc/claude-code/.claude/skills/<name>` (managed dir, no flag) | loaded unprefixed with no flag; symlinked entries followed; the 5 real skills loaded. `/etc/claude-code/skills` (without `.claude`) is **not** read. |
-| claude | `--add-dir <d>` (loads `<d>/.claude/skills`) | loaded unprefixed. Rejected as the default because it also widens file access to `<d>`. |
-| claude | `--plugin-dir <d>` with `.claude-plugin/plugin.json` + `skills/` | loaded, but every skill becomes `<plugin>:<name>` (`lib:unslop`). Rejected. |
-| codex | `/etc/codex/skills/<name>` | loaded as scope `admin`, unprefixed; symlinked entries followed; the 5 real skills loaded. (`skills/extraRoots/set` is an app-server API call; no TUI flag or config key for it was found.) |
-| opencode | `OPENCODE_CONFIG_CONTENT='{"skills":{"paths":["<d>"]}}'` | loaded; the 5 real skills loaded. `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` drops `~/.claude`, `~/.agents` **and** the project's `.claude`/`.agents` skills, so it is not a usable way to exclude only carried copies. |
-| pi | `--skill <d>` (a dir of skills or a single skill) | loaded; with `--no-skills --skill <d>`, only `<d>` loads. |
-| openclaw | `openclaw config set skills.load.extraDirs '[...]'` | loaded as source `openclaw-extra`; openclaw reports "No gateway restart needed". |
+| Agent    | Mechanism                                                        | Result                                                                                                                                                                                                            |
+| -------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| claude   | `/etc/claude-code/.claude/skills/<name>` (managed dir, no flag)  | loaded unprefixed with no flag; symlinked entries followed; the 5 real skills loaded. `/etc/claude-code/skills` (without `.claude`) is **not** read.                                                              |
+| claude   | `--add-dir <d>` (loads `<d>/.claude/skills`)                     | loaded unprefixed. Rejected as the default because it also widens file access to `<d>`.                                                                                                                           |
+| claude   | `--plugin-dir <d>` with `.claude-plugin/plugin.json` + `skills/` | loaded, but every skill becomes `<plugin>:<name>` (`lib:unslop`). Rejected.                                                                                                                                       |
+| codex    | `/etc/codex/skills/<name>`                                       | loaded as scope `admin`, unprefixed; symlinked entries followed; the 5 real skills loaded. (`skills/extraRoots/set` is an app-server API call; no TUI flag or config key for it was found.)                       |
+| opencode | `OPENCODE_CONFIG_CONTENT='{"skills":{"paths":["<d>"]}}'`         | loaded; the 5 real skills loaded. `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` drops `~/.claude`, `~/.agents` **and** the project's `.claude`/`.agents` skills, so it is not a usable way to exclude only carried copies. |
+| pi       | `--skill <d>` (a dir of skills or a single skill)                | loaded; with `--no-skills --skill <d>`, only `<d>` loads.                                                                                                                                                         |
+| openclaw | `openclaw config set skills.load.extraDirs '[...]'`              | loaded as source `openclaw-extra`; openclaw reports "No gateway restart needed".                                                                                                                                  |
 
 **Use, not just listing.** claude: with a skill only in
 `/etc/claude-code/.claude/skills`, `claude -p "Use the probe-managed1 skill…"`
@@ -1035,12 +1045,12 @@ under `~/.claude/plugins/cache`.
 This box's copies (carried in from that Mac, so they show what a box actually
 receives):
 
-| Tree | Size | Skills |
-| --- | --- | --- |
-| `~/.agents` | 26 MB | 15 in `skills/` |
-| `~/.claude/skills` | 35 MB | 16 + `synced/` (13 claude.ai-synced `SKILL.md`, 4.7 MB) |
-| `~/.codex/skills` | 772 KB | 4 + `.system` |
-| `~/.claude/plugins` | 27 MB | 86 `SKILL.md` |
+| Tree                | Size   | Skills                                                  |
+| ------------------- | ------ | ------------------------------------------------------- |
+| `~/.agents`         | 26 MB  | 15 in `skills/`                                         |
+| `~/.claude/skills`  | 35 MB  | 16 + `synced/` (13 claude.ai-synced `SKILL.md`, 4.7 MB) |
+| `~/.codex/skills`   | 772 KB | 4 + `.system`                                           |
+| `~/.claude/plugins` | 27 MB  | 86 `SKILL.md`                                           |
 
 - **Largest single skill:** `nano-banana-pro-prompts-recommend-skill`, 23 MB:
   three reference JSONs (10.8, 5.8 and 1.8 MB) and a 1.9 MB cover PNG. Next is
@@ -1054,12 +1064,12 @@ receives):
 
 gitleaks v8.24.3 (`dir` mode) over this box's copies, triaged by hand:
 
-| Tree | Raw hits | Rules | Real secrets |
-| --- | --- | --- | --- |
-| `~/.agents/skills` | 63 | curl-auth-header 53, generic-api-key 6, private-key 4 | 0: all in `daytona/references/**`, placeholders (`Bearer YOUR_API_KEY`, `<YOUR_OPENVPN_CLIENT_PRIVATE_KEY>`) |
-| `~/.claude/skills` | 63 | same files (the dereferenced duplicates) | 0 |
-| `~/.codex/skills` | 0 | — | 0 |
-| `~/.claude/plugins` | 236 | sourcegraph-access-token 230, curl-auth-header 4, generic-api-key 2 | 0: the 230 are 40-hex git SHAs in marketplace JSON and `plugin-catalog-cache.json`; the 6 are vercel plugin test fixtures (`sk_live_abc123`) |
+| Tree                | Raw hits | Rules                                                               | Real secrets                                                                                                                                 |
+| ------------------- | -------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.agents/skills`  | 63       | curl-auth-header 53, generic-api-key 6, private-key 4               | 0: all in `daytona/references/**`, placeholders (`Bearer YOUR_API_KEY`, `<YOUR_OPENVPN_CLIENT_PRIVATE_KEY>`)                                 |
+| `~/.claude/skills`  | 63       | same files (the dereferenced duplicates)                            | 0                                                                                                                                            |
+| `~/.codex/skills`   | 0        | —                                                                   | 0                                                                                                                                            |
+| `~/.claude/plugins` | 236      | sourcegraph-access-token 230, curl-auth-header 4, generic-api-key 2 | 0: the 230 are 40-hex git SHAs in marketplace JSON and `plugin-catalog-cache.json`; the 6 are vercel plugin test fixtures (`sk_live_abc123`) |
 
 The host-tools deny list (`CREDENTIAL_ARGV_PATTERNS`, 12 patterns) matches
 argv, not secrets in files. Run over skill text, it flags skills that _tell
