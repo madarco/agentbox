@@ -106,11 +106,15 @@ describe('toShare', () => {
     }
   });
 
-  it('keeps hours saved, and still parses a share made before it existed', () => {
-    expect(share.kpis.hoursSaved).toEqual({ value: 401, delta: 132 });
-    const oldKpis = { ...share.kpis };
-    delete oldKpis.hoursSaved;
-    expect(() => UsageShare.parse({ ...share, kpis: oldKpis })).not.toThrow();
+  it('leaves hours saved out of the share: it comes from the hero', () => {
+    expect(usageFixture().kpis.hoursSaved).toEqual({ value: 401, delta: 132 });
+    expect('hoursSaved' in share.kpis).toBe(false);
+    expect(() =>
+      UsageShare.parse({
+        ...share,
+        kpis: { ...share.kpis, hoursSaved: { value: 1, delta: null } },
+      }),
+    ).toThrow();
   });
 
   it('drops the live counters', () => {

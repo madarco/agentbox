@@ -3,7 +3,7 @@ import type { ReactElement } from 'react';
 import { hoursSaved } from '@agentbox/usage-view';
 import type { AgentId, ProviderId, UsageShare } from '@agentbox/usage-view';
 import { OG, boxMark, loadOgFonts } from '@/lib/og';
-import { TAGLINE, dayMonth, hasSaving, num, shareTitle, speedup } from './format';
+import { TAGLINE, dayMonth, hasSaving, hasSpeedup, num, shareTitle, speedup } from './format';
 import { dailySeries } from './og-series';
 import type { DailySeries } from './og-series';
 
@@ -313,8 +313,10 @@ function OgCard({ share }: { share: UsageShare }) {
         value: compact(saved),
         label: `${one(saved, 'hour', 'hours')} saved, ${speedup(h.speedup)} faster than one agent`,
       }
-    : // The footer already counts PRs: show how many sandboxes the work used instead.
-      { value: compact(h.boxes), label: one(h.boxes, 'sandbox used', 'sandboxes used') };
+    : hasSpeedup(share)
+      ? { value: speedup(h.speedup), label: 'faster than one agent' }
+      : // The footer already counts PRs: show how many sandboxes the work used instead.
+        { value: compact(h.boxes), label: one(h.boxes, 'sandbox used', 'sandboxes used') };
   const shipped =
     `${compact(h.prsMerged)} ${one(h.prsMerged, 'PR', 'PRs')} merged · ` +
     `${compact(h.commits)} ${one(h.commits, 'commit', 'commits')}\u00a0·\u00a0`;

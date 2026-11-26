@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { addDays, hoursSaved, maxOf } from '../aggregate.js';
+import { addDays, claimsHoursSaved, hoursSaved, maxOf } from '../aggregate.js';
 import { decodeDaily, decodeWall } from '../columns.js';
 import { AGENT_IDS, PROVIDER_IDS } from '../schema.js';
 import type {
@@ -71,7 +71,8 @@ interface View {
   handle: string | null;
   range: UsageStats['range'];
   hero: UsageStats['hero'];
-  kpis: UsageStats['kpis'];
+  /** A share has no `hoursSaved` KPI: its value comes from the hero, with no delta. */
+  kpis: UsageShare['kpis'] & Partial<Pick<UsageStats['kpis'], 'hoursSaved'>>;
   daily: (Omit<DailyStats, 'byProject'> & { byProject?: Record<string, SplitValues> })[];
   wall: UsageStats['wall'];
   streaks: UsageStats['streaks'];
@@ -268,7 +269,7 @@ function Hero({ v }: { v: View }): ReactElement {
           </b>{' '}
           of work in <b>{nf(h.wallHours)} hours</b>. Side by side, they got{' '}
           <b>{h.speedup.toFixed(1)}×</b> as much done as one agent alone
-          {saved > 0 ? (
+          {claimsHoursSaved(h) ? (
             <>
               , <b>{hoursLabel(saved)}</b> saved vs. one agent at a time
             </>
@@ -410,7 +411,7 @@ function Hero({ v }: { v: View }): ReactElement {
 
 function Kpis({ v }: { v: View }): ReactElement {
   const k = v.kpis;
-  // Shares made before the field existed: the value from the hero, no delta.
+  // A share: the value from the hero, no delta.
   const saved = k.hoursSaved ?? { value: hoursSaved(v.hero), delta: null };
   const days = v.daily;
   const prev = previousLabel(v.range.id, v.range.since);

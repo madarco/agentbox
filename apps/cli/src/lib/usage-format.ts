@@ -4,7 +4,6 @@ import type {
   HubApiUsageGroup,
   HubApiUsageTotals,
 } from '../control-plane/hub-api-client.js';
-import { hoursSaved } from '@agentbox/usage-view';
 import type { UsageStats } from '@agentbox/usage-view';
 import { clip, compactCount, shortId } from './sessions-format.js';
 
@@ -99,13 +98,20 @@ const nf = (n: number, digits = 0): string =>
   n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
 /** `agentbox usage`: the hero numbers of a window, one per line. */
+/** ` (+132.0 h vs. the previous window)`, or nothing when there is none. */
+function savedDelta(s: UsageStats): string {
+  const d = s.kpis.hoursSaved.delta;
+  if (d === null) return '';
+  return ` (${d >= 0 ? '+' : '-'}${nf(Math.abs(d), 1)} h vs. the previous window)`;
+}
+
 export function usageHeroLines(s: UsageStats): string[] {
   const h = s.hero;
   const rows: Array<[string, string]> = [
     ['Agent-hours', `${nf(h.agentHours, 1)} h`],
     ['Wall hours', `${nf(h.wallHours, 1)} h`],
     ['Speed-up', `${nf(h.speedup, 2)}x`],
-    ['Hours saved', `${nf(hoursSaved(h), 1)} h vs. one agent at a time`],
+    ['Hours saved', `${nf(s.kpis.hoursSaved.value, 1)} h vs. one agent at a time${savedDelta(s)}`],
     ['Peak at once', h.peakDate ? `${nf(h.peakAtOnce)} (${h.peakDate})` : nf(h.peakAtOnce)],
     ['PRs merged', nf(h.prsMerged)],
     ['Commits', nf(h.commits)],

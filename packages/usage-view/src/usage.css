@@ -808,10 +808,19 @@
   align-items: center;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1240px) {
+  /* Five cards as 3 + 2, the second row filling the width. */
   .usage .kpis {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
+  .usage .kpi {
+    grid-column: span 2;
+  }
+  .usage .kpi:nth-child(n + 4) {
+    grid-column: span 3;
+  }
+}
+@media (max-width: 1100px) {
   .usage .hero {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -832,6 +841,10 @@
 @media (max-width: 760px) {
   .usage .kpis {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .usage .kpi,
+  .usage .kpi:nth-child(n + 4) {
+    grid-column: auto;
   }
 }
 @media (prefers-reduced-motion: reduce) {

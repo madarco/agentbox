@@ -1,4 +1,4 @@
-import { hoursSaved } from '@agentbox/usage-view';
+import { MIN_SPEEDUP, claimsHoursSaved, hoursSaved } from '@agentbox/usage-view';
 import type { UsageShare } from '@agentbox/usage-view';
 
 const whole = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
@@ -66,12 +66,9 @@ export function periodText(share: UsageShare): string {
 export const shareTitle = (share: UsageShare): string =>
   `@${share.handle}'s coding agents · ${periodText(share)}`;
 
-/** Below 1.1x there is no speed-up worth claiming (one agent at a time). */
-export const hasSpeedup = (share: UsageShare): boolean => share.hero.speedup >= 1.1;
+export const hasSpeedup = (share: UsageShare): boolean => share.hero.speedup >= MIN_SPEEDUP;
 
-/** Hours saved worth a headline: a real speed-up and at least an hour. */
-export const hasSaving = (share: UsageShare): boolean =>
-  hasSpeedup(share) && hoursSaved(share.hero) >= 1;
+export const hasSaving = (share: UsageShare): boolean => claimsHoursSaved(share.hero);
 
 /** "401 hours saved" */
 export const savedText = (share: UsageShare): string =>

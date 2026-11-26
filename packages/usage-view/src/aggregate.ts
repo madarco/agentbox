@@ -4,7 +4,7 @@ import type {
   FeedItem,
   GanttDayStats,
   Hero,
-  Kpis,
+  StatsKpis,
   LaneStats,
   ProviderId,
   ProviderStats,
@@ -679,6 +679,16 @@ export function hoursSaved(h: { agentHours: number; wallHours: number }): number
   return Math.max(0, round(h.agentHours - h.wallHours, 1));
 }
 
+/** Below this there is no speed-up worth claiming: one agent at a time, near enough. */
+export const MIN_SPEEDUP = 1.1;
+
+/** Hours saved worth stating in words: a real speed-up and at least an hour. */
+export const claimsHoursSaved = (h: {
+  agentHours: number;
+  wallHours: number;
+  speedup: number;
+}): boolean => h.speedup >= MIN_SPEEDUP && hoursSaved(h) >= 1;
+
 function addSplit<K extends string>(
   rec: Partial<Record<K, SplitValues>>,
   k: K,
@@ -1100,7 +1110,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
   };
   const boxHours = round(boxMs / HOUR, 1);
   const prev = input.previous;
-  const kpis: Kpis = {
+  const kpis: StatsKpis = {
     peak: {
       value: conc.peak,
       delta: prev ? conc.peak - prev.peak : null,

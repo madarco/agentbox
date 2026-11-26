@@ -7,6 +7,7 @@ import {
   concurrencyByDay,
   dayKey,
   dayStart,
+  claimsHoursSaved,
   groupSessions,
   hoursSaved,
   lanesFromSessions,
@@ -320,8 +321,8 @@ describe('buildUsageStats', () => {
     expect(stats.kpis.boxHours.deltaPct).toBe(100);
     expect(stats.kpis.peak.delta).toBe(2);
     expect(stats.kpis.boxHours.tokens).toBe(1000);
-    expect(stats.kpis.hoursSaved!.value).toBe(hoursSaved(stats.hero));
-    expect(stats.kpis.hoursSaved!.delta).toBeCloseTo(hoursSaved(stats.hero) - 0.2, 5);
+    expect(stats.kpis.hoursSaved.value).toBe(hoursSaved(stats.hero));
+    expect(stats.kpis.hoursSaved.delta).toBeCloseTo(hoursSaved(stats.hero) - 0.2, 5);
   });
 
   it('fills daily splits', () => {
@@ -647,5 +648,13 @@ describe('hoursSaved', () => {
     expect(hoursSaved({ agentHours: 10.3, wallHours: 3.1 })).toBe(7.2);
     expect(hoursSaved({ agentHours: 0.3, wallHours: 0.1 })).toBe(0.2);
     expect(hoursSaved({ agentHours: 1.04, wallHours: 1 })).toBe(0);
+  });
+});
+
+describe('claimsHoursSaved', () => {
+  it('needs a real speed-up and at least an hour', () => {
+    expect(claimsHoursSaved({ agentHours: 612, wallHours: 211, speedup: 2.9 })).toBe(true);
+    expect(claimsHoursSaved({ agentHours: 30.3, wallHours: 30, speedup: 1.01 })).toBe(false);
+    expect(claimsHoursSaved({ agentHours: 1.5, wallHours: 0.6, speedup: 2.5 })).toBe(false);
   });
 });

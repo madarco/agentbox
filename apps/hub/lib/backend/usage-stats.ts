@@ -409,10 +409,7 @@ export async function computeUsageStats(
     previous = {
       peak: c.peak,
       speedup: c.wallMs > 0 ? Math.round((c.agentMs / c.wallMs) * 100) / 100 : 0,
-      hoursSaved: hoursSaved({
-        agentHours: Math.round((c.agentMs / HOUR) * 10) / 10,
-        wallHours: Math.round((c.wallMs / HOUR) * 10) / 10,
-      }),
+      hoursSaved: hoursSaved({ agentHours: c.agentMs / HOUR, wallHours: c.wallMs / HOUR }),
       prsMerged: events.filter((e) => e.type === 'pr.merged' && e.at >= prevFrom && e.at < from)
         .length,
       boxHours:
