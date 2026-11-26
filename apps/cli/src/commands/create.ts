@@ -541,7 +541,7 @@ export const createCommand = new Command('create')
   .option('--model-auth <source...>', boxModelAuthHelp())
   .option(
     '--account <agent=name>',
-    "named LLM account per agent, e.g. --account claude=work (repeatable; default: each agent's <agent>.account, else its default login). Fixed at create; see `agentbox accounts`.",
+    "named LLM account per agent, e.g. --account claude=work (repeatable; default: each agent's <agent>.account, else its default login). Fixed at create; see `agentbox credentials`.",
     collectRepeatable,
   )
   .option(

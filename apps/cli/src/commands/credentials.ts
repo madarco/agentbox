@@ -24,6 +24,21 @@ import {
 } from '@agentbox/core';
 import { providerForBox } from '../provider/registry.js';
 import { handleLifecycleError } from './_errors.js';
+import {
+  addCommand,
+  credentialsInteractive,
+  fail,
+  labelCommand,
+  listCommand,
+  removeCommand,
+  renewCommand,
+  runCredentialsTui,
+  switchCommand,
+  useCommand,
+  type AddOpts,
+  type RenewOpts,
+  type UseOpts,
+} from './credentials-manage.js';
 
 interface PropagateOpts {
   agent: string;
@@ -246,6 +261,90 @@ async function pushCredentialToCustody(
   }
 }
 
+const withRef =
+  <A extends unknown[]>(fn: (...args: A) => Promise<void>) =>
+  (...args: A): Promise<void> =>
+    fn(...args).catch(fail);
+
 export const credentialsCommand = new Command('credentials')
-  .description('Manage agent credential sync across boxes')
-  .addCommand(propagateCommand);
+  .description(
+    'Subscriptions and keys per agent (logins, setup tokens, API keys): list, add, renew, make default, move a box. Bare on a terminal: an interactive menu',
+  )
+  .option('--json', 'print the list as JSON (no menu)')
+  // Without it the parent swallows a subcommand's own options (`list --json`).
+  .enablePositionalOptions()
+  .action(async (opts: { json?: boolean }) => {
+    if (!opts.json && credentialsInteractive()) await runCredentialsTui();
+    else await listCommand(opts).catch(fail);
+  })
+  .addCommand(
+    new Command('list')
+      .description('list the accounts on this machine (no secrets)')
+      .option('--json', 'machine-readable output')
+      .action(withRef((opts: { json?: boolean }) => listCommand(opts))),
+  )
+  .addCommand(
+    new Command('add')
+      .description(
+        'add a named account: sign a login in here, or store a setup token / API key (read from a hidden prompt or stdin, never argv)',
+      )
+      .argument('<agent/name>', 'e.g. claude/work')
+      .option('--login', 'sign in with the browser (the OAuth login)')
+      .option('--setup-token', 'store a long-lived setup token (never refreshes; fine for many boxes at once)')
+      .option('--api-key', 'store an API key')
+      .option('--label <text>', 'display label')
+      .option('--headless', 'login without a terminal: print the URL, then finish with --code')
+      .option('--code <code>', 'finish a --headless login with the OAuth code')
+      .action(withRef((ref: string, opts: AddOpts) => addCommand(ref, opts))),
+  )
+  .addCommand(
+    new Command('renew')
+      .description(
+        "sign a login in again, then push it to every box on the account (a box showing 'Login expired' works again)",
+      )
+      .argument('<agent/account>', 'e.g. claude/default, claude/work')
+      .option('--skip-sign-in', 'push the stored login as it is (only a box lost it)')
+      .option('--headless', 'login without a terminal: print the URL, then finish with --code')
+      .option('--code <code>', 'finish a --headless login with the OAuth code, then push it')
+      .action(withRef((ref: string, opts: RenewOpts) => renewCommand(ref, opts))),
+  )
+  .addCommand(
+    new Command('use')
+      .description(
+        'which account new boxes get: no argument shows it per agent for this project; <agent/account> sets it for this project (--global: everywhere)',
+      )
+      .argument('[agent/account]', 'e.g. claude/work; with --clear, the agent alone')
+      .option('--global', 'the global default instead of this project')
+      .option('--clear', 'remove the setting (this project, or with --global the global one)')
+      .option('--json', 'with no argument: machine-readable output')
+      .action(withRef((ref: string | undefined, opts: UseOpts) => useCommand(ref, opts))),
+  )
+  .addCommand(
+    new Command('rm')
+      .description('remove a named account: its stored login and its docker volume')
+      .argument('<agent/account>', 'e.g. claude/work')
+      .option('-y, --yes', 'do not ask for confirmation')
+      .action(withRef((ref: string, opts: { yes?: boolean }) => removeCommand(ref, opts))),
+  )
+  .addCommand(
+    new Command('label')
+      .description("set or clear an account's display label")
+      .argument('<agent/account>', 'e.g. claude/work')
+      .argument('[label]', 'the new label')
+      .option('--clear', 'remove the label')
+      .action(
+        withRef((ref: string, label: string | undefined, opts: { clear?: boolean }) =>
+          labelCommand(ref, label, opts),
+        ),
+      ),
+  )
+  .addCommand(
+    new Command('switch')
+      .description(
+        "move a box's agent to another account: a setup token or API key restarts the agent with it, a login rebuilds a docker box on that account's volume; the conversation resumes",
+      )
+      .argument('<box>', 'box id or name')
+      .argument('<agent/account>', 'e.g. claude/work, or claude/default')
+      .action(withRef((box: string, ref: string) => switchCommand(box, ref))),
+  )
+  .addCommand(propagateCommand, { hidden: true });

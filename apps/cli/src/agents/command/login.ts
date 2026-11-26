@@ -18,45 +18,59 @@ import { syncAgentCredentialsIfChanged } from '../../commands/control-plane.js';
 import { intro, log, outro, spinner } from '@agentbox/cli-kit';
 import { imageProgress } from '@agentbox/cli-kit';
 import { accountConfigVolume, findAccount } from '@agentbox/core';
-import {
-  readAccounts,
-  resolveAgentSpec,
-  resolveLoginAccount,
-  type LoginAccountRequest,
-} from '@agentbox/sandbox-core';
-import { captureAccountLogin, runPastedAccountLogin } from '../../lib/account-login.js';
+import { readAccounts } from '@agentbox/sandbox-core';
+import { captureAccountLogin } from '../../lib/account-login.js';
 import type { AgentCliSpec } from '@agentbox/cli-kit';
 
 export interface LoginOptions {
   interactive?: boolean;
-  account?: string;
+}
+
+/** A named login account to sign in instead of the default one. */
+export interface LoginAccountTarget {
+  id: string;
   label?: string;
-  apiKey?: boolean;
-  setupToken?: boolean;
+}
+
+/** Every agent's CLI descriptor, registered as its `login` is wired. */
+const LOGIN_SPECS = new Map<string, AgentCliSpec>();
+
+/** The CLI descriptor of an agent with a `login` (for `credentials add/renew`). */
+export function agentLoginSpec(id: string): AgentCliSpec | undefined {
+  return LOGIN_SPECS.get(id);
 }
 
 /**
- * Resolve the account flags, and run a pasted-kind login to completion.
- * Returns the named `login` account to sign in, null for the default login,
- * or 'done' when a pasted kind was handled.
+ * Refuse `login --account`: commander hands the flag to the parent create
+ * command, so without this the default login would be signed in silently.
  */
-async function routeAccountLogin(
+function refuseNamedAccount(a: AgentCliSpec, cmd: Command): void {
+  const name = namedAccountFlag(cmd);
+  if (name === undefined) return;
+  log.error(
+    `\`${a.id} login\` signs in the default account; add a named one with \`agentbox credentials add ${a.id}/${name} --login\``,
+  );
+  process.exit(1);
+}
+
+/** The `--account` typed with `login`, wherever commander put it; undefined when none. */
+export function namedAccountFlag(cmd: Command): string | undefined {
+  const raw = (cmd.optsWithGlobals() as { account?: string | string[] }).account;
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
+/**
+ * Sign an agent in: its default login, or a named login account (captured into
+ * the account store). An agent with its own login protocol (claude's headless
+ * print-URL / `--code` pair) runs it with `extra` (its own flags) passed through.
+ */
+export async function runAgentLogin(
   a: AgentCliSpec,
-  opts: LoginOptions,
-): Promise<LoginAccountRequest | null | 'done'> {
-  let req: LoginAccountRequest | null;
-  try {
-    req = resolveLoginAccount(resolveAgentSpec(a.id), opts);
-  } catch (err) {
-    log.error((err as Error).message);
-    process.exit(1);
-  }
-  if (req && req.kind !== 'login') {
-    intro(`Saving a ${a.shortName} account...`);
-    await runPastedAccountLogin(a, { ...req, kind: req.kind });
-    return 'done';
-  }
-  if (req) {
+  args: string[],
+  opts: LoginOptions & { account?: LoginAccountTarget; extra?: Record<string, unknown> },
+): Promise<void> {
+  const account = opts.account;
+  if (account) {
     // Fail closed: a runtime that does not honour `ensureVolume({account})` and
     // `signIn({volume})` would sign into the SHARED volume and seed the host's
     // login into the named one — capturing the owner's login under a new name.
@@ -65,136 +79,106 @@ async function routeAccountLogin(
       process.exit(1);
     }
     // Before the whole OAuth flow, not after it.
-    const existing = findAccount(await readAccounts(), a.id, req.id);
+    const existing = findAccount(await readAccounts(), a.id, account.id);
     if (existing && existing.kind !== 'login') {
       log.error(
-        `account '${req.id}' is a ${existing.kind} account; remove it first (\`agentbox accounts rm ${a.id}/${req.id}\`)`,
+        `account '${account.id}' is a ${existing.kind} account; remove it first (\`agentbox credentials rm ${a.id}/${account.id}\`)`,
       );
       process.exit(1);
     }
   }
-  return req;
-}
-
-/**
- * `--account` exactly as typed after `login`. The parent `agentbox <agent>`
- * command declares `--account` too (the create flag), and commander gives a
- * flag both declare to the PARENT — so read the merged view and take its
- * single value.
- */
-export function loginOptions(cmd: Command, own: LoginOptions): LoginOptions {
-  const merged = cmd.optsWithGlobals() as LoginOptions & { account?: string | string[] };
-  const raw = own.account ?? merged.account;
-  const values = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
-  if (values.length > 1) {
-    log.error('login takes one --account');
-    process.exit(1);
-  }
-  return { ...own, ...(values[0] !== undefined ? { account: values[0] } : {}) };
-}
-
-export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
   const custom = a.runtime.loginCommand?.run;
   if (custom) {
     // The app-level calls a custom login needs, injected rather than imported:
     // an agent package cannot reach `commands/control-plane.ts`,
     // `commands/_errors.ts` or the account-login helpers.
-    return cmd.action(async function (
-      this: Command,
-      args: string[],
-      rawOpts: LoginOptions & Record<string, unknown>,
-    ) {
-      const opts = { ...rawOpts, ...loginOptions(this, rawOpts) };
-      try {
-        const routed = await routeAccountLogin(a, opts);
-        if (routed === 'done') return;
-        const loginAccount = routed
-          ? { id: routed.id, ...(routed.label ? { label: routed.label } : {}) }
-          : undefined;
-        await custom(
-          args,
-          { ...opts, ...(loginAccount ? { loginAccount } : {}) },
-          {
-            syncCredentialsIfChanged: syncAgentCredentialsIfChanged,
-            fail: handleLifecycleError,
-            captureAccountLogin: (o) => captureAccountLogin(a, o),
-          },
-        );
-      } catch (err) {
-        handleLifecycleError(err);
-      }
-    });
-  }
-  return cmd.action(async function (this: Command, args: string[], rawOpts: LoginOptions) {
-    const opts = loginOptions(this, rawOpts);
-    let account: LoginAccountRequest | null;
-    try {
-      const routed = await routeAccountLogin(a, opts);
-      if (routed === 'done') return;
-      account = routed;
-    } catch (err) {
-      handleLifecycleError(err);
-    }
-    intro(
-      account
-        ? `Signing in to ${a.shortName} as account '${account.id}'...`
-        : `Signing in to ${a.shortName}...`,
+    await custom(
+      args,
+      {
+        ...opts.extra,
+        ...(opts.interactive ? { interactive: true } : {}),
+        ...(account ? { loginAccount: account } : {}),
+      },
+      {
+        syncCredentialsIfChanged: syncAgentCredentialsIfChanged,
+        fail: handleLifecycleError,
+        captureAccountLogin: (o) => captureAccountLogin(a, o),
+      },
     );
-    // Two shapes: an agent whose guided flow needs no keystroke (codex's device
-    // code) only needs a terminal for the passthrough; one whose flow always
-    // prompts needs one either way.
-    const ttyRequired = a.runtime.loginNeedsTty === 'always' || opts.interactive === true;
-    if (!process.stdin.isTTY && ttyRequired) {
-      log.error(
-        `\`agentbox ${a.id} login${opts.interactive === true ? ' --interactive' : ''}\` needs an interactive terminal.`,
-      );
-      process.exit(1);
-    }
+    return;
+  }
+  intro(
+    account
+      ? `Signing in to ${a.shortName} as account '${account.id}'...`
+      : `Signing in to ${a.shortName}...`,
+  );
+  // Two shapes: an agent whose guided flow needs no keystroke (codex's device
+  // code) only needs a terminal for the passthrough; one whose flow always
+  // prompts needs one either way.
+  const ttyRequired = a.runtime.loginNeedsTty === 'always' || opts.interactive === true;
+  if (!process.stdin.isTTY && ttyRequired) {
+    log.error(
+      `\`agentbox ${a.id} login${opts.interactive === true ? ' --interactive' : ''}\` needs an interactive terminal.`,
+    );
+    process.exit(1);
+  }
+  const cfg = await loadEffectiveConfig(process.cwd());
+  const baseImage = cfg.effective.box.image;
+
+  const s = spinner();
+  s.start('preparing sandbox image');
+  // The login container RUNS the agent; the base image is agentless.
+  const { ref: image } = await ensureImage(baseImage, {
+    agents: [a.id],
+    onProgress: imageProgress(s),
+  });
+  // Ensure the volume exists + is vscode-writable before the login
+  // container writes its credential into it. A named account gets its own
+  // volume, seeded with the host's config but not the host's login.
+  const volume = account
+    ? accountConfigVolume(a.runtime.sharedVolume, account.id)
+    : a.runtime.sharedVolume;
+  s.message(`preparing ${a.id} config`);
+  await a.runtime.ensureVolume(
+    { volume },
+    { syncFromHost: true, image, ...(account ? { account: account.id } : {}) },
+  );
+  s.stop('image ready');
+
+  const res = await a.runtime.signIn(image, args, {
+    passthrough: opts.interactive === true,
+    ...(account ? { volume } : {}),
+  });
+  if (res.cancelled) {
+    outro('sign-in cancelled');
+    process.exit(1);
+  }
+  if (!res.ok) {
+    log.error(res.error ?? 'login failed');
+    process.exit(1);
+  }
+  if (account) {
+    await captureAccountLogin(a, {
+      account: { id: account.id, ...(account.label ? { label: account.label } : {}) },
+      volume,
+      image,
+    });
+    return;
+  }
+  outro('signed in — credentials saved for future boxes');
+}
+
+export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
+  LOGIN_SPECS.set(a.id, a);
+  return cmd.action(async function (
+    this: Command,
+    args: string[],
+    rawOpts: LoginOptions & Record<string, unknown>,
+  ) {
+    refuseNamedAccount(a, this);
     try {
-      const cfg = await loadEffectiveConfig(process.cwd());
-      const baseImage = cfg.effective.box.image;
-
-      const s = spinner();
-      s.start('preparing sandbox image');
-      // The login container RUNS the agent; the base image is agentless.
-      const { ref: image } = await ensureImage(baseImage, {
-        agents: [a.id],
-        onProgress: imageProgress(s),
-      });
-      // Ensure the volume exists + is vscode-writable before the login
-      // container writes its credential into it. A named account gets its own
-      // volume, seeded with the host's config but not the host's login.
-      const volume = account
-        ? accountConfigVolume(a.runtime.sharedVolume, account.id)
-        : a.runtime.sharedVolume;
-      s.message(`preparing ${a.id} config`);
-      await a.runtime.ensureVolume(
-        { volume },
-        { syncFromHost: true, image, ...(account ? { account: account.id } : {}) },
-      );
-      s.stop('image ready');
-
-      const res = await a.runtime.signIn(image, args, {
-        passthrough: opts.interactive === true,
-        ...(account ? { volume } : {}),
-      });
-      if (res.cancelled) {
-        outro('sign-in cancelled');
-        process.exit(1);
-      }
-      if (!res.ok) {
-        log.error(res.error ?? 'login failed');
-        process.exit(1);
-      }
-      if (account) {
-        await captureAccountLogin(a, {
-          account: { id: account.id, ...(account.label ? { label: account.label } : {}) },
-          volume,
-          image,
-        });
-        return;
-      }
-      outro('signed in — credentials saved for future boxes');
+      const { interactive, ...extra } = rawOpts;
+      await runAgentLogin(a, args, { ...(interactive ? { interactive } : {}), extra });
     } catch (err) {
       handleLifecycleError(err);
     }

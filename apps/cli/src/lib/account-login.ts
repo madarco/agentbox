@@ -1,22 +1,13 @@
 /**
- * The shared half of `<agent> login --account …` (llm-accounts Phase 2): the
- * pasted kinds (`--api-key`, `--setup-token`) and the capture step every
- * named `login` ends with. Agent-neutral — each agent contributes only its
+ * The shared half of `agentbox credentials add` (llm-accounts Phase 2,
+ * docs/credentials-tui-plan.md): reading a pasted secret and the capture step
+ * every named login ends with. Agent-neutral — each agent contributes only its
  * `runtime.accountIdentity` reader.
  */
 import type { AgentCliSpec } from '@agentbox/cli-kit';
-import { isCancel, log, outro, password } from '@agentbox/cli-kit';
-import { findAccount, type LlmAccountIdentity, type LlmAccountKind } from '@agentbox/core';
-import {
-  encodePastedSecret,
-  pastedSecretProblem,
-  readAccounts,
-  removeAccount,
-  resolveAgentSpec,
-  upsertAccount,
-  writeAccountSecret,
-  type LoginAccountRequest,
-} from '@agentbox/sandbox-core';
+import { isCancel, outro, password } from '@agentbox/cli-kit';
+import { type LlmAccountIdentity, type LlmAccountKind } from '@agentbox/core';
+import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { captureVolumeLogin, dockerVolumeFileReader } from '@agentbox/sandbox-docker';
 
 export function describeIdentity(identity: LlmAccountIdentity | undefined): string {
@@ -52,60 +43,21 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-const KIND_NOUN: Record<Exclude<LlmAccountKind, 'login'>, string> = {
+export const PASTED_KIND_NOUN: Record<Exclude<LlmAccountKind, 'login'>, string> = {
   'api-key': 'API key',
   'setup-token': 'setup token',
 };
 
 /**
  * Read a pasted secret: a hidden prompt on a terminal, otherwise stdin. Never
- * argv — a token on the command line lands in shell history and `ps`.
+ * argv — a token on the command line lands in shell history and `ps`. Null
+ * when the prompt was cancelled.
  */
-async function readPastedSecret(noun: string): Promise<string | null> {
+export async function readPastedSecret(noun: string): Promise<string | null> {
   if (process.stdin.isTTY) {
     const v = await password({ message: `Paste the ${noun}` });
     if (isCancel(v)) return null;
     return String(v).trim();
   }
   return (await readStdin()).trim();
-}
-
-/** `<agent> login --account <name> --api-key | --setup-token`. */
-export async function runPastedAccountLogin(
-  a: AgentCliSpec,
-  req: LoginAccountRequest & { kind: Exclude<LlmAccountKind, 'login'> },
-): Promise<void> {
-  const noun = KIND_NOUN[req.kind];
-  const token = await readPastedSecret(noun);
-  if (token === null) {
-    outro('cancelled');
-    process.exit(1);
-  }
-  const problem = pastedSecretProblem(token);
-  if (problem) {
-    log.error(problem);
-    process.exit(1);
-  }
-  const existing = findAccount(await readAccounts(), a.id, req.id);
-  if (existing && existing.kind !== req.kind) {
-    log.error(
-      `account '${req.id}' is a ${existing.kind} account; remove it first (\`agentbox accounts rm ${a.id}/${req.id}\`)`,
-    );
-    process.exit(1);
-  }
-  const label = req.label ?? existing?.label;
-  await upsertAccount({
-    agent: a.id,
-    id: req.id,
-    kind: req.kind,
-    createdAt: existing?.createdAt ?? new Date().toISOString(),
-    ...(label ? { label } : {}),
-  });
-  try {
-    await writeAccountSecret(a.id, req.id, encodePastedSecret({ kind: req.kind, token }));
-  } catch (err) {
-    if (!existing) await removeAccount(a.id, req.id).catch(() => {});
-    throw err;
-  }
-  outro(`saved the ${noun} as ${a.id} account '${req.id}'`);
 }
