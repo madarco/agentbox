@@ -100,6 +100,7 @@ describe('createContributionPusher', () => {
       build: async ({ days }) => {
         builds.push(days);
         return contrib({
+          window: { since: days === FULL_DAYS ? '2025-11-21' : '2026-10-18', until: '2026-11-21' },
           intervals: Array.from({ length: intervals }, (_, i) => ({
             boxId: 'b1',
             agent: 'claude' as const,
