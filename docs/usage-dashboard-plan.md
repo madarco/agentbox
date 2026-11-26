@@ -184,6 +184,28 @@ from Phase 1 on.
   testing against a preview deployment.
 - `agentbox usage share` for the CLI.
 
+## Phase 0 results (2026-11-26, history-side only)
+
+Read-only SQL on a copy of the live `history.db` (30 sessions, 7,033 turns,
+2026-11-24 to 26, claude/codex/opencode/pi on docker and hetzner):
+
+| idle gap | agent-hours | intervals | peak at once | wall hours | speed-up |
+|---|---|---|---|---|---|
+| 5 min | 18.8 | 142 | 8 | 11.4 | 1.65x |
+| **10 min** | **25.7** | **73** | **8** | **14.5** | **1.77x** |
+| 15 min | 30.0 | 47 | 8 | 16.5 | 1.82x |
+| 30 min | 33.2 | 37 | 8 | 18.0 | 1.84x |
+
+- The peak is stable across gaps (8 on 24 Nov, 5 on 25 Nov); the speed-up moves
+  little. 10 min stays the default: 5 min splits runs at long tool calls (builds),
+  30 min counts idle waiting as work.
+- `history_sessions.manager_id` is never set (0 of 30), so sessions cannot come
+  from history. Group boxes into sessions by the `managerId` the ledger records
+  per box (Phase 1), falling back to overlapping intervals.
+- Still open, moved to Phase 4's live check: which providers lose history on
+  destroy (a paused cloud box is skipped by `history-flush.ts` today), and the
+  `UsageShare` size for a full year (checked in the usage-view PR).
+
 ## Decisions (defaults proposed, to confirm)
 
 1. **URL**: `agent-box.sh/u/<handle>/<n>` rather than `/sessions/…`, since
