@@ -99,13 +99,15 @@ export interface SeedOutcome {
 export async function seedSkillsIfEmpty(
   client: HubApiClient,
   ctx: SkillsContext,
+  /** This PC's skills when the caller already discovered them. */
+  discovered?: LocalSkill[],
 ): Promise<SeedOutcome | null> {
   const listing = await client.listSkills();
   if (listing.seeded) return null;
   const never = new Set(listing.skipped ?? []);
-  const local = (await discoverLocalSkills({ home: ctx.home, maxBytes: ctx.maxBytes })).filter(
-    (s) => !never.has(s.name),
-  );
+  const local = (
+    discovered ?? (await discoverLocalSkills({ home: ctx.home, maxBytes: ctx.maxBytes }))
+  ).filter((s) => !never.has(s.name));
   const out: SeedOutcome = { uploaded: [], skipped: [], failed: [] };
   for (const skill of local) {
     try {

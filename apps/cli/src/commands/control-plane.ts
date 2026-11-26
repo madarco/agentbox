@@ -2811,7 +2811,12 @@ async function finalizeControlBoxState(url: string | undefined): Promise<void> {
   // First time only: seed the hub's skills library from this PC. After that the
   // hub is the source and adding a skill is an explicit `agentbox skills` upload.
   const { autoSeedSkills } = await import('../lib/skills/auto-seed.js');
-  await autoSeedSkills({ ...(url ? { url } : {}), announce: (line) => log.info(line) });
+  // Setup has no command log: a seed that could not run is a warning here.
+  await autoSeedSkills({
+    ...(url ? { url } : {}),
+    announce: (line) => log.info(line),
+    debug: (line) => log.warn(line),
+  });
   // Re-register any remote-docker host this machine has shared before. A fresh
   // control box knows none of them, and the user should not have to remember
   // which engines they had handed over.

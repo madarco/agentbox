@@ -612,10 +612,13 @@ export const createCommand = new Command('create')
     reportCheckoutInBackground(projectRoot);
     // The first create against a hub whose skills library was never seeded
     // uploads this PC's skills. Awaited, unlike the checkout report above: it
-    // costs a round trip only until this PC has seen the hub seeded (a local
-    // memo), after which it returns without touching the network.
+    // costs a round trip only while this PC has skills and has not seen the hub
+    // seeded (a local memo); otherwise it returns without touching the network.
     await autoSeedSkills({
-      announce: (line) => log.info(line),
+      announce: (line) => {
+        log.info(line);
+        cmdLog.write(`skills seed: ${line}`);
+      },
       debug: (line) => cmdLog.write(line),
     });
     // `providerName` stays a bare name — it keys the per-provider config
