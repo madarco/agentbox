@@ -117,6 +117,20 @@ export default function SubscriptionsPage() {
       setConfirmRemove(null);
     });
 
+  // The global default for new boxes (`<agent>.account`); `default` clears the
+  // setting, so the agent's own login is the default again.
+  const makeDefault = (a: Account) =>
+    act(`default:${a.agent}/${a.id}`, () =>
+      api('/default', {
+        method: 'PUT',
+        body: JSON.stringify({
+          agent: a.agent,
+          account: a.id === 'default' ? null : a.id,
+          scope: 'global',
+        }),
+      }),
+    );
+
   const add = () =>
     act('add', async () => {
       if (!chosen || !chosenKind) return;
@@ -193,6 +207,7 @@ export default function SubscriptionsPage() {
                       busy={busy !== null}
                       confirming={confirmRemove === subscriptionKey(a)}
                       onLabel={() => relabel(a)}
+                      onMakeDefault={() => void makeDefault(a)}
                       onAskRemove={() => setConfirmRemove(subscriptionKey(a))}
                       onKeep={() => setConfirmRemove(null)}
                       onRemove={() => void remove(a)}
@@ -274,8 +289,10 @@ export default function SubscriptionsPage() {
               <div className="mt-3 text-[12px] text-muted-foreground">
                 A setup token never renews, so it is the right kind for an account several boxes use
                 at once. To add a <span className="font-mono">login</span>, run{' '}
-                <span className="font-mono">agentbox claude login --account &lt;name&gt;</span> on
-                this machine.
+                <span className="font-mono">
+                  agentbox credentials add claude/&lt;name&gt; --login
+                </span>{' '}
+                on this machine.
               </div>
             </Card>
           )}
@@ -292,6 +309,7 @@ function SubscriptionCard({
   busy,
   confirming,
   onLabel,
+  onMakeDefault,
   onAskRemove,
   onKeep,
   onRemove,
@@ -302,6 +320,7 @@ function SubscriptionCard({
   busy: boolean;
   confirming: boolean;
   onLabel: () => void;
+  onMakeDefault: () => void;
   onAskRemove: () => void;
   onKeep: () => void;
   onRemove: () => void;
@@ -325,6 +344,14 @@ function SubscriptionCard({
           <div className="flex items-center gap-2 text-[13.5px] font-semibold">
             <span className="truncate">{subName(a)}</span>
             <TierBadge account={a} />
+            {a.default?.global ? (
+              <Badge
+                className="px-1.5 py-0 text-[10.5px]"
+                title={`New ${a.agent} boxes use this account unless a project picks another`}
+              >
+                Default
+              </Badge>
+            ) : null}
             {a.hasSecret ? null : <Badge className="px-1.5 py-0 text-[10.5px]">no secret</Badge>}
           </div>
           <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground">
@@ -344,6 +371,17 @@ function SubscriptionCard({
               {atLimit ? 'at limit' : 'ok'}
             </Badge>
           ) : null}
+          {a.default?.global ? null : (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              title={`Use this account for new ${a.agent} boxes (projects that pick their own keep it)`}
+              onClick={onMakeDefault}
+            >
+              Make default
+            </Button>
+          )}
           <Button
             size="icon-sm"
             variant="ghost"

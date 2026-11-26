@@ -212,6 +212,19 @@ export interface HistoryAccountLimits {
 }
 
 /**
+ * Credential evidence for a subscription from its sessions' transcripts
+ * (docs/credentials-tui-plan.md): the newest refused credential and the newest
+ * real reply. ISO times; null when no session reported one.
+ */
+export interface HistoryAccountAuth {
+  failedAt: string | null;
+  error: string | null;
+  /** The box whose session reported the newest failure. */
+  failedBox: string | null;
+  okAt: string | null;
+}
+
+/**
  * A session's live-status inputs (docs/agent-live-status-plan.md, Phase 3):
  * the newest working-on line, the plan line, context fill, the agent's own
  * cumulative totals (codex, opencode) and the sum of its usage rows.
@@ -304,6 +317,8 @@ export interface HistoryRepo {
    * (`agent/account`) reported, or null (hub settings Phase 3b).
    */
   accountLimits(account: string): Promise<HistoryAccountLimits | null>;
+  /** Credential evidence for subscription `account` (`agent/account`). */
+  accountAuth(account: string): Promise<HistoryAccountAuth>;
   /** A session's live-status inputs, or null when it has none. */
   liveRow(key: string): Promise<HistoryLiveRow | null>;
   /** The most recent session `agent` ran in box `boxId`, by its own last activity. */

@@ -135,14 +135,21 @@ type Row = Record<string, unknown>;
 const n = (v: unknown): number => Number(v ?? 0);
 const nowMs = (): number => Date.now();
 
-type LiveRecord = Extract<HistoryRecord, { kind: 'activity' | 'totals' | 'context' | 'limits' }>;
+type LiveRecord = Extract<
+  HistoryRecord,
+  { kind: 'activity' | 'totals' | 'context' | 'limits' | 'auth' }
+>;
 
 /**
  * Upserts of the live row. The newest activity and context win by the record's
  * own time (a subagent's file can land after the main one); a record without
  * one wins outright. A plan line is set or cleared independently of the rest.
  */
-function liveStatements(db: Db): { apply(key: string, r: LiveRecord, now: number): void } {
+function liveStatements(db: Db): {
+  apply(key: string, r: LiveRecord, now: number): void;
+  /** A real reply landed (a usage record with output): the credential works. */
+  authOk(key: string, ts: string | undefined, now: number): void;
+} {
   const ensure = db.prepare(
     'INSERT OR IGNORE INTO history_live (session_key, updated_at) VALUES (?, ?)',
   );
@@ -164,10 +171,27 @@ function liveStatements(db: Db): { apply(key: string, r: LiveRecord, now: number
     `UPDATE history_live SET limits = ?2, limits_ts = ?3, updated_at = ?4
      WHERE session_key = ?1 AND (?3 IS NULL OR limits_ts IS NULL OR limits_ts <= ?3)`,
   );
+  const auth = db.prepare(
+    `UPDATE history_live SET auth_error = ?2, auth_ts = ?3, updated_at = ?4
+     WHERE session_key = ?1 AND (auth_ts IS NULL OR auth_ts <= ?3)`,
+  );
+  const authOk = db.prepare(
+    `UPDATE history_live SET auth_ok_ts = ?2, updated_at = ?3
+     WHERE session_key = ?1 AND (auth_ok_ts IS NULL OR auth_ok_ts <= ?2)`,
+  );
+  // A record without its own time is dated by its arrival, so it still orders
+  // against the stored secret's write time.
+  const iso = (ts: string | undefined, now: number): string => ts ?? new Date(now).toISOString();
   return {
+    authOk(key, ts, now) {
+      ensure.run(key, now);
+      authOk.run(key, iso(ts, now), now);
+    },
     apply(key, r, now) {
       ensure.run(key, now);
-      if (r.kind === 'activity') {
+      if (r.kind === 'auth') {
+        auth.run(key, r.error, iso(r.ts, now), now);
+      } else if (r.kind === 'activity') {
         if (r.plan) plan.run(key, r.text || null, now);
         else if (r.text) activity.run(key, r.text, r.ts ?? null, now);
       } else if (r.kind === 'context') {
@@ -325,6 +349,9 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   const live = columns(db, 'history_live');
   if (!live.has('limits')) db.exec('ALTER TABLE history_live ADD COLUMN limits TEXT');
   if (!live.has('limits_ts')) db.exec('ALTER TABLE history_live ADD COLUMN limits_ts TEXT');
+  for (const col of ['auth_error', 'auth_ts', 'auth_ok_ts']) {
+    if (!live.has(col)) db.exec(`ALTER TABLE history_live ADD COLUMN ${col} TEXT`);
+  }
   // Hub settings 3a: an account is stamped as its subscription, `agent/account`.
   // A bare id from before is the session agent's own, unless the agent can
   // borrow a login: that one is cleared for the backfill (which only fills
@@ -552,6 +579,17 @@ export async function openSqliteHistoryRepo(
        JOIN history_sessions s ON s.key = l.session_key
      WHERE s.account = ? AND l.limits IS NOT NULL
      ORDER BY COALESCE(l.limits_ts, '') DESC, l.updated_at DESC LIMIT 1`,
+  );
+  const authFailGet = db.prepare(
+    `SELECT l.auth_ts, l.auth_error, s.box_name FROM history_live l
+       JOIN history_sessions s ON s.key = l.session_key
+     WHERE s.account = ? AND l.auth_ts IS NOT NULL
+     ORDER BY l.auth_ts DESC LIMIT 1`,
+  );
+  const authOkGet = db.prepare(
+    `SELECT MAX(l.auth_ok_ts) AS ok FROM history_live l
+       JOIN history_sessions s ON s.key = l.session_key
+     WHERE s.account = ?`,
   );
   const liveSums = db.prepare(
     `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
@@ -803,13 +841,15 @@ export async function openSqliteHistoryRepo(
               epochMs(r.ts),
               r.costUsd ?? null,
             );
+            if (r.outputTokens > 0) live.authOk(sessionKey, r.ts, nowMs());
             continue;
           }
           if (
             r.kind === 'activity' ||
             r.kind === 'totals' ||
             r.kind === 'context' ||
-            r.kind === 'limits'
+            r.kind === 'limits' ||
+            r.kind === 'auth'
           ) {
             live.apply(sessionKey, r, nowMs());
             continue;
@@ -944,6 +984,16 @@ export async function openSqliteHistoryRepo(
       } catch {
         return null;
       }
+    },
+    async accountAuth(account) {
+      const f = authFailGet.get(account) as Row | undefined;
+      const o = authOkGet.get(account) as Row | undefined;
+      return {
+        failedAt: f ? s(f.auth_ts) : null,
+        error: f ? s(f.auth_error) : null,
+        failedBox: f ? s(f.box_name) : null,
+        okAt: o ? s(o.ok) : null,
+      };
     },
     async liveRow(key) {
       const r = liveGet.get(key) as Row | undefined;

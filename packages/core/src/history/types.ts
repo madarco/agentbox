@@ -233,6 +233,13 @@ export type HistoryRecord =
       ts?: string;
       at: number;
     }
+  /**
+   * The agent's credential was refused (claude's `error: "authentication_failed"`
+   * line: a dead login, setup token or API key). Account data like `limits`:
+   * the hub keeps the newest per session and marks the account revoked until a
+   * real reply or a new secret is newer (docs/credentials-tui-plan.md).
+   */
+  | { kind: 'auth'; error: string; ts?: string; at: number }
   /** Size of the last request's context, and the model's window when the agent records it. */
   | { kind: 'context'; tokens: number; window?: number; ts?: string; at: number }
   /**

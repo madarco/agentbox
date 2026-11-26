@@ -1,10 +1,12 @@
-// GET /api/v1/accounts — the named LLM accounts of THIS hub's machine (its
-//   `~/.agentbox/accounts.json`), plus the agents that can hold them:
-//   `{ accounts: [{agent, id, label?, kind, identity?, hasSecret, boxes}],
-//      agents: [{id, kinds}] }`. Never a secret.
+// GET /api/v1/accounts[?project=<abs folder>] — the LLM accounts of THIS hub's
+//   machine (its `~/.agentbox/accounts.json`), plus the agents that can hold them:
+//   `{ accounts: [{agent, id, label?, kind, identity?, hasSecret, boxes, limits?,
+//      auth: {state, since?, box?, detail?}, default?: {global?, project?}}],
+//      agents: [{id, kinds}], defaults: {<agent>: {account, source, ...}} }`.
+//   `project` adds that project's setting to `defaults` and `default`. Never a secret.
 // POST /api/v1/accounts — add a PASTEABLE account:
 //   `{ agent, id, kind: 'api-key' | 'setup-token', token, label? }` → the account.
-//   A `login` is interactive and runs on the machine: `agentbox <agent> login --account <id>`.
+//   A `login` is interactive and runs on the machine: `agentbox credentials add <agent>/<id> --login`.
 import { backendOrNull } from '../lib/backend';
 import { fail, ok } from '../lib/envelope';
 import { readJson } from '../lib/validate';
@@ -12,12 +14,13 @@ import { readJson } from '../lib/validate';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
   const backend = backendOrNull();
   // Host-machine state, like checkouts: the hosted/Postgres path holds none.
-  if (!backend) return ok({ accounts: [], agents: [] });
+  if (!backend) return ok({ accounts: [], agents: [], defaults: {} });
+  const project = new URL(req.url).searchParams.get('project') ?? undefined;
   try {
-    return ok(await backend.listAccounts());
+    return ok(await backend.listAccounts(project ? { project } : {}));
   } catch (e) {
     return fail('internal', e instanceof Error ? e.message : String(e));
   }

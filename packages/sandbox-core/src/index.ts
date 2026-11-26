@@ -475,10 +475,12 @@ export {
   accountEnvPolicy,
   applyAccountEnv,
   boxAccount,
+  accountDefaults,
   boxesOnAccount,
   NO_ACCOUNT_ENV,
   parseAccountFlags,
   resolveBoxAccounts,
+  type AccountDefault,
   type AccountEnvPolicy,
   type ResolvedBoxAccounts,
 } from './account-selection.js';
