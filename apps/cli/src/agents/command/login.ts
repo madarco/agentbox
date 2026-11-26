@@ -20,6 +20,7 @@ import { imageProgress } from '@agentbox/cli-kit';
 import { accountConfigVolume, findAccount } from '@agentbox/core';
 import { readAccounts } from '@agentbox/sandbox-core';
 import { captureAccountLogin } from '../../lib/account-login.js';
+import { fanOutDefaultLoginIfSignedIn, readDefaultVolumeLogin } from '../../lib/login-fanout.js';
 import type { AgentCliSpec } from '@agentbox/cli-kit';
 
 export interface LoginOptions {
@@ -168,6 +169,17 @@ export async function runAgentLogin(
   outro('signed in — credentials saved for future boxes');
 }
 
+/** A local image to read a volume with, or null when none can be had. */
+async function helperImage(agent: string): Promise<string | null> {
+  try {
+    const cfg = await loadEffectiveConfig(process.cwd());
+    // The login's own image, so its ensure is the cache hit after this one.
+    return (await ensureImage(cfg.effective.box.image, { agents: [agent] })).ref;
+  } catch {
+    return null;
+  }
+}
+
 export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
   LOGIN_SPECS.set(a.id, a);
   return cmd.action(async function (
@@ -178,7 +190,20 @@ export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
     refuseNamedAccount(a, this);
     try {
       const { interactive, ...extra } = rawOpts;
+      // The default login, as its volume holds it before and after: a change
+      // means a sign-in completed, and the boxes on `default` get it.
+      const image = await helperImage(a.id);
+      const before = image ? await readDefaultVolumeLogin(a.id, image) : null;
       await runAgentLogin(a, args, { ...(interactive ? { interactive } : {}), extra });
+      if (image) {
+        // The sign-in itself succeeded; a box that missed the push is fixed by
+        // `agentbox credentials renew <agent>/default --skip-sign-in`.
+        await fanOutDefaultLoginIfSignedIn(a.id, image, before).catch((err: unknown) => {
+          log.warn(
+            `signed in, but the push to boxes failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
     } catch (err) {
       handleLifecycleError(err);
     }

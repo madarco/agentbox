@@ -679,7 +679,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Boxes'],
           summary: "Switch the box's agent to another LLM account",
           description:
-            "A setup token or API key: the box record moves and the agent's session restarts with that token set and the other auth var cleared, resuming its conversation (every provider; a cloud box gets its agent env file rewritten first). The stored token's shape is checked first. A login: a docker box is rebuilt on that account's config volume (committed, recreated with the same name, mounts, ports and env), the session's files copied across, and the agent resumes; a cloud box is refused (409) for now. A box that is not running is recorded only and takes the account at its next start. Backs `agentbox credentials switch`.",
+            "A setup token or API key: the box record moves and the agent's session restarts with that token set and the other auth var cleared, resuming its conversation (every provider; a cloud box gets its agent env file rewritten first). The stored token's shape is checked first. A login (every provider): the account's stored login is written into the box's own credential file and nothing is rebuilt. Claude reads that file before every request, so it keeps running; leaving a setup token or API key, or an agent without that behaviour, restarts the agent. A docker box takes a login in any state but must have been created with its own credential file (409 otherwise); a cloud box must be running (409). A box that is not running is recorded only and takes the account at its next start. Backs `agentbox credentials switch`.",
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
           requestBody: {
             required: true,
@@ -711,11 +711,11 @@ export function buildOpenApi(): Record<string, unknown> {
                       agent: { type: 'string' },
                       from: { type: 'string' },
                       to: { type: 'string' },
-                      how: { type: 'string', enum: ['env', 'recreate'] },
+                      how: { type: 'string', enum: ['env', 'file'] },
                       restarted: {
                         type: 'boolean',
                         description:
-                          'False when the box was not running: the account applies at its next start.',
+                          'Whether the agent was restarted. False with `how: file`: the login is already in effect. False with `how: env`: the box was not running and the account applies at its next start.',
                       },
                     },
                     required: ['boxId', 'agent', 'from', 'to', 'how', 'restarted'],
@@ -7135,7 +7135,7 @@ export function buildOpenApi(): Record<string, unknown> {
             accountSwitches: {
               type: 'array',
               description:
-                "The box's account switches, newest last, at most 10. `how`: `env` (the agent restarted with the token) or `recreate` (a docker box rebuilt on the login's volume). `reason`: `manual` or `limit` (`accounts.onLimit`).",
+                "The box's account switches, newest last, at most 10. `how`: `env` (the agent restarted with the token) or `file` (the login was written into the box's own credential file). `reason`: `manual` or `limit` (`accounts.onLimit`).",
               items: {
                 type: 'object',
                 properties: {
@@ -7143,7 +7143,7 @@ export function buildOpenApi(): Record<string, unknown> {
                   agent: { type: 'string' },
                   from: { type: 'string' },
                   to: { type: 'string' },
-                  how: { type: 'string', enum: ['env', 'recreate'] },
+                  how: { type: 'string', enum: ['env', 'file'] },
                   reason: { type: 'string', enum: ['manual', 'limit'] },
                 },
                 required: ['at', 'agent', 'from', 'to', 'how', 'reason'],

@@ -70,6 +70,12 @@ import {
 } from './portless.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
+  boxCredentialMount,
+  emptyCredentialPlaceholder,
+  writeBoxCredentialFile,
+} from './box-credentials.js';
+import { volumeSettingsTarget } from './sync/settings-propagate.js';
+import {
   readState,
   recordBox,
   removeBoxRecord,
@@ -833,6 +839,22 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   for (const m of agentMounts) extraVolumes.push(...m.extraVolumes);
   if (agentsMounts) extraVolumes.push(...agentsMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
+  // Each agent's credential is this box's own file, seeded from what its
+  // volume holds now, so a later login switch writes that file and not the
+  // volume every other box on the account shares.
+  const credentialFiles: string[] = [];
+  for (const [agent, choice] of Object.entries(agentSpecs)) {
+    const cred = resolveAgentSpec(agent).credential;
+    if (!cred) continue;
+    const held = await volumeSettingsTarget(choice.volume, ensureRef, choice.volume)
+      .readText(cred.boxRelPath)
+      .catch(() => null);
+    const content = held?.trim() ? held : emptyCredentialPlaceholder(agent);
+    if (content === null) continue;
+    await writeBoxCredentialFile({ id, name, projectIndex }, agent, content);
+    extraVolumes.push(boxCredentialMount({ id, name, projectIndex }, agent));
+    credentialFiles.push(agent);
+  }
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
   // In-box dockerd's data root. Per-box (`agentbox-docker-<id>`, wiped on
@@ -1029,6 +1051,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ? { borrowedCredentials: [...opts.borrowCredentials] }
       : {}),
     ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
+    ...(credentialFiles.length > 0 ? { credentialFiles } : {}),
     ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
     // What the registration above was keyed and stamped with, so every
     // re-registration (start, rehydrate) sends the same repo and origin.

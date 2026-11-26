@@ -48,14 +48,6 @@ function AgentAccountRow({
   const current = box.accounts?.[agent] ?? 'default';
   const [target, setTarget] = useState(current);
   const [busy, setBusy] = useState(false);
-  const cloud = box.provider !== 'docker';
-  // A cloud box can switch to one login only: `default`, when it was created on it.
-  const createdOn = (box.accountSwitches ?? []).find((s) => s.agent === agent)?.from ?? current;
-  const blocked = (a: Account) =>
-    cloud &&
-    a.kind === 'login' &&
-    a.id !== current &&
-    !(a.id === 'default' && createdOn === 'default');
   const rows = accounts.some((a) => a.id === current)
     ? accounts
     : [{ agent, id: current, kind: 'login', hasSecret: false, boxes: [] } as Account, ...accounts];
@@ -77,10 +69,10 @@ function AgentAccountRow({
       onToast({
         title: `${agent} now runs on ${r.to}`,
         detail: r.restarted
-          ? r.how === 'recreate'
-            ? 'The box was rebuilt on that login and the conversation resumed.'
-            : 'The agent restarted with the new account and resumed its conversation.'
-          : 'The box is not running: the account applies at its next start.',
+          ? 'The agent restarted with the new account and resumed its conversation.'
+          : r.how === 'file'
+            ? 'The login is in the box; the agent uses it from its next request.'
+            : 'The box is not running: the account applies at its next start.',
       });
       void refreshAccounts();
     } catch (err) {
@@ -108,9 +100,8 @@ function AgentAccountRow({
             className="font-mono"
           >
             {rows.map((a) => (
-              <option key={a.id} value={a.id} disabled={blocked(a)}>
+              <option key={a.id} value={a.id}>
                 {optionText(a)}
-                {blocked(a) ? ' · docker only' : ''}
               </option>
             ))}
           </Select>
@@ -171,7 +162,7 @@ export function AccountRows({ box }: { box: Box }) {
                   {new Date(s.at).toLocaleString()} · {s.agent}: {s.from} → {s.to}
                   <span className="text-muted-foreground">
                     {' '}
-                    ({s.how === 'recreate' ? 'rebuilt' : 'restarted'}
+                    ({s.how === 'file' ? 'login written' : 'restarted'}
                     {s.reason === 'limit' ? ', at the limit' : ''})
                   </span>
                 </li>

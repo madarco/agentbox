@@ -41,6 +41,7 @@ import {
   resolveAgentSpec,
   runDockerCredentialRefresh,
   shouldAcceptCredentialUpdate,
+  credentialIdentityMismatch,
   writeCredentialBackup,
   SEED_MARKER,
   type StageResult,
@@ -804,6 +805,13 @@ export async function reconcileAgentCredentialsViaTransport(
       if (!hostReal && boxReal) {
         await writeCredentialBackup(spec.id, boxText, { backupPath });
         log(`captured ${spec.id} credential from box (no host backup)`);
+        continue;
+      }
+      // The box holds another login than its account's (a refresh of the
+      // account it switched away from): the record wins, never the box.
+      if (boxReal && hostReal && credentialIdentityMismatch(spec.id, boxText, hostText)) {
+        await pushCredentialToBox(transport, spec.id, hostText);
+        log(`replaced another login in box with its account's ${spec.id} credential`);
         continue;
       }
       // Box->host capture needs an ORDERING to be safe, or a resumed box's

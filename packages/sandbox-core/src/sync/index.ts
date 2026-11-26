@@ -151,6 +151,8 @@ export {
   credentialExpiry,
   oauthRefreshExpiresAt,
   shouldAcceptCredentialUpdate,
+  credentialIdentityMismatch,
+  IDENTITY_MISMATCH,
   writeCredentialBackup,
   readCredentialBackup,
   pushCredentialToBox,

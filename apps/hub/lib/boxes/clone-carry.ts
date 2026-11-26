@@ -96,6 +96,8 @@ export const CLONE_RECORD_POLICY = {
   accounts: 'carry',
   // A clone starts its own history; the accounts it runs on are carried above.
   accountSwitches: 'drop',
+  // A docker create gives every box its own credential files.
+  credentialFiles: 'n/a',
   llmProxy: 'carry',
   createdAt: 'n/a',
 } as const satisfies Record<keyof BoxRecord, ClonePolicy>;

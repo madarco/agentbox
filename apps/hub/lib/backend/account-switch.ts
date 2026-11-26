@@ -6,8 +6,12 @@
 //     auth vars cleared, and it resumes its conversation. Every provider whose
 //     agent starts through exec takes this path (docker reads the record at the
 //     exec, a cloud box gets its agent env file rewritten first).
-//   - a login lives in the account's config volume. A docker box is rebuilt on
-//     that volume (`recreateBoxOnAccount`); a cloud box is refused for now.
+//   - a login is written into the box's OWN credential file (docker: the
+//     per-box host file over the agent's path; cloud: the box-local file), so
+//     no other box moves and nothing is rebuilt. An agent that re-reads the file
+//     on every request (claude, `credential.liveReload`) keeps running; leaving a
+//     token still restarts it, since the token's env var has to go
+//     (docs/hot-switch-subscriptions-plan.md).
 // The token's shape is checked first: claude ignores a malformed OAuth token and
 // reads as logged out, with nothing saying why.
 import {
@@ -30,13 +34,11 @@ export interface AccountSwitchDeps {
   accountInject(agent: string, account: string): Promise<Record<string, string>>;
   /** The box's runtime state (`running`, `paused`, `stopped`, ...). */
   boxState(box: BoxRecord): Promise<string>;
-  /** The agent's current session id in the box, when known. */
-  sessionId(box: BoxRecord, agent: string): Promise<string | undefined>;
-  /** Docker: rebuild the box on the account's volume (`recreated: false` = same volume). */
-  recreate(
-    box: BoxRecord,
-    o: { agent: string; account: string; sessionId?: string; onLog: (l: string) => void },
-  ): Promise<{ record: BoxRecord; recreated: boolean }>;
+  /**
+   * Write `account`'s stored login into the box's own credential file for
+   * `agent`. Throws with a message a person can act on.
+   */
+  writeLogin(box: BoxRecord, agent: string, account: string): Promise<void>;
   /** Cloud: rewrite the agent env file from the (already moved) record. */
   rewriteCloudEnv(box: BoxRecord): Promise<void>;
   /** Kill the agent's session and start it again, resuming its conversation. */
@@ -75,8 +77,26 @@ export type SwitchResult =
   | { kind: 'refused'; error: string }
   | { kind: 'error'; error: string };
 
-const CLOUD_LOGIN_REFUSAL =
-  'switching a cloud box to another login is not supported yet; use a setup token or API key';
+/**
+ * Why `box` cannot take another login for `agent` in `state`, or null. Pure.
+ * Docker writes a host file, so any state will do, but only a box created with
+ * its own credential file has one. A cloud box is written over its transport,
+ * so it must be up.
+ */
+export function loginSwitchRefusal(
+  box: Pick<BoxRecord, 'name' | 'provider' | 'credentialFiles'>,
+  agent: string,
+  state: string,
+): string | null {
+  if ((box.provider ?? 'docker') === 'docker') {
+    return box.credentialFiles?.includes(agent)
+      ? null
+      : `${box.name} was created before boxes had their own ${agent} login file; destroy and create it again to switch its login`;
+  }
+  return state === 'running'
+    ? null
+    : `${box.name} is ${state}; start it before switching its login`;
+}
 
 /**
  * Why `token` is not a usable `kind` token for `spec`, or null. Pure. Never
@@ -99,18 +119,6 @@ export function tokenShapeProblem(
   return re.test(token)
     ? null
     : `the stored ${kind} does not look like a ${spec.id} ${kind} (${spec.id} would ignore it); paste it again`;
-}
-
-/** The account `agent` ran on when the box was created. Pure. */
-export function createdOn(
-  box: Pick<BoxRecord, 'accounts' | 'accountSwitches'>,
-  agent: string,
-): string {
-  return (
-    (box.accountSwitches ?? []).find((s) => s.agent === agent)?.from ??
-    box.accounts?.[agent] ??
-    'default'
-  );
 }
 
 /**
@@ -183,35 +191,40 @@ async function switchLocked(
   const reason = req.reason ?? 'manual';
 
   let how: AccountSwitchRecord['how'] = 'env';
-  let current = box;
-  try {
-    if (kind === 'login' && !isDocker) {
-      // The one login a cloud box can go back to is the one it was created on
-      // and still holds: `default`, after a switch to a token.
-      if (!isDefaultAccount(to) || !isDefaultAccount(createdOn(box, agent))) {
-        return { kind: 'refused', error: CLOUD_LOGIN_REFUSAL };
-      }
-    } else if (kind === 'login') {
-      if (state === 'paused') {
-        return {
-          kind: 'refused',
-          error: 'the box is paused; resume it before switching its login',
-        };
-      }
-      const sessionId = running ? await deps.sessionId(box, agent) : undefined;
-      const r = await deps.recreate(box, { agent, account: to, sessionId, onLog: deps.log });
-      if (r.recreated) {
-        how = 'recreate';
-        current = r.record;
-      }
-    } else {
-      const envKey = spec.accountEnv?.[kind];
-      if (!envKey) return { kind: 'invalid', error: `${agent} has no ${kind} accounts` };
-      const inject = await deps.accountInject(agent, to);
-      const problem = tokenShapeProblem(spec, kind, inject[envKey]);
-      if (problem) return { kind: 'invalid', error: problem };
-    }
+  // A switch restarts the agent unless it is login to login and the agent
+  // re-reads its credential file on its own.
+  let restart = true;
+  if (kind === 'login') {
+    const refusal = loginSwitchRefusal(box, agent, state);
+    if (refusal) return { kind: 'refused', error: refusal };
+    how = 'file';
+    const fromKind = isDefaultAccount(from) ? 'login' : await deps.accountKind(agent, from);
+    restart = !spec.credential?.liveReload || fromKind !== 'login';
+  } else {
+    const envKey = spec.accountEnv?.[kind];
+    if (!envKey) return { kind: 'invalid', error: `${agent} has no ${kind} accounts` };
+    const inject = await deps.accountInject(agent, to);
+    const problem = tokenShapeProblem(spec, kind, inject[envKey]);
+    if (problem) return { kind: 'invalid', error: problem };
+  }
 
+  const putBack = async (): Promise<void> => {
+    const back = (await deps.revertSwitch(box.id, box.accounts).catch(() => undefined)) ?? box;
+    await deps.reregister(back).catch(() => undefined);
+    if (how === 'file') {
+      await deps.writeLogin(back, agent, from).catch(() => undefined);
+    }
+    if (running && restart) {
+      try {
+        if (!isDocker) await deps.rewriteCloudEnv(back);
+        await deps.restartAgent(back, agent);
+      } catch {
+        /* reported by the caller */
+      }
+    }
+  };
+
+  try {
     const entry: AccountSwitchRecord = {
       at: deps.now().toISOString(),
       agent,
@@ -220,36 +233,34 @@ async function switchLocked(
       how,
       reason,
     };
-    current = (await deps.recordSwitch(box.id, entry)) ?? current;
+    // The record moves before the file: a refresh the box ships in between is
+    // then credited to the new account, and one of the old login is refused by
+    // its identity (credentials-fanout).
+    const current = (await deps.recordSwitch(box.id, entry)) ?? box;
     await deps.reregister(current).catch((err: unknown) => {
       deps.log(`relay re-registration failed: ${errText(err)}`);
     });
 
-    // A recreate restarted the box; its agent still has to come back. A box
-    // that is not running picks the record up at its next start.
+    if (how === 'file') {
+      try {
+        await deps.writeLogin(current, agent, to);
+      } catch (err) {
+        await putBack();
+        return {
+          kind: 'error',
+          error: `could not write the ${to} login into ${box.name}, so it stays on ${from}: ${errText(err)}`,
+        };
+      }
+    }
+
+    // A box that is not running picks the record up at its next start.
     let restarted = false;
-    if (running) {
+    if (running && restart) {
       try {
         if (!isDocker) await deps.rewriteCloudEnv(current);
         await deps.restartAgent(current, agent);
       } catch (err) {
-        // A token switch changed nothing but the record: put it back and bring
-        // the agent back on the old account. A rebuilt box IS on the new
-        // volume, so its record stays.
-        if (how === 'recreate') {
-          return {
-            kind: 'error',
-            error: `${box.name} now runs on ${to}, but ${agent} did not restart: ${errText(err)}`,
-          };
-        }
-        const back = (await deps.revertSwitch(box.id, box.accounts).catch(() => undefined)) ?? box;
-        await deps.reregister(back).catch(() => undefined);
-        try {
-          if (!isDocker) await deps.rewriteCloudEnv(back);
-          await deps.restartAgent(back, agent);
-        } catch {
-          /* reported below */
-        }
+        await putBack();
         return {
           kind: 'error',
           error: `could not restart ${agent} on ${to}, so the box stays on ${from}: ${errText(err)}`,

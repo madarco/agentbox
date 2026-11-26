@@ -12,7 +12,11 @@ import {
   STATE_DIR,
   type AgentId,
 } from '@agentbox/sandbox-core';
-import { DEFAULT_BOX_IMAGE, volumeSettingsTarget } from '@agentbox/sandbox-docker';
+import {
+  DEFAULT_BOX_IMAGE,
+  volumeSettingsTarget,
+  writeBoxCredentialFile,
+} from '@agentbox/sandbox-docker';
 import {
   accountCustodyPath,
   accountIdProblem,
@@ -45,6 +49,7 @@ interface PropagateOpts {
   agent: string;
   sourceBox?: string;
   account?: string;
+  box?: string;
 }
 
 /**
@@ -68,6 +73,7 @@ const propagateCommand = new Command('propagate')
     '--account <name>',
     "the LLM account whose login to fan out (default: the agent's default login); only boxes on that account are targets",
   )
+  .option('--box <id>', 'push to this box only (it must be on the account)')
   .option('--json', 'end with a `{"pushed","failed"}` JSON line')
   .action(async (opts: PropagateOpts) => {
     try {
@@ -97,16 +103,25 @@ const propagateCommand = new Command('propagate')
       // The source box's own store already holds the fresh blob: its docker
       // volume IS the file the watcher saw change; a cloud source box wrote it
       // to its own FS. Excluding the source volume skips a guaranteed no-op.
+      // A source box with its own credential file wrote that file, not its
+      // volume, so the volume still needs the write.
       const excludeVolume =
-        sourceBox && (sourceBox.provider ?? 'docker') === 'docker'
+        sourceBox &&
+        (sourceBox.provider ?? 'docker') === 'docker' &&
+        !sourceBox.credentialFiles?.includes(agent)
           ? (agentConfigVolume(sourceBox, agent) ?? spec.dockerVolume)
           : undefined;
-      const plan = planPropagateTargets(state.boxes, {
+      // `--box`: one box only (the relay putting an account's login back into a
+      // box that shipped someone else's), so the source is not excluded.
+      const boxes = opts.box ? state.boxes.filter((b) => b.id === opts.box) : state.boxes;
+      if (opts.box && boxes.length === 0) throw new Error(`no box ${opts.box}`);
+      const plan = planPropagateTargets(boxes, {
         agent,
-        sourceBoxId: opts.sourceBox ?? '',
+        sourceBoxId: opts.box ? '' : (opts.sourceBox ?? ''),
         scope: 'all',
-        excludeVolume,
+        excludeVolume: opts.box ? undefined : excludeVolume,
         account,
+        credential: true,
       });
 
       let pushed = 0;
@@ -127,6 +142,20 @@ const propagateCommand = new Command('propagate')
           failed += 1;
           process.stderr.write(
             `volume ${vol.volume}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+      }
+
+      // Paused and stopped boxes too: the file is on this host.
+      for (const target of plan.dockerBoxFiles) {
+        try {
+          await writeBoxCredentialFile(target, agent, content);
+          pushed += 1;
+          process.stdout.write(`pushed ${agent} credential to ${target.name}\n`);
+        } catch (err) {
+          failed += 1;
+          process.stderr.write(
+            `${target.name}: ${err instanceof Error ? err.message : String(err)}\n`,
           );
         }
       }

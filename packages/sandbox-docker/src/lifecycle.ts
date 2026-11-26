@@ -50,11 +50,6 @@ import {
 } from './docker.js';
 import { CHECKPOINT_IMAGE_PREFIX, listAllCheckpointImages } from './checkpoint.js';
 import { launchCtlDaemon } from './ctl.js';
-import {
-  recoverParkedContainers,
-  removeParkedContainers,
-  removeSwitchImages,
-} from './switch-images.js';
 import { ensureHomeOwnedByVscode } from './home-ownership.js';
 import { launchDockerdDaemon, SHARED_DOCKER_CACHE_VOLUME } from './dockerd.js';
 import { launchVncDaemon, VNC_CONTAINER_PORT } from './vnc.js';
@@ -442,9 +437,6 @@ export async function refreshBoxSshd(box: BoxRecord): Promise<BoxRecord> {
 
 export async function startBox(idOrName: string): Promise<StartedBox> {
   const box = await resolveBox(idOrName);
-  // A switch interrupted between parking the old container and creating the
-  // new one left no container under the box's name: bring the parked one back.
-  await recoverParkedContainers(box.container, { removeOthers: false });
   // .git bind-mounts are baked into the container at create time; if a host
   // main repo's .git/ has been deleted out from under us, restart fails with
   // an opaque mount error. Surface it loudly.
@@ -736,9 +728,6 @@ export async function destroyBox(
   }
   const beforeContainer = await inspectContainerStatus(box.container);
   await removeContainer(box.container);
-  // The image an account switch rebuilt the box from (hub settings 3c).
-  await removeSwitchImages(box.id);
-  await removeParkedContainers(box.container);
   const afterContainer = await inspectContainerStatus(box.container);
   const removedContainer = beforeContainer !== 'missing' && afterContainer === 'missing';
 

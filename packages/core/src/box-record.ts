@@ -318,8 +318,8 @@ export interface AccountSwitchRecord {
   agent: string;
   from: string;
   to: string;
-  /** `env`: the agent restarted in place with the new token; `recreate`: the box was rebuilt on the account's volume. */
-  how: 'env' | 'recreate';
+  /** `env`: the agent restarted with the new token in its env; `file`: the account's login was written into the box's own credential file. */
+  how: 'env' | 'file';
   /** `manual`: a person asked; `limit`: the old account was at its limit. */
   reason: 'manual' | 'limit';
 }
@@ -564,6 +564,13 @@ export interface BoxRecord {
    * box page shows as its history.
    */
   accountSwitches?: AccountSwitchRecord[];
+  /**
+   * Docker: the agents whose credential file is this box's own (a host file
+   * bind-mounted over `credential.boxAbsPath`), not the shared config volume's.
+   * Only these can switch to another login, by writing that file
+   * (docs/hot-switch-subscriptions-plan.md). Absent on boxes created before it.
+   */
+  credentialFiles?: string[];
   /**
    * The hub egress proxy this box's agents use (llm-accounts Phase 7),
    * resolved at create: `upstream` is the `host:port` of the hub's CONNECT

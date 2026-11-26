@@ -20,6 +20,7 @@ import type {
 } from '../control-plane/hub-api-client.js';
 import { agentLoginSpec, runAgentLogin } from '../agents/command/login.js';
 import { PASTED_KIND_NOUN, readPastedSecret } from '../lib/account-login.js';
+import { fanOutLogin } from '../lib/login-fanout.js';
 import {
   KIND_TEXT,
   identityText,
@@ -257,29 +258,7 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
     });
     if (startsOnly) return;
   }
-  await fanOut(agent, id);
-}
-
-async function fanOut(agent: string, id: string): Promise<void> {
-  const s = spinner();
-  s.start(`pushing ${agent}/${id} to its boxes`);
-  const r = await withHubClient(LOCAL, (client) => client.renewAccount(agent, id)).catch(
-    (err: unknown) => {
-      s.stop('fan-out failed');
-      throw err;
-    },
-  );
-  if (!r) {
-    s.stop('fan-out failed');
-    return;
-  }
-  s.stop(
-    `pushed to ${String(r.pushed)} target(s)${r.failed > 0 ? `, ${String(r.failed)} failed` : ''}`,
-  );
-  for (const line of r.output) {
-    if (!line.startsWith('propagated ')) log.message(line);
-  }
-  if (r.failed > 0) process.exitCode = 1;
+  await fanOutLogin(agent, id);
 }
 
 // ---- rm / label / switch ----------------------------------------------------
@@ -358,9 +337,11 @@ export async function switchCommand(box: string, ref: string): Promise<void> {
   const agent = agentId(name);
   await withHubClient(LOCAL, async (client) => {
     const r = await client.switchBoxAccount(box, { agent, account: id });
-    const how = r.how === 'recreate' ? ' (box rebuilt on its volume)' : '';
+    const how = r.restarted ? ' (agent restarted)' : r.how === 'file' ? ' (no restart)' : '';
     log.success(`${r.agent} in ${box} moved from '${r.from}' to '${r.to}'${how}`);
-    if (!r.restarted) log.info('the box is not running: the account applies at its next start');
+    if (!r.restarted && r.how !== 'file') {
+      log.info('the box is not running: the account applies at its next start');
+    }
   });
 }
 

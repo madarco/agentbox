@@ -1160,8 +1160,8 @@ export interface BoxAccountSwitchView {
   agent: string;
   from: string;
   to: string;
-  /** `env`: restarted with the token; `recreate`: rebuilt on the login's volume. */
-  how: 'env' | 'recreate';
+  /** `env`: restarted with the token; `file`: the login written into the box's own file. */
+  how: 'env' | 'file';
   /** False when the box was not running: the switch applies at its next start. */
   restarted: boolean;
 }

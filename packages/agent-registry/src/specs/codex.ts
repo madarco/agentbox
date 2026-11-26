@@ -142,6 +142,7 @@ export const codexSpec: AgentSyncSpec = {
     cloudMountPath: '/home/vscode/.agentbox-creds/codex',
     cloudSubpath: 'codex/',
     realShape: 'nonempty-json',
+    identity: { jsonPaths: [['tokens', 'account_id']] },
   },
   // Named LLM accounts (docs/llm-accounts-plan.md). Codex has no setup-token.
   accountKinds: ['login', 'api-key'],

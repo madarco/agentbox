@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountSwitchRecord, AgentSyncSpec, BoxRecord } from '@agentbox/core';
 import {
-  createdOn,
   isSwitchingAccount,
+  loginSwitchRefusal,
   switchBoxAccount,
   tokenShapeProblem,
   withRecordAccounts,
@@ -11,13 +11,21 @@ import {
 
 const SPEC = {
   id: 'claude',
+  credential: { liveReload: true },
   accountEnv: { 'api-key': 'ANTHROPIC_API_KEY', 'setup-token': 'CLAUDE_CODE_OAUTH_TOKEN' },
   accountTokenPattern: { 'setup-token': '^sk-ant-oat01-[A-Za-z0-9_-]{60,}$' },
 } as unknown as AgentSyncSpec;
 const GOOD = `sk-ant-oat01-${'a'.repeat(80)}`;
 
 function box(o: Partial<BoxRecord> = {}): BoxRecord {
-  return { id: 'b1', name: 'web', provider: 'docker', agents: ['claude'], ...o } as BoxRecord;
+  return {
+    id: 'b1',
+    name: 'web',
+    provider: 'docker',
+    agents: ['claude'],
+    credentialFiles: ['claude'],
+    ...o,
+  } as BoxRecord;
 }
 
 function deps(o: Partial<AccountSwitchDeps> & { kinds?: Record<string, string> } = {}) {
@@ -30,10 +38,8 @@ function deps(o: Partial<AccountSwitchDeps> & { kinds?: Record<string, string> }
     accountInject: async (_a, id): Promise<Record<string, string>> =>
       id === 'tok' ? { CLAUDE_CODE_OAUTH_TOKEN: GOOD } : {},
     boxState: async () => 'running',
-    sessionId: async () => 'sess-1',
-    recreate: vi.fn(async (b: BoxRecord) => {
-      calls.push('recreate');
-      return { record: b, recreated: true };
+    writeLogin: vi.fn(async (_b: BoxRecord, _a: string, account: string) => {
+      calls.push(`write:${account}`);
     }),
     rewriteCloudEnv: async () => void calls.push('env-file'),
     restartAgent: async () => void calls.push('restart'),
@@ -90,36 +96,72 @@ describe('switchBoxAccount', () => {
     expect(calls).toEqual([]);
   });
 
-  it('a login on docker recreates, then restarts the agent', async () => {
+  it('a login on docker: records, then writes the file, and claude keeps running', async () => {
     const { d, calls } = deps();
     const r = await switchBoxAccount(d, 'web', { account: 'work' });
-    expect(r).toMatchObject({ kind: 'ok', how: 'recreate' });
-    expect(d.recreate).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ account: 'work', sessionId: 'sess-1' }),
-    );
+    expect(r).toMatchObject({ kind: 'ok', how: 'file', restarted: false });
+    expect(calls).toEqual(['record:default>work:file:manual', 'register', 'write:work']);
+  });
+
+  it('a login on a cloud box takes the same path, no env file, no restart', async () => {
+    const { d, calls } = deps({ findBox: async () => box({ provider: 'e2b' }) });
+    const r = await switchBoxAccount(d, 'web', { account: 'work' });
+    expect(r).toMatchObject({ kind: 'ok', how: 'file', restarted: false });
+    expect(calls).toEqual(['record:default>work:file:manual', 'register', 'write:work']);
+  });
+
+  it('a paused or stopped docker box takes a login (the file is on the host)', async () => {
+    const { d, calls } = deps({ boxState: async () => 'paused' });
+    expect(await switchBoxAccount(d, 'web', { account: 'work' })).toMatchObject({
+      kind: 'ok',
+      restarted: false,
+    });
+    expect(calls).toContain('write:work');
+  });
+
+  it('leaving a token for a login restarts the agent, since the env var must go', async () => {
+    const { d, calls } = deps({ findBox: async () => box({ accounts: { claude: 'tok' } }) });
+    const r = await switchBoxAccount(d, 'web', { account: 'work' });
+    expect(r).toMatchObject({ kind: 'ok', how: 'file', restarted: true });
+    expect(calls).toEqual(['record:tok>work:file:manual', 'register', 'write:work', 'restart']);
+  });
+
+  it('an agent that does not re-read its file is restarted after a login switch', async () => {
+    const { d, calls } = deps({ agentSpec: () => ({ ...SPEC, credential: {} }) as AgentSyncSpec });
+    await switchBoxAccount(d, 'web', { account: 'work' });
+    expect(calls.at(-1)).toBe('restart');
+  });
+
+  it('a failed write puts the record and the old login back', async () => {
+    const { d, calls } = deps({
+      writeLogin: async (_b, _a, account) => {
+        calls.push(`write:${account}`);
+        if (account === 'work') throw new Error('disk full');
+      },
+    });
+    expect(await switchBoxAccount(d, 'web', { account: 'work' })).toEqual({
+      kind: 'error',
+      error: 'could not write the work login into web, so it stays on default: disk full',
+    });
     expect(calls).toEqual([
-      'recreate',
-      'record:default>work:recreate:manual',
+      'record:default>work:file:manual',
       'register',
-      'restart',
+      'write:work',
+      'revert',
+      'register',
+      'write:default',
     ]);
   });
 
-  it('a login on a cloud box is refused with the agreed message', async () => {
-    const { d, calls } = deps({ findBox: async () => box({ provider: 'e2b' }) });
-    const r = await switchBoxAccount(d, 'web', { account: 'work' });
-    expect(r).toEqual({
-      kind: 'refused',
-      error:
-        'switching a cloud box to another login is not supported yet; use a setup token or API key',
-    });
-    expect(calls).toEqual([]);
-  });
-
-  it('a paused docker box is refused for a login', async () => {
-    const { d } = deps({ boxState: async () => 'paused' });
-    expect((await switchBoxAccount(d, 'web', { account: 'work' })).kind).toBe('refused');
+  it('refuses a docker box without its own file and a cloud box that is not running', () => {
+    expect(loginSwitchRefusal(box({ credentialFiles: undefined }), 'claude', 'running')).toMatch(
+      /destroy and create it again/,
+    );
+    expect(loginSwitchRefusal(box({ provider: 'hetzner' }), 'claude', 'paused')).toMatch(
+      /start it/,
+    );
+    expect(loginSwitchRefusal(box({ provider: 'hetzner' }), 'claude', 'running')).toBeNull();
+    expect(loginSwitchRefusal(box(), 'claude', 'stopped')).toBeNull();
   });
 
   it('rejects an unknown account, the current account and an agent the box lacks', async () => {
@@ -134,18 +176,6 @@ describe('switchBoxAccount', () => {
     ).toBe('not_found');
   });
 
-  it('a failed recreate is an error and records nothing', async () => {
-    const { d, calls } = deps({
-      recreate: async () => {
-        throw new Error('docker said no');
-      },
-    });
-    expect(await switchBoxAccount(d, 'web', { account: 'work' })).toEqual({
-      kind: 'error',
-      error: 'docker said no',
-    });
-    expect(calls).toEqual([]);
-  });
 });
 
 describe('switchBoxAccount failures', () => {
@@ -185,35 +215,19 @@ describe('switchBoxAccount failures', () => {
 });
 
 describe('switch review fixes (#486)', () => {
-  it('a cloud box goes back to the default login it was created on, through the env path', async () => {
+  it('a cloud box leaving a token for the default login rewrites its env file and restarts', async () => {
     const { d, calls } = deps({
-      findBox: async () =>
-        box({
-          provider: 'hetzner',
-          accounts: { claude: 'tok' },
-          accountSwitches: [
-            { at: 'x', agent: 'claude', from: 'default', to: 'tok', how: 'env', reason: 'manual' },
-          ],
-        }),
+      findBox: async () => box({ provider: 'hetzner', accounts: { claude: 'tok' } }),
     });
     const r = await switchBoxAccount(d, 'web', { account: 'default' });
-    expect(r).toMatchObject({ kind: 'ok', to: 'default', how: 'env' });
-    expect(calls).toEqual(['record:tok>default:env:manual', 'register', 'env-file', 'restart']);
-  });
-
-  it('a cloud box created on a named login cannot go to default', async () => {
-    const { d } = deps({
-      findBox: async () =>
-        box({
-          provider: 'hetzner',
-          accounts: { claude: 'tok' },
-          accountSwitches: [
-            { at: 'x', agent: 'claude', from: 'work', to: 'tok', how: 'env', reason: 'manual' },
-          ],
-        }),
-    });
-    expect((await switchBoxAccount(d, 'web', { account: 'default' })).kind).toBe('refused');
-    expect(createdOn(box({ accounts: { claude: 'work' } }), 'claude')).toBe('work');
+    expect(r).toMatchObject({ kind: 'ok', to: 'default', how: 'file' });
+    expect(calls).toEqual([
+      'record:tok>default:file:manual',
+      'register',
+      'write:default',
+      'env-file',
+      'restart',
+    ]);
   });
 
   it('a registration back on default drops the named account it left', () => {

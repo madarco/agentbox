@@ -245,4 +245,29 @@ describe('CredentialsFanout — custody write-back', () => {
     await fanout.handle('box-1', payload('codex', JSON.stringify({ tokens: { access: 'x' } })));
     expect(paths).toEqual(['agents/codex/auth.json']);
   });
+
+  it('refuses another login under the account and puts the account`s back into that box, once a minute', async () => {
+    const owned = (account: string, exp: number): string =>
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: exp, accountUuid: account },
+      });
+    const repushes: string[] = [];
+    const runs: string[] = [];
+    const fanout = new CredentialsFanout({
+      log: () => {},
+      debounceMs: 100,
+      runPropagate: async (agent, box) => void runs.push(`${agent}:${box}`),
+      runRepush: async (agent, box, account) => void repushes.push(`${agent}:${box}:${account}`),
+      backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
+      boxAccountFor: () => Promise.resolve(undefined),
+    });
+    expect((await fanout.handle('box-a', payload('claude', owned('me', 100)))).accepted).toBe(true);
+    const r = await fanout.handle('box-b', payload('claude', owned('someone', 200)));
+    expect(r).toEqual({ accepted: false, reason: 'identity mismatch' });
+    await fanout.handle('box-b', payload('claude', owned('someone', 300)));
+    expect(repushes).toEqual(['claude:box-b:default']);
+    expect(await readFile(join(dir, 'claude-credentials.json'), 'utf8')).toBe(owned('me', 100));
+    await fanout.flush();
+    expect(runs).toEqual([]);
+  });
 });

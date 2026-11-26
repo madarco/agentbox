@@ -46,7 +46,23 @@ describe('reconcileAgentCredentialsViaTransport', () => {
     await reconcileAgentCredentialsViaTransport(t, { backups });
     const push = t.ops.find((o) => o.op === 'pushFile');
     expect(push).toBeDefined();
-    expect(push!.args['boxDestPath']).toBe(CLAUDE_BOX_PATH);
+    expect(push!.args['boxDestPath']).toBe(`${CLAUDE_BOX_PATH}.agentbox-push`);
+  });
+
+  it('a newer box blob of ANOTHER login is replaced by the account`s, never captured', async () => {
+    const owned = (account: string, exp: number): string =>
+      JSON.stringify({
+        claudeAiOauth: { refreshToken: 'r', expiresAt: exp, accountUuid: account },
+      });
+    await writeFile(backups.claude, owned('work', 100));
+    const t = makeRecordingTransport({
+      readText: (path) => (path === CLAUDE_BOX_PATH ? owned('home', 300) : null),
+    });
+    await reconcileAgentCredentialsViaTransport(t, { backups });
+    expect(await readFile(backups.claude, 'utf8')).toBe(owned('work', 100));
+    expect(t.ops.find((o) => o.op === 'pushFile')!.args['boxDestPath']).toBe(
+      `${CLAUDE_BOX_PATH}.agentbox-push`,
+    );
   });
 
   it('captures the box claude blob to the backup when the box is newer', async () => {
@@ -76,7 +92,7 @@ describe('reconcileAgentCredentialsViaTransport', () => {
     });
     await reconcileAgentCredentialsViaTransport(t, { backups });
     const push = t.ops.find((o) => o.op === 'pushFile');
-    expect(push!.args['boxDestPath']).toBe('/home/vscode/.codex/auth.json');
+    expect(push!.args['boxDestPath']).toBe('/home/vscode/.codex/auth.json.agentbox-push');
     expect(await readFile(backups.codex, 'utf8')).toBe('{"token":"host"}');
   });
 

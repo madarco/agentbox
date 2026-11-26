@@ -30,6 +30,7 @@ import {
   namedAccounts,
 } from '@agentbox/core';
 import {
+  IDENTITY_MISMATCH,
   parseCredentialsUpdate,
   readCredentialBackup,
   resolveAgentSpec,
@@ -61,6 +62,13 @@ export interface CredentialsFanoutDeps {
     sourceBoxId: string,
     account: string,
   ) => Promise<void>;
+  /**
+   * Put `account`'s stored login back into box `boxId` (it shipped another
+   * login's blob). Override for tests; default: `credentials propagate --box`.
+   */
+  runRepush?: (agent: CredentialAgentKind, boxId: string, account: string) => Promise<void>;
+  /** Least time between two re-pushes to one box (default 60s), so a loop can't spin. */
+  repushIntervalMs?: number;
   /** Override the DEFAULT account's backup path (tests; default: the registry's). */
   backupPathFor?: (agent: CredentialAgentKind) => string;
   /**
@@ -140,6 +148,13 @@ export class CredentialsFanout {
     boxId: string,
     agent: CredentialAgentKind,
   ) => Promise<string | undefined>;
+  private readonly runRepush: (
+    agent: CredentialAgentKind,
+    boxId: string,
+    account: string,
+  ) => Promise<void>;
+  private readonly repushIntervalMs: number;
+  private readonly lastRepush = new Map<string, number>();
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly chains = new Map<string, Promise<void>>();
 
@@ -147,6 +162,8 @@ export class CredentialsFanout {
     this.log = deps.log;
     this.debounceMs = deps.debounceMs ?? 3_000;
     this.runPropagate = deps.runPropagate ?? defaultRunPropagate;
+    this.runRepush = deps.runRepush ?? defaultRunRepush;
+    this.repushIntervalMs = deps.repushIntervalMs ?? 60_000;
     this.backupPathFor = deps.backupPathFor;
     this.accountKindFor =
       deps.accountKindFor ??
@@ -202,6 +219,7 @@ export class CredentialsFanout {
     const existing = await readCredentialBackup(update.agent, { backupPath });
     const verdict = shouldAcceptCredentialUpdate(update.agent, update.content, existing);
     if (!verdict.accept) {
+      if (verdict.reason === IDENTITY_MISMATCH) this.repush(update.agent, sourceBoxId, account);
       return { accepted: false, reason: verdict.reason };
     }
     if (!isDefault && backupPath) {
@@ -260,6 +278,26 @@ export class CredentialsFanout {
     }
   }
 
+  /**
+   * The box holds another login than its record's account: a refresh of the
+   * account it switched away from, written back after the switch. The record
+   * is what the user chose, so the account's login goes back into the box.
+   */
+  private repush(agent: CredentialAgentKind, boxId: string, account: string): void {
+    const key = `${agent}\u0000${boxId}`;
+    const now = Date.now();
+    if (now - (this.lastRepush.get(key) ?? -Infinity) < this.repushIntervalMs) return;
+    this.lastRepush.set(key, now);
+    this.log(
+      `credentials: box ${boxId} holds another ${agent} login than account '${account}'; putting the account's back`,
+    );
+    this.runRepush(agent, boxId, account).catch((err: unknown) => {
+      this.log(
+        `credentials: ${agent} re-push to box ${boxId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
+
   /** Debounce + serialize per (agent, account): two accounts never share a chain. */
   private schedule(agent: CredentialAgentKind, account: string, sourceBoxId: string): void {
     const key = `${agent}\u0000${account}`;
@@ -302,6 +340,22 @@ async function defaultRunPropagate(
   sourceBoxId: string,
   account: string,
 ): Promise<void> {
+  await runPropagateCli(agent, ['--source-box', sourceBoxId], account);
+}
+
+async function defaultRunRepush(
+  agent: CredentialAgentKind,
+  boxId: string,
+  account: string,
+): Promise<void> {
+  await runPropagateCli(agent, ['--box', boxId], account);
+}
+
+async function runPropagateCli(
+  agent: CredentialAgentKind,
+  target: string[],
+  account: string,
+): Promise<void> {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) {
     throw new Error('AGENTBOX_CLI_ENTRY not set; cannot run credential propagate host-side');
@@ -314,8 +368,7 @@ async function defaultRunPropagate(
       'propagate',
       '--agent',
       agent,
-      '--source-box',
-      sourceBoxId,
+      ...target,
       // Only for a named account: an older CLI then still parses a default
       // fan-out, which is the only kind it can route.
       ...(isDefaultAccount(account) ? [] : ['--account', account]),

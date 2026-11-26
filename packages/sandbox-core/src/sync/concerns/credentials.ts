@@ -28,7 +28,6 @@
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { BOX_CREDS_DIR } from '@agentbox/core';
 import type { AgentCredential, SyncTransport } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '../registry.js';
 import type { AgentId } from '@agentbox/core';
@@ -226,6 +225,37 @@ export function jsonNumberAt(text: string, path: readonly string[]): number | nu
   }
 }
 
+function jsonStringAt(text: string, path: readonly string[]): string | null {
+  try {
+    let cur: unknown = JSON.parse(text);
+    for (const key of path) {
+      if (!cur || typeof cur !== 'object') return null;
+      cur = (cur as Record<string, unknown>)[key];
+    }
+    return typeof cur === 'string' && cur.length > 0 ? cur : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when two blobs of `agent` name different owners: a declared identity
+ * path both carry holds different values. A path either blob lacks proves
+ * nothing (an older agent version, a hand-written file), so it never refuses.
+ */
+export function credentialIdentityMismatch(
+  agent: CredentialAgentKind,
+  a: string,
+  b: string,
+): boolean {
+  const paths = resolveAgentSpec(agent).credential?.identity?.jsonPaths ?? [];
+  return paths.some((path) => {
+    const x = jsonStringAt(a, path);
+    const y = jsonStringAt(b, path);
+    return x !== null && y !== null && x !== y;
+  });
+}
+
 /** The agent's declared freshness value for a blob, or null when it declares none. */
 export function credentialFreshness(agent: CredentialAgentKind, text: string): number | null {
   const path = resolveAgentSpec(agent).credential?.freshness?.jsonPath;
@@ -280,11 +310,20 @@ export function oauthRefreshExpiresAt(text: string): number | null {
  * opencode auth files carry no ordering field: accept whenever the content
  * differs (last-writer-wins). Identical content is always a no-op.
  */
+/** `shouldAcceptCredentialUpdate`'s reason for a blob owned by another login. */
+export const IDENTITY_MISMATCH = 'identity mismatch';
+
 export function shouldAcceptCredentialUpdate(
   agent: CredentialAgentKind,
   incoming: string,
   existing: string | null,
 ): { accept: boolean; reason: string } {
+  // Another login under this account's name: a box that switched accounts
+  // while a refresh of its old login was in flight, or a post that raced the
+  // switch. Newer or not, it must never replace this account's login.
+  if (existing !== null && credentialIdentityMismatch(agent, incoming, existing)) {
+    return { accept: false, reason: IDENTITY_MISMATCH };
+  }
   return shouldAcceptCredentialBlob(
     resolveAgentSpec(agent).credential?.freshness?.jsonPath,
     incoming,
@@ -434,6 +473,16 @@ export async function resolveHostCredentialFile(
   return { path: best.path, text: best.text };
 }
 
+/**
+ * Write `content` as the box's own copy of `agent`'s credential.
+ *
+ * Staged next to the file and renamed ONTO the path, never written through it:
+ * the bake symlinks the path into the cloud credentials mount, which on
+ * Daytona is the account's subpath of a volume other boxes share, so writing
+ * through the link would move every box on that account (a login switch) or
+ * hand them one box's copy. Renaming replaces the link with a box-local file,
+ * the same thing claude's own refresh does (docs/hot-switch-subscriptions-plan.md).
+ */
 export async function pushCredentialToBox(
   transport: SyncTransport,
   agent: CredentialAgentKind,
@@ -449,6 +498,7 @@ export async function pushCredentialToBox(
     );
   }
   const dir = abs.slice(0, abs.lastIndexOf('/'));
+  const staged = `${abs}.agentbox-push`;
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-cred-push-'));
   try {
     const tmp = join(stage, 'credential');
@@ -457,24 +507,21 @@ export async function pushCredentialToBox(
     if (mk.exitCode !== 0) {
       throw new Error(`mkdir ${dir} in box failed: ${mk.stderr.trim()}`);
     }
-    await transport.pushFile(tmp, abs);
-    const normalize = `chown "$(id -un):" '${abs}' && chmod 600 '${abs}'`;
-    // A path that resolves into the cloud credential volume is exempt: Daytona's
-    // virtiofs mount refuses chown/chmod even for root, and the file is already
-    // written (see BOX_CREDS_DIR).
-    const norm = await transport.exec([
+    await transport.pushFile(tmp, staged);
+    const normalize = `chown "$(id -un):" '${staged}' && chmod 600 '${staged}'`;
+    const place = await transport.exec([
       'sh',
       '-c',
-      `{ ${normalize}; } 2>/dev/null || sudo sh -c "${normalize.replaceAll('"', '\\"')}" || ` +
-        `case "$(readlink -f '${abs}')" in "$(readlink -f '${BOX_CREDS_DIR}')"/*) exit 0 ;; *) exit 1 ;; esac`,
+      `{ { ${normalize}; } 2>/dev/null || sudo sh -c "${normalize.replaceAll('"', '\\"')}"; } && mv -fT '${staged}' '${abs}'`,
     ]);
-    if (norm.exitCode !== 0) {
+    if (place.exitCode !== 0) {
       // Some transports (Daytona) return the combined output as stdout.
-      const out = [norm.stderr, norm.stdout]
+      const out = [place.stderr, place.stdout]
         .map((x) => x.trim())
         .filter(Boolean)
         .join('\n');
-      throw new Error(`chown/chmod of ${abs} in box failed: ${out}`);
+      await transport.exec(['rm', '-f', staged]).catch(() => undefined);
+      throw new Error(`placing ${abs} in box failed: ${out}`);
     }
   } finally {
     await rm(stage, { recursive: true, force: true });

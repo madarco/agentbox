@@ -42,6 +42,42 @@ describe('planPropagateTargets', () => {
     expect(plan.cloudBoxes.map((b) => b.name)).toEqual(['cloud-d', 'cloud-e']);
   });
 
+  it('a credential run writes a docker box`s own file, never its volume (another account`s after a switch)', () => {
+    const switched = {
+      id: 'w',
+      name: 'switched',
+      provider: 'docker',
+      agentConfigVolumes: { claude: 'agentbox-claude-config' },
+      credentialFiles: ['claude'],
+      accounts: { claude: 'work' },
+    };
+    const work = planPropagateTargets([...boxes, switched], {
+      agent: 'claude',
+      sourceBoxId: 's',
+      scope: 'all',
+      account: 'work',
+      credential: true,
+    });
+    expect(work.dockerBoxFiles.map((b) => b.name)).toEqual(['switched']);
+    expect(work.dockerVolumes).toEqual([]);
+    const def = planPropagateTargets([...boxes, switched], {
+      agent: 'claude',
+      sourceBoxId: 's',
+      scope: 'all',
+      account: 'default',
+      credential: true,
+    });
+    expect(def.dockerBoxFiles).toEqual([]);
+    expect(def.dockerVolumes.flatMap((v) => v.boxNames)).not.toContain('switched');
+    // A settings run (no `credential`) still writes the volume.
+    const settings = planPropagateTargets([switched], {
+      agent: 'claude',
+      sourceBoxId: 's',
+      scope: 'all',
+    });
+    expect(settings.dockerVolumes.map((v) => v.volume)).toEqual(['agentbox-claude-config']);
+  });
+
   describe('per account (llm-accounts Phase 4)', () => {
     const extra = [
       { id: 'w', name: 'cloud-work', provider: 'daytona', accounts: { claude: 'work' } },

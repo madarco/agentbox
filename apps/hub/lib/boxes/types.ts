@@ -238,15 +238,15 @@ export interface Box {
   subscriptions?: Record<string, string>;
   /**
    * The box's account switches, newest last, at most 10 (hub settings 3c):
-   * `how` is `env` (restarted with the token) or `recreate` (rebuilt on the
-   * login's volume); `reason` is `manual` or `limit`. Read-only.
+   * `how` is `env` (restarted with the token) or `file` (the login written into
+   * the box's own credential file); `reason` is `manual` or `limit`. Read-only.
    */
   accountSwitches?: Array<{
     at: string;
     agent: string;
     from: string;
     to: string;
-    how: 'env' | 'recreate';
+    how: 'env' | 'file';
     reason: 'manual' | 'limit';
   }>;
   /**
