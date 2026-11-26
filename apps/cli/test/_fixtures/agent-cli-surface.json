@@ -344,7 +344,7 @@
       },
       {
         "flags": "--account <name>",
-        "description": "named LLM account the box runs on (see `agentbox accounts`; default: claude.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
+        "description": "named LLM account the box runs on (see `agentbox credentials`; default: claude.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -500,34 +500,6 @@
           {
             "flags": "--interactive",
             "description": "attach your terminal to claude's own login TUI (legacy passthrough; try this if the guided prompt can't drive your login method)",
-            "defaultValue": null,
-            "mandatory": false,
-            "negate": false
-          },
-          {
-            "flags": "--account <name>",
-            "description": "sign in a named account (lowercase letters, digits, dashes) instead of the default one",
-            "defaultValue": null,
-            "mandatory": false,
-            "negate": false
-          },
-          {
-            "flags": "--label <text>",
-            "description": "display label for the named account",
-            "defaultValue": null,
-            "mandatory": false,
-            "negate": false
-          },
-          {
-            "flags": "--api-key",
-            "description": "store an API key as the named account (read from a hidden prompt, or stdin)",
-            "defaultValue": null,
-            "mandatory": false,
-            "negate": false
-          },
-          {
-            "flags": "--setup-token",
-            "description": "store a long-lived setup token as the named account (read from a hidden prompt, or stdin); the right kind for an account many boxes share",
             "defaultValue": null,
             "mandatory": false,
             "negate": false
@@ -882,7 +854,7 @@
       },
       {
         "flags": "--account <name>",
-        "description": "named LLM account the box runs on (see `agentbox accounts`; default: codex.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
+        "description": "named LLM account the box runs on (see `agentbox credentials`; default: codex.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -1017,27 +989,6 @@
           {
             "flags": "--interactive",
             "description": "attach your terminal to codex's own login TUI (legacy passthrough; needs an interactive terminal)",
-            "defaultValue": null,
-            "mandatory": false,
-            "negate": false
-          },
-          {
-            "flags": "--account <name>",
-            "description": "sign in a named account (lowercase letters, digits, dashes) instead of the default one",
-            "defaultValue": null,
-            "mandatory": false,
-            "negate": false
-          },
-          {
-            "flags": "--label <text>",
-            "description": "display label for the named account",
-            "defaultValue": null,
-            "mandatory": false,
-            "negate": false
-          },
-          {
-            "flags": "--api-key",
-            "description": "store an API key as the named account (read from a hidden prompt, or stdin)",
             "defaultValue": null,
             "mandatory": false,
             "negate": false
@@ -1648,7 +1599,7 @@
       },
       {
         "flags": "--account <name>",
-        "description": "named LLM account the box runs on (see `agentbox accounts`; default: opencode.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
+        "description": "named LLM account the box runs on (see `agentbox credentials`; default: opencode.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -2130,7 +2081,7 @@
       },
       {
         "flags": "--account <name>",
-        "description": "named LLM account the box runs on (see `agentbox accounts`; default: pi.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
+        "description": "named LLM account the box runs on (see `agentbox credentials`; default: pi.account, else the default login). Use <agent>=<name> for a borrowed --model-auth login; repeatable. Fixed at create.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
