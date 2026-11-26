@@ -14,6 +14,29 @@ const USAGE_TOTALS = {
   sessions: { type: 'integer' },
 };
 
+/** `defaults` on GET /accounts and GET/PUT /accounts/default. */
+const ACCOUNT_DEFAULTS_SCHEMA = {
+  type: 'object',
+  description:
+    "Per agent, the account a new box gets with no `--account` and where that comes from: the project's `<agent>.account` (only with `?project=`), else the global one, else `default` (the agent's own login).",
+  additionalProperties: {
+    type: 'object',
+    properties: {
+      account: { type: 'string' },
+      source: { type: 'string', enum: ['project', 'global', 'default'] },
+      project: {
+        type: 'string',
+        description: 'The project setting, when set.',
+      },
+      global: {
+        type: 'string',
+        description: 'The global setting, when set.',
+      },
+    },
+    required: ['account', 'source'],
+  },
+};
+
 const errorResponse = {
   description: 'Error',
   content: {
@@ -1327,27 +1350,7 @@ export function buildOpenApi(): Record<string, unknown> {
                         description:
                           "This hub machine's id. Custody holds a named account's login under `agents/<agent>/accounts/<machine>/<id>/`, so a client joins those entries to these accounts only when the machine matches.",
                       },
-                      defaults: {
-                        type: 'object',
-                        description:
-                          "Per agent, the account a new box gets with no `--account` and where that comes from: the project's `<agent>.account` (only with `?project=`), else the global one, else `default` (the agent's own login).",
-                        additionalProperties: {
-                          type: 'object',
-                          properties: {
-                            account: { type: 'string' },
-                            source: { type: 'string', enum: ['project', 'global', 'default'] },
-                            project: {
-                              type: 'string',
-                              description: 'The project setting, when set.',
-                            },
-                            global: {
-                              type: 'string',
-                              description: 'The global setting, when set.',
-                            },
-                          },
-                          required: ['account', 'source'],
-                        },
-                      },
+                      defaults: ACCOUNT_DEFAULTS_SCHEMA,
                     },
                     required: ['accounts', 'agents', 'defaults'],
                   },
@@ -1411,27 +1414,7 @@ export function buildOpenApi(): Record<string, unknown> {
                   schema: {
                     type: 'object',
                     properties: {
-                      defaults: {
-                        type: 'object',
-                        description:
-                          "Per agent, the account a new box gets with no `--account` and where that comes from: the project's `<agent>.account` (only with `?project=`), else the global one, else `default` (the agent's own login).",
-                        additionalProperties: {
-                          type: 'object',
-                          properties: {
-                            account: { type: 'string' },
-                            source: { type: 'string', enum: ['project', 'global', 'default'] },
-                            project: {
-                              type: 'string',
-                              description: 'The project setting, when set.',
-                            },
-                            global: {
-                              type: 'string',
-                              description: 'The global setting, when set.',
-                            },
-                          },
-                          required: ['account', 'source'],
-                        },
-                      },
+                      defaults: ACCOUNT_DEFAULTS_SCHEMA,
                     },
                     required: ['defaults'],
                   },

@@ -41,6 +41,7 @@ import {
 } from './credentials-manage.js';
 
 interface PropagateOpts {
+  json?: boolean;
   agent: string;
   sourceBox?: string;
   account?: string;
@@ -67,6 +68,7 @@ const propagateCommand = new Command('propagate')
     '--account <name>',
     "the LLM account whose login to fan out (default: the agent's default login); only boxes on that account are targets",
   )
+  .option('--json', 'end with a `{"pushed","failed"}` JSON line')
   .action(async (opts: PropagateOpts) => {
     try {
       const spec = resolveAgentSpec(opts.agent);
@@ -204,6 +206,8 @@ const propagateCommand = new Command('propagate')
           (failed > 0 ? `, ${String(failed)} failed` : '') +
           '\n',
       );
+      // The machine-readable summary the hub's renew route reads.
+      if (opts.json) process.stdout.write(`${JSON.stringify({ pushed, failed })}\n`);
 
       // Opportunistically mirror the refreshed backup up to the control box's
       // custody store, so a hub-created box (phase 3) logs in with the same
@@ -293,6 +297,7 @@ export const credentialsCommand = new Command('credentials')
       .option('--setup-token', 'store a long-lived setup token (never refreshes; fine for many boxes at once)')
       .option('--api-key', 'store an API key')
       .option('--label <text>', 'display label')
+      .option('--replace', "paste a new token over an existing setup token or API key (boxes on it keep it)")
       .option('--headless', 'login without a terminal: print the URL, then finish with --code')
       .option('--code <code>', 'finish a --headless login with the OAuth code')
       .action(withRef((ref: string, opts: AddOpts) => addCommand(ref, opts))),
@@ -300,7 +305,7 @@ export const credentialsCommand = new Command('credentials')
   .addCommand(
     new Command('renew')
       .description(
-        "sign a login in again, then push it to every box on the account (a box showing 'Login expired' works again)",
+        "sign a login in again, then push it to every box on the account (a box showing 'Login expired' works again); for a setup token or API key, paste its new token",
       )
       .argument('<agent/account>', 'e.g. claude/default, claude/work')
       .option('--skip-sign-in', 'push the stored login as it is (only a box lost it)')

@@ -97,5 +97,10 @@ describe('account defaults', () => {
       'invalid_request',
     );
     expect(await code({ agent: 'claude', account: 'default', scope: 'global' })).toBe('ok');
+    // A folder that is no project of the user's.
+    const bare = mkdtempSync(join(tmpdir(), 'agentbox-acct-bare-'));
+    expect(await code({ agent: 'claude', account: 'work', scope: 'project', project: bare })).toBe(
+      'invalid_request',
+    );
   });
 });

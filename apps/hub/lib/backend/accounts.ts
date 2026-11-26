@@ -5,7 +5,7 @@
 // (Phase 5), so a named account is refused there with a message naming it.
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   loadEffectiveConfig,
@@ -228,6 +228,7 @@ async function cliPropagate(
         entry,
         'credentials',
         'propagate',
+        '--json',
         '--agent',
         agent,
         ...(isDefaultAccount(id) ? [] : ['--account', id]),
@@ -244,16 +245,29 @@ async function cliPropagate(
   }
 }
 
-/** The fan-out's per-target lines, and how many pushed or failed. Pure. */
+/**
+ * The fan-out's outcome from `credentials propagate --json`: its last line is
+ * `{"pushed","failed"}`, the rest are the per-target lines. Without that line
+ * (it died first) a non-zero exit counts as one failure. Pure.
+ */
 export function parsePropagateOutput(output: string, exitCode: number): AccountRenewView {
   const lines = output
     .split('\n')
     .map((l) => l.trimEnd())
     .filter(Boolean);
-  const total = /propagated \S+ credential to (\d+) target\(s\)(?:, (\d+) failed)?/.exec(output);
-  const pushed = total ? Number(total[1]) : 0;
-  const failed = total?.[2] ? Number(total[2]) : exitCode === 0 ? 0 : 1;
-  return { pushed, failed, output: lines };
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(lines[i]!);
+    } catch {
+      continue;
+    }
+    const r = parsed as { pushed?: unknown; failed?: unknown };
+    if (typeof r?.pushed === 'number' && typeof r.failed === 'number') {
+      return { pushed: r.pushed, failed: r.failed, output: lines.filter((_, j) => j !== i) };
+    }
+  }
+  return { pushed: 0, failed: exitCode === 0 ? 0 : 1, output: lines };
 }
 
 export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBackend {
@@ -314,13 +328,25 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     );
   }
 
-  /** A project folder from a client, or a message: absolute, and a directory. */
-  async function projectProblem(project: unknown): Promise<string | null> {
+  /**
+   * A project folder from a client, or a message: absolute, a directory, and
+   * (`write`) inside a git checkout or an agentbox.yaml project, so a client
+   * cannot plant project config on an arbitrary folder of the hub's machine.
+   */
+  async function projectProblem(project: unknown, write = false): Promise<string | null> {
     if (typeof project !== 'string' || !isAbsolute(project)) {
       return 'project must be an absolute folder path';
     }
     const st = await stat(project).catch(() => null);
-    return st?.isDirectory() ? null : `no such folder: ${project}`;
+    if (!st?.isDirectory()) return `no such folder: ${project}`;
+    if (!write) return null;
+    for (let dir = project; ; dir = dirname(dir)) {
+      for (const marker of ['.git', 'agentbox.yaml']) {
+        if (await stat(join(dir, marker)).catch(() => null)) return null;
+      }
+      if (dirname(dir) === dir) break;
+    }
+    return `not a project (no git checkout or agentbox.yaml): ${project}`;
   }
 
   async function defaultsFor(project?: string): Promise<Record<string, AccountDefaultView>> {
@@ -390,7 +416,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       }
       let project: string | undefined;
       if (scope === 'project') {
-        const problem = await projectProblem(b.project);
+        const problem = await projectProblem(b.project, true);
         if (problem) return { ok: false, code: 'invalid_request', error: problem };
         project = b.project as string;
       }
@@ -466,21 +492,31 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       const problem = pastedSecretProblem(token);
       if (problem) return { ok: false, code: 'invalid_request', error: problem };
       const existing = findAccount(await readAccounts(store), spec.id, req.id);
-      if (existing) {
+      // `replace`: a new token for the same account (a rotated or expiring setup
+      // token), so boxes on it need not be moved off first. Same kind only.
+      const replace = b.replace === true;
+      if (existing && (!replace || existing.kind !== req.kind)) {
         return {
           ok: false,
           code: 'conflict',
-          error: `${spec.id} account '${req.id}' already exists; remove it first`,
+          error:
+            replace && existing.kind !== req.kind
+              ? `${spec.id} account '${req.id}' is a ${existing.kind}; remove it first`
+              : `${spec.id} account '${req.id}' already exists; remove it first, or replace its token`,
         };
       }
+      if (replace && !existing) {
+        return { ok: false, code: 'not_found', error: `no ${spec.id} account '${req.id}' to replace` };
+      }
       // From here a failure is the hub's (disk, permissions), not the input's:
-      // it propagates and the route answers 500.
+      // it propagates and the route answers 500. A new token restarts the
+      // setup token's year, so `createdAt` moves with it.
       const row: LlmAccount = {
         agent: spec.id,
         id: req.id,
         kind: req.kind,
-        createdAt: new Date().toISOString(),
-        ...(label ? { label } : {}),
+        createdAt: new Date(now()).toISOString(),
+        ...((label ?? existing?.label) ? { label: label ?? existing!.label! } : {}),
       };
       await upsertAccount(row, store);
       try {
@@ -491,7 +527,8 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
           store,
         );
       } catch (err) {
-        await removeStoredAccount(spec.id, req.id, store).catch(() => {});
+        if (existing) await upsertAccount(existing, store).catch(() => {});
+        else await removeStoredAccount(spec.id, req.id, store).catch(() => {});
         throw err;
       }
       return { ok: true, value: await view(row) };

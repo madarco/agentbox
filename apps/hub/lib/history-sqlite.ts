@@ -352,6 +352,8 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   for (const col of ['auth_error', 'auth_ts', 'auth_ok_ts']) {
     if (!live.has(col)) db.exec(`ALTER TABLE history_live ADD COLUMN ${col} TEXT`);
   }
+  // Per-account reads (limits, auth) filter on it on every accounts listing.
+  db.exec('CREATE INDEX IF NOT EXISTS history_sessions_account ON history_sessions(account)');
   // Hub settings 3a: an account is stamped as its subscription, `agent/account`.
   // A bare id from before is the session agent's own, unless the agent can
   // borrow a login: that one is cleared for the backfill (which only fills

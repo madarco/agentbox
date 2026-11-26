@@ -34,6 +34,7 @@ import {
   findLiveSession,
   findPendingSession,
   describeSessionAccount,
+  finishLoginCommand,
   readLoginRequest,
   readLoginState,
   sessionAccountMismatch,
@@ -47,6 +48,17 @@ import { imageProgress } from '@agentbox/cli-kit';
 import { loadPtyBackend } from '@agentbox/cli-kit';
 import { signInToClaude } from './runtime.js';
 
+/**
+ * How the caller finishes a headless login, when it is not the plain command:
+ * `credentials renew` finishes with its own `--code` so the login is pushed to
+ * the account's boxes too. Set per run by {@link runClaudeLoginCommand}.
+ */
+let finishOverride: string | undefined;
+
+function finishCommand(account: LoginAccount | undefined): string {
+  return finishOverride ?? finishLoginCommand(account);
+}
+
 function printAwaitingCode(st: LoginState, account: LoginAccount | undefined): void {
   const url = st.url ?? '';
   log.info(
@@ -54,7 +66,7 @@ function printAwaitingCode(st: LoginState, account: LoginAccount | undefined): v
   );
   process.stdout.write(`\n  ${url}\n\n`);
   log.info(
-    `Then run:  agentbox claude login --code <CODE>${account ? ` --account ${account.id}` : ''}`,
+    `Then run:  ${finishCommand(account)}`,
   );
   // Stable, greppable marker so an orchestrating agent can grab the URL
   // deterministically regardless of how the prose above is worded.
@@ -94,7 +106,7 @@ async function startHeadlessLogin(args: string[], account?: LoginAccount): Promi
       printAwaitingCode(existing.state, pendingAccount);
     } else {
       log.info(
-        'A login is already in progress; wait for it to print its URL, then finish with `agentbox claude login --code <CODE>`.',
+        `A login is already in progress; wait for it to print its URL, then finish with \`${finishCommand(pendingAccount)}\`.`,
       );
     }
     return;
@@ -213,7 +225,7 @@ async function deliverLoginCode(code: string, account: LoginAccount | undefined)
     if (st?.phase === 'awaiting-code' && st.lastError && Date.parse(st.updatedAt) >= submittedAt) {
       s.stop('code rejected');
       log.error(
-        `${st.lastError}. Run \`agentbox claude login --code <CODE>\` again with a fresh code.`,
+        `${st.lastError}. Run \`${finishCommand(account)}\` again with a fresh code.`,
       );
       process.exit(1);
     }
@@ -268,8 +280,10 @@ export async function runClaudeLoginCommand(
     code?: string;
     interactive?: boolean;
     loginAccount?: LoginAccount;
+    finishCommand?: string;
   };
   const account = opts.loginAccount;
+  finishOverride = opts.finishCommand;
   const mode = selectLoginMode({
     isTTY: !!process.stdin.isTTY,
     headless: !!opts.headless,

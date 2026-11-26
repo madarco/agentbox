@@ -142,3 +142,24 @@ and a "Make default" action on every other account card (the `PUT` route).
   it on the account (same `auth` evidence, `source: 'box'`).
 - Codex/opencode/pi: measure their dead-login transcript lines and emit the
   same `auth` record from their parsers.
+
+## Known gaps (from the Phase 1 review)
+
+- **A switched session keeps its first account.** Auth evidence is read per
+  subscription through `history_sessions.account`, which is stamped once. A
+  conversation resumed on another account after `credentials switch` keeps
+  counting its replies and refusals under the old one, the same limit usage
+  attribution already has. Fix with the per-turn attribution item in the hub
+  settings backlog.
+- **The TUI exits on a failed or cancelled sign-in.** `runAgentLogin` (and
+  claude's own login) end the process on a cancel or a rejected code instead
+  of throwing, so the menu closes rather than coming back. Fine for the
+  subcommands. The menu needs the login path to throw.
+- **Renew runs its own propagate.** `POST …/renew` spawns
+  `credentials propagate` directly instead of joining the relay's
+  per-(agent, account) chain. Both push the same stored file, so a race only
+  repeats a write. Routing renew through `CredentialsFanout` would remove even
+  that.
+- **`ls` fallback for an older hub** derives subscriptions from `accounts`
+  alone and ignores a borrowed login (`codex/…` under openclaw). A current hub
+  sends `subscriptions`.

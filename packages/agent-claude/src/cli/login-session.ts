@@ -251,15 +251,25 @@ export function describeSessionAccount(account: { id: string } | undefined): str
  * worker overwrites the wrong login — for `default`, the owner's login every
  * box runs on. So a mismatch is refused, in both directions.
  */
+/**
+ * The command that finishes a pending headless login for `account`: the plain
+ * `claude login --code` for the default login, `credentials add … --code` for a
+ * named one (`login --account` is gone; docs/credentials-tui-plan.md).
+ */
+export function finishLoginCommand(account: { id: string } | undefined): string {
+  return account
+    ? `agentbox credentials add claude/${account.id} --login --code <CODE>`
+    : 'agentbox claude login --code <CODE>';
+}
+
 export function sessionAccountMismatch(
   pending: { id: string } | undefined,
   requested: { id: string } | undefined,
 ): string | null {
   if ((pending?.id ?? null) === (requested?.id ?? null)) return null;
-  const flag = pending ? ` --account ${pending.id}` : '';
   return (
     `the pending headless login is for ${describeSessionAccount(pending)}, not ` +
-    `${describeSessionAccount(requested)}. Finish it with \`agentbox claude login --code <CODE>${flag}\`, ` +
+    `${describeSessionAccount(requested)}. Finish it with \`${finishLoginCommand(pending)}\`, ` +
     'or wait for it to expire, then start again'
   );
 }

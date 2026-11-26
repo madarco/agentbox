@@ -254,7 +254,7 @@ describe('POST /api/v1/accounts/:agent/:id/renew (backend)', () => {
         return Promise.resolve({
           exitCode: 0,
           output:
-            'pushed claude credential to volume v (b-work)\npropagated claude credential to 1 target(s)\n',
+            'pushed claude credential to volume v (b-work)\npropagated claude credential to 1 target(s)\n{"pushed":1,"failed":0}\n',
         });
       },
     });
@@ -276,13 +276,15 @@ describe('POST /api/v1/accounts/:agent/:id/renew (backend)', () => {
     const r = await b.renewAccount('claude', 'ci');
     expect(!r.ok && r.code).toBe('invalid_request');
   });
-  it('reads failures out of the fan-out', () => {
+  it('reads the counts off the JSON summary line', () => {
     expect(
-      parsePropagateOutput('propagated claude credential to 2 target(s), 1 failed\n', 1),
-    ).toMatchObject({
+      parsePropagateOutput('a: boom\npropagated claude credential to 2 target(s), 1 failed\n{"pushed":2,"failed":1}\n', 1),
+    ).toEqual({
       pushed: 2,
       failed: 1,
+      output: ['a: boom', 'propagated claude credential to 2 target(s), 1 failed'],
     });
+    // It died before the summary.
     expect(parsePropagateOutput('no usable claude credential\n', 1)).toMatchObject({
       pushed: 0,
       failed: 1,

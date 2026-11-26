@@ -80,6 +80,7 @@ export async function listCommand(opts: { json?: boolean }): Promise<void> {
 // ---- add -------------------------------------------------------------------
 
 export interface AddOpts {
+  replace?: boolean;
   login?: boolean;
   setupToken?: boolean;
   apiKey?: boolean;
@@ -104,16 +105,34 @@ async function addPasted(
   id: string,
   kind: Exclude<Kind, 'login'>,
   label: string | undefined,
+  replace = false,
 ): Promise<boolean> {
   const noun = PASTED_KIND_NOUN[kind];
-  const token = await readPastedSecret(noun);
+  const token = await readPastedSecret(replace ? `new ${noun}` : noun);
   if (token === null) return false;
   if (!token) throw new Error(`no ${noun} given`);
   const stored = await withHubClient(LOCAL, (client) =>
-    client.addPastedAccount({ agent, id, kind, token, ...(label ? { label } : {}) }),
+    client.addPastedAccount({
+      agent,
+      id,
+      kind,
+      token,
+      ...(label ? { label } : {}),
+      ...(replace ? { replace: true } : {}),
+    }),
   );
   if (!stored) return false;
-  log.success(`saved the ${noun} as ${agent}/${id}`);
+  if (!replace) {
+    log.success(`saved the ${noun} as ${agent}/${id}`);
+  } else {
+    log.success(`replaced the ${noun} of ${agent}/${id}`);
+    if (stored.boxes.length > 0) {
+      // The token reaches an agent as an env var at its start.
+      log.info(
+        `${stored.boxes.join(', ')} pick${stored.boxes.length === 1 ? 's' : ''} it up when the agent restarts (\`agentbox <agent> start <box>\` after stopping its session, or restart the box)`,
+      );
+    }
+  }
   return true;
 }
 
@@ -162,8 +181,12 @@ export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
     kind = picked;
   }
   const label = opts.label?.trim() || undefined;
-  if (kind === 'login') await addLogin(agent, id, label, opts);
-  else if (!(await addPasted(agent, id, kind, label))) process.exitCode = 1;
+  if (kind === 'login') {
+    if (opts.replace) throw new Error('--replace is for a setup token or API key; renew a login');
+    await addLogin(agent, id, label, opts);
+  } else if (!(await addPasted(agent, id, kind, label, opts.replace === true))) {
+    process.exitCode = 1;
+  }
 }
 
 // ---- renew -----------------------------------------------------------------
@@ -187,9 +210,9 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
   const account = list.accounts.find((a) => a.agent === agent && a.id === id);
   if (!account) throw new Error(`no account ${agent}/${id} (see \`agentbox credentials\`)`);
   if (account.kind !== 'login') {
-    throw new Error(
-      `${agent}/${id} is a ${KIND_TEXT[account.kind]}: remove it and add the new one (\`agentbox credentials rm ${agent}/${id}\`, then \`credentials add\`)`,
-    );
+    // A pasted kind is renewed by pasting its new token over it.
+    if (!(await addPasted(agent, id, account.kind, undefined, true))) process.exitCode = 1;
+    return;
   }
   if (!opts.skipSignIn) {
     const spec = agentLoginSpec(agent);
@@ -202,13 +225,16 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
       opts.code === undefined &&
       (opts.headless === true || !process.stdin.isTTY);
     await runAgentLogin(spec, [], {
-      ...(isDefaultAccount(id) ? {} : { account: { id, ...(account.label ? { label: account.label } : {}) } }),
-      extra: loginExtra(opts),
+      ...(isDefaultAccount(id)
+        ? {}
+        : { account: { id, ...(account.label ? { label: account.label } : {}) } }),
+      // Finishing through `renew` again is what pushes the new login out.
+      extra: {
+        ...loginExtra(opts),
+        finishCommand: `agentbox credentials renew ${agent}/${id} --code <CODE>`,
+      },
     });
-    if (startsOnly) {
-      log.info(`then finish with \`agentbox credentials renew ${agent}/${id} --code <code>\``);
-      return;
-    }
+    if (startsOnly) return;
   }
   await fanOut(agent, id);
 }
@@ -475,16 +501,11 @@ async function tuiAccount(client: HubApiClient, a: HubApiAccount): Promise<void>
   note(detailNote(a), `${a.agent}/${a.id}`);
   const named = !isDefaultAccount(a.id);
   const options: Array<{ value: string; label: string; hint?: string }> = [];
-  if (a.kind === 'login') {
-    options.push({
-      value: 'renew',
-      label: 'Renew',
-      hint:
-        a.auth?.state === 'revoked'
-          ? 'sign in again and push the login to its boxes'
-          : 'sign in again, then push the login to its boxes',
-    });
-  }
+  options.push(
+    a.kind === 'login'
+      ? { value: 'renew', label: 'Renew', hint: 'sign in again, then push the login to its boxes' }
+      : { value: 'renew', label: 'Replace its token', hint: `paste a new ${KIND_TEXT[a.kind]}` },
+  );
   if (!a.default?.project) options.push({ value: 'project', label: 'Use for this project' });
   if (!a.default?.global) options.push({ value: 'global', label: 'Use everywhere', hint: 'the global default' });
   options.push({ value: 'move', label: 'Move a box to this account' });

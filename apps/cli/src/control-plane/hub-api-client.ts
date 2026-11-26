@@ -2123,6 +2123,8 @@ export class HubApiClient {
     kind: 'setup-token' | 'api-key';
     token: string;
     label?: string;
+    /** A new token for an existing account of the same kind. */
+    replace?: boolean;
   }): Promise<HubApiAccount> {
     const res = await this.request<{ account: HubApiAccount }>('POST', '/accounts', body);
     return res.account;
