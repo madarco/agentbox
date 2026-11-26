@@ -3,6 +3,26 @@
 Open items found while building the phases of
 [`usage-dashboard-plan.md`](./usage-dashboard-plan.md). Newest phase first.
 
+## From Phase 6 (share from the hub)
+
+- **A stale claim secret has no UI.** If a site's shares are reset (a preview
+  deployment's database), the hub keeps sending the old secret and every share of
+  that handle is refused; the error says to remove the `<origin> <handle>` entry
+  from `~/.agentbox/hub/share.json`. A "forget this handle" action (API + dialog)
+  would replace the hand edit.
+- **No delete or update of a posted share.** The hub keeps the secret so a later
+  `DELETE`/`PUT` on agent-box.sh can prove ownership, but the site has neither yet.
+- **The preview is built once.** The dialog renders the share of the window at the
+  moment it opens; the post rebuilds it, so a turn finished in between can move a
+  number by a minute's work. Posting the previewed share instead would make them
+  identical but let the browser send any schema-valid body.
+- **The dialog follows the hub's light-only theme** (see Phase 3: the hub has no
+  dark tokens yet). It uses the hub's own tokens, so it needs nothing when they land.
+- **Live check was against a local `next dev`**, not a Vercel preview: previews sit
+  behind Vercel login and the box has no bypass token. Repeat it once against the
+  preview (`share.endpoint=https://<preview>/api/share`) or production after the
+  Neon setup.
+
 ## From Phase 3 (the hub Usage page)
 
 - **The default window is the last 30 days**, to match the tray's header pill

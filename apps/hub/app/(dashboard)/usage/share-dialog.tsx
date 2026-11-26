@@ -131,7 +131,7 @@ export function ShareDialog({
   const site = host(preview?.endpoint ?? settings?.endpoint ?? 'https://agent-box.sh');
 
   return (
-    <Dialog onClose={onClose} className="max-w-[1240px]">
+    <Dialog onClose={onClose} className="max-w-[min(1240px,calc(100vw-48px))]">
       <div className="border-b border-border/70 px-5 pb-4 pt-5 pr-14">
         <div className="text-base font-semibold leading-tight tracking-tight">
           {posted ? 'Shared' : `Share on ${site}`}
