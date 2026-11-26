@@ -101,7 +101,7 @@ export function LimitsAge({ limits }: { limits: NonNullable<Account['limits']> }
     <div
       className={cn(
         'mt-2 font-mono text-[11px]',
-        limits.stale ? 'text-[#6a4e0c]' : 'text-muted-foreground',
+        limits.stale ? 'text-[var(--amber-ink)]' : 'text-muted-foreground',
       )}
       title={
         limits.stale

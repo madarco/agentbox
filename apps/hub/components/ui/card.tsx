@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 type DivProps = HTMLAttributes<HTMLDivElement>;
 
 export function Card({ className, ...props }: DivProps) {
-  return <div className={cn('rounded-xl border border-border bg-card text-card-foreground', className)} {...props} />;
+  return <div className={cn('rounded-xl border border-border bg-card text-card-foreground shadow-sm', className)} {...props} />;
 }
 export function CardHeader({ className, ...props }: DivProps) {
   return <div className={cn('flex flex-col space-y-1 p-5', className)} {...props} />;

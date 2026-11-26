@@ -467,7 +467,7 @@ function NewBranchModal({
           </p>
         </div>
         <Label htmlFor="nb-from">
-          Base ref <span className="font-normal text-[#a4a9b0]">(optional)</span>
+          Base ref <span className="font-normal text-[var(--faint)]">(optional)</span>
         </Label>
         <BranchField
           boxId={box.id}

@@ -43,6 +43,20 @@ const github: Icon = (props: IconProps) => (
 
 export const Icons = {
   grid: mk(['M4 4h7v7H4zM13 4h7v7h-7zM13 13h7v7h-7zM4 13h7v7H4z']),
+  sun: mk([
+    'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z',
+    'M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+  ]),
+  moon: mk(['M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z']),
+  more: mk([
+    'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z',
+  ]),
+  chevUD: mk(['m7 15 5 5 5-5', 'm7 9 5-5 5 5']),
+  panel: mk(['M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z', 'M9 3v18']),
+  logout: mk(['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'm16 17 5-5-5-5', 'M21 12H9']),
+  list: mk(['M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01']),
+  layout: mk(['M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z']),
+  zap: mk(['M13 2 3 14h9l-1 8 10-12h-9Z']),
   box: mk(['M12 20.5 5 17V7l7-3.5L19 7v10Z', 'm5 7 7 3.5L19 7M12 10.5V20']),
   folder: mk(['M4 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z']),
   settings: mk([

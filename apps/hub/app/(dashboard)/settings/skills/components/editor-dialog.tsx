@@ -162,7 +162,7 @@ export function EditorDialog({
           disabled={!creating && !loaded}
         />
         {others.length > 0 ? (
-          <div className="font-mono text-[11px] text-[#a4a9b0]">
+          <div className="font-mono text-[11px] text-[var(--faint)]">
             kept as they are: {others.map((f) => f.path).join(', ')}
           </div>
         ) : null}

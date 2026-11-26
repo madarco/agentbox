@@ -51,7 +51,7 @@ export function ToastStack({
   dismiss: (id: number) => void;
 }) {
   return (
-    <div className="pointer-events-none fixed bottom-5 right-5 z-[60] flex w-[340px] max-w-[calc(100vw-40px)] flex-col gap-2">
+    <div className="pointer-events-none fixed !border-0 bottom-5 right-5 z-[60] flex w-[340px] max-w-[calc(100vw-40px)] flex-col gap-2">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -62,7 +62,7 @@ export function ToastStack({
               'mt-0.5 grid h-6 w-6 flex-none place-items-center rounded-md border',
               t.variant === 'error'
                 ? 'border-[var(--red-line)] bg-[var(--red-soft)] text-[var(--red)]'
-                : 'border-[var(--green-line)] bg-accent text-primary',
+                : 'border-[var(--green-line)] bg-[var(--green-soft)] text-primary',
             )}
           >
             {t.variant === 'error' ? (
@@ -80,7 +80,7 @@ export function ToastStack({
             ) : null}
           </div>
           <button
-            className="absolute right-2.5 top-2.5 grid h-5 w-5 cursor-pointer place-items-center rounded border-0 bg-transparent text-[#a4a9b0] hover:text-foreground"
+            className="absolute right-2.5 top-2.5 grid h-5 w-5 cursor-pointer place-items-center rounded border-0 bg-transparent text-[var(--faint)] hover:text-foreground"
             onClick={() => dismiss(t.id)}
             aria-label="Dismiss"
           >

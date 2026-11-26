@@ -139,7 +139,7 @@ export default function FilesPage() {
         <>
           <SectionLabel
             right={
-              <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+              <span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">
                 {total} files
               </span>
             }
@@ -204,7 +204,7 @@ function GroupView({ group }: { group: FilesGroup }) {
               {group.link.label}
             </Link>
           ) : (
-            <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+            <span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">
               {fmtBytes(group.size)}
             </span>
           )
@@ -242,7 +242,7 @@ function GroupView({ group }: { group: FilesGroup }) {
                   </span>
                 ) : null}
                 {s.subtitle && s.subtitle !== s.title ? (
-                  <span className="truncate font-mono text-[11px] text-[#a4a9b0]">
+                  <span className="truncate font-mono text-[11px] text-[var(--faint)]">
                     {s.subtitle}
                   </span>
                 ) : null}
@@ -270,7 +270,7 @@ function Row({ row }: { row: FilesRow }) {
   );
   return (
     <div className="flex items-center gap-3 py-1.5 max-sm:flex-wrap">
-      <Icons.file className="size-3.5 flex-none text-[#a4a9b0]" />
+      <Icons.file className="size-3.5 flex-none text-[var(--faint)]" />
       <div className="min-w-0 flex-1">
         <div className="truncate font-mono text-[12.5px]">{title}</div>
         {row.detail || row.hint ? (
@@ -282,7 +282,7 @@ function Row({ row }: { row: FilesRow }) {
         ) : null}
       </div>
       {row.files > 1 ? (
-        <span className="font-mono text-[11px] text-[#a4a9b0]">{row.files} files</span>
+        <span className="font-mono text-[11px] text-[var(--faint)]">{row.files} files</span>
       ) : null}
       <span className="w-16 text-right font-mono text-[11px] text-muted-foreground">
         {fmtBytes(row.size)}
@@ -313,12 +313,12 @@ function Pill({
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] transition-colors',
         active
-          ? 'border-transparent bg-accent font-medium text-accent-foreground'
+          ? 'border-transparent bg-[var(--green-soft)] font-medium text-[var(--green-ink)]'
           : 'border-border text-secondary-foreground hover:bg-secondary hover:text-foreground',
       )}
     >
       {label}
-      <span className={cn('font-mono text-[11px]', active ? 'text-primary' : 'text-[#a4a9b0]')}>
+      <span className={cn('font-mono text-[11px]', active ? 'text-primary' : 'text-[var(--faint)]')}>
         {count}
       </span>
     </button>

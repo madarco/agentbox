@@ -1,24 +1,37 @@
 import type { ReactNode } from 'react';
-import { cn } from '@/lib/utils';
-import { Card } from '@/components/ui/card';
 import type { Icon } from '@/components/icons';
+import { Card } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
 
 export function StatGrid({ children }: { children: ReactNode }) {
-  return (
-    <Card className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] divide-x divide-border/60 overflow-hidden">
-      {children}
-    </Card>
-  );
+  return <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">{children}</div>;
 }
 
-export function Stat({ k, v, mono, icon: IconComp }: { k: ReactNode; v: ReactNode; mono?: boolean; icon?: Icon }) {
+export function Stat({
+  k,
+  v,
+  mono,
+  icon: IconComp,
+}: {
+  k: ReactNode;
+  v: ReactNode;
+  mono?: boolean;
+  icon?: Icon;
+}) {
   return (
-    <div className="px-4.5 p-4">
-      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">{k}</div>
-      <div className={cn('flex items-center gap-2 font-semibold tracking-[-0.01em]', mono ? 'font-mono text-sm font-medium' : 'text-base')}>
-        {IconComp ? <IconComp className="size-[15px] text-muted-foreground" /> : null}
+    <Card className="min-w-0 p-4">
+      <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        {IconComp ? <IconComp className="size-3.5" /> : null}
+        {k}
+      </div>
+      <div
+        className={cn(
+          'flex min-w-0 items-center gap-2 font-semibold tabular-nums [&>*]:truncate',
+          mono ? 'font-mono text-sm font-medium' : 'text-lg',
+        )}
+      >
         {v}
       </div>
-    </div>
+    </Card>
   );
 }

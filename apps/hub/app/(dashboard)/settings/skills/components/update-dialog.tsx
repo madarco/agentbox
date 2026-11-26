@@ -160,7 +160,7 @@ export function UpdateDialog({
         ) : (
           <>
             <Findings findings={diff.findings} />
-            <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[#a4a9b0]">
+            <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[var(--faint)]">
               {diff.files.length} file{diff.files.length === 1 ? '' : 's'} changed
             </div>
             {diff.files.map((f) => (

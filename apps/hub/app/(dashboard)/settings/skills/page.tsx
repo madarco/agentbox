@@ -421,7 +421,7 @@ export default function SkillsPage() {
                       {a.detail}
                     </div>
                   ) : null}
-                  <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
+                  <div className="mt-0.5 font-mono text-[11px] text-[var(--faint)]">
                     box {boxName(a.boxId)} · <Ago ms={a.createdAt} />
                   </div>
                 </div>
@@ -511,7 +511,7 @@ export default function SkillsPage() {
                 className="pl-8"
               />
             </div>
-            <span className="flex items-center gap-3 font-mono text-[11px] text-[#a4a9b0]">
+            <span className="flex items-center gap-3 font-mono text-[11px] text-[var(--faint)]">
               {pendingCount > 0 ? (
                 <span className="text-[var(--amber)]">{pendingCount} update(s) waiting</span>
               ) : null}
@@ -572,7 +572,7 @@ export default function SkillsPage() {
             </div>
           ) : (
             <Card className="mt-4 overflow-hidden">
-              <div className="grid grid-cols-[minmax(0,1fr)_150px_170px_360px_44px] gap-3 border-b border-border/60 px-5 py-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-[#a4a9b0] max-lg:hidden">
+              <div className="grid grid-cols-[minmax(0,1fr)_150px_170px_360px_44px] gap-3 border-b border-border/60 px-5 py-2 font-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--faint)] max-lg:hidden">
                 <span>Skill</span>
                 <span>Agents</span>
                 <span>Status</span>
@@ -748,7 +748,7 @@ function SkillTableRow({
           </div>
           {s ? (
             <div
-              className="mt-1 truncate font-mono text-[11px] text-[#a4a9b0]"
+              className="mt-1 truncate font-mono text-[11px] text-[var(--faint)]"
               title={originLabel(s.origin)}
             >
               {fmtBytes(s.size)} · {s.files} file{s.files === 1 ? '' : 's'} · from{' '}
@@ -758,7 +758,7 @@ function SkillTableRow({
               · updated <Ago ms={Date.parse(s.updatedAt)} /> · {short(s.current)}
             </div>
           ) : cmp?.pc ? (
-            <div className="mt-1 truncate font-mono text-[11px] text-[#a4a9b0]" title={cmp.pc.path}>
+            <div className="mt-1 truncate font-mono text-[11px] text-[var(--faint)]" title={cmp.pc.path}>
               {fmtBytes(cmp.pc.size)} · {cmp.pc.files} file{cmp.pc.files === 1 ? '' : 's'} ·{' '}
               {cmp.pc.path}
             </div>
@@ -780,7 +780,7 @@ function SkillTableRow({
       </div>
       <div className="flex flex-wrap gap-1 pt-0.5">
         {(cmp?.agents ?? []).length === 0 ? (
-          <span className="font-mono text-[11px] text-[#a4a9b0]">—</span>
+          <span className="font-mono text-[11px] text-[var(--faint)]">—</span>
         ) : (
           cmp!.agents.map((a) => (
             <Badge key={a} className="px-1.5 py-0 text-[10px] normal-case">

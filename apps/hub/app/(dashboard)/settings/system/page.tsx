@@ -130,7 +130,7 @@ export default function SystemPage() {
           </StatGrid>
           {data.build.build ? (
             <div className="mt-3 flex items-center gap-2 font-mono text-[12px] text-muted-foreground">
-              <Icons.commit className="size-3.5 flex-none text-[#a4a9b0]" />
+              <Icons.commit className="size-3.5 flex-none text-[var(--faint)]" />
               {data.build.build}
             </div>
           ) : null}
@@ -174,7 +174,7 @@ export default function SystemPage() {
                     {staleCount} need re-bake
                   </Badge>
                 ) : (
-                  <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+                  <span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">
                     base images
                   </span>
                 )}
@@ -210,7 +210,7 @@ export default function SystemPage() {
 function DeployField({ k, v }: { k: string; v?: string }) {
   return (
     <div className="px-4.5 p-4">
-      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">
+      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[var(--faint)]">
         {k}
       </div>
       <div className="truncate font-mono text-sm font-medium" title={v ?? undefined}>
@@ -243,7 +243,7 @@ function ProviderBakeRow({
         ) : null}
         {p.fingerprint ? (
           <span
-            className="ml-auto font-mono text-[11px] text-[#a4a9b0]"
+            className="ml-auto font-mono text-[11px] text-[var(--faint)]"
             title="build-context fingerprint"
           >
             {p.fingerprint}
@@ -271,7 +271,7 @@ function ProviderBakeRow({
         </a>
       ) : null}
       {p.baked ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-[#a4a9b0]">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-[var(--faint)]">
           {p.cliVersion ? <span>baked with {p.cliVersion}</span> : null}
           {p.bakedAt ? (
             <span>
@@ -310,7 +310,7 @@ function BoxImageDetail({ boxImage }: { boxImage: NonNullable<SystemResponse['bo
 function BoxImageField({ k, v }: { k: string; v?: string }) {
   return (
     <div>
-      <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">
+      <div className="mb-1 font-mono text-[10.5px] uppercase tracking-[.06em] text-[var(--faint)]">
         {k}
       </div>
       <div className="truncate font-mono text-[12.5px] font-medium" title={v ?? undefined}>
@@ -372,7 +372,7 @@ function CarriedSection({
       <>
         <SectionLabel
           right={
-            <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+            <span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">
               {hostCarried.length} path(s) present
             </span>
           }
@@ -404,7 +404,7 @@ function CarriedSection({
         right={
           <Link
             href="/settings/files"
-            className="flex items-center gap-1 font-mono text-[11px] normal-case tracking-normal text-[#a4a9b0] hover:text-foreground"
+            className="flex items-center gap-1 font-mono text-[11px] normal-case tracking-normal text-[var(--faint)] hover:text-foreground"
           >
             Files
             <Icons.ext className="size-3" />
@@ -428,7 +428,7 @@ function CarriedSection({
         .
       </div>
 
-      <div className="mb-2 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[#a4a9b0]">
+      <div className="mb-2 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[var(--faint)]">
         <Icons.shield className="size-3.5" />
         Agent credentials · custody
       </div>
@@ -449,7 +449,7 @@ function CarriedSection({
         </Card>
       )}
 
-      <div className="mb-2 mt-6 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[#a4a9b0]">
+      <div className="mb-2 mt-6 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[.08em] text-[var(--faint)]">
         <Icons.book className="size-3.5" />
         Skills · library
       </div>
@@ -457,7 +457,7 @@ function CarriedSection({
         <span className="text-[13px] font-medium">
           {library.count} skill{library.count === 1 ? '' : 's'}
         </span>
-        <span className="font-mono text-[11px] text-[#a4a9b0]">{fmtBytes(library.size)}</span>
+        <span className="font-mono text-[11px] text-[var(--faint)]">{fmtBytes(library.size)}</span>
         <span className="text-[12px] text-muted-foreground">
           {library.count > 0
             ? "stored for your PCs; boxes don't read the library yet"
@@ -467,7 +467,7 @@ function CarriedSection({
         </span>
         <Link
           href="/settings/skills"
-          className="ml-auto flex items-center gap-1 font-mono text-[11px] text-[#a4a9b0] hover:text-foreground"
+          className="ml-auto flex items-center gap-1 font-mono text-[11px] text-[var(--faint)] hover:text-foreground"
         >
           Skills
           <Icons.ext className="size-3" />
@@ -481,16 +481,16 @@ function CarriedSection({
 function AgentCredRow({ a }: { a: AgentCredSummary }) {
   return (
     <div className="flex items-center gap-3 px-5 py-3">
-      <span className="flex size-3.5 flex-none items-center justify-center text-[#a4a9b0]">
+      <span className="flex size-3.5 flex-none items-center justify-center text-[var(--faint)]">
         <Icons.key />
       </span>
       <span className="text-[13px] font-medium">{a.label}</span>
       <Badge>
         {a.count} file{a.count === 1 ? '' : 's'}
       </Badge>
-      <span className="font-mono text-[11px] text-[#a4a9b0]">{fmtBytes(a.size)}</span>
+      <span className="font-mono text-[11px] text-[var(--faint)]">{fmtBytes(a.size)}</span>
       {a.lastUpdate > 0 ? (
-        <span className="ml-auto font-mono text-[11px] text-[#a4a9b0]">
+        <span className="ml-auto font-mono text-[11px] text-[var(--faint)]">
           updated <Ago ms={a.lastUpdate} />
         </span>
       ) : null}
@@ -508,7 +508,7 @@ function CarriedRow({ c }: { c: CarriedEntry }) {
   return (
     <div className="px-5 py-3">
       <div className="flex items-center gap-3">
-        <span className="flex size-3.5 flex-none items-center justify-center text-[#a4a9b0]">
+        <span className="flex size-3.5 flex-none items-center justify-center text-[var(--faint)]">
           {icon}
         </span>
         <span className="text-[13px] font-medium">{c.label}</span>
@@ -517,12 +517,12 @@ function CarriedRow({ c }: { c: CarriedEntry }) {
             {c.skills.length} skill{c.skills.length === 1 ? '' : 's'}
           </Badge>
         ) : null}
-        <span className="ml-auto truncate font-mono text-[11px] text-[#a4a9b0]" title={c.hostPath}>
+        <span className="ml-auto truncate font-mono text-[11px] text-[var(--faint)]" title={c.hostPath}>
           {c.hostPath}
         </span>
       </div>
       {c.skills && c.skills.length > 0 ? (
-        <div className="mt-1.5 pl-6.5 font-mono text-[11px] leading-relaxed text-[#a4a9b0]">
+        <div className="mt-1.5 pl-6.5 font-mono text-[11px] leading-relaxed text-[var(--faint)]">
           {c.skills.join(', ')}
         </div>
       ) : null}
@@ -546,7 +546,7 @@ function StaleDiff({ p }: { p: ProviderBake }) {
   const total = changed.length + added.length + removed.length;
   return (
     <details className="mt-2">
-      <summary className="cursor-pointer font-mono text-[11px] text-[#a4a9b0] hover:text-secondary-foreground">
+      <summary className="cursor-pointer font-mono text-[11px] text-[var(--faint)] hover:text-secondary-foreground">
         why is this stale?
       </summary>
       <div className="mt-2 rounded-lg border border-border/60 bg-background px-3.5 py-2.5">
@@ -570,9 +570,9 @@ function StaleDiff({ p }: { p: ProviderBake }) {
           <div className="flex flex-col gap-1 font-mono text-[11px]">
             {changed.map((f) => (
               <div key={f.rel} className="flex items-center gap-2">
-                <span className="flex-none text-[var(--amber-fg,#b45309)]">~</span>
+                <span className="flex-none text-[var(--amber-ink)]">~</span>
                 <span className="truncate">{f.rel}</span>
-                <span className="ml-auto flex-none text-[#a4a9b0]">
+                <span className="ml-auto flex-none text-[var(--faint)]">
                   {f.from.slice(0, 7)} → {f.to.slice(0, 7)}
                 </span>
               </div>
@@ -581,14 +581,14 @@ function StaleDiff({ p }: { p: ProviderBake }) {
               <div key={rel} className="flex items-center gap-2">
                 <span className="flex-none text-primary">+</span>
                 <span className="truncate">{rel}</span>
-                <span className="ml-auto flex-none text-[#a4a9b0]">added</span>
+                <span className="ml-auto flex-none text-[var(--faint)]">added</span>
               </div>
             ))}
             {removed.map((rel) => (
               <div key={rel} className="flex items-center gap-2">
                 <span className="flex-none text-destructive">-</span>
                 <span className="truncate">{rel}</span>
-                <span className="ml-auto flex-none text-[#a4a9b0]">removed</span>
+                <span className="ml-auto flex-none text-[var(--faint)]">removed</span>
               </div>
             ))}
           </div>

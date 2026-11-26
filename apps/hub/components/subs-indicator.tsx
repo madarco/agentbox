@@ -109,7 +109,7 @@ export function SubsIndicator() {
                   full
                     ? 'font-medium text-[var(--red)]'
                     : pct >= 80
-                      ? 'text-[#6a4e0c]'
+                      ? 'text-[var(--amber-ink)]'
                       : 'text-secondary-foreground',
                 )}
               >
@@ -167,7 +167,7 @@ export function SubsIndicator() {
                 </div>
                 <SubMeters account={a} compact />
                 {full ? (
-                  <div className="mt-2.5 flex items-start gap-1.5 text-[11.5px] text-[#6a4e0c]">
+                  <div className="mt-2.5 flex items-start gap-1.5 text-[11.5px] text-[var(--amber-ink)]">
                     <Icons.warn className="mt-px size-3 flex-none" />
                     <span>At its limit: its boxes wait until a window resets.</span>
                   </div>

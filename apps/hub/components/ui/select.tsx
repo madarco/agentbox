@@ -11,7 +11,7 @@ export function Select({ wrapperClassName, className, children, ...props }: Sele
     <span className={cn('relative inline-flex', wrapperClassName)}>
       <select
         className={cn(
-          'h-9 w-full cursor-pointer appearance-none rounded-lg border border-input bg-card py-1 pl-3 pr-9 text-[13px] shadow-sm focus-visible:outline-none focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/15',
+          'h-9 w-full cursor-pointer appearance-none rounded-md border border-input bg-background py-1 pl-3 pr-9 text-sm shadow-sm focus-visible:outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 dark:bg-input/30',
           className,
         )}
         {...props}

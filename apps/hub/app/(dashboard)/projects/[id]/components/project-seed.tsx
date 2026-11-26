@@ -103,7 +103,7 @@ export function ProjectSeed({ projectId }: { projectId: string }) {
 function Field({ k, v, mono }: { k: string; v: React.ReactNode; mono?: boolean }) {
   return (
     <div className="px-4.5 p-4">
-      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">{k}</div>
+      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[var(--faint)]">{k}</div>
       <div className={mono ? 'truncate font-mono text-sm font-medium' : 'text-sm font-medium'}>{v}</div>
     </div>
   );

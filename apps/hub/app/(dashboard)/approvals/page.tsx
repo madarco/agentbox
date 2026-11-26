@@ -56,7 +56,7 @@ export default function ApprovalsPage() {
                       ) : (
                         <div className="text-[13.5px] font-medium">{a.boxId}</div>
                       )}
-                      <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">{box ? box.repo : a.boxId}</div>
+                      <div className="mt-0.5 font-mono text-[11px] text-[var(--faint)]">{box ? box.repo : a.boxId}</div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-start gap-1.5 text-[13px]">
@@ -64,7 +64,7 @@ export default function ApprovalsPage() {
                         <div className="min-w-0">
                           <div className="truncate font-mono text-secondary-foreground">{a.command ?? a.message}</div>
                           {a.detail ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{a.detail}</div> : null}
-                          {a.cwd ? <div className="mt-0.5 truncate font-mono text-[11px] text-[#a4a9b0]">{a.cwd}</div> : null}
+                          {a.cwd ? <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--faint)]">{a.cwd}</div> : null}
                         </div>
                       </div>
                     </TableCell>

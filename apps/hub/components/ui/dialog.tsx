@@ -26,7 +26,7 @@ export function Dialog({
 
   return (
     <div
-      className="anim-fade fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[rgba(20,24,30,.42)] p-6 backdrop-blur-[2px]"
+      className="anim-fade fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/50 p-6 backdrop-blur-[2px]"
       onClick={onClose}
     >
       <div
@@ -40,7 +40,7 @@ export function Dialog({
       >
         {children}
         <button
-          className="absolute right-4 top-4 grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-[#a4a9b0] transition-colors hover:bg-secondary hover:text-foreground"
+          className="absolute right-4 top-4 grid h-7 w-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-[var(--faint)] transition-colors hover:bg-secondary hover:text-foreground"
           onClick={onClose}
           aria-label="Close"
         >
@@ -73,7 +73,7 @@ export function DialogFooter({ className, ...props }: DivProps) {
 }
 export function DialogIcon({ children }: { children: ReactNode }) {
   return (
-    <span className="grid h-9 w-9 flex-none place-items-center rounded-lg border border-[var(--green-line)] bg-accent text-primary [&_svg]:size-[17px]">
+    <span className="grid h-9 w-9 flex-none place-items-center rounded-lg border border-[var(--green-line)] bg-[var(--green-soft)] text-primary [&_svg]:size-[17px]">
       {children}
     </span>
   );

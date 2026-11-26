@@ -28,8 +28,8 @@ export function BoxApprovals({ boxId }: { boxId: string }) {
             <div className="min-w-0 flex-1">
               <div className="truncate font-mono text-[13px] text-secondary-foreground">{a.command ?? a.message}</div>
               {a.detail ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{a.detail}</div> : null}
-              {a.cwd ? <div className="mt-0.5 truncate font-mono text-[11px] text-[#a4a9b0]">{a.cwd}</div> : null}
-              <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
+              {a.cwd ? <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--faint)]">{a.cwd}</div> : null}
+              <div className="mt-0.5 font-mono text-[11px] text-[var(--faint)]">
                 <Ago ms={a.createdAt} />
               </div>
             </div>

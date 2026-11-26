@@ -231,7 +231,7 @@ export default function DevicesPage() {
 
           <SectionLabel
             right={
-              <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+              <span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">
                 {active.length}
               </span>
             }
@@ -262,7 +262,7 @@ function PendingDetails({ p }: { p: Pending }) {
   return (
     <>
       <div className="truncate text-[13.5px] font-medium">{p.label}</div>
-      <div className="truncate font-mono text-[11px] text-[#a4a9b0]" title={p.deviceId}>
+      <div className="truncate font-mono text-[11px] text-[var(--faint)]" title={p.deviceId}>
         {p.deviceId} · from {p.sourceIp || 'unknown address'} · opened{' '}
         <Ago ms={Date.parse(p.createdAt)} />
         {p.reenroll && p.proven ? ' · re-login from this enrolled computer' : ''}
@@ -295,7 +295,7 @@ function DeviceList({
           <Icons.host className="size-4 flex-none text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13.5px] font-medium">{d.label}</div>
-            <div className="truncate font-mono text-[11px] text-[#a4a9b0]" title={d.id}>
+            <div className="truncate font-mono text-[11px] text-[var(--faint)]" title={d.id}>
               {d.id}
             </div>
           </div>

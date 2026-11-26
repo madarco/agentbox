@@ -22,14 +22,25 @@ import { PROJECT_NAME_RE } from '@/app/(dashboard)/api/v1/lib/validate';
 // Button + modal to register a folder on this machine as a project, so a box can
 // be created in it even before it has any box — or to create a brand-new empty
 // folder first, for a project that has no workspace yet (hosting a service bot).
-export function AddProjectButton() {
+export function AddProjectButton({
+  variant,
+  trigger,
+}: {
+  variant?: 'default' | 'outline';
+  /** A custom anchor (the sidebar's "+"); gets the opener. */
+  trigger?: (open: () => void) => ReactNode;
+} = {}) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button onClick={() => setOpen(true)}>
-        <Icons.plus />
-        New project
-      </Button>
+      {trigger ? (
+        trigger(() => setOpen(true))
+      ) : (
+        <Button variant={variant} onClick={() => setOpen(true)}>
+          {variant === 'outline' ? <Icons.folder /> : <Icons.plus />}
+          New project
+        </Button>
+      )}
       {open ? <AddProjectModal onClose={() => setOpen(false)} /> : null}
     </>
   );
@@ -164,11 +175,11 @@ function AddProjectModal({ onClose }: { onClose: () => void }) {
                 <Icons.folder className="size-4 flex-none text-muted-foreground" />
                 <span className="truncate">{e.name}</span>
                 {e.isProject ? (
-                  <span className="ml-auto flex-none rounded border border-[var(--green-line)] bg-accent px-1.5 py-px font-mono text-[10px] uppercase tracking-wide text-primary">
+                  <span className="ml-auto flex-none rounded border border-[var(--green-line)] bg-[var(--green-soft)] px-1.5 py-px font-mono text-[10px] uppercase tracking-wide text-primary">
                     project
                   </span>
                 ) : (
-                  <Icons.chevR className="ml-auto size-3.5 flex-none text-[#a4a9b0]" />
+                  <Icons.chevR className="ml-auto size-3.5 flex-none text-[var(--faint)]" />
                 )}
               </button>
             ))

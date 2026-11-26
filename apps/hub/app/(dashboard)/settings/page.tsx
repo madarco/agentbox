@@ -36,7 +36,7 @@ export default function SettingsPage() {
       <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">General</h1>
       <div className="mt-1.5 text-sm text-muted-foreground">Providers, GitHub access &amp; hub configuration.</div>
 
-      <SectionLabel right={<span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">credentials &amp; base images</span>}>
+      <SectionLabel right={<span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">credentials &amp; base images</span>}>
         Sandbox providers
       </SectionLabel>
       <ProvidersSection />
@@ -92,7 +92,7 @@ export default function SettingsPage() {
             </div>
           </Card>
 
-          <SectionLabel right={<span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">{gh.repos.length} repos</span>}>
+          <SectionLabel right={<span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">{gh.repos.length} repos</span>}>
             Authorized repositories
           </SectionLabel>
           <Card className="divide-y divide-border/60 overflow-hidden">
