@@ -2,7 +2,15 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { ShareHeader } from '@/components/share-header';
-import { dateDay, num, peakText, rangeText, speedup } from '@/lib/share/format';
+import {
+  dateDay,
+  hasSaving,
+  num,
+  peakText,
+  rangeText,
+  savedText,
+  speedup,
+} from '@/lib/share/format';
 import { validHandle } from '@/lib/share/params';
 import { db, listShares } from '@/lib/share/store';
 
@@ -48,6 +56,7 @@ export default async function HandlePage({ params }: Props) {
                 <span>
                   {num(share.hero.agentHours)} h of work in {num(share.hero.wallHours)} h ·{' '}
                   {speedup(share.hero.speedup)}
+                  {hasSaving(share) ? ` · ${savedText(share)}` : null}
                 </span>
                 <span className="text-fd-muted-foreground">
                   {num(share.hero.prsMerged)} PRs merged · {num(share.hero.commits)} commits

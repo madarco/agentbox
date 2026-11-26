@@ -21,6 +21,7 @@ import {
   dayKey,
   dayStart,
   daysBetween,
+  hoursSaved,
   lanesFromSessions,
   totalMs,
   zoneSegments,
@@ -404,12 +405,15 @@ export async function computeUsageStats(
 
   // The previous window of the same length, when there is anything before this one.
   const hasEarlier = spanRows.some((r) => r.start < from) || rows.some((e) => atMs(e) < from);
-  let previous: { peak: number; speedup: number; prsMerged: number; boxHours: number } | undefined;
+  let previous:
+    | { peak: number; speedup: number; hoursSaved: number; prsMerged: number; boxHours: number }
+    | undefined;
   if (hasEarlier) {
     const c = concurrency(lanesFromSessions(sessions), prevFrom, from);
     previous = {
       peak: c.peak,
       speedup: c.wallMs > 0 ? Math.round((c.agentMs / c.wallMs) * 100) / 100 : 0,
+      hoursSaved: hoursSaved({ agentHours: c.agentMs / HOUR, wallHours: c.wallMs / HOUR }),
       prsMerged: events.filter((e) => e.type === 'pr.merged' && e.at >= prevFrom && e.at < from)
         .length,
       boxHours:

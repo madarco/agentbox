@@ -244,6 +244,14 @@ export const Kpis = z.strictObject({
   boxHours: z.strictObject({ value: hours, deltaPct: delta, boxes: count, tokens: tokens }),
 });
 export type Kpis = z.infer<typeof Kpis>;
+/**
+ * The live KPIs add `hoursSaved(hero)` with its change. A share leaves it out (its
+ * value comes from the hero), so the share schema, and agent-box.sh, stay unchanged.
+ */
+export const StatsKpis = Kpis.extend({
+  hoursSaved: z.strictObject({ value: hours, delta }),
+});
+export type StatsKpis = z.infer<typeof StatsKpis>;
 
 export const Streaks = z.strictObject({
   current: count,
@@ -469,6 +477,7 @@ export type UsageShare = z.infer<typeof UsageShare>;
 
 export const UsageStats = z.strictObject({
   ...coreShape,
+  kpis: StatsKpis,
   generatedAt: z.iso.datetime({ offset: true }),
   punchcard: Punchcard,
   daily: unq(z.array(DailyStats).max(LIMITS.dailyDays), (d) => d.date, 'daily date'),

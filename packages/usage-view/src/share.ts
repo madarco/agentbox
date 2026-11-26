@@ -81,10 +81,12 @@ export function toShare(stats: UsageStats, handle: string): UsageShare {
     range: stats.range,
     hero: stats.hero,
     // Boxes running and PRs waiting at publish time are live state, not a result.
+    // hoursSaved is left out: the share derives it from the hero (see StatsKpis).
     kpis: {
-      ...stats.kpis,
       peak: { ...stats.kpis.peak, runningNow: 0 },
+      speedup: stats.kpis.speedup,
       prs: { ...stats.kpis.prs, waitingReview: 0 },
+      boxHours: stats.kpis.boxHours,
     },
     daily: fitDaily(encodeDaily(stats.daily.slice(-SHARE_LIMITS.dailyDays), stats.range.since)),
     wall: fitWall(encodeWall(stats.wall, stats.range.since)),
