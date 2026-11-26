@@ -64,6 +64,13 @@ describe.skipIf(!URL_)('POST /api/share', () => {
     handle = `t-${randomBytes(5).toString('hex')}`;
   });
 
+  it('reads no share before the tables exist, without creating them', async () => {
+    expect(await getShare(sql, handle, 1)).toBeNull();
+    expect((await listShares(sql, handle)).shares).toEqual([]);
+    const [t] = await sql`SELECT to_regclass('shares') AS t`;
+    expect(t!.t).toBeNull();
+  });
+
   it('claims a handle on the first post, then needs its secret', async () => {
     const first = await post(sql, fixture(handle));
     expect(first.status).toBe(201);
@@ -83,7 +90,7 @@ describe.skipIf(!URL_)('POST /api/share', () => {
 
     const stored = await getShare(sql, handle, 2);
     expect(stored?.share.handle).toBe(handle);
-    expect((await listShares(sql, handle)).map((s) => s.n)).toEqual([2, 1]);
+    expect((await listShares(sql, handle)).shares.map((s) => s.n)).toEqual([2, 1]);
     const [row] = await sql<{ claim_hash: string }[]>`
       SELECT claim_hash FROM handles WHERE handle = ${handle}`;
     expect(row!.claim_hash).not.toContain(a.claimSecret!);

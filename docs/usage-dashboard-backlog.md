@@ -23,6 +23,14 @@ Open items found while building the phases of
 - **The rate limit counts by the IP Vercel reports** (`x-real-ip`, else the first
   `x-forwarded-for`). A hub behind one NAT shares the limit with its neighbours; 10
   shares an hour is plenty for one person.
+- **Refused posts are not counted.** A 403 (wrong claim secret) is checked before any
+  lock and writes nothing, so it does not count toward the per-IP limit: guessing a
+  secret costs one indexed read per try (a 256-bit secret is not guessable). A
+  Vercel Firewall rule on `/api/share` is the throttle for that.
+- **The DB tests need a Postgres.** `apps/web/test/share.test.ts` runs against
+  `SHARE_TEST_DATABASE_URL` and skips without it, so CI does not run the claim,
+  rate-limit and concurrency tests. A `postgres` service container in the CI job
+  would.
 - **Unfurl checks with the real validators** (X card validator, LinkedIn post inspector,
   a Slack paste) need the production domain; done locally only against the rendered PNGs.
 

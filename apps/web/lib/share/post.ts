@@ -31,7 +31,7 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
     }
     chunks.push(value);
   }
-  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 /** The client IP as Vercel reports it. */
@@ -54,7 +54,7 @@ export async function handleSharePost(req: Request, deps: SharePostDeps): Promis
   try {
     raw = await readCapped(req, SHARE_MAX_BYTES);
   } catch {
-    return json({ error: 'body is not valid UTF-8' }, 400);
+    return json({ error: 'request body could not be read' }, 400);
   }
   if (raw === null) return json({ error: `body over ${SHARE_MAX_BYTES} bytes` }, 413);
 

@@ -54,14 +54,12 @@ export function loadOgFonts(): Promise<OgFont[]> {
       fetchFont(FONT_URLS.mono600),
     ]);
     const fonts: OgFont[] = [];
-    if (sans400)
-      fonts.push({ name: 'IBM Plex Sans', data: sans400, weight: 400, style: 'normal' });
-    if (sans600)
-      fonts.push({ name: 'IBM Plex Sans', data: sans600, weight: 600, style: 'normal' });
-    if (mono400)
-      fonts.push({ name: 'IBM Plex Mono', data: mono400, weight: 400, style: 'normal' });
-    if (mono600)
-      fonts.push({ name: 'IBM Plex Mono', data: mono600, weight: 600, style: 'normal' });
+    if (sans400) fonts.push({ name: 'IBM Plex Sans', data: sans400, weight: 400, style: 'normal' });
+    if (sans600) fonts.push({ name: 'IBM Plex Sans', data: sans600, weight: 600, style: 'normal' });
+    if (mono400) fonts.push({ name: 'IBM Plex Mono', data: mono400, weight: 400, style: 'normal' });
+    if (mono600) fonts.push({ name: 'IBM Plex Mono', data: mono600, weight: 600, style: 'normal' });
+    // A partial set is not kept: the next render fetches again.
+    if (fonts.length < 4) fontsPromise = null;
     return fonts;
   })();
   return fontsPromise;
@@ -115,7 +113,15 @@ export function localPng(relPathFromPublic: string): Promise<string | null> {
 // A simple 3D cube (Daytona has no Simple Icon; mirrors home.html's #i-cube).
 export function cubeMark(color: string, size = 22): ReactElement {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth="1.8"
+      strokeLinejoin="round"
+    >
       <path d="M12 2 21 7v10l-9 5-9-5V7z" />
       <path d="M12 12 21 7M12 12v10M12 12 3 7" />
     </svg>

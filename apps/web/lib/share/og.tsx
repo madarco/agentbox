@@ -3,7 +3,7 @@ import type { ReactElement } from 'react';
 import { decodeWall } from '@agentbox/usage-view';
 import type { ProviderId, UsageShare } from '@agentbox/usage-view';
 import { OG, boxMark, loadOgFonts } from '@/lib/og';
-import { num, rangeText, speedup } from './format';
+import { hoursText, num, rangeText, speedup } from './format';
 
 export const OG_SIZE = { width: 1200, height: 630 } as const;
 export const OG_ALT = 'Usage shared from AgentBox: agents at once, hours of work, what shipped';
@@ -224,9 +224,9 @@ function OgCard({ share }: { share: UsageShare }) {
   const h = share.hero;
   const peak = `${num(h.peakAtOnce)}`;
   // Satori trims spaces at span edges, so the joins are non-breaking spaces.
-  const peakRest = h.peakAtOnce === 1 ? '\u00a0agent at once' : '\u00a0agents at once';
+  const peakRest = num(h.peakAtOnce) === '1' ? '\u00a0agent at once' : '\u00a0agents at once';
   const heroSize = fit(peak + peakRest, 112, 1072);
-  const hoursA = `${num(h.agentHours)} ${h.agentHours === 1 ? 'hour' : 'hours'} of work in ${num(h.wallHours)} ${h.wallHours === 1 ? 'hour' : 'hours'}`;
+  const hoursA = hoursText(share);
   // One agent at a time is no speed-up: leave the claim out rather than print "1x faster".
   const hoursB = h.speedup >= 1.1 ? `\u00a0·\u00a0${speedup(h.speedup)} faster` : '';
   const subSize = fit(hoursA + hoursB, 42, 1072);
@@ -306,9 +306,12 @@ function OgCard({ share }: { share: UsageShare }) {
           <div style={{ display: 'flex', gap: 44 }}>
             <Stat
               value={compact(h.prsMerged)}
-              label={h.prsMerged === 1 ? 'PR merged' : 'PRs merged'}
+              label={num(h.prsMerged) === '1' ? 'PR merged' : 'PRs merged'}
             />
-            <Stat value={compact(h.commits)} label={h.commits === 1 ? 'commit' : 'commits'} />
+            <Stat
+              value={compact(h.commits)}
+              label={num(h.commits) === '1' ? 'commit' : 'commits'}
+            />
             <Stat
               value={
                 <div style={{ display: 'flex' }}>
@@ -356,9 +359,14 @@ function OgCard({ share }: { share: UsageShare }) {
 /** The link-preview card of one share. Immutable, so cached for a year. */
 export async function renderShareOg(share: UsageShare): Promise<ImageResponse> {
   const fonts = await loadOgFonts();
+  // Missing fonts render a fallback face: cache that briefly, never as the share's image.
+  const cache =
+    fonts.length === 4
+      ? 'public, max-age=31536000, s-maxage=31536000, immutable'
+      : 'public, max-age=60, s-maxage=60';
   return new ImageResponse(<OgCard share={share} />, {
     ...OG_SIZE,
     fonts: fonts.length ? fonts : undefined,
-    headers: { 'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable' },
+    headers: { 'Cache-Control': cache },
   });
 }

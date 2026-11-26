@@ -26,8 +26,9 @@ export function rangeText(share: UsageShare): string {
   return since.slice(0, 4) === today.slice(0, 4) ? `${a.slice(0, -5)} - ${b}` : `${a} - ${b}`;
 }
 
+/** Singular when the printed number is "1" (0.96 hours prints as "1 hour"). */
 const plural = (n: number, one: string, many = `${one}s`): string =>
-  `${num(n)} ${n === 1 ? one : many}`;
+  `${num(n)} ${num(n) === '1' ? one : many}`;
 
 /** "9 agents at once" */
 export const peakText = (share: UsageShare): string =>

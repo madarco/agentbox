@@ -73,6 +73,12 @@ export async function createShare(
   const handle = share.handle;
   if (RESERVED_HANDLES.has(handle)) return { ok: false, status: 403 };
   await ensureSchema(sql);
+  // A wrong secret is refused before any lock, so guessing can't queue up behind the owner.
+  const [claimed] = await sql<{ claim_hash: string }[]>`
+    SELECT claim_hash FROM handles WHERE handle = ${handle}`;
+  if (claimed && (!secret || !sameHash(sha256(secret), claimed.claim_hash))) {
+    return { ok: false, status: 403 };
+  }
   // A rejection throws, so the transaction rolls back (a returned value would commit).
   const reject = (r: CreateResult): never => {
     throw new Reject(r);
@@ -133,9 +139,10 @@ export interface StoredShare {
 
 /** A stored share, re-validated on the way out; null when absent or no longer valid. */
 export async function getShare(sql: Sql, handle: string, n: number): Promise<StoredShare | null> {
-  await ensureSchema(sql);
-  const [row] = await sql<{ snapshot: unknown; created_at: Date }[]>`
-    SELECT snapshot, created_at FROM shares WHERE handle = ${handle} AND n = ${n}`;
+  const [row] = await orEmpty(
+    sql<{ snapshot: unknown; created_at: Date }[]>`
+      SELECT snapshot, created_at FROM shares WHERE handle = ${handle} AND n = ${n}`,
+  );
   if (!row) return null;
   const parsed = UsageShare.safeParse(row.snapshot);
   return parsed.success ? { share: parsed.data, createdAt: row.created_at } : null;
@@ -145,15 +152,35 @@ export interface ShareSummary extends StoredShare {
   n: number;
 }
 
-export async function listShares(sql: Sql, handle: string): Promise<ShareSummary[]> {
-  await ensureSchema(sql);
-  const rows = await sql<{ n: number; snapshot: unknown; created_at: Date }[]>`
-    SELECT n, snapshot, created_at FROM shares WHERE handle = ${handle}
-    ORDER BY n DESC LIMIT 200`;
-  const out: ShareSummary[] = [];
-  for (const r of rows) {
+const LIST_MAX = 200;
+
+/** A handle's newest shares; `more` when older ones were left out. */
+export async function listShares(
+  sql: Sql,
+  handle: string,
+): Promise<{ shares: ShareSummary[]; more: boolean }> {
+  const rows = await orEmpty(
+    sql<{ n: number; snapshot: unknown; created_at: Date }[]>`
+      SELECT n, snapshot, created_at FROM shares WHERE handle = ${handle}
+      ORDER BY n DESC LIMIT ${LIST_MAX + 1}`,
+  );
+  const shares: ShareSummary[] = [];
+  for (const r of rows.slice(0, LIST_MAX)) {
     const parsed = UsageShare.safeParse(r.snapshot);
-    if (parsed.success) out.push({ n: r.n, share: parsed.data, createdAt: r.created_at });
+    if (parsed.success) shares.push({ n: r.n, share: parsed.data, createdAt: r.created_at });
   }
-  return out;
+  return { shares, more: rows.length > LIST_MAX };
+}
+
+/**
+ * Reads never create the tables (no DDL on a page view): before the first share
+ * there are none, which reads as no rows.
+ */
+async function orEmpty<T>(q: Promise<T[]>): Promise<T[]> {
+  try {
+    return await q;
+  } catch (err) {
+    if ((err as { code?: string }).code === '42P01') return [];
+    throw err;
+  }
 }

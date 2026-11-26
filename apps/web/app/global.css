@@ -12,10 +12,8 @@
  * fonts and looks off next to the IBM Plex body.
  */
 @theme {
-  --font-sans: var(--font-agb-sans), 'IBM Plex Sans', system-ui, -apple-system,
-    sans-serif;
-  --font-mono: var(--font-agb-mono), 'IBM Plex Mono', ui-monospace, 'SF Mono',
-    Menlo, monospace;
+  --font-sans: var(--font-agb-sans), 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-agb-mono), 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 /*
@@ -75,7 +73,11 @@
 }
 
 body {
-  font-family: var(--font-agb-sans), 'IBM Plex Sans', system-ui, -apple-system,
+  font-family:
+    var(--font-agb-sans),
+    'IBM Plex Sans',
+    system-ui,
+    -apple-system,
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -85,8 +87,7 @@ body {
 code,
 pre,
 kbd {
-  font-family: var(--font-agb-mono), 'IBM Plex Mono', ui-monospace, 'SF Mono',
-    Menlo, monospace;
+  font-family: var(--font-agb-mono), 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
 
 /* Brand lockup + version pill in the docs top bar (mirrors the mockup). */

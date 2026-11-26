@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { ShareHeader } from '@/components/share-header';
 import { dateDay, num, peakText, rangeText, speedup } from '@/lib/share/format';
-import { shareParams } from '@/lib/share/params';
+import { validHandle } from '@/lib/share/params';
 import { db, listShares } from '@/lib/share/store';
 
 // Revalidated by POST /api/share whenever this handle gains a share.
@@ -23,23 +23,22 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function HandlePage({ params }: Props) {
   const { handle } = await params;
   const sql = db();
-  const p = shareParams(handle);
-  if (!p || !sql) notFound();
-  const shares = await listShares(sql, p.handle);
+  if (!validHandle(handle) || !sql) notFound();
+  const { shares, more } = await listShares(sql, handle);
   if (shares.length === 0) notFound();
   return (
     <>
       <ShareHeader>
-        <span className="text-fd-foreground">{p.handle}</span> · {shares.length}{' '}
-        {shares.length === 1 ? 'share' : 'shares'}
+        <span className="text-fd-foreground">{handle}</span> · {shares.length}
+        {more ? '+' : ''} {shares.length === 1 ? 'share' : 'shares'}
       </ShareHeader>
       <div className="mx-auto w-full max-w-[1240px] px-6 py-8">
-        <h1 className="mb-6 text-2xl font-semibold tracking-tight">{p.handle}&apos;s agents</h1>
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight">{handle}&apos;s agents</h1>
         <ul className="divide-y divide-fd-border overflow-hidden rounded-xl border border-fd-border bg-fd-card">
           {shares.map(({ n, share, createdAt }) => (
             <li key={n}>
               <Link
-                href={`/u/${p.handle}/${n}`}
+                href={`/u/${handle}/${n}`}
                 className="flex flex-wrap items-baseline gap-x-6 gap-y-1 px-5 py-4 hover:bg-fd-accent"
               >
                 <span className="w-32 shrink-0 font-mono text-[13px] text-fd-muted-foreground">
