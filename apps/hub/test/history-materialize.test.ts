@@ -138,6 +138,12 @@ describe('createSessionMaterializer', () => {
       '{"c":3}\n',
     );
 
+    // Listed in the manifest, so the host-session watcher skips it.
+    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')) as {
+      files: Record<string, { size: number }>;
+    };
+    expect(manifest.files[main]!.size).toBe((await stat(main)).size);
+
     // Unchanged: nothing written.
     expect((await h.m.pass()).written).toBe(0);
 

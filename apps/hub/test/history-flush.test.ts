@@ -141,4 +141,25 @@ describe('flushBoxHistory', () => {
     expect(lines.some((l) => l.includes('timed out; stopping anyway'))).toBe(true);
     expect(after).toBe(1);
   });
+
+  it('a stop or pause of a box that is not running ships nothing (the destroy will)', async () => {
+    for (const provider of ['docker', 'e2b']) {
+      let read = false;
+      let execd = false;
+      await flushBoxHistory(box(provider), {
+        relayHistory: {
+          flushBox: async () => void (read = true),
+          settleBox: async () => undefined,
+        },
+        exec: async () => {
+          execd = true;
+          return { exitCode: 0, stdout: '', stderr: '' };
+        },
+        probeState: async () => 'stopped',
+        log: () => {},
+        reason: 'pause',
+      });
+      expect({ read, execd }).toEqual({ read: false, execd: false });
+    }
+  });
 });

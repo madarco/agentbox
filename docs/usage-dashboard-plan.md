@@ -290,7 +290,8 @@ and 4b (contributions to a remote hub).
   provider (docker: the in-box flush, then the relay's host-side read while the
   box still runs; cloud: `agentbox-ctl history flush` when the box is running).
   Bounded at 30 s (10 s in-box head start) for stop/pause, 90 s for destroy;
-  only a destroy settles the relay's docker reads. The relay skips a paused or
+  only a destroy settles the relay's docker reads. A stop or pause of a box that
+  is not running flushes nothing (the destroy's flush covers it). The relay skips a paused or
   stopped docker box on its 30 s tick, so before this a stop/pause left the tail
   unshipped until the destroy.
 - Docker autopause flushes through the relay (`beforePause`, 30 s bound) before
@@ -305,12 +306,16 @@ and 4b (contributions to a remote hub).
   of the session's repo, else a registered project with that origin. Key:
   `hostProjectKey('dashed-path', folder)`, the same as claude's (checked against
   a real `~/.claude/projects` entry). Runs 15 s after a session ships (debounced),
-  60 s after the hub starts and daily. Writes complete lines only, atomically.
+  60 s after the hub starts and daily. Writes complete lines only: a new copy
+  atomically (tmp + rename), a grown one by appending the new lines.
   `~/.agentbox/hub/history-materialized.json` records each copy (hub file row,
   offset, size, mtime): an unchanged copy is skipped, a missing one written back,
   a file the hub did not write (a session id collision) or one changed since it
-  was written (resumed on the PC) left alone and logged once. The host-session
-  watcher skips the files in that manifest. Box transcripts record `cwd:
+  was written (resumed on the PC) left alone and logged once; both are checked
+  again right before the write. The entry is saved before the file lands, and
+  the host-session watcher skips the files in that manifest. Docker autopause
+  re-checks the agent state after its flush and leaves a box that started
+  working running. Box transcripts record `cwd:
   /workspace`, and `claude --resume` lists them anyway (checked).
   `history.materialize` (default true, global or per project) turns it off.
 - Live check (docker, in a box): stop and pause right after a turn shipped the

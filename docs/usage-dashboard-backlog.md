@@ -22,6 +22,13 @@ Open items found while building the phases of
 - **The cloud keepalive's idle pause does not flush.** ctl ships every 30 s and
   the pause comes after minutes of idle, so only a memory write in the last 30 s
   of an idle box could be missed.
+- **A stop or pause flush ships opencode rows before they settle.** The final
+  pass ignores the row cursor's settle wait (as the destroy's flush always has,
+  see the agent-history backlog). A row that changes after the resume is written
+  again, so the history holds both versions.
+- **A stop/pause flush that times out keeps running.** Unlike a destroy, it is
+  not settled (the box comes back, so its reads must go on); the relay's next
+  pass for that box waits behind it.
 - **Autopause flushes transcripts, not the in-box pass.** The relay's read covers
   claude/codex/pi transcripts; opencode's row cursor and memory run in the box's
   own 30 s loop, which the pause freezes until the box resumes.

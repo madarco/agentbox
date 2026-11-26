@@ -51,12 +51,26 @@ export async function flushBoxHistory(box: BoxRecord, deps: HistoryFlushDeps): P
     ? 'destroying anyway'
     : `${reason === 'stop' ? 'stopping' : 'pausing'} anyway`;
   const isDocker = (box.provider ?? 'docker') === 'docker';
+  const probe = deps.probeState(box);
+  if (!destroying) {
+    // A stop or pause of a box that is not running has nothing new to ship
+    // (whatever it wrote last is shipped by the destroy's flush), and reading a
+    // stopped docker box costs a helper container per file.
+    let t: NodeJS.Timeout | undefined;
+    const state = await Promise.race([
+      probe.catch(() => 'unknown'),
+      new Promise<string>((resolve) => {
+        t = setTimeout(() => resolve('unknown'), CLOSE_IN_BOX_FIRST_MS);
+      }),
+    ]).finally(() => clearTimeout(t));
+    if (state !== 'running') return;
+  }
   // A paused or stopped cloud box is not woken for its history: resuming bills
   // and boots it, and its last turn was shipped before it went idle unless it
   // was cut off mid-pass. A docker box is read host-side in any state.
   // The in-box flush ships memory on every provider (memory is on the box's own
   // disk) and transcripts on the non-docker ones. It needs a running box.
-  const inBox = deps.probeState(box).then(async (state) => {
+  const inBox = probe.then(async (state) => {
     if (state !== 'running') {
       if (!isDocker) deps.log(`history: ${box.name} is ${state}; skipping the final flush`);
       return;
@@ -110,4 +124,31 @@ export async function flushBoxHistory(box: BoxRecord, deps: HistoryFlushDeps): P
       );
     });
   }
+}
+
+/**
+ * The hub's lifecycle flush: before a stop, pause or destroy, then fold the
+ * shipped tail into the usage stats.
+ */
+export function lifecycleHistoryFlush(opts: {
+  relayHistory?: HistoryFlushDeps['relayHistory'];
+  afterFlush?: () => Promise<unknown>;
+  log(line: string): void;
+}): (
+  box: BoxRecord,
+  provider: {
+    exec(box: BoxRecord, argv: string[], opts?: ExecOptions): Promise<ExecResult>;
+    probeState(box: BoxRecord): Promise<string>;
+  },
+  reason: HistoryFlushReason,
+) => Promise<void> {
+  return (box, provider, reason) =>
+    flushBoxHistory(box, {
+      ...(opts.relayHistory ? { relayHistory: opts.relayHistory } : {}),
+      exec: (b, argv, o) => provider.exec(b, argv, o),
+      probeState: (b) => provider.probeState(b),
+      log: opts.log,
+      reason,
+      ...(opts.afterFlush ? { afterFlush: opts.afterFlush } : {}),
+    });
 }

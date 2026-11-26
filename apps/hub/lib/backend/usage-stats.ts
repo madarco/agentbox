@@ -486,3 +486,16 @@ export function usageStats(deps: UsageStatsDeps, q: UsageStatsQuery): Promise<Us
 export function clearUsageStatsCache(): void {
   cache.clear();
 }
+
+/**
+ * After a box's final flush: fold its last turns into the usage intervals now
+ * rather than at the next minute sweep, and drop the stats cache so the next
+ * read of `/api/v1/usage/stats` sees them.
+ */
+export async function refreshUsageAfterFlush(): Promise<void> {
+  try {
+    await globalThis.__AGENTBOX_HUB_HISTORY?.refreshUsageSpans();
+  } finally {
+    clearUsageStatsCache();
+  }
+}

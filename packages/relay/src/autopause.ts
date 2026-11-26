@@ -209,6 +209,9 @@ export function startAutopauseLoop(deps: AutopauseLoopDeps): AutopauseLoopHandle
               log,
               deps.beforePauseTimeoutMs ?? BEFORE_PAUSE_TIMEOUT_MS,
             );
+            // The flush took time: an agent that started working meanwhile
+            // (the user came back) keeps its box running.
+            if (readPauseState(statusStore.get(boxId)).state !== e.agentState) continue;
           }
           await pause(e.containerName);
           void recordActivity({
