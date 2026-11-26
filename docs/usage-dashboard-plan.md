@@ -187,7 +187,7 @@ from Phase 1 on.
 - `agentbox usage` prints the hero numbers (`--json` the whole `UsageStats`); the
   token breakdown that was `agentbox usage` is now `agentbox usage tokens`.
 
-### Phase 3 — the hub Usage page
+### Phase 3 — the hub Usage page (done 2026-11-26)
 
 - Port the mockup to `packages/usage-view` React components (hand-drawn SVG, no
   chart library), light and dark. **Done** (feat/usage-view) as `UsageView` from
@@ -202,6 +202,9 @@ from Phase 1 on.
   (`agentbox cp ../agentbox-design/control-shadcn/{views-usage.jsx,usage.css}`):
   the design repo is not in the workspace.
 - Update the tray if it links to Usage; update the public docs page for Usage.
+- **Done** (feat/usage-page): `/usage` renders `UsageView`; the range (`?range=`,
+  default `30d` to match the tray's pill) and `?subscription=` live in the URL;
+  Export CSV is one row per day; the token breakdown moved to `/usage?view=tokens`.
 
 ### Phase 4 — where sessions live, and how they reach the usage page
 

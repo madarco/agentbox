@@ -148,6 +148,7 @@ function toView(data: UsageStats | UsageShare): View {
 
 const RANGE_OPTIONS = [
   ['7d', '7 days'],
+  ['30d', '30 days'],
   ['month', 'This month'],
   ['90d', '90 days'],
   ['year', 'Year'],

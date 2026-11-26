@@ -216,11 +216,24 @@ conversation there; the box's recent switches are listed under it.
 (an approval offering the next account) or switch on its own. See
 [several accounts per agent](/docs/run-an-agent#several-accounts-per-agent).
 
-The **Usage** page shows the tokens your boxes' agents spent: totals for a
-window (24 hours to all time), tokens per day stacked by agent, and breakdowns
-by agent, model, subscription, project, box, PC and session. Clicking a row
-filters the page to it. The **Subscription** selector narrows the page to one
-subscription and keeps it in the URL (`/usage?subscription=claude/personal`). It reads the same numbers as
+The **Usage** page shows what your agents did side by side and what they
+shipped: agent-hours against wall-clock hours (the speed-up over one agent), the
+most boxes running at once, merged pull requests, commits, lines and files, a
+Gantt of the busiest days, the biggest sessions, a year-long activity wall, when
+your agents work, the providers they ran on and the top boxes and projects. Pick
+a window with **7 days**, **30 days** (the default, the window the tray's header
+pill shows), **This month**, **90 days** or **Year**; days are in your browser's
+time zone. The **Subscription** selector narrows the page to one subscription.
+Both stay in the URL (`/usage?range=90d&subscription=claude/personal`), so a
+Subscriptions card links straight to its numbers. **Export CSV** downloads one
+row per day of the window (hours, peak, tokens, commits, PRs, lines, files, and
+agent-hours per agent and per provider). The page reads the same numbers as
+[`agentbox usage`](/docs/cli#usage).
+
+**Tokens** (`/usage?view=tokens`) keeps the token breakdown: totals for a window
+(24 hours to all time), tokens per day stacked by agent, and breakdowns by agent,
+model, subscription, project, box, PC and session. Clicking a row filters the
+page to it. It reads the same numbers as
 [`agentbox usage tokens`](/docs/cli#usage-tokens).
 
 ### Sharing your usage on agent-box.sh

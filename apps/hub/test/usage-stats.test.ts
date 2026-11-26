@@ -139,12 +139,12 @@ const window = q.query;
 beforeEach(() => clearUsageStatsCache());
 
 describe('parseUsageStatsQuery', () => {
-  it('defaults to the last 30 days in UTC, and names the range by its length', () => {
+  it('defaults to the last 30 days in UTC, and names the range by its length and start', () => {
     const r = parseUsageStatsQuery({}, NOW);
     expect(r).toEqual({
       ok: true,
       query: {
-        id: 'month',
+        id: '30d',
         since: '2026-10-23',
         until: '2026-11-21',
         today: '2026-11-21',

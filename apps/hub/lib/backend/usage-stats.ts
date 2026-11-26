@@ -67,9 +67,10 @@ const isDay = (d: string): boolean =>
   new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
 const SUBSCRIPTION_RE = /^[A-Za-z0-9._-]{1,64}\/[^\s/]{1,128}$/;
 
-function rangeIdFor(days: number): RangeId {
+/** A window starting on the 1st reads as a month; any other month-long one as 30 days. */
+function rangeIdFor(days: number, since: string): RangeId {
   if (days <= 7) return '7d';
-  if (days <= 31) return 'month';
+  if (days <= 31) return since.endsWith('-01') ? 'month' : '30d';
   if (days <= 92) return '90d';
   return 'year';
 }
@@ -108,15 +109,16 @@ export function parseUsageStatsQuery(
   const days =
     Math.round((Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / DAY) + 1;
   let id: RangeId;
-  if (raw.range === undefined) id = rangeIdFor(days);
+  if (raw.range === undefined) id = rangeIdFor(days, since);
   else if (
     raw.range === '7d' ||
+    raw.range === '30d' ||
     raw.range === 'month' ||
     raw.range === '90d' ||
     raw.range === 'year'
   )
     id = raw.range;
-  else return { ok: false, message: 'range must be one of 7d, month, 90d, year' };
+  else return { ok: false, message: 'range must be one of 7d, 30d, month, 90d, year' };
   const range = { id, since, until, today: until < today ? until : today, tz };
   const parsed = UsageRange.safeParse(range);
   if (!parsed.success) {
