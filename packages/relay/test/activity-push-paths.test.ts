@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -15,6 +15,24 @@ import { configureBoxPushStat, parsePushedTips } from '../src/workspaces/push-st
 import type { HostAction } from '../src/types.js';
 import { startRelayServer, type RelayServerHandle } from '../src/server.js';
 import type { AddressInfo } from 'node:net';
+
+/**
+ * The ledger's push rows once every branch in `branches` has one. A row is
+ * written after the push answers, and a slow runner (git, the box context's
+ * `git remote` probe) can take well over a second, so this polls instead of
+ * sleeping a fixed time.
+ */
+async function pushRowsFor(store: ActivityStore, branches: string[]) {
+  return vi.waitFor(
+    async () => {
+      const rows = await store.list({ types: ['git.push'] });
+      const have = new Set(rows.map((r) => r.branch));
+      for (const b of branches) if (!have.has(b)) throw new Error(`no row for ${b} yet`);
+      return rows;
+    },
+    { timeout: 20_000, interval: 25 },
+  );
+}
 
 /**
  * One ledger row per push, whichever path ran it: a cloud box's own push out of
@@ -153,21 +171,11 @@ describe('a cloud box push, recorded once', () => {
     }) as Promise<{ exitCode: number; stderr: string }>;
   }
 
-  async function rows(): Promise<Awaited<ReturnType<ActivityStore['list']>>> {
-    // The row is written after the executor answers.
-    for (let i = 0; i < 50; i++) {
-      const r = await store.list({ types: ['git.push'] });
-      if (r.length) return r;
-      await new Promise((res) => setTimeout(res, 20));
-    }
-    return [];
-  }
-
   it("measures a control box's push from the remote's old tip, not the whole branch", async () => {
     await writeState(''); // no host checkout: a scratch repo against the origin
     const r = await run({});
     expect(r.exitCode, r.stderr).toBe(0);
-    const pushed = await rows();
+    const pushed = await pushRowsFor(store, [BRANCH]);
     expect(pushed).toHaveLength(1);
     expect(statAsked).toEqual([{ before: oldTip.slice(0, 7) }]);
     expect(pushed[0]).toMatchObject({ actor: 'box', commits: 1 });
@@ -177,7 +185,7 @@ describe('a cloud box push, recorded once', () => {
     await writeState(host);
     const r = await run({ hostOnly: true, as: 'landed' });
     expect(r.exitCode, r.stderr).toBe(0);
-    const landed = await rows();
+    const landed = await pushRowsFor(store, ['landed']);
     expect(landed).toHaveLength(1);
     expect(landed[0]).toMatchObject({ hostOnly: true, branch: 'landed', commits: 2 });
 
@@ -186,8 +194,11 @@ describe('a cloud box push, recorded once', () => {
     const token = tokens.mint('box1', 'git.push', hashRpcParams(params));
     const r2 = await run({ ...params, hostInitiated: token }, tokens);
     expect(r2.exitCode, r2.stderr).toBe(0);
-    await new Promise((res) => setTimeout(res, 200));
-    expect(await store.list({ types: ['git.push'] })).toHaveLength(1);
+    // A later box landing is the sentinel: once its row is in, the hub's
+    // landing (which is never written) has had every chance to be.
+    expect((await run({ hostOnly: true, as: 'landed3' })).exitCode).toBe(0);
+    const all = await pushRowsFor(store, ['landed', 'landed3']);
+    expect(all.map((r) => r.branch).sort()).toEqual(['landed', 'landed3']);
   });
 });
 
@@ -253,9 +264,8 @@ describe('a docker box host-only landing, recorded once', () => {
       { method: 'git.push', params: { path: '/workspace', hostOnly: true, as: 'landed' } },
       't1',
     );
-    expect(land.status).toBe(200);
-    await new Promise((res) => setTimeout(res, 300));
-    const rows = await store.list({ types: ['git.push'] });
+    expect(land.status, await land.clone().text()).toBe(200);
+    const rows = await pushRowsFor(store, ['landed']);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ hostOnly: true, branch: 'landed', commits: 2, actor: 'box' });
 
@@ -273,7 +283,14 @@ describe('a docker box host-only landing, recorded once', () => {
       't1',
     );
     expect(hubLand.status).toBe(200);
-    await new Promise((res) => setTimeout(res, 300));
-    expect(await store.list({ types: ['git.push'] })).toHaveLength(1);
+    // The sentinel, as in the cloud test: a later box landing.
+    const box3 = await post(
+      '/rpc',
+      { method: 'git.push', params: { path: '/workspace', hostOnly: true, as: 'landed3' } },
+      't1',
+    );
+    expect(box3.status).toBe(200);
+    const all = await pushRowsFor(store, ['landed', 'landed3']);
+    expect(all.map((r) => r.branch).sort()).toEqual(['landed', 'landed3']);
   });
 });
