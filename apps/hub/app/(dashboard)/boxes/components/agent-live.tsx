@@ -112,12 +112,6 @@ function distinctTitle(title: string | undefined, task: string): string | undefi
   return title && title.trim() !== task.trim() ? title : undefined;
 }
 
-/** Usage figure for a box row's status cell (the primary agent's). */
-export function BoxUsageFigure({ box }: { box: Box }) {
-  const live = primaryLive(box);
-  return <UsageFigure usage={live?.entry.usage} />;
-}
-
 /** One agent's live rows for the box detail page; empty when it has nothing. */
 export function agentLiveRows(
   entry: AgentStatusWire,

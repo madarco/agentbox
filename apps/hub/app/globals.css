@@ -218,7 +218,8 @@ body {
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: var(--faint);
+  /* faint alone is ~2.4:1 on the page; a third of the foreground brings it near 4.5:1 */
+  color: color-mix(in oklab, var(--faint), hsl(var(--foreground)) 33%);
 }
 ::selection {
   background: var(--green-soft);

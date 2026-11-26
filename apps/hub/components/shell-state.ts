@@ -8,6 +8,7 @@ import { useSyncExternalStore } from 'react';
 
 const KEY = 'hub-sidebar';
 const EVENT = 'hub-sidebar-change';
+const DRAWER = '(max-width: 767.98px)';
 
 export function toggleSidebar(): void {
   const collapsed = document.documentElement.classList.toggle('sb-collapsed');
@@ -21,7 +22,7 @@ export function toggleSidebar(): void {
 
 /** The header button: a drawer under Tailwind's md (768px), the rail toggle above. */
 export function toggleNav(): void {
-  if (window.matchMedia('(max-width: 767.98px)').matches) {
+  if (window.matchMedia(DRAWER).matches) {
     document.body.classList.toggle('nav-open');
   } else {
     toggleSidebar();
@@ -29,14 +30,22 @@ export function toggleNav(): void {
 }
 
 function subscribe(cb: () => void): () => void {
+  const mq = window.matchMedia(DRAWER);
   window.addEventListener(EVENT, cb);
-  return () => window.removeEventListener(EVENT, cb);
+  mq.addEventListener('change', cb);
+  return () => {
+    window.removeEventListener(EVENT, cb);
+    mq.removeEventListener('change', cb);
+  };
 }
 
+/** Whether the sidebar is the icon rail; the phone drawer is always full width. */
 export function useSidebarCollapsed(): boolean {
   return useSyncExternalStore(
     subscribe,
-    () => document.documentElement.classList.contains('sb-collapsed'),
+    () =>
+      document.documentElement.classList.contains('sb-collapsed') &&
+      !window.matchMedia(DRAWER).matches,
     () => false,
   );
 }

@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { Separator } from '@/components/ui/separator';
 import { useStore } from '@/lib/boxes/store';
-import { safeDecode } from '@/lib/utils';
+import { cn, safeDecode } from '@/lib/utils';
 
 interface Crumb {
   label: string;
@@ -56,19 +56,34 @@ function useCrumbs(): Crumb[] {
 
 function Breadcrumbs() {
   const items = useCrumbs();
+  // On a phone the middle crumbs are hidden; the nearest one stays reachable
+  // as a back arrow, so leaving a box page does not need the drawer.
+  const back = items
+    .slice(0, -1)
+    .reverse()
+    .find((c) => c.to)?.to;
   return (
     <nav
       aria-label="Breadcrumb"
       className="flex min-w-0 items-center gap-2 font-mono text-[12.5px] text-muted-foreground/80"
     >
-      <Link className="hover:text-primary" href="/">
+      {back ? (
+        <Link
+          className="grid size-7 flex-none place-items-center rounded-md hover:bg-accent sm:hidden"
+          href={back}
+          aria-label="Back"
+        >
+          <Icons.arrowL className="size-4" />
+        </Link>
+      ) : null}
+      <Link className={cn('hover:text-primary', back && 'max-sm:hidden')} href="/">
         hub
       </Link>
       {items.map((c, i) => {
         const last = i === items.length - 1;
         return (
           <Fragment key={i}>
-            <span className={last ? 'text-border' : 'text-border max-sm:hidden'}>/</span>
+            <span className={cn('text-border', (!last || back) && 'max-sm:hidden')}>/</span>
             {last ? (
               <span aria-current="page" className="truncate font-medium text-secondary-foreground">
                 {c.label}
@@ -117,14 +132,15 @@ export function Topbar() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      // In a text field these are editing keys (bold, delete to end of line).
-      const t = e.target as HTMLElement | null;
-      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       const k = e.key.toLowerCase();
+      // In a text field ⌘B is an editing key (bold); ⌘K stays the palette, so
+      // it can close it and open it from a filter box.
+      const t = e.target as HTMLElement | null;
+      const editing = !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
       if (k === 'k') {
         e.preventDefault();
         setCmdk((v) => !v);
-      } else if (k === 'b') {
+      } else if (k === 'b' && !editing) {
         e.preventDefault();
         toggleSidebar();
       }
@@ -161,19 +177,18 @@ export function Topbar() {
         <Button
           variant="ghost"
           size="sm"
-          className="max-md:hidden"
+          className="max-md:size-8 max-md:px-0"
           href={state.controlPlane.url}
           target="_blank"
           rel="noopener"
+          aria-label="Control box"
           title={`This hub operates through the control box at ${state.controlPlane.url}`}
         >
           <Icons.server />
-          Control box
+          <span className="max-md:hidden">Control box</span>
         </Button>
       ) : null}
-      <div className="max-sm:hidden">
-        <SubsIndicator />
-      </div>
+      <SubsIndicator />
       <ThemeToggle />
       {cmdk ? <CommandPalette onClose={() => setCmdk(false)} /> : null}
     </header>

@@ -94,7 +94,7 @@ describe('buildLanes', () => {
         ev('3', 'box.created', 5, { boxName: 'a', jobId: 'j2' }),
         ev('4', 'box.ready', 4, { boxId: 'a', boxName: 'a', jobId: 'j2' }),
       ],
-      [box('a', 'running'), box('job:j1', 'error', { name: 'a' })],
+      [box('a', 'running'), box('job:j1', 'error', { name: 'a', task: 'a' })],
       NOW,
     );
     const ok = lanes.find((l) => l.key === 'a')!;
@@ -103,6 +103,7 @@ describe('buildLanes', () => {
     expect(ok.segs).toEqual([[4, 0, 'running']]);
     expect(bad.failed).toBeCloseTo(5.9);
     expect(bad.box?.id).toBe('job:j1');
+    expect(bad.label).toBe('a (create failed)');
   });
 
   it('gives a name-only row to the box of that name that followed it, not a later one', () => {
@@ -117,6 +118,27 @@ describe('buildLanes', () => {
     );
     expect(lanes.find((l) => l.key === 'A')!.segs).toEqual([[8, 7, 'running']]);
     expect(lanes.find((l) => l.key === 'B')!.segs).toEqual([[3, 0, 'running']]);
+  });
+
+  it('draws a box up since before the fetch over the whole window', () => {
+    const lanes = buildLanes(
+      [ev('1', 'git.push', 2, { boxId: 'p', boxName: 'p', commits: 1 })],
+      [box('p', 'running'), box('q', 'paused'), box('s', 'stopped')],
+      NOW,
+    );
+    expect(lanes.find((l) => l.key === 'p')!.segs).toEqual([[12, 0, 'running']]);
+    expect(lanes.find((l) => l.key === 'p')!.pushes).toEqual([2]);
+    expect(lanes.find((l) => l.key === 'q')!.segs).toEqual([[12, 0, 'paused']]);
+    expect(lanes.find((l) => l.key === 's')).toBeUndefined();
+    expect(runningAtOnce(lanes, 12, 60)[0]).toBe(1);
+  });
+
+  it('infers a running stretch before a pause when the start is out of the fetch', () => {
+    const lanes = buildLanes([ev('1', 'box.paused', 4, { boxId: 'p' })], [box('p', 'paused')], NOW);
+    expect(lanes[0]!.segs).toEqual([
+      [12, 4, 'running'],
+      [4, 0, 'paused'],
+    ]);
   });
 
   it('counts boxes running at once', () => {

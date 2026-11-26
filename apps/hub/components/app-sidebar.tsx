@@ -7,7 +7,7 @@ import { useId, useState, type ReactNode } from 'react';
 import { AddProjectButton } from '@/app/(dashboard)/boxes/components/add-project-modal';
 import { Icons, type Icon } from '@/components/icons';
 import { useSidebarCollapsed } from '@/components/shell-state';
-import { MenuItem, MenuSeparator, Popover } from '@/components/ui/popover';
+import { MenuItem, MenuLabel, MenuSeparator, Popover } from '@/components/ui/popover';
 import { useAccounts } from '@/lib/accounts-client';
 import { signOut } from '@/lib/auth.client';
 import { useStore } from '@/lib/boxes/store';
@@ -234,11 +234,16 @@ function HubHeader() {
   );
 }
 
+const THEMES = [
+  { id: 'light', label: 'Light', icon: Icons.sun },
+  { id: 'dark', label: 'Dark', icon: Icons.moon },
+  { id: 'system', label: 'System', icon: Icons.layout },
+] as const;
+
 function NavUser() {
   const router = useRouter();
   const { state } = useStore();
-  const { resolvedTheme, setTheme } = useTheme();
-  const dark = resolvedTheme === 'dark';
+  const { theme, setTheme } = useTheme();
   const { name, login } = state.user;
   return (
     <Popover
@@ -273,15 +278,21 @@ function NavUser() {
             </div>
           </div>
           <MenuSeparator />
-          <MenuItem
-            icon={dark ? Icons.sun : Icons.moon}
-            onClick={() => {
-              setTheme(dark ? 'light' : 'dark');
-              close();
-            }}
-          >
-            {dark ? 'Light mode' : 'Dark mode'}
-          </MenuItem>
+          <MenuLabel>Theme</MenuLabel>
+          {THEMES.map((t) => (
+            <MenuItem
+              key={t.id}
+              icon={t.icon}
+              checked={(theme ?? 'system') === t.id}
+              onClick={() => {
+                setTheme(t.id);
+                close();
+              }}
+            >
+              {t.label}
+            </MenuItem>
+          ))}
+          <MenuSeparator />
           <MenuItem icon={Icons.book} href="https://agent-box.sh/docs" external onClick={close}>
             Docs
           </MenuItem>

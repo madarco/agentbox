@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import type { Icon } from '@/components/icons';
+import { Icons, type Icon } from '@/components/icons';
 import { cn } from '@/lib/utils';
 
 /**
@@ -112,6 +112,7 @@ export function MenuItem({
   disabled,
   href,
   external,
+  checked,
 }: {
   icon?: Icon;
   children: ReactNode;
@@ -121,6 +122,8 @@ export function MenuItem({
   disabled?: boolean;
   href?: string;
   external?: boolean;
+  /** A choice among several (a radio item): marks the current one. */
+  checked?: boolean;
 }) {
   const className = cn(
     'flex w-full cursor-pointer select-none items-center gap-2 rounded-sm border-0 bg-transparent px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4',
@@ -133,6 +136,7 @@ export function MenuItem({
       {shortcut ? (
         <span className="ml-auto text-xs tracking-widest text-muted-foreground">{shortcut}</span>
       ) : null}
+      {checked ? <Icons.check className="ml-auto text-foreground" /> : null}
     </>
   );
   if (href) {
@@ -151,7 +155,8 @@ export function MenuItem({
   }
   return (
     <button
-      role="menuitem"
+      role={checked === undefined ? 'menuitem' : 'menuitemradio'}
+      aria-checked={checked}
       type="button"
       disabled={disabled}
       onClick={onClick}

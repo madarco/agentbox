@@ -29,6 +29,7 @@ import { subscriptionKey, usageKeyLabel } from '@/lib/subscriptions';
 import { cn } from '@/lib/utils';
 import { ApprovalBanner } from '../approvals/components/approval-banner';
 import { AddProjectButton } from '../boxes/components/add-project-modal';
+import { DeleteProjectButton } from '../boxes/components/delete-project-button';
 import { BoxTable } from '../boxes/components/box-table';
 import { CreateBoxButton } from '../boxes/components/create-box-modal';
 import { EmptyBox } from '../boxes/components/empty-box';
@@ -226,6 +227,8 @@ export function Dashboard() {
     count: boxesFor(p.id).length,
   }));
 
+  // A create in flight or one that failed (`job:` rows) is not a box at rest.
+  const idle = boxes.filter((b) => !b.id.startsWith('job:')).length;
   const mode = state.authMode === 'password' ? 'remote hub' : 'local hub';
 
   return (
@@ -248,7 +251,7 @@ export function Dashboard() {
               <>
                 No agents at work{' '}
                 <span className="serif text-[30px] text-[var(--green-ink)]">
-                  {boxes.length ? `${plural(boxes.length, 'box', 'boxes')} idle` : 'yet'}
+                  {idle ? `${plural(idle, 'box', 'boxes')} idle` : 'yet'}
                 </span>
               </>
             )}
@@ -641,7 +644,10 @@ export function Dashboard() {
       ) : (
         state.projects
           .filter((p) => !projects.length || projects.includes(p.id))
-          .map((p) => {
+          .map((p) => ({ p, all: boxesFor(p.id).length }))
+          // Projects with boxes first; the source order within each group.
+          .sort((a, b) => Number(a.all === 0) - Number(b.all === 0))
+          .map(({ p, all }) => {
             const bs = filtered.filter((b) => b.projectId === p.id);
             return (
               <div className="mb-6" key={p.id}>
@@ -660,6 +666,9 @@ export function Dashboard() {
                   <span className="font-mono text-[11px] text-muted-foreground">
                     {plural(bs.length, 'box', 'boxes')}
                   </span>
+                  {all === 0 ? (
+                    <DeleteProjectButton project={p} size="sm" className="font-mono text-xs" />
+                  ) : null}
                   <CreateBoxButton project={p} variant="outline" size="sm" label="New box" />
                 </div>
                 {bs.length ? (

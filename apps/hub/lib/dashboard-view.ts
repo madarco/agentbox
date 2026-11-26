@@ -56,6 +56,27 @@ export interface Lane {
 const HOUR = 3_600_000;
 const RUN_START = new Set(['box.ready', 'box.started', 'box.resumed']);
 const RUN_END = new Set(['box.stopped', 'box.destroyed', 'box.failed']);
+/** A remote hub's clock can run a little ahead of the browser's. */
+const SKEW_MS = 60_000;
+
+/** The state a row sets, `undefined` for a row that sets none. */
+function stateOf(type: string): SegKind | null | undefined {
+  if (RUN_START.has(type)) return 'running';
+  if (type === 'box.paused') return 'paused';
+  if (RUN_END.has(type)) return null;
+  return undefined;
+}
+
+/**
+ * The state before a box's first state row, when the fetch does not reach back
+ * to its start: a pause or a stop means it was running, a resume that it was
+ * paused. A start, a ready or a failure says it was not up yet.
+ */
+function stateBefore(type: string): SegKind | null {
+  if (type === 'box.paused' || type === 'box.stopped' || type === 'box.destroyed') return 'running';
+  if (type === 'box.resumed') return 'paused';
+  return null;
+}
 
 /**
  * One lane per box with something inside the last `span` hours: running and
@@ -103,32 +124,48 @@ export function buildLanes(
     if (g) g.push(e);
     else groups.set(key, [e]);
   }
+  // A box up since before the fetch (a persistent box, a bot) may have no row
+  // in it at all; it still ran the whole window.
+  for (const b of boxes) {
+    if ((b.status === 'running' || b.status === 'paused') && !groups.has(b.id))
+      groups.set(b.id, []);
+  }
 
   const lanes: Lane[] = [];
   for (const [key, rows] of groups) {
     const box = byId.get(key) ?? (key.startsWith('name:') ? byName.get(key.slice(5)) : undefined);
+    const lastRow = rows[rows.length - 1];
+    const name = box?.task ?? lastRow?.boxName ?? key;
     const lane: Lane = {
       key,
       box,
-      label: box?.task ?? rows[rows.length - 1]!.boxName ?? key,
+      // A failed create's lane sits next to the retry that took its name.
+      label:
+        key.startsWith('job:') && rows.some((r) => r.type === 'box.failed')
+          ? `${name} (create failed)`
+          : name,
       agent: box?.agent ?? rows.find((r) => r.agent)?.agent,
       segs: [],
       pushes: [],
       merges: [],
-      last: Date.parse(rows[rows.length - 1]!.at),
+      last: lastRow ? Date.parse(lastRow.at) : (box?.lastActivity ?? start),
     };
-    let state: SegKind | null = null;
+    // The state the fetch opens in: what its first state row implies came
+    // before it, or, with no state row at all, what the store says now.
+    const first = rows.find((r) => stateOf(r.type) !== undefined);
+    let state: SegKind | null = first
+      ? stateBefore(first.type)
+      : box?.status === 'running' || box?.status === 'paused'
+        ? box.status
+        : null;
     let since = start;
     const close = (at: number) => {
       if (state && at > start) lane.segs.push([ago(Math.max(since, start)), ago(at), state]);
     };
     for (const r of rows) {
       const t = Date.parse(r.at);
-      if (Number.isNaN(t) || t > now) continue;
-      let next: SegKind | null | undefined;
-      if (RUN_START.has(r.type)) next = 'running';
-      else if (r.type === 'box.paused') next = 'paused';
-      else if (RUN_END.has(r.type)) next = null;
+      if (Number.isNaN(t) || t > now + SKEW_MS) continue;
+      const next = stateOf(r.type);
       if (next !== undefined && next !== state) {
         close(t);
         state = next;

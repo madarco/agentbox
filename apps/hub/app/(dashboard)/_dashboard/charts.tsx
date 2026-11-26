@@ -3,7 +3,7 @@
 // Hand-drawn SVG charts for the Dashboard (no chart library): a sparkline, KPI
 // mini bars, the week's bars and the day's lanes. Colors are theme tokens.
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { agentIcon } from '@/components/icons';
 import type { Lane } from '@/lib/dashboard-view';
 import { cn } from '@/lib/utils';
@@ -298,7 +298,7 @@ export function Lanes({
           width={w}
           height={H}
           className="block"
-          role="img"
+          role="group"
           aria-label={`Boxes over the last ${String(span)} hours`}
         >
           {ticks.map((t) => (
@@ -330,9 +330,25 @@ export function Lanes({
             return (
               <g
                 key={l.key}
-                className={boxId ? 'cursor-pointer' : ''}
+                className={boxId ? 'cursor-pointer outline-none' : ''}
                 onClick={() => boxId && onOpen?.(boxId)}
                 onMouseEnter={() => setHover(i)}
+                // A lane with a box is a link to it, by keyboard too.
+                {...(boxId
+                  ? {
+                      role: 'link',
+                      tabIndex: 0,
+                      'aria-label': `Open ${l.label}`,
+                      onFocus: () => setHover(i),
+                      onBlur: () => setHover(null),
+                      onKeyDown: (e: KeyboardEvent<SVGGElement>) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onOpen?.(boxId);
+                        }
+                      },
+                    }
+                  : {})}
               >
                 <rect
                   x="0"
