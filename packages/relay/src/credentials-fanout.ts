@@ -30,6 +30,7 @@ import {
   namedAccounts,
 } from '@agentbox/core';
 import {
+  IDENTITY_MISMATCH,
   parseCredentialsUpdate,
   readCredentialBackup,
   resolveAgentSpec,
@@ -61,6 +62,19 @@ export interface CredentialsFanoutDeps {
     sourceBoxId: string,
     account: string,
   ) => Promise<void>;
+  /**
+   * Put `account`'s stored login back into box `boxId` (it shipped another
+   * login's blob). Override for tests; default: `credentials propagate --box`.
+   */
+  runRepush?: (agent: CredentialAgentKind, boxId: string, account: string) => Promise<void>;
+  /** Least time between two re-pushes to one box (default 60s), so a loop can't spin. */
+  repushIntervalMs?: number;
+  /**
+   * When `agent` in box `boxId` last switched accounts (ms epoch) and the
+   * account it left, or undefined. Override for tests; default: the box
+   * record's `accountSwitches`.
+   */
+  lastSwitch?: (boxId: string, agent: CredentialAgentKind) => Promise<LastSwitch | undefined>;
   /** Override the DEFAULT account's backup path (tests; default: the registry's). */
   backupPathFor?: (agent: CredentialAgentKind) => string;
   /**
@@ -110,6 +124,21 @@ export async function stateBoxAccount(boxId: string, agent: string): Promise<str
   return namedAccounts(box?.accounts)?.[agent];
 }
 
+/** How long after a switch a mismatched login is taken for a refresh race. */
+export const SWITCH_RACE_WINDOW_MS = 10 * 60_000;
+
+export interface LastSwitch {
+  at: number;
+  from: string;
+}
+
+async function stateLastSwitch(boxId: string, agent: string): Promise<LastSwitch | undefined> {
+  const box = (await readState()).boxes.find((b) => b.id === boxId);
+  const last = (box?.accountSwitches ?? []).filter((s) => s.agent === agent).at(-1);
+  const at = last ? Date.parse(last.at) : NaN;
+  return last && Number.isFinite(at) ? { at, from: last.from } : undefined;
+}
+
 /** The single write this needs from a custody store (structural: no import cycle). */
 export interface CredentialCustodyWriter {
   put(path: string, data: Buffer): Promise<unknown>;
@@ -140,6 +169,17 @@ export class CredentialsFanout {
     boxId: string,
     agent: CredentialAgentKind,
   ) => Promise<string | undefined>;
+  private readonly runRepush: (
+    agent: CredentialAgentKind,
+    boxId: string,
+    account: string,
+  ) => Promise<void>;
+  private readonly repushIntervalMs: number;
+  private readonly lastRepush = new Map<string, number>();
+  private readonly lastSwitch: (
+    boxId: string,
+    agent: CredentialAgentKind,
+  ) => Promise<LastSwitch | undefined>;
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly chains = new Map<string, Promise<void>>();
 
@@ -147,6 +187,9 @@ export class CredentialsFanout {
     this.log = deps.log;
     this.debounceMs = deps.debounceMs ?? 3_000;
     this.runPropagate = deps.runPropagate ?? defaultRunPropagate;
+    this.runRepush = deps.runRepush ?? defaultRunRepush;
+    this.repushIntervalMs = deps.repushIntervalMs ?? 60_000;
+    this.lastSwitch = deps.lastSwitch ?? stateLastSwitch;
     this.backupPathFor = deps.backupPathFor;
     this.accountKindFor =
       deps.accountKindFor ??
@@ -182,40 +225,55 @@ export class CredentialsFanout {
       return { accepted: false, reason: 'account unverifiable' };
     }
     const account = named ?? DEFAULT_ACCOUNT_ID;
+    const verdict = await this.acceptFor(update.agent, account, update.content, sourceBoxId);
+    if (verdict.reason === IDENTITY_MISMATCH) {
+      await this.onIdentityMismatch(update.agent, sourceBoxId, account, update.content);
+    }
+    return verdict;
+  }
+
+  /**
+   * Gate `content` against `account`'s stored copy and, when it wins, store it,
+   * mirror it into custody and schedule the account's fan-out.
+   */
+  private async acceptFor(
+    agent: CredentialAgentKind,
+    account: string,
+    content: string,
+    sourceBoxId: string,
+  ): Promise<CredentialsHandleResult> {
     const isDefault = isDefaultAccount(account);
     // Only a LOGIN account takes a login. A pasted-kind account's secret is
     // its token (a login there would replace it and break every box on it),
     // and an account the store no longer has must not be re-created by a
     // late update (`credentials rm` already removed it).
     if (!isDefault) {
-      const kind = await this.accountKindFor(update.agent, account).catch(() => undefined);
+      const kind = await this.accountKindFor(agent, account).catch(() => undefined);
       if (kind !== 'login') {
         this.log(
-          `credentials: ignored ${update.agent} update from box ${sourceBoxId} (account '${account}' is ${kind ?? 'not in the store'})`,
+          `credentials: ignored ${agent} update from box ${sourceBoxId} (account '${account}' is ${kind ?? 'not in the store'})`,
         );
         return { accepted: false, reason: `account '${account}' is ${kind ?? 'unknown'}` };
       }
     }
     const backupPath = isDefault
-      ? this.backupPathFor?.(update.agent)
-      : this.accountBackupPathFor(update.agent, account);
-    const existing = await readCredentialBackup(update.agent, { backupPath });
-    const verdict = shouldAcceptCredentialUpdate(update.agent, update.content, existing);
-    if (!verdict.accept) {
-      return { accepted: false, reason: verdict.reason };
-    }
+      ? this.backupPathFor?.(agent)
+      : this.accountBackupPathFor(agent, account);
+    const existing = await readCredentialBackup(agent, { backupPath });
+    const verdict = shouldAcceptCredentialUpdate(agent, content, existing);
+    if (!verdict.accept) return { accepted: false, reason: verdict.reason };
     if (!isDefault && backupPath) {
       // The account store's dir is owner-only, like `writeAccountSecret`'s.
       await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
       await chmod(dirname(backupPath), 0o700).catch(() => {});
     }
-    await writeCredentialBackup(update.agent, update.content, { backupPath });
-    await this.recordInCustody(update.agent, account, update.content, sourceBoxId);
-    const label = isDefault ? update.agent : `${update.agent} account '${account}'`;
+    await writeCredentialBackup(agent, content, { backupPath });
+    await this.recordInCustody(agent, account, content, sourceBoxId);
+    const label = isDefault ? agent : `${agent} account '${account}'`;
     this.log(
       `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
     );
-    this.schedule(update.agent, account, sourceBoxId);
+    this.schedule(agent, account, sourceBoxId);
     return { accepted: true, reason: verdict.reason };
   }
 
@@ -260,6 +318,50 @@ export class CredentialsFanout {
     }
   }
 
+  /**
+   * The box holds another login than its record's account. Shortly after a
+   * switch, a blob of the account it LEFT is a refresh of that login written
+   * back by a request in flight: it is credited to that account (its refresh
+   * token rotated, so the stored copy is now dead) and the record's account
+   * goes back in, because the record is what the user chose. Any other login
+   * is a person's own sign-in inside the box, which it keeps; it just never
+   * reaches the account's other boxes.
+   */
+  private async onIdentityMismatch(
+    agent: CredentialAgentKind,
+    boxId: string,
+    account: string,
+    content: string,
+  ): Promise<void> {
+    const last = await this.lastSwitch(boxId, agent).catch(() => undefined);
+    if (last && Date.now() - last.at <= SWITCH_RACE_WINDOW_MS && last.from !== account) {
+      const r = await this.acceptFor(agent, last.from, content, boxId);
+      // Accepted, unchanged or older: it is the left account's login either way.
+      if (r.reason !== IDENTITY_MISMATCH && !r.reason.startsWith('account ')) {
+        this.repush(agent, boxId, account);
+        return;
+      }
+    }
+    this.log(
+      `credentials: box ${boxId} signed in another ${agent} login than account '${account}'; not fanned out`,
+    );
+  }
+
+  private repush(agent: CredentialAgentKind, boxId: string, account: string): void {
+    const key = `${agent}\u0000${boxId}`;
+    const now = Date.now();
+    if (now - (this.lastRepush.get(key) ?? -Infinity) < this.repushIntervalMs) return;
+    this.lastRepush.set(key, now);
+    this.log(
+      `credentials: box ${boxId} holds another ${agent} login than account '${account}'; putting the account's back`,
+    );
+    this.runRepush(agent, boxId, account).catch((err: unknown) => {
+      this.log(
+        `credentials: ${agent} re-push to box ${boxId} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
+
   /** Debounce + serialize per (agent, account): two accounts never share a chain. */
   private schedule(agent: CredentialAgentKind, account: string, sourceBoxId: string): void {
     const key = `${agent}\u0000${account}`;
@@ -302,6 +404,22 @@ async function defaultRunPropagate(
   sourceBoxId: string,
   account: string,
 ): Promise<void> {
+  await runPropagateCli(agent, ['--source-box', sourceBoxId], account);
+}
+
+async function defaultRunRepush(
+  agent: CredentialAgentKind,
+  boxId: string,
+  account: string,
+): Promise<void> {
+  await runPropagateCli(agent, ['--box', boxId], account);
+}
+
+async function runPropagateCli(
+  agent: CredentialAgentKind,
+  target: string[],
+  account: string,
+): Promise<void> {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
   if (!entry) {
     throw new Error('AGENTBOX_CLI_ENTRY not set; cannot run credential propagate host-side');
@@ -314,8 +432,7 @@ async function defaultRunPropagate(
       'propagate',
       '--agent',
       agent,
-      '--source-box',
-      sourceBoxId,
+      ...target,
       // Only for a named account: an older CLI then still parses a default
       // fan-out, which is the only kind it can route.
       ...(isDefaultAccount(account) ? [] : ['--account', account]),

@@ -172,6 +172,16 @@ export const claudeSpec: AgentSyncSpec = {
     // (verified live), and the refresh ROTATES the refresh token — so an older
     // blob is dead, not merely stale, and must never overwrite a newer one.
     freshness: { jsonPath: ['claudeAiOauth', 'expiresAt'] },
+    identity: {
+      jsonPaths: [
+        ['claudeAiOauth', 'accountUuid'],
+        ['claudeAiOauth', 'organizationUuid'],
+      ],
+    },
+    // A running claude reads the file before every request (measured in
+    // docs/hot-switch-subscriptions-plan.md), so a login switch needs no restart.
+    liveReload: true,
+    bindMountable: true,
   },
   // Named LLM accounts (docs/llm-accounts-plan.md). `setup-token` is the long-lived
   // `claude setup-token` kind: it never refreshes, so it never revokes the other

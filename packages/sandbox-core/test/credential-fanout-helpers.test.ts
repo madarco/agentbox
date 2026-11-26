@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   credentialFreshness,
+  credentialIdentityMismatch,
+  IDENTITY_MISMATCH,
   jsonNumberAt,
   makeRecordingTransport,
   parseCredentialsUpdate,
@@ -113,11 +115,13 @@ describe('writeCredentialBackup / readCredentialBackup', () => {
 });
 
 describe('pushCredentialToBox', () => {
-  it('pushes to the canonical path and normalizes owner/mode', async () => {
+  it('stages next to the canonical path, normalizes owner/mode, then renames onto it', async () => {
     const t = makeRecordingTransport();
     await pushCredentialToBox(t, 'claude', claudeBlob(9));
     const push = t.ops.find((o) => o.op === 'pushFile');
-    expect(push!.args['boxDestPath']).toBe('/home/vscode/.claude/.credentials.json');
+    expect(push!.args['boxDestPath']).toMatch(
+      /^\/home\/vscode\/\.claude\/\.credentials\.json\.agentbox-push-[0-9a-f]{8}$/,
+    );
     const execs = t.ops.filter((o) => o.op === 'exec');
     expect(execs.some((e) => (e.args['cmd'] as string[]).join(' ').includes('mkdir -p'))).toBe(
       true,
@@ -149,16 +153,50 @@ describe('pushCredentialToBox', () => {
     );
   });
 
-  it('accepts a refused chown/chmod only when the file resolves into the credential volume', async () => {
+  it('renames onto the path rather than writing through a symlink into the shared mount', async () => {
     const t = makeRecordingTransport();
     await pushCredentialToBox(t, 'opencode', '{"k":1}');
-    const norm = t.ops
+    const place = t.ops
       .filter((o) => o.op === 'exec')
       .map((e) => (e.args['cmd'] as string[]).join(' '))
       .find((c) => c.includes('chmod 600'));
-    expect(norm).toContain(
-      `case "$(readlink -f '/home/vscode/.local/share/opencode/auth.json')" in "$(readlink -f '/home/vscode/.agentbox-creds')"/*) exit 0 ;; *) exit 1 ;; esac`,
+    expect(place).toMatch(
+      /mv -fT '\/home\/vscode\/\.local\/share\/opencode\/auth\.json\.agentbox-push-[0-9a-f]{8}' '\/home\/vscode\/\.local\/share\/opencode\/auth\.json'/,
     );
+  });
+});
+
+describe('credential identity', () => {
+  const owned = (account: string, exp = 1): string =>
+    JSON.stringify({
+      claudeAiOauth: {
+        refreshToken: 'r',
+        expiresAt: exp,
+        accountUuid: account,
+        organizationUuid: 'o',
+      },
+    });
+
+  it('refuses a newer blob of another login, and names why', () => {
+    expect(credentialIdentityMismatch('claude', owned('a'), owned('b'))).toBe(true);
+    expect(shouldAcceptCredentialUpdate('claude', owned('b', 9), owned('a', 1))).toEqual({
+      accept: false,
+      reason: IDENTITY_MISMATCH,
+    });
+  });
+
+  it('accepts a newer blob of the same login', () => {
+    expect(shouldAcceptCredentialUpdate('claude', owned('a', 9), owned('a', 1)).accept).toBe(true);
+  });
+
+  it('a blob without the identity fields proves nothing', () => {
+    expect(credentialIdentityMismatch('claude', owned('a'), claudeBlob(9))).toBe(false);
+  });
+
+  it('reads codex`s account id', () => {
+    const codex = (id: string): string => JSON.stringify({ tokens: { account_id: id } });
+    expect(credentialIdentityMismatch('codex', codex('x'), codex('y'))).toBe(true);
+    expect(credentialIdentityMismatch('codex', codex('x'), codex('x'))).toBe(false);
   });
 });
 

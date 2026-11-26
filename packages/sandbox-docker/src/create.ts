@@ -16,7 +16,10 @@ import {
   type AgentSyncSpec,
   accountEnvPolicy,
   applyAccountEnv,
+  isRealAgentCredential,
+  readCredentialBackup,
   resolveAgentSpec,
+  STATE_DIR,
   type RegistrationOrigin,
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
@@ -70,6 +73,15 @@ import {
 } from './portless.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
+  boxCredentialMount,
+  emptyCredentialPlaceholder,
+  ensureVolumeCredentialIsFile,
+  hasBoxCredentialFile,
+  removeBoxCredentialFiles,
+  writeBoxCredentialFile,
+} from './box-credentials.js';
+import { volumeSettingsTarget } from './sync/settings-propagate.js';
+import {
   readState,
   recordBox,
   removeBoxRecord,
@@ -80,6 +92,7 @@ import {
 import {
   accountConfigVolume,
   generateBoxId,
+  accountSecretPath,
   isDefaultAccount,
   namedAccounts,
   type LlmProxyRecord,
@@ -833,6 +846,40 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   for (const m of agentMounts) extraVolumes.push(...m.extraVolumes);
   if (agentsMounts) extraVolumes.push(...agentsMounts.extraVolumes);
   extraVolumes.push(...ide.extraVolumes);
+  // Each agent's credential is this box's own file, so a later login switch
+  // writes that file and not the volume every other box on the account
+  // shares. Seeded from the account's stored login (the fan-out keeps that
+  // current; the volume stops being written once its boxes have their own
+  // files), then from the volume for a login made only there.
+  const credentialFiles: string[] = [];
+  for (const [agent, choice] of Object.entries(agentSpecs)) {
+    const cred = resolveAgentSpec(agent).credential;
+    if (!cred || !hasBoxCredentialFile(agent)) continue;
+    const stored = await readCredentialBackup(agent, {
+      backupPath: accountSecretPath(
+        resolveAgentSpec(agent),
+        choice.account ?? 'default',
+        STATE_DIR,
+      ),
+    }).catch(() => null);
+    const held =
+      stored !== null && isRealAgentCredential(agent, stored)
+        ? stored
+        : await volumeSettingsTarget(choice.volume, ensureRef, choice.volume)
+            .readText(cred.boxRelPath)
+            .catch(() => null);
+    const content = held?.trim() ? held : emptyCredentialPlaceholder(agent);
+    if (content === null) continue;
+    try {
+      await ensureVolumeCredentialIsFile(choice.volume, ensureRef, agent);
+      await writeBoxCredentialFile({ id, name, projectIndex }, agent, content);
+    } catch (err) {
+      await removeBoxCredentialFiles({ id, name, projectIndex });
+      throw err;
+    }
+    extraVolumes.push(boxCredentialMount({ id, name, projectIndex }, agent));
+    credentialFiles.push(agent);
+  }
   extraVolumes.push(`${socketDir}:/run/agentbox`);
   extraVolumes.push(`${mergedExportDir}:${CONTAINER_EXPORT_MERGED}`);
   // In-box dockerd's data root. Per-box (`agentbox-docker-<id>`, wiped on
@@ -1029,6 +1076,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       ? { borrowedCredentials: [...opts.borrowCredentials] }
       : {}),
     ...(namedAccounts(opts.accounts) ? { accounts: namedAccounts(opts.accounts) } : {}),
+    ...(credentialFiles.length > 0 ? { credentialFiles } : {}),
     ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
     // What the registration above was keyed and stamped with, so every
     // re-registration (start, rehydrate) sends the same repo and origin.
@@ -1058,23 +1106,30 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     createdAt,
   };
 
-  await runBox({
-    name: containerName,
-    image: imageRef,
-    extraVolumes,
-    limits: effectiveLimits,
-    portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
-    env: {
-      AGENTBOX_BOX_ID: id,
-      ...agentboxEnv,
-      ...Object.assign({}, ...agentMounts.map((m) => m.env)),
-      ...relayEnv,
-      ...vncEnv,
-      ...portlessEnv,
-      ...(opts.claudeEnv ?? {}),
-    },
-    onLog: log,
-  });
+  try {
+    await runBox({
+      name: containerName,
+      image: imageRef,
+      extraVolumes,
+      limits: effectiveLimits,
+      portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
+      env: {
+        AGENTBOX_BOX_ID: id,
+        ...agentboxEnv,
+        ...Object.assign({}, ...agentMounts.map((m) => m.env)),
+        ...relayEnv,
+        ...vncEnv,
+        ...portlessEnv,
+        ...(opts.claudeEnv ?? {}),
+      },
+      onLog: log,
+    });
+  } catch (err) {
+    // No record yet, so no destroy will find these: a live refresh token must
+    // not outlive a box that never started.
+    await removeBoxCredentialFiles({ id, name, projectIndex });
+    throw err;
+  }
   log(`container ${containerName} started`);
 
   // Provisional registration: the box now exists, so persist it before the

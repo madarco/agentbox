@@ -1,7 +1,9 @@
 // POST /api/v1/boxes/:id/account {account, agent?} — switch the box's agent to
 // another LLM account (hub settings 3c). A setup token or API key restarts the
-// agent with that token and resumes its conversation; a login rebuilds a docker
-// box on the account's volume. A cloud box cannot switch to a login yet (409).
+// agent with that token and resumes its conversation; a login is written into
+// the box's own credential file and the agent keeps running (409 when the box
+// cannot take it: a cloud box that is not running, a docker box without its own
+// file).
 import { backendOrNull } from '../../../lib/backend';
 import { fail, ok } from '../../../lib/envelope';
 

@@ -237,6 +237,8 @@ export interface PropagateBoxLike {
   borrowedCredentials?: string[];
   /** Named LLM account per agent (`BoxRecord.accounts`); absent = `default`. */
   accounts?: Record<string, string>;
+  /** Docker agents with a per-box credential file (`BoxRecord.credentialFiles`). */
+  credentialFiles?: string[];
 }
 
 export interface PropagatePlan<B extends PropagateBoxLike> {
@@ -256,6 +258,12 @@ export interface PropagatePlan<B extends PropagateBoxLike> {
    * once, under the running set.
    */
   borrowingBoxes: B[];
+  /**
+   * Docker boxes whose credential file is their own (`credentialFiles`), on a
+   * `credential` run only: each gets its file written, never its volume, which
+   * may be another account's after a switch.
+   */
+  dockerBoxFiles: B[];
 }
 
 /**
@@ -294,6 +302,8 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
      * safe for a set known to carry no credential.
      */
     account?: string;
+    /** A credential fan-out: docker boxes with their own file go to `dockerBoxFiles`. */
+    credential?: boolean;
   },
 ): PropagatePlan<B> {
   const sharedVolume = resolveAgentSpec(opts.agent).dockerVolume;
@@ -305,6 +315,7 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
   const volumes = new Map<string, { boxNames: string[]; shared: boolean }>();
   const cloudBoxes: B[] = [];
   const borrowingBoxes: B[] = [];
+  const dockerBoxFiles: B[] = [];
   for (const box of inScope) {
     // A credential fan-out carries ONE account's login: a box on another
     // account for this agent (running it, or borrowing it as model auth) must
@@ -330,6 +341,10 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
       cloudBoxes.push(box);
       continue;
     }
+    if (opts.credential && box.credentialFiles?.includes(opts.agent)) {
+      dockerBoxFiles.push(box);
+      continue;
+    }
     const recorded = isolatedVolumeOf(box, opts.agent);
     // A box on a NAMED account mounts its account's volume, always recorded at
     // create. Without that record there is no safe target: the shared volume is
@@ -347,5 +362,6 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
     dockerVolumes: [...volumes.entries()].map(([volume, v]) => ({ volume, ...v })),
     cloudBoxes,
     borrowingBoxes,
+    dockerBoxFiles,
   };
 }

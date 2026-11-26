@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -244,5 +244,58 @@ describe('CredentialsFanout — custody write-back', () => {
     });
     await fanout.handle('box-1', payload('codex', JSON.stringify({ tokens: { access: 'x' } })));
     expect(paths).toEqual(['agents/codex/auth.json']);
+  });
+
+  it('credits a race blob to the account the box left, puts the record`s back, and leaves a third login alone', async () => {
+    const owned = (account: string, exp: number): string =>
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'a',
+          refreshToken: 'r',
+          expiresAt: exp,
+          accountUuid: account,
+        },
+      });
+    const workPath = join(dir, 'work.json');
+    await writeFile(workPath, owned('w', 50));
+    const repushes: string[] = [];
+    const runs: string[] = [];
+    const fanout = new CredentialsFanout({
+      log: () => {},
+      debounceMs: 100,
+      runPropagate: async (agent, box, account) => void runs.push(`${agent}:${box}:${account}`),
+      runRepush: async (agent, box, account) => void repushes.push(`${agent}:${box}:${account}`),
+      // box-b and box-d left `work` 5 s ago; box-c switched long ago.
+      lastSwitch: (box) =>
+        Promise.resolve(
+          box === 'box-c'
+            ? { at: Date.now() - 3_600_000, from: 'work' }
+            : box === 'box-a'
+              ? undefined
+              : { at: Date.now() - 5_000, from: 'work' },
+        ),
+      backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
+      accountBackupPathFor: () => workPath,
+      accountKindFor: () => Promise.resolve('login'),
+      boxAccountFor: () => Promise.resolve(undefined),
+    });
+    expect((await fanout.handle('box-a', payload('claude', owned('me', 100)))).accepted).toBe(true);
+    // work's refresh, written back after box-b moved to default.
+    const r = await fanout.handle('box-b', payload('claude', owned('w', 200)));
+    expect(r).toEqual({ accepted: false, reason: 'identity mismatch' });
+    expect(await readFile(workPath, 'utf8')).toBe(owned('w', 200));
+    expect(repushes).toEqual(['claude:box-b:default']);
+    // Once a minute at most.
+    await fanout.handle('box-b', payload('claude', owned('w', 300)));
+    expect(repushes).toEqual(['claude:box-b:default']);
+    // A login that is neither account's, right after a switch: a person's own /login.
+    await fanout.handle('box-d', payload('claude', owned('someone', 400)));
+    // Long after a switch, even the left account's login is left alone.
+    await fanout.handle('box-c', payload('claude', owned('w', 500)));
+    expect(repushes).toEqual(['claude:box-b:default']);
+    expect(await readFile(workPath, 'utf8')).toBe(owned('w', 300));
+    expect(await readFile(join(dir, 'claude-credentials.json'), 'utf8')).toBe(owned('me', 100));
+    await fanout.flush();
+    expect(runs).toEqual([]);
   });
 });

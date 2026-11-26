@@ -182,6 +182,27 @@ export interface AgentCredential {
    * means no credential watch at all.
    */
   freshness?: { jsonPath: readonly string[] };
+  /**
+   * JSON properties that name the login's OWNER (account / org ids). Two blobs
+   * whose values differ at any path both carry are different logins, so a box
+   * that ships one under another account's name is refused instead of
+   * overwriting that account (docs/hot-switch-subscriptions-plan.md). Absent:
+   * no identity check.
+   */
+  identity?: { jsonPaths: readonly (readonly string[])[] };
+  /**
+   * True when a RUNNING agent re-reads this file before every request, so a
+   * login written into it takes effect without a restart (measured for claude).
+   * Absent: a switch to a login restarts the agent.
+   */
+  liveReload?: boolean;
+  /**
+   * True when the agent still saves the file when it is a bind mount: its
+   * rename onto the mount fails (EBUSY) and it falls back to writing in place
+   * (measured for claude). Only such an agent gets a docker per-box credential
+   * file, so only it can switch to another login on docker.
+   */
+  bindMountable?: boolean;
 }
 
 /**

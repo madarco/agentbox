@@ -761,7 +761,7 @@ export interface HubBackend
   // (`agentbox openclaw <box>`; the box's ctl then runs `reload --agents`).
   addBoxAgent(id: string, agent: string): Promise<AddBoxAgentResult>;
   // Switch the box's agent to another LLM account (hub settings 3c): a token
-  // restarts the agent with it, a login rebuilds a docker box on its volume.
+  // restarts the agent with it, a login is written into the box's own file.
   switchBoxAccount(id: string, req: SwitchRequest): Promise<SwitchResult>;
 
   // ── box service logs ──
