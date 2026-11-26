@@ -18,6 +18,7 @@ import {
   canonicalTimeZone,
   clipSpans,
   concurrency,
+  contributionRows,
   dayKey,
   dayStart,
   daysBetween,
@@ -34,6 +35,7 @@ import {
   type SessionTurns,
   type SubscriptionRow,
   type TokenRow,
+  type UsageContribution,
   type UsageStats,
 } from '@agentbox/usage-view';
 import type { HistoryRepo, UsageSessionMeta } from './history';
@@ -57,6 +59,10 @@ export interface UsageStatsQuery {
 export interface UsageStatsDeps {
   history: Pick<HistoryRepo, 'usageSpans' | 'usageTokens' | 'usageSessions'> | null;
   ledger: Pick<ActivityStore, 'list'> | null;
+  /** Other machines' usage contributions (Phase 4b); absent on a hub that takes none. */
+  contributions?: { list(): Promise<UsageContribution[]> } | null;
+  /** This hub's own machine id: a contribution under it is never merged. */
+  selfMachineId?: string;
   now?: () => number;
 }
 
@@ -232,24 +238,34 @@ export function boxRunsOf(
   return runs;
 }
 
-/** Load the window's rows and build its `UsageStats`. */
-export async function computeUsageStats(
-  deps: UsageStatsDeps,
-  q: UsageStatsQuery,
-): Promise<UsageStats> {
-  const now = (deps.now ?? Date.now)();
-  const tz = q.tz;
-  const lastDay = q.today < q.until ? q.today : q.until;
-  const from = dayStart(q.since, tz);
-  const to = dayStart(addDays(lastDay, 1), tz);
-  const windowDays = daysBetween(q.since, lastDay).length;
-  const prevSince = addDays(q.since, -windowDays);
-  const prevFrom = dayStart(prevSince, tz);
-  const wallFrom = dayStart(addDays(lastDay, -(LIMITS.wallDays - 1)), tz);
-  // The wall looks a year back and the KPI deltas one window back: read both at once.
-  const readFrom = Math.min(prevFrom, wallFrom);
-  const account = q.subscription;
+/** The hub's own rows for `[readFrom, to)`, adapted to `buildUsageStats` input. */
+export interface UsageRows {
+  sessions: SessionTurns[];
+  tokens: TokenRow[];
+  events: UsageEvent[];
+  boxes: Map<string, BoxInfo>;
+  boxRuns: BoxRun[];
+  /** The ledger rows read (filtered to the subscription). */
+  rows: ActivityEvent[];
+  /** Earliest span start read, Infinity when none. */
+  firstSpanStart: number;
+  /** Token totals per subscription inside `[from, to)`. */
+  subs: Map<string, { tokens: number; cost: number | null }>;
+  /** Each PR's newest state. */
+  prState: Map<string, string>;
+  /** Host sessions held here (no box), by agent session id. */
+  hostSessionIds: Set<string>;
+}
 
+/**
+ * Read history and the ledger for `[readFrom, to)` and adapt them. `from` bounds
+ * the subscription totals (the window shown, not the read).
+ */
+export async function loadUsageRows(
+  deps: UsageStatsDeps,
+  w: { readFrom: number; from: number; to: number; tz: string; account?: string; now: number },
+): Promise<UsageRows> {
+  const { readFrom, from, to, tz, account, now } = w;
   const [spanRows, tokenRows, ledgerRows] = await Promise.all([
     deps.history
       ? deps.history.usageSpans({
@@ -352,6 +368,7 @@ export async function computeUsageStats(
       provider: m.boxId ? (box?.provider ?? asProvider(m.provider)) : 'host',
       project: box?.project ?? projectName(m.projectKey),
       boxId: m.boxId,
+      ...(m.boxId ? {} : { sessionId: m.sessionId }),
       tokens: t.tokens,
     });
     if (tAt >= from && tAt < to && m.account) {
@@ -361,16 +378,6 @@ export async function computeUsageStats(
       subs.set(m.account, s);
     }
   }
-  const subscriptions: SubscriptionRow[] = [...subs]
-    .sort((a, b) => b[1].tokens - a[1].tokens)
-    .slice(0, LIMITS.subscriptions)
-    .map(([key, s]) => ({
-      agent: asAgent(key.split('/')[0]),
-      label: key.slice(0, LIMITS.name),
-      tokens: Math.round(s.tokens),
-      cost: s.cost === null ? null : Math.round(s.cost * 100) / 100,
-    }));
-
   const events: UsageEvent[] = [];
   for (const e of countedPushes(rows)) {
     events.push({
@@ -402,9 +409,115 @@ export async function computeUsageStats(
   }
 
   const boxRuns = boxRunsOf(rows, (id) => boxes.get(id)?.provider ?? 'other', now);
+  const hostSessionIds = new Set<string>();
+  for (const m of metas.values()) if (!m.boxId) hostSessionIds.add(m.sessionId);
+  return {
+    sessions,
+    tokens,
+    events,
+    boxes,
+    boxRuns,
+    rows,
+    firstSpanStart: spanRows.reduce((a, r) => Math.min(a, r.start), Infinity),
+    subs,
+    prState,
+    hostSessionIds,
+  };
+}
+
+/**
+ * Add the stored contributions of other machines (Phase 4b) to `own`, for the
+ * read `[readFrom, to)`. A box or host session the hub holds rows for itself is
+ * skipped: those rows are the full record.
+ */
+export function addContributions(
+  own: UsageRows,
+  contributions: readonly UsageContribution[],
+  w: { readFrom: number; to: number; selfMachineId?: string },
+): void {
+  if (contributions.length === 0) return;
+  const sessionBoxIds = new Set<string>();
+  for (const s of own.sessions) if (s.boxId) sessionBoxIds.add(s.boxId);
+  for (const t of own.tokens) if (t.boxId) sessionBoxIds.add(t.boxId);
+  const pushBoxIds = new Set<string>();
+  const prBoxIds = new Set<string>();
+  const runBoxIds = new Set<string>();
+  for (const e of own.rows) {
+    if (!e.boxId) continue;
+    if (e.type === 'git.push') pushBoxIds.add(e.boxId);
+    else if (e.type === 'pr.merged') prBoxIds.add(e.boxId);
+    else if (RUNNING.has(e.type) || IDLE.has(e.type)) runBoxIds.add(e.boxId);
+  }
+  const keys = {
+    sessionBoxIds,
+    sessionIds: own.hostSessionIds,
+    pushBoxIds,
+    prBoxIds,
+    runBoxIds,
+  };
+  for (const c of contributions) {
+    if (w.selfMachineId && c.machineId === w.selfMachineId) continue;
+    const r = contributionRows(c, keys, w.readFrom, w.to);
+    own.sessions.push(...r.sessions);
+    own.tokens.push(...r.tokens);
+    own.events.push(...r.events);
+    own.boxRuns.push(...r.boxRuns);
+    for (const b of r.boxes) if (!own.boxes.has(b.boxId)) own.boxes.set(b.boxId, b);
+    for (const s of r.sessions) {
+      const first = s.spans?.reduce((a, sp) => Math.min(a, sp.start), Infinity) ?? Infinity;
+      if (first < own.firstSpanStart) own.firstSpanStart = first;
+    }
+  }
+}
+
+/** Load the window's rows (plus other machines' contributions) and build its `UsageStats`. */
+export async function computeUsageStats(
+  deps: UsageStatsDeps,
+  q: UsageStatsQuery,
+): Promise<UsageStats> {
+  const now = (deps.now ?? Date.now)();
+  const tz = q.tz;
+  const lastDay = q.today < q.until ? q.today : q.until;
+  const from = dayStart(q.since, tz);
+  const to = dayStart(addDays(lastDay, 1), tz);
+  const windowDays = daysBetween(q.since, lastDay).length;
+  const prevSince = addDays(q.since, -windowDays);
+  const prevFrom = dayStart(prevSince, tz);
+  const wallFrom = dayStart(addDays(lastDay, -(LIMITS.wallDays - 1)), tz);
+  // The wall looks a year back and the KPI deltas one window back: read both at once.
+  const readFrom = Math.min(prevFrom, wallFrom);
+  const account = q.subscription;
+
+  const own = await loadUsageRows(deps, {
+    readFrom,
+    from,
+    to,
+    tz,
+    now,
+    ...(account ? { account } : {}),
+  });
+  // A contribution carries no subscription, so a subscription view is this hub's rows only.
+  if (!account && deps.contributions) {
+    addContributions(own, await deps.contributions.list(), {
+      readFrom,
+      to,
+      ...(deps.selfMachineId ? { selfMachineId: deps.selfMachineId } : {}),
+    });
+  }
+  const { sessions, tokens, events, boxes, boxRuns, rows, subs, prState } = own;
+
+  const subscriptions: SubscriptionRow[] = [...subs]
+    .sort((a, b) => b[1].tokens - a[1].tokens)
+    .slice(0, LIMITS.subscriptions)
+    .map(([key, s]) => ({
+      agent: asAgent(key.split('/')[0]),
+      label: key.slice(0, LIMITS.name),
+      tokens: Math.round(s.tokens),
+      cost: s.cost === null ? null : Math.round(s.cost * 100) / 100,
+    }));
 
   // The previous window of the same length, when there is anything before this one.
-  const hasEarlier = spanRows.some((r) => r.start < from) || rows.some((e) => atMs(e) < from);
+  const hasEarlier = own.firstSpanStart < from || rows.some((e) => atMs(e) < from);
   let previous:
     | { peak: number; speedup: number; hoursSaved: number; prsMerged: number; boxHours: number }
     | undefined;
@@ -458,7 +571,12 @@ export async function computeUsageStats(
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 32;
-const cache = new Map<string, { at: number; value: Promise<UsageStats> }>();
+// On globalThis: the custom server and Next's route bundle each carry their own copy
+// of this module, and a contribution stored by one must clear the cache the other reads.
+const shared = globalThis as typeof globalThis & {
+  __AGENTBOX_USAGE_STATS_CACHE?: Map<string, { at: number; value: Promise<UsageStats> }>;
+};
+const cache = (shared.__AGENTBOX_USAGE_STATS_CACHE ??= new Map());
 
 /** `computeUsageStats`, shared for a minute per (window, zone, subscription). */
 export function usageStats(deps: UsageStatsDeps, q: UsageStatsQuery): Promise<UsageStats> {
@@ -479,7 +597,7 @@ export function usageStats(deps: UsageStatsDeps, q: UsageStatsQuery): Promise<Us
   return value;
 }
 
-/** For tests. */
+/** Drop every cached answer (a stored contribution changes them; tests). */
 export function clearUsageStatsCache(): void {
   cache.clear();
 }

@@ -1944,6 +1944,57 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/usage/contributions': {
+        post: {
+          tags: ['History'],
+          summary: "Store a PC's usage contribution",
+          description:
+            "A PC's usage metrics for this hub's `/usage/stats` (usage dashboard Phase 4b), sent by a PC's hub configured with this hub as its control box. Body: `UsageContribution` from `@agentbox/usage-view` (`v`, `machineId`, `window`, `tz`, `intervals`, `tokens`, `shipped`, `boxes`, `boxRuns`): ids, enums, dates and numbers only, parsed strict. It replaces what that machine sent for the same days. `/usage/stats` merges it with this hub's rows (intervals unioned; a box this hub holds itself counted once), except under `subscription`.",
+          requestBody: {
+            required: true,
+            content: { 'application/json': { schema: { type: 'object' } } },
+          },
+          responses: {
+            '200': {
+              description: 'What is now stored for that machine (counts).',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '400': {
+              description:
+                'Not a valid contribution (unknown key, free text, bad id, window over 400 days).',
+            },
+            '409': { description: 'This hub already holds contributions from 64 machines.' },
+            '413': { description: 'Body over 8 MB.' },
+          },
+        },
+        get: {
+          tags: ['History'],
+          summary: 'Machines that sent usage contributions',
+          description:
+            '`{ machines: [{ machineId, receivedAt, window, tz, intervals, tokenRows, shippedRows, boxes, boxRuns }] }`, counts only.',
+          responses: {
+            '200': {
+              description: 'The machines.',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+          },
+        },
+      },
+      '/usage/contributions/sync': {
+        post: {
+          tags: ['History'],
+          summary: "Push this PC's usage contribution now",
+          description:
+            "On a PC's hub: send this PC's contribution to its configured control box now: the last 35 days (the year on a first push, or after a time-zone change), skipped when unchanged; `?full=1` sends the year whatever changed. A device token may only send its own machine id. `agentbox usage` calls it before reading a remote hub. `status`: `pushed` (with `target`, `days`, `intervals`, `bytes`), `unchanged`, `disabled` (`history.contributeUsage` is false), `no-remote` or `no-machine-id`.",
+          responses: {
+            '200': {
+              description: 'What happened.',
+              content: { 'application/json': { schema: { type: 'object' } } },
+            },
+            '503': { description: 'The control box refused the push or could not be reached.' },
+          },
+        },
+      },
       '/usage/stats': {
         get: {
           tags: ['History'],

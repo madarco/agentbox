@@ -8,8 +8,10 @@
 //                 and start: from the 1st inside one month is month, else up to 31 days 30d)
 //   subscription: only sessions and boxes on this `<agent>/<account>`
 // The window is checked against the schema's bounds (2020-2100, at most a year)
-// before any day is walked.
+// before any day is walked. Other PCs' usage contributions (Phase 4b) are merged
+// in, except under a subscription filter (a contribution carries no account).
 import { parseUsageStatsQuery, usageStats } from '@/lib/backend/usage-stats';
+import { hubUsageStatsDeps } from '@/lib/usage-stats-deps';
 import { fail, ok } from '../../lib/envelope';
 
 export const runtime = 'nodejs';
@@ -38,10 +40,7 @@ export async function GET(req: Request): Promise<Response> {
       Date.now(),
     );
     if (!parsed.ok) return fail('invalid_request', parsed.message);
-    const stats = await usageStats(
-      { history: history?.repo ?? null, ledger: ledger ?? null },
-      parsed.query,
-    );
+    const stats = await usageStats(hubUsageStatsDeps(), parsed.query);
     return ok(stats);
   } catch (e) {
     return fail(

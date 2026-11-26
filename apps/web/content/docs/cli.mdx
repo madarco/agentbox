@@ -265,6 +265,8 @@ agentbox usage --since 7d --json
 
 Days are local days in `--tz`, and `--until` is included; a window may be at most a year. Agent-hours outlive transcript retention: a session's intervals are kept when [`history.retentionDays`](/docs/configuration#history--session-history) deletes its turns. The numbers come from [`GET /api/v1/usage/stats`](/docs/api#history).
 
+**With a remote hub** (a [control box](/docs/hub) set in `relay.controlPlaneUrl`), your local docker boxes and the sessions on this PC stay in this PC's hub. Their transcripts are not uploaded; their metrics are: this PC's hub sends the control box a usage contribution every 5 minutes while something changed, and `agentbox usage` sends one before it reads the control box. The control box adds it to its own numbers, counting a box it also holds only once. What leaves the PC: each agent's active intervals (start, end, agent, provider, box or session id), tokens per day and agent, pushes, commits, lines, files and merged PRs per day and box, and box running time. No transcript text, box names, projects, branches or PR titles, so on the control box a PC's box is listed by its id, and a `--subscription` view leaves contributions out. Turn it off with [`history.contributeUsage: false`](/docs/configuration#history--session-history).
+
 | Flag                             | Meaning                                                                                                       |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `--since <when>`                 | first day, `YYYY-MM-DD`, or a number of days or weeks ending at `--until` (`7d`, `2w`, `365d`); default `30d` |

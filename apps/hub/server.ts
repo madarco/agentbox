@@ -49,6 +49,7 @@ import {
   type RelayServerHandle,
   ensureActivityBackfill,
   openActivityLedger,
+  resolveControlBox,
 } from '@agentbox/relay';
 import { startActivityPrSweep } from './lib/backend/activity';
 import { defaultGhExec } from './lib/backend/github-prs';
@@ -71,6 +72,11 @@ import { createMcpServer, MCP_INSTRUCTIONS, type McpHubScope } from './lib/backe
 import { historyMcpTools } from './lib/backend/mcp-history';
 import { skillsMcpTools } from './lib/backend/mcp-skills';
 import { createSkillProposals } from './lib/backend/skill-proposals';
+import {
+  buildContribution,
+  ContributionStore,
+  createContributionPusher,
+} from './lib/backend/usage-contrib';
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number.parseInt(process.env.AGENTBOX_HUB_PORT ?? '8787', 10);
@@ -332,6 +338,31 @@ async function main(): Promise<void> {
           `agentbox-hub: activity backfill failed — ${e instanceof Error ? e.message : String(e)}\n`,
         );
       });
+  }
+  // Usage contributions (usage dashboard Phase 4b). Every hub takes them (a PC
+  // pushes to the control box it is configured with); every hub with a configured
+  // control box pushes its own, every 5 minutes when they changed. A control box
+  // resolves no control box of its own, so it never pushes.
+  globalThis.__AGENTBOX_HUB_USAGE_CONTRIBUTIONS = new ContributionStore(
+    path.join(path.dirname(HISTORY_DB_PATH), 'usage-contributions'),
+  );
+  if (history || activity) {
+    const pusher = createContributionPusher({
+      enabled: () =>
+        loadEffectiveConfig(homedir())
+          .then((c) => c.effective.history.contributeUsage)
+          .catch(() => true),
+      target: () => resolveControlBox(),
+      machineId: () => tryGetMachineId(),
+      build: (o) =>
+        buildContribution({ history: history?.repo ?? null, ledger: activity ?? null }, o),
+      log: (line) => process.stdout.write(`agentbox-hub: ${line}\n`),
+    });
+    globalThis.__AGENTBOX_HUB_USAGE_PUSHER = pusher;
+    const first = setTimeout(() => void pusher.tick(), 30_000);
+    first.unref();
+    const t = setInterval(() => void pusher.tick(), 5 * 60_000);
+    t.unref();
   }
   // Agent memory (Phase 4), same db file, own connection.
   const memory = history

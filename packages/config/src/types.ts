@@ -363,6 +363,12 @@ export interface UserConfig {
      * over the global value.
      */
     hostSessions?: boolean;
+    /**
+     * With a remote control box configured, push this PC's usage metrics (active
+     * intervals, token and shipped totals, ids only, never transcripts) to it so its
+     * Usage page counts this PC's local boxes and sessions (default true).
+     */
+    contributeUsage?: boolean;
   };
   update?: {
     /**
@@ -576,6 +582,7 @@ export interface EffectiveConfig {
     capture: boolean;
     retentionDays: number;
     hostSessions: boolean;
+    contributeUsage: boolean;
   };
   update: {
     check: boolean;
@@ -795,6 +802,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     capture: true,
     retentionDays: 90,
     hostSessions: false,
+    contributeUsage: true,
   },
   update: {
     check: true,
@@ -1549,6 +1557,12 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     type: 'bool',
     description:
       "Ship the agent sessions run directly on this PC (not in a box) to the hub's session history (default false). Set globally, it turns the relay's host-session watcher on for every project agentbox knows on this PC; set in a project's config, true allows and false denies that project whatever the global value. Only registered project folders are read. Sessions go to the configured hub (relay.controlPlaneUrl, with this PC's device token) or the local one. `agentbox sessions host` toggles it and shows the watcher's status.",
+  },
+  {
+    key: 'history.contributeUsage',
+    type: 'bool',
+    description:
+      "With a remote control box configured (relay.controlPlaneUrl), push this PC's usage metrics to it every few minutes so its Usage page counts this PC's local docker boxes and sessions (default true). Only metrics leave the PC: active intervals, token totals per day, push/commit/PR counts per day and box running time, keyed by box and session ids, agent and provider. No transcripts, box names, projects or branches. Set false to keep them on this PC; read by this PC's hub.",
   },
   {
     key: 'update.check',

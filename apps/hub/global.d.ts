@@ -4,6 +4,7 @@ import type { DeviceService } from './lib/backend/devices';
 import type { HistoryService } from './lib/backend/history';
 import type { MemoryService } from './lib/backend/history-memory';
 import type { SkillProposals } from './lib/backend/skill-proposals';
+import type { ContributionPusher, ContributionStore } from './lib/backend/usage-contrib';
 
 declare global {
   // Set by the custom server (server.ts) after the relay daemon is constructed,
@@ -28,6 +29,13 @@ declare global {
   // of `@agentbox/relay` and would not see the server's installed ledger.
   // eslint-disable-next-line no-var
   var __AGENTBOX_HUB_ACTIVITY: ActivityStore | undefined;
+
+  // Other machines' usage contributions (usage dashboard Phase 4b), and this PC's
+  // pusher to its configured remote hub. Both set by the custom server.
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_USAGE_CONTRIBUTIONS: ContributionStore | undefined;
+  // eslint-disable-next-line no-var
+  var __AGENTBOX_HUB_USAGE_PUSHER: ContributionPusher | undefined;
 
   // Agent memory versions (docs/agent-history-plan.md, Phase 4), in history.db.
   // eslint-disable-next-line no-var
