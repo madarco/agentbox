@@ -44,3 +44,4 @@ Open items found while building the phases of
   two is Phase 4's job (the laptop's stats fetch the control box's and merge).
 - **`box.failed` carries no reason.** Deliberately: the ledger holds no free text
   (the share snapshot must not leak any). The create job's log has it.
+

@@ -138,7 +138,24 @@ from Phase 1 on.
 
 - `packages/usage-view`: the zod `UsageStats` / `UsageShare` schemas and the
   pure functions that build them (intervals, union, overlap, sessions, streaks),
-  unit-tested on fixtures.
+  unit-tested on fixtures. **Done** (feat/usage-view): `buildUsageStats(input)`
+  takes plain arrays (`SessionTurns`, `git.push` / `pr.merged` events, token rows,
+  box info, box runs) that the hub adapts its rows to; `toShare(stats, handle)`
+  builds the public subset. Decisions made there:
+  - `tzOffset` is local time minus UTC in minutes (CET is `60`, the opposite sign
+    of `Date#getTimezoneOffset`). A fixed offset is wrong across DST; see the backlog.
+  - A box's sessions are unioned into one lane, so two sessions in one box count
+    once in "boxes at once" and in agent-hours. Host sessions are one lane each.
+  - Lines and files come from `git.push` only; a merged PR's lines were already
+    pushed. `pr.merged` counts PRs and gives "biggest PR".
+  - The share drops the live counters (`runningNow`, `waitingReview`) as well as
+    every name. It stores `daily` and `wall` column by column (one array per
+    metric) and has its own tighter bounds (`SHARE_LIMITS`: 62 days of the daily
+    chart, 3 Gantt days of up to 16 lanes x 8 intervals, 10 sessions; hours to one
+    decimal, counts capped per day). A share with every array full and every number
+    at its longest is about 55 KB (tested); `toShare` rounds, clamps and cuts to fit.
+    Every date is 2020-2100 and the range must hold `since <= today <= until` within
+    367 days, so no renderer walks an unbounded run of days.
 - `apps/hub/lib/backend/usage-stats.ts` reads `history.db` + the ledger and
   returns `UsageStats` for a window, a tz offset and an optional subscription.
 - `GET /api/v1/usage/stats?since=&until=&tzOffset=&subscription=`; the existing
@@ -149,7 +166,11 @@ from Phase 1 on.
 ### Phase 3 — the hub Usage page
 
 - Port the mockup to `packages/usage-view` React components (hand-drawn SVG, no
-  chart library), styled with the hub's tokens, light and dark.
+  chart library), light and dark. **Done** (feat/usage-view) as `UsageView` from
+  `@agentbox/usage-view/react`, styled by its own scoped `usage.css` (the mockup's
+  `.usage` variables, not the hub's tokens, so the hub and agent-box.sh render it
+  the same; dark under any `.dark` ancestor). A fixture of the mockup's numbers and
+  a vite preview (`pnpm --filter @agentbox/usage-view preview`) ship with it.
 - `apps/hub/app/(dashboard)/usage/page.tsx` becomes a pure REST client of
   `/api/v1/usage/stats` (plus `/api/v1/usage` for the token breakdowns). Range
   control, subscription filter, Export CSV.
@@ -174,9 +195,14 @@ from Phase 1 on.
 
 ### Phase 5 — agent-box.sh share endpoint and page
 
-- `POST https://agent-box.sh/api/share`: body is `UsageShare`, parsed with the
+- `POST https://agent-box.sh/api/share`: read the body as raw text and pass it to
+  `parseShareBody` from `@agentbox/usage-view`. It refuses more than 64 KB of raw
+  text and any `__proto__` / `constructor` / `prototype` key, then parses with the
   strict zod schema (unknown keys rejected, every string an enum or the handle
-  regex, numbers bounded, at most 64 KB). Stored in Neon Postgres (the Vercel
+  regex, numbers and arrays bounded). **Store `JSON.stringify` of the parsed
+  result, never the raw body**: zod drops some keys silently (`__proto__`), so
+  only the re-serialized output is known to hold nothing but numbers, dates,
+  enum ids and the handle. Stored in Neon Postgres (the Vercel
   Marketplace integration, `vercel integration add neon --non-interactive`):
   `handles (handle pk, claim_hash, created_at)` and
   `shares (handle, n, snapshot jsonb, ip_hash, created_at, pk (handle, n))`.
