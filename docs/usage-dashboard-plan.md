@@ -1,6 +1,6 @@
 # Usage dashboard and public share — plan
 
-Status: plan, not started (2026-11-26). Design mockup approved: the Usage view in
+Status: Phase 0 and Phase 1 done (2026-11-26). Design mockup approved: the Usage view in
 `../agentbox-design/AgentBox Control Plane (shadcn).html#/usage`
 (`control-shadcn/views-usage.jsx` + `control-shadcn/usage.css`).
 
@@ -88,19 +88,42 @@ from Phase 1 on.
 - Check the payload size of a 1-year `UsageShare` (target under 64 KB).
 - Output: a "Phase 0 results" section here, and any change to the phases below.
 
-### Phase 1 — activity ledger
+### Phase 1 — activity ledger (done 2026-11-26)
 
-- A hub-owned `activity` store, sqlite locally and postgres on a control box
-  (same split as the history store). One row per event, for **every** box, in a
-  workspace or not: `box.created|ready|started|stopped|paused|resumed|destroyed`
-  (provider, agent, account, project key, manager id) and `git.push` (commits,
-  files changed, additions, deletions, branch), `pr.opened|merged|closed`.
-- Writers: the hub's lifecycle worker for box events; the relay's push hook
-  (`timeline-hooks.ts`) for pushes, now computing commit and file counts next to
-  the existing `pushDiff` shortstat; the GitHub PR sync for PR states.
-- Backfill once from every workspace `timeline.jsonl` (idempotent on event id).
-- New backend slice `apps/hub/lib/backend/activity.ts` (never `hub-backend.ts`).
-- Tests: the backfill, a non-workspace box's push landing in the ledger.
+- A hub-owned `activity` store in `@agentbox/relay` (`src/activity/`): one table,
+  sqlite at `~/.agentbox/hub/activity.db`, postgres when `ACTIVITY_STORE_URL` or
+  `POSTGRES_URL` is set. It follows the relay store's dual-dialect pattern, not
+  the history store's, for two reasons. The push, `gh` and create-job writers
+  live in the relay package. The local create worker is a separate CLI process
+  (`_run-queued-job`). The history store is hub-only, and its postgres half does
+  not exist yet. Its own file: `store.db` belongs to the relay, and is in memory
+  on a laptop.
+- One row per event, for **every** box, in a workspace or not:
+  `box.created|ready|failed|started|stopped|paused|resumed|destroyed`, `git.push`
+  (`commits`, `filesChanged`, `additions`, `deletions`, `branch`, `hostOnly`) and
+  `pr.opened|ready|merged|closed`. Each row carries the box's name, provider,
+  agent, account (`agent/account`), repo URL and project key, workspace,
+  manager, create job and actor.
+- Writers:
+  - The hub's box routes (`withBoxActivity` in `apps/hub/lib/backend/activity.ts`):
+    create, start, stop, pause, resume, destroy, host-initiated pushes.
+  - Create jobs: `recordCreateJobTimeline` (the queue worker) and
+    `recordCreateJobRowTimeline` (the control box's worker).
+  - The relay's push hook (`timeline-hooks.ts`): `pushLineStat` /
+    `boxPushLineStat` now also count commits (`rev-list --count`) and files
+    changed.
+  - The `gh` shim.
+  - Docker autopause and the cloud keepalive's idle pause.
+  - The workspace GitHub sync, plus a PR sweep (every 5 minutes) for the branches
+    the ledger knows that no workspace covers.
+- Dedupe: a row reuses the timeline's key when its source has one
+  (`job:<id>:ready`, `pr:<repo>#<n>:merged`, `push:<box>:<sha>`). The backfill
+  imports a workspace `timeline.jsonl` line under its key (or `tl:<id>`), and only
+  if it is older than the ledger's `created_at`: anything later was written
+  live. The hub runs the backfill once at start (`timeline_backfill_at` meta);
+  rerunning it is a no-op.
+- Read: `listActivity` (the slice) and `GET /api/v1/activity?since=&until=&type=&box=`.
+- Open items: [`usage-dashboard-backlog.md`](./usage-dashboard-backlog.md).
 
 ### Phase 2 — `UsageStats` and the stats API
 
