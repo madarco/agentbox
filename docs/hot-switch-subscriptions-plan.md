@@ -33,12 +33,12 @@ Setup: claude 2.1.326 in a tmux TUI (`--model haiku`), `CLAUDE_CONFIG_DIR` point
 
 - Claude re-reads the file before every request (1), so after the switch the process never refreshes the *old* account from memory. The only window is a refresh already in flight at the moment of the write: claude read the old blob, POSTed the refresh, and writes the old account's rotated blob back over the new one. That window is one HTTP round trip (around 200 ms). It can't be timed reliably by hand without rotating a real token, so it is **reasoned, not reproduced**. Measurement 1 does show that claude writes the file after a refresh attempt, so the race exists.
 - The other direction also exists. The ctl watcher polls every 15 s, and the relay credits a blob to the box's account **at receipt**. A blob written just before the switch and shipped just after it would be credited to the new account.
-- **Defence: identity.** A claude blob names its owner (`claudeAiOauth.accountUuid`, `organizationUuid`), and so does a codex one (`tokens.account_id`). The relay rejects a blob whose identity differs from the account's stored one, and pushes the account's own login back into that box, because the record is authoritative. The cloud resume reconcile applies the same rule: on a mismatch the host copy wins.
+- **Defence: identity.** A claude blob names its owner (`claudeAiOauth.accountUuid`, `organizationUuid`), and so does a codex one (`tokens.account_id`). The relay never stores or fans out a blob whose identity differs from the account's stored one. Within 10 minutes of the box's last switch it also pushes the account's own login back into that box, because the record is authoritative. Outside that window the blob is a person's own `/login` inside the box: the box keeps it, and nothing else gets it. The cloud resume reconcile neither captures nor overwrites a mismatched blob.
   - Identity can't tell apart two account names holding the *same* real login (as in the live check below). That case is harmless: they share one refresh chain.
 
 ## Phase 1: what changes
 
-1. **Docker: a per-box credential file.** At create, every agent with a `credential` gets `~/.agentbox/boxes/<box>/credentials/<agent>/<file>` bind-mounted over its `credential.boxAbsPath`, seeded with the account's login (the volume's copy is shadowed). The record says so (`boxCredentialFiles: true`). Boxes created before this change have no such file and are refused with "recreate the box": AgentBox is unreleased, so there is no fallback path.
+1. **Docker: a per-box credential file.** At create, every agent whose credential declares `bindMountable` (claude only: its in-place fallback is what was measured) gets `~/.agentbox/boxes/<box>/credentials/<agent>/<file>` bind-mounted over its `credential.boxAbsPath`, seeded from the account's stored login (the fan-out keeps that current, and the volume stops being written once its boxes have their own files). The volume's copy is used only when nothing is stored, and the volume's own copy is shadowed. The record says so (`boxCredentialFiles: true`). Boxes created before this change have no such file and are refused with "recreate the box": AgentBox is unreleased, so there is no fallback path.
 2. **Switch to a login = write the target's stored login into the box's own file, then move the record.** Docker writes the host file in place (works running, paused or stopped). Cloud writes over the transport with `tmp + mv` (the box must be running). The record moves first and the file is written second, so a watcher tick in between credits the new blob to the new account. No agent restart when the box was already on a login. Leaving a pasted token still restarts the agent, because its env var must go. `how: 'file'` replaces `how: 'recreate'`.
 3. **Fan-out is per box account.** `propagate` writes a docker box's own file (not the volume) and only for boxes on the account. Legacy volume writes remain for boxes without a per-box file. The relay credits by the box's current account and refuses a mismatched identity (see 3).
 4. `recreateBoxOnAccount`, `switch-images.ts` and `CLOUD_LOGIN_REFUSAL` are deleted.
@@ -56,7 +56,18 @@ Setup: claude 2.1.326 in a tmux TUI (`--model haiku`), `CLAUDE_CONFIG_DIR` point
 
 The relay's host watcher (`history/host-watcher.ts`) ships host *transcripts*, not credentials, so it covers none of these and nothing is pushed twice.
 
+## Live check (2026-11-26, docker in an AgentBox box)
+
+Two docker boxes, `hs1` and `hs2`, both on `default`, each answered a real turn. `claude/work` was a copy of the default login with a marker key.
+
+- `credentials switch hs1 claude/work` took 1.5 s and printed "(no restart)". `hs1` kept container id `baf4abd0d4cb` and claude PIDs 516/517. Its own file held work's login (marker present), and `hs2`'s file did not. Both boxes then answered a real turn.
+- A refresh written in `hs1` (newer `expiresAt`) was accepted for account `work`. `default`'s stored copy was unchanged.
+- After switching `hs1` back to `default`, `hs1` wrote a newer blob with another `accountUuid` (the refresh race). The relay logged `identity mismatch` and put `default`'s login back into `hs1`'s file. `default`'s stored copy was unchanged. `hs1` answered a final turn, still the same container and PIDs.
+
 ## Open items
 
-- codex: measure whether a running codex re-reads `auth.json`. Until then a codex login switch restarts codex.
+- codex: measure whether a running codex re-reads `auth.json` and whether it writes in place on a bind mount. Until then a docker codex box can't switch to a login, and a cloud codex box restarts codex after one.
+- Cloud providers were not exercised live here (no cloud credentials in this box). Left for the host: switch a running hetzner/vercel/e2b/daytona/remote-docker box between two logins and check a turn plus `readlink ~/.claude/.credentials.json` (it must be a regular file after the switch; on daytona the shared subpath must be unchanged).
+- A docker box's per-box file is written by the host user at 0600. On a Linux host whose uid is not the box's 1000, claude can't read it. Docker Desktop (macOS) and uid-1000 Linux hosts are fine.
+- `agentbox <agent> login` / `credentials renew` fan-out after a real OAuth sign-in was not run live (needs a browser); unit-covered by the volume-change capture.
 - API keys could also hot-switch through claude's `apiKeyHelper` (a script claude re-runs on a TTL) instead of an env var. Not needed for logins, so not done.
