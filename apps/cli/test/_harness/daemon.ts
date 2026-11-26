@@ -275,7 +275,7 @@ function renderScreen(term: XtermTerminal, opts: RenderOpts): string {
   const hi = Math.min(rows - 1, end);
   const lines: string[] = [];
   for (let y = lo; y <= hi; y++) {
-    const line = buf.getLine(y);
+    const line = buf.getLine(buf.viewportY + y);
     if (!line) {
       lines.push('');
       continue;

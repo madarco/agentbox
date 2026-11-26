@@ -31,8 +31,8 @@ export interface HubApiBox {
   accounts?: Record<string, string>;
   /** Each agent's subscription, `<agent>/<account>` (a borrower under its lender). */
   subscriptions?: Record<string, string>;
-  /** Label + kind for each entry of `accounts`, from the hub machine's store. */
-  accountsInfo?: Array<{ agent: string; account: string; label?: string; kind?: string }>;
+  /** The kind of each entry of `accounts`, from the hub machine's store. */
+  accountsInfo?: Array<{ agent: string; account: string; kind?: string }>;
   /** The hub egress proxy the box was created with (llm-accounts Phase 7). */
   llmProxy?: { mode: 'forward'; upstream: string };
   name?: string;
@@ -571,7 +571,6 @@ export interface HubApiCheckout {
 export interface HubApiAccount {
   agent: string;
   id: string;
-  label?: string;
   kind: 'login' | 'setup-token' | 'api-key';
   identity?: { email?: string; org?: string; plan?: string };
   hasSecret: boolean;
@@ -2210,7 +2209,6 @@ export class HubApiClient {
     id: string;
     kind: 'setup-token' | 'api-key';
     token: string;
-    label?: string;
     /** A new token for an existing account of the same kind. */
     replace?: boolean;
   }): Promise<HubApiAccount> {
@@ -2242,15 +2240,6 @@ export class HubApiClient {
       'POST',
       `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}/renew`,
     );
-  }
-
-  async labelAccount(agent: string, id: string, label: string | null): Promise<HubApiAccount> {
-    const res = await this.request<{ account: HubApiAccount }>(
-      'PATCH',
-      `/accounts/${encodeURIComponent(agent)}/${encodeURIComponent(id)}`,
-      { label },
-    );
-    return res.account;
   }
 
   async removeAccount(

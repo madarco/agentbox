@@ -22,6 +22,10 @@ const VALID: Fixture[] = [
   { name: 'empty', yaml: '' },
   { name: 'box only', yaml: 'box:\n  hostSnapshot: true\n' },
   { name: 'box defaultCheckpoint', yaml: 'box:\n  defaultCheckpoint: warm-1\n' },
+  {
+    name: 'account name with _',
+    yaml: 'claude:\n  account: work_max\ncodex:\n  account: team-2\n',
+  },
   { name: 'checkpoint maxLayers', yaml: 'checkpoint:\n  maxLayers: 3\n' },
   { name: 'engine override', yaml: 'engine:\n  kind: orbstack\n' },
   {

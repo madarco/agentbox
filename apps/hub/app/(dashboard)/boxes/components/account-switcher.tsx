@@ -29,7 +29,7 @@ async function errorOf(res: Response): Promise<string> {
 
 function optionText(a: Account): string {
   const pct = topPct(a);
-  const parts = [a.label ? `${a.id} (${a.label})` : a.id, KIND_TEXT[a.kind]];
+  const parts = [a.id, KIND_TEXT[a.kind]];
   if (pct >= 100) parts.push('at its limit');
   return parts.join(' · ');
 }
@@ -144,7 +144,7 @@ export function AccountRows({ box }: { box: Box }) {
           <DRow
             key={`acct-${a.agent}`}
             k={`${a.agent} account`}
-            v={[a.account, a.label, a.kind].filter(Boolean).join(' · ')}
+            v={[a.account, a.kind].filter(Boolean).join(' · ')}
             mono
           />
         ))

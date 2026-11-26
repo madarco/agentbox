@@ -219,14 +219,13 @@ export interface Box {
    */
   accounts?: Record<string, string>;
   /**
-   * Label and kind for each entry of `accounts`, from the hub machine's account
-   * store (`[{ agent, account, label?, kind? }]`). An account the store does not
+   * The kind of each entry of `accounts`, from the hub machine's account
+   * store (`[{ agent, account, kind? }]`). An account the store does not
    * have keeps only its id. Read-only. (llm-accounts Phase 5.)
    */
   accountsInfo?: Array<{
     agent: string;
     account: string;
-    label?: string;
     kind?: 'login' | 'setup-token' | 'api-key';
   }>;
   /**

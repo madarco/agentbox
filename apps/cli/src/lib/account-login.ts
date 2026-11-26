@@ -21,7 +21,7 @@ export function describeIdentity(identity: LlmAccountIdentity | undefined): stri
 /** Store the login a named account's volume now holds; print the outcome. */
 export async function captureAccountLogin(
   a: AgentCliSpec,
-  o: { account: { id: string; label?: string }; volume: string; image: string },
+  o: { account: { id: string }; volume: string; image: string },
 ): Promise<void> {
   const res = await captureVolumeLogin({
     spec: resolveAgentSpec(a.id),

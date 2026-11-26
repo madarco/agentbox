@@ -44,6 +44,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@clack/core':
+        specifier: ^0.4.1
+        version: 0.4.1
       '@clack/prompts':
         specifier: ^0.9.0
         version: 0.9.1
@@ -77,6 +80,9 @@ importers:
       pg:
         specifier: ^8.13.1
         version: 8.22.0
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
       react:
         specifier: ^19
         version: 19.2.7
@@ -684,12 +690,18 @@ importers:
       '@agentbox/sandbox-docker':
         specifier: workspace:*
         version: link:../sandbox-docker
+      '@clack/core':
+        specifier: ^0.4.1
+        version: 0.4.1
       '@clack/prompts':
         specifier: ^0.9.0
         version: 0.9.1
       commander:
         specifier: ^12.1.0
         version: 12.1.0
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
     optionalDependencies:
       '@homebridge/node-pty-prebuilt-multiarch':
         specifier: ^0.13.1

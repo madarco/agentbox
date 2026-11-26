@@ -102,6 +102,7 @@ export {
   accountConfigVolume,
   accountCustodyPath,
   accountIdProblem,
+  normalizeAccountName,
   accountKindProblem,
   accountSecretPath,
   agentAccountKinds,

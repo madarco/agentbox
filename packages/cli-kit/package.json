@@ -22,8 +22,10 @@
     "@agentbox/core": "workspace:*",
     "@agentbox/sandbox-core": "workspace:*",
     "@agentbox/sandbox-docker": "workspace:*",
+    "@clack/core": "^0.4.1",
     "@clack/prompts": "^0.9.0",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

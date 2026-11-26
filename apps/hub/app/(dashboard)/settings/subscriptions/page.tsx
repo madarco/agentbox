@@ -2,8 +2,8 @@
 
 // Subscriptions page (Settings → Subscriptions) — the named LLM accounts of this hub's machine (logins, setup
 // tokens, API keys per agent; docs/llm-accounts-plan.md, Phase 5). PURE REST
-// CLIENT over /api/v1/accounts: list, add a pasted key or setup token, relabel,
-// remove. A login is interactive and runs on the machine, so it is a command
+// CLIENT over /api/v1/accounts: list, add a pasted key or setup token, remove.
+// A login is interactive and runs on the machine, so it is a command
 // to copy, not a form. No secret ever comes back from the API. Each card shows
 // one meter per plan-limit window the account reports (hub settings 3b,
 // design: control-shadcn/views-env.jsx SubscriptionsPane).
@@ -19,6 +19,7 @@ import { SubMark, SubMeters, TierBadge, subLine, subName } from '@/components/su
 import { refreshAccounts, resetText, useAccounts, type Account } from '@/lib/accounts-client';
 import { groupSubscriptions, subscriptionKey, type AccountKind } from '@/lib/subscriptions';
 import { cn } from '@/lib/utils';
+import { newAccountName } from '@/app/(dashboard)/api/v1/lib/validate';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 
@@ -74,7 +75,6 @@ export default function SubscriptionsPage() {
   const [agent, setAgent] = useState('');
   const [kind, setKind] = useState<Kind>('setup-token');
   const [id, setId] = useState('');
-  const [label, setLabel] = useState('');
   const [token, setToken] = useState('');
 
   // Usage is a side fact: the cards render without it.
@@ -89,6 +89,10 @@ export default function SubscriptionsPage() {
   const chosen = pastedAgents.find((a) => a.id === agent) ?? pastedAgents[0];
   const pastedKinds: Kind[] = (chosen?.kinds ?? []).filter((k) => k !== 'login');
   const chosenKind = pastedKinds.includes(kind) ? kind : pastedKinds[0];
+  // What the hub will store: an existing name as typed, a new one normalized.
+  const typedId = id.trim();
+  const existingName = (accounts ?? []).some((a) => a.agent === chosen?.id && a.id === typedId);
+  const savedAs = typedId && !existingName ? newAccountName(typedId) : null;
 
   const act = async (key: string, fn: () => Promise<unknown>): Promise<void> => {
     setBusy(key);
@@ -101,14 +105,6 @@ export default function SubscriptionsPage() {
     } finally {
       setBusy(null);
     }
-  };
-
-  const relabel = (a: Account) => {
-    const next = window.prompt(`Label for ${a.agent}/${a.id} (empty clears it)`, a.label ?? '');
-    if (next === null) return;
-    void act(`label:${a.agent}/${a.id}`, () =>
-      api(enc(a), { method: 'PATCH', body: JSON.stringify({ label: next.trim() || null }) }),
-    );
   };
 
   const remove = (a: Account) =>
@@ -141,11 +137,9 @@ export default function SubscriptionsPage() {
           id: id.trim(),
           kind: chosenKind,
           token: token.trim(),
-          ...(label.trim() ? { label: label.trim() } : {}),
         }),
       });
       setId('');
-      setLabel('');
       setToken('');
     });
 
@@ -206,7 +200,6 @@ export default function SubscriptionsPage() {
                       weekLoaded={weekTokens !== null}
                       busy={busy !== null}
                       confirming={confirmRemove === subscriptionKey(a)}
-                      onLabel={() => relabel(a)}
                       onMakeDefault={
                         agents.some((x) => x.id === a.agent) ? () => void makeDefault(a) : undefined
                       }
@@ -261,15 +254,10 @@ export default function SubscriptionsPage() {
                 <Input
                   value={id}
                   onChange={(ev) => setId(ev.target.value)}
-                  placeholder="name (e.g. ci)"
-                  className="w-36 font-mono"
-                  autoComplete="off"
-                />
-                <Input
-                  value={label}
-                  onChange={(ev) => setLabel(ev.target.value)}
-                  placeholder="label (optional)"
-                  className="w-40"
+                  placeholder="name (e.g. work max)"
+                  aria-label="Name"
+                  title={savedAs ? `Saved as ${savedAs}` : undefined}
+                  className="w-40 font-mono"
                   autoComplete="off"
                 />
                 <Input
@@ -288,6 +276,13 @@ export default function SubscriptionsPage() {
                   <Icons.plus /> Add
                 </Button>
               </form>
+              {typedId && !existingName && savedAs !== typedId ? (
+                <div className="mt-2 font-mono text-[12px] text-muted-foreground">
+                  {savedAs
+                    ? `saved as ${chosen?.id ?? ''}/${savedAs}`
+                    : 'a name is letters, digits, spaces or _'}
+                </div>
+              ) : null}
               <div className="mt-3 text-[12px] text-muted-foreground">
                 A setup token never renews, so it is the right kind for an account several boxes use
                 at once. To add a <span className="font-mono">login</span>, run{' '}
@@ -310,7 +305,6 @@ function SubscriptionCard({
   weekLoaded,
   busy,
   confirming,
-  onLabel,
   onMakeDefault,
   onAskRemove,
   onKeep,
@@ -321,7 +315,6 @@ function SubscriptionCard({
   weekLoaded: boolean;
   busy: boolean;
   confirming: boolean;
-  onLabel: () => void;
   /** Absent for an agent with no `<agent>.account` setting. */
   onMakeDefault: (() => void) | undefined;
   onAskRemove: () => void;
@@ -385,16 +378,6 @@ function SubscriptionCard({
               Make default
             </Button>
           )}
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            disabled={busy}
-            aria-label={`Label ${key}`}
-            title="Set its label"
-            onClick={onLabel}
-          >
-            <Icons.pencil />
-          </Button>
           {named && !confirming ? (
             <Button
               size="icon-sm"
