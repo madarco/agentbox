@@ -59,6 +59,7 @@ import {
   skillSelectionFromFlags,
 } from '../lib/skills/selection.js';
 import { autoSeedSkills } from '../lib/skills/auto-seed.js';
+import { checkSkillsDrift, printSkillsNotice, type SkillsDrift } from '../lib/skills/drift.js';
 import { workspaceHub } from '../lib/workspace-ref.js';
 import { readCurrentBranch } from '@agentbox/relay';
 import {
@@ -247,6 +248,7 @@ async function runCreateViaHubApi(
   cfg: EffectiveConfig,
   /** `--account`, already resolved and validated on this machine. */
   accounts: Record<string, string> = {},
+  skillsDrift: Promise<SkillsDrift | null> = Promise.resolve(null),
 ): Promise<void> {
   // A stale login on the control box means the box comes up signed out — refresh
   // custody from the host backup first (hash-compared, silent + best-effort).
@@ -405,6 +407,7 @@ async function runCreateViaHubApi(
       );
     }
   }
+  printSkillsNotice(await skillsDrift);
   outro(`box ready: ${boxId ?? '(id pending)'}`);
   cmdLog.close();
   process.exit(0);
@@ -614,13 +617,22 @@ export const createCommand = new Command('create')
     // uploads this PC's skills. Awaited, unlike the checkout report above: it
     // costs a round trip only while this PC has skills and has not seen the hub
     // seeded (a local memo); otherwise it returns without touching the network.
-    await autoSeedSkills({
+    const seedScan = await autoSeedSkills({
       announce: (line) => {
         log.info(line);
         cmdLog.write(`skills seed: ${line}`);
       },
       debug: (line) => cmdLog.write(line),
     });
+    // Started by each path once it knows it won't attach, and printed when the
+    // box is ready, so the round trip overlaps the create instead of adding to it.
+    const startSkillsDrift = (): Promise<SkillsDrift | null> =>
+      checkSkillsDrift({
+        url: opts.url,
+        ...(seedScan ? { local: seedScan } : {}),
+        cwd: opts.workspace,
+        debug: (line) => cmdLog.write(line),
+      });
     // `providerName` stays a bare name — it keys the per-provider config
     // (box.image<P>, box.defaultCheckpoint<P>) and lands on the box record; the
     // engine rides alongside it in `remoteHost`.
@@ -767,6 +779,8 @@ export const createCommand = new Command('create')
         cmdLog,
         cfg.effective,
         accounts,
+        // The control-box path never attaches.
+        startSkillsDrift(),
       );
       return;
     }
@@ -956,6 +970,8 @@ export const createCommand = new Command('create')
     // Cloud + switch-to-claude: provision the cloud box now, then attach
     // claude via the cloud SSH path once the box is ready.
     const attachClaudeAfter = wiz.action === 'switch-to-claude' && !isDocker;
+    const skillsDrift =
+      opts.attach || attachClaudeAfter ? Promise.resolve(null) : startSkillsDrift();
 
     const useSnapshot = resolveUseSnapshot(opts, cfg.effective.box.hostSnapshot);
 
@@ -1172,6 +1188,7 @@ export const createCommand = new Command('create')
     // they stay on screen — this is the last moment before the box is handed
     // over or attached to.
     for (const w of cmdLog.warnings()) log.warn(w);
+    printSkillsNotice(await skillsDrift);
 
     outro('done');
 

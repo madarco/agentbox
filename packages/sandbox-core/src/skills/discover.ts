@@ -14,7 +14,13 @@ import { join, sep } from 'node:path';
 import { agentSkillDirs } from './compare.js';
 import { parseSkillFrontmatter } from './frontmatter.js';
 import { scanSkillFiles, type SecretFinding } from './scan.js';
-import { readSkillTree, SkillTooLargeError, treeHash, type SkillFile } from './tree.js';
+import {
+  readSkillTree,
+  SkillTooLargeError,
+  treeHash,
+  type SkillFile,
+  type SkillHashCache,
+} from './tree.js';
 
 export const LOCAL_SKILL_DIRS: readonly string[] = [
   '.agents/skills',
@@ -36,6 +42,8 @@ function isReserved(name: string): boolean {
 }
 /** The Agent Skills name rule: lowercase letters, digits and hyphens, up to 64. */
 export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** Skills read at once by discovery. */
+const READ_CONCURRENCY = 8;
 
 export interface LocalSkill {
   name: string;
@@ -101,7 +109,8 @@ async function readSkillMd(dir: string, skill: LocalSkill, maxBytes?: number): P
 export async function readLocalSkill(
   name: string,
   dir: string,
-  opts: { maxBytes?: number } = {},
+  /** `hashCache`: a summary read (see {@link SkillHashCache}): no file data, scan hits from the cache. */
+  opts: { maxBytes?: number; hashCache?: SkillHashCache } = {},
 ): Promise<LocalSkill> {
   const skill: LocalSkill = {
     name,
@@ -137,7 +146,7 @@ export async function readLocalSkill(
     for (const l of tree.outOfTreeLinks) {
       skill.problems.push(`symlink points outside the skill: ${l}`);
     }
-    skill.findings = scanSkillFiles(tree.files);
+    skill.findings = tree.findings ?? scanSkillFiles(tree.files);
   } catch (err) {
     if (err instanceof SkillTooLargeError) {
       skill.problems.push(
@@ -156,12 +165,13 @@ export async function readLocalSkill(
  * `synced/` tree, and folders with no SKILL.md.
  */
 export async function discoverLocalSkills(
-  opts: { home?: string; maxBytes?: number } = {},
+  opts: { home?: string; maxBytes?: number; hashCache?: SkillHashCache } = {},
 ): Promise<LocalSkill[]> {
   const home = opts.home ?? homedir();
-  const byName = new Map<string, LocalSkill>();
-  // The built-in dirs first (their order decides which copy is read), then any
-  // dir a plugin agent declares on the registry.
+  // Every candidate location in precedence order, grouped by name: the built-in
+  // dirs first (their order decides which copy is read), then any dir a plugin
+  // agent declares on the registry.
+  const byName = new Map<string, string[]>();
   const dirs = [...new Set([...LOCAL_SKILL_DIRS, ...agentSkillDirs().flatMap((a) => a.dirs)])];
   for (const rel of dirs) {
     const root = join(home, rel);
@@ -176,24 +186,33 @@ export async function discoverLocalSkills(
       const dir = join(root, name);
       if (join(rel, name) === CLAUDE_SYNCED_DIR) continue;
       if (!(await isDir(dir)) || !(await exists(join(dir, 'SKILL.md')))) continue;
-      const first = byName.get(name);
-      if (first) {
-        // The usual Mac layout links `~/.claude/skills/<x>` into `~/.agents/skills/<x>`:
-        // the same directory, so no need to read and scan it a second time.
-        const [a, b] = await Promise.all([
-          realpath(first.dir).catch(() => first.dir),
-          realpath(dir).catch(() => dir),
-        ]);
-        if (a === b) {
-          first.alsoAt.push({ dir, same: true });
-          continue;
-        }
-        const other = await readLocalSkill(name, dir, opts);
-        first.alsoAt.push({ dir, same: other.treeSha !== '' && other.treeSha === first.treeSha });
-        continue;
-      }
-      byName.set(name, await readLocalSkill(name, dir, opts));
+      const at = byName.get(name);
+      if (at) at.push(dir);
+      else byName.set(name, [dir]);
     }
   }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  // Skills are read concurrently (a summary read is mostly stat calls, which
+  // queue on the fs threadpool), each name's locations in order.
+  const readOne = async ([name, locations]: [string, string[]]): Promise<LocalSkill> => {
+    const first = await readLocalSkill(name, locations[0]!, opts);
+    const firstReal = await realpath(first.dir).catch(() => first.dir);
+    for (const dir of locations.slice(1)) {
+      // The usual Mac layout links `~/.claude/skills/<x>` into `~/.agents/skills/<x>`:
+      // the same directory, so no need to read and scan it a second time.
+      if ((await realpath(dir).catch(() => dir)) === firstReal) {
+        first.alsoAt.push({ dir, same: true });
+        continue;
+      }
+      const other = await readLocalSkill(name, dir, opts);
+      first.alsoAt.push({ dir, same: other.treeSha !== '' && other.treeSha === first.treeSha });
+    }
+    return first;
+  };
+  const entries = [...byName];
+  const out: LocalSkill[] = [];
+  const worker = async (): Promise<void> => {
+    for (let e = entries.shift(); e !== undefined; e = entries.shift()) out.push(await readOne(e));
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, entries.length) }, worker));
+  return out.sort((a, b) => a.name.localeCompare(b.name));
 }

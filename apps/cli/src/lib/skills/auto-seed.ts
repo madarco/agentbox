@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { loadEffectiveConfig, STATE_DIR } from '@agentbox/config';
 import { withHubTargetQuiet } from '../../control-plane/with-hub.js';
-import { discoverLocalSkills } from '@agentbox/sandbox-core';
+import { discoverLocalSkills, type LocalSkill } from '@agentbox/sandbox-core';
 import { describeSeed, seedSkillsIfEmpty } from './sync.js';
 
 function memoPath(): string {
@@ -67,6 +67,7 @@ export async function rememberSeeded(url: string): Promise<void> {
   );
 }
 
+/** Returns this PC's skills when it scanned them, so a caller's drift check needn't rescan. */
 export async function autoSeedSkills(opts: {
   /** The hub to seed; default the configured one. */
   url?: string;
@@ -74,7 +75,7 @@ export async function autoSeedSkills(opts: {
   announce: (line: string) => void;
   /** Why nothing was seeded, and any upload failure (a log file on create, never the terminal). */
   debug?: (line: string) => void;
-}): Promise<void> {
+}): Promise<LocalSkill[] | undefined> {
   try {
     // Lazy, like withHubClient: control-plane.ts sits in a module cycle with hub.ts.
     const { resolveHubApiTarget } = await import('../../commands/control-plane.js');
@@ -83,9 +84,9 @@ export async function autoSeedSkills(opts: {
       opts.debug?.(
         'skills seed skipped: no hub could be resolved (none configured, or no credential for it); the next create retries',
       );
-      return;
+      return undefined;
     }
-    if ((await seededHubs()).includes(normalizeUrl(target.url))) return;
+    if ((await seededHubs()).includes(normalizeUrl(target.url))) return undefined;
 
     const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
     const maxBytes = cfg?.effective.skills.maxSkillBytes ?? 50 * 1024 * 1024;
@@ -94,7 +95,7 @@ export async function autoSeedSkills(opts: {
     const local = await discoverLocalSkills({ home: homedir(), maxBytes });
     if (local.length === 0) {
       opts.debug?.(`skills seed skipped: no skills on this PC to seed ${target.url} with`);
-      return;
+      return local;
     }
     // The resolved target itself, not its URL: re-resolving `target.url` as an
     // explicit URL finds no credential for this machine's own hub.
@@ -105,7 +106,7 @@ export async function autoSeedSkills(opts: {
       opts.debug?.(
         `skills seed failed against ${target.url}: ${res.error}; the next create retries`,
       );
-      return;
+      return local;
     }
     const out = res.value;
     // Done with this hub once it holds a skill (or this PC has nothing it may
@@ -115,17 +116,19 @@ export async function autoSeedSkills(opts: {
     if (!out || out.uploaded.length > 0 || out.failed.length === 0) {
       await rememberSeeded(target.url);
     }
-    if (!out) return;
+    if (!out) return local;
     if (out.uploaded.length + out.skipped.length + out.failed.length === 0) {
       opts.debug?.(`skills seed: every skill on this PC is skipped on ${target.url}`);
-      return;
+      return local;
     }
     opts.announce(describeSeed(out));
     const retry =
       out.uploaded.length === 0 ? 'the next create retries' : 'upload it with `agentbox skills`';
     for (const f of out.failed)
       opts.debug?.(`skills seed: ${f.name} failed (${retry}): ${f.reason}`);
+    return local;
   } catch (err) {
     opts.debug?.(`skills seed failed: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
   }
 }

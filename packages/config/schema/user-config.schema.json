@@ -488,6 +488,9 @@
       "properties": {
         "maxSkillBytes": {
           "type": "integer"
+        },
+        "notice": {
+          "type": "boolean"
         }
       }
     },
