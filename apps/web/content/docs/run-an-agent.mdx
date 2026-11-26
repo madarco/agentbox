@@ -245,7 +245,8 @@ keeps its conversation on the new account:
   that file before every request, so it keeps running and its next turn uses
   the new account. Other boxes on either account are not touched. A docker box
   can switch while running, paused or stopped. A cloud box must be running.
-  An agent that does not re-read its file (codex) is restarted.
+  Codex can't switch to a login on docker yet. On a cloud box it is restarted,
+  since it isn't known to re-read its file.
 - To a **setup token** or **API key**, on any provider: the agent's session
   restarts with that token set and the other auth variable cleared, and resumes
   the same conversation. A token that does not have the agent's shape is
