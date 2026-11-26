@@ -4,18 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "node scripts/copy-schema.mjs",
+    "predev": "node scripts/copy-schema.mjs && node scripts/ensure-usage-view.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/copy-schema.mjs",
+    "prebuild": "node scripts/copy-schema.mjs && node scripts/ensure-usage-view.mjs",
     "build": "next build",
     "start": "next start",
-    "postinstall": "fumadocs-mdx"
+    "postinstall": "fumadocs-mdx",
+    "test": "vitest run",
+    "db:migrate": "node scripts/migrate-share-db.mjs"
   },
   "dependencies": {
+    "@agentbox/usage-view": "workspace:*",
     "fumadocs-core": "^16.9.3",
     "fumadocs-mdx": "^15.0.10",
     "fumadocs-ui": "^16.9.3",
     "next": "^16.2.7",
+    "postgres": "^4.1.1",
     "react": "^19",
     "react-dom": "^19",
     "zod": "^4.4.3"
@@ -27,6 +31,7 @@
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "tailwindcss": "^4",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
