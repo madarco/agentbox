@@ -42,6 +42,11 @@ data accumulates, and destroyed boxes' transcripts cannot be backfilled.
   closed 1 minute after its last turn. Phase 0 checks the gap against real runs.
 - **Agent-hours**: the sum of active intervals. **Wall hours**: their union.
 - **Speed-up**: agent-hours / wall hours.
+- **Hours saved**: agent-hours - wall hours, at least 0, to 0.1 h (`hoursSaved()` in
+  `@agentbox/usage-view`, the one definition the hub, CLI, React view and share card
+  use). Time against running the same work one agent at a time, not a person's time.
+  Derived from the hero, so every share has it; `kpis.hoursSaved` (optional, so
+  older shares still parse) adds the change from the previous window.
 - **Boxes at once**: the maximum overlap of active intervals, per day and overall.
 - **Box-hours**: running time from the lifecycle ledger (Phase 1). Shown as a
   KPI, never as the hero number: a box left running is not work.

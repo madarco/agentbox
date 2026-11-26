@@ -163,6 +163,14 @@ describe('share wording', () => {
     expect(m.description).toContain(
       '612 hours of agent work in 211 hours, 2.9x faster than one agent.',
     );
+    expect(m.description).toContain('401 hours saved vs. running one agent at a time.');
     expect(m.description).not.toMatch(/—/);
+  });
+
+  it('claims no hours saved without a real speed-up', () => {
+    const hero = { ...share.hero, agentHours: 3, wallHours: 2.9, speedup: 1.03 };
+    expect(shareMeta({ ...share, hero }).description).not.toContain('saved');
+    const one = { ...share.hero, agentHours: 2.2, wallHours: 1.2, speedup: 1.8 };
+    expect(shareMeta({ ...share, hero: one }).description).toContain('1 hour saved');
   });
 });

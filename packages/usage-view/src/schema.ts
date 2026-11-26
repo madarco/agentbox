@@ -240,6 +240,8 @@ const delta = signedDelta.nullable();
 export const Kpis = z.strictObject({
   peak: z.strictObject({ value: count, delta, runningNow: count }),
   speedup: z.strictObject({ value: ratio, delta }),
+  /** `hoursSaved(hero)`, with its change. Optional: shares made before it lack it. */
+  hoursSaved: z.strictObject({ value: hours, delta }).optional(),
   prs: z.strictObject({ value: count, delta, waitingReview: count }),
   boxHours: z.strictObject({ value: hours, deltaPct: delta, boxes: count, tokens: tokens }),
 });

@@ -4,6 +4,7 @@ import type {
   HubApiUsageGroup,
   HubApiUsageTotals,
 } from '../control-plane/hub-api-client.js';
+import { hoursSaved } from '@agentbox/usage-view';
 import type { UsageStats } from '@agentbox/usage-view';
 import { clip, compactCount, shortId } from './sessions-format.js';
 
@@ -104,6 +105,7 @@ export function usageHeroLines(s: UsageStats): string[] {
     ['Agent-hours', `${nf(h.agentHours, 1)} h`],
     ['Wall hours', `${nf(h.wallHours, 1)} h`],
     ['Speed-up', `${nf(h.speedup, 2)}x`],
+    ['Hours saved', `${nf(hoursSaved(h), 1)} h vs. one agent at a time`],
     ['Peak at once', h.peakDate ? `${nf(h.peakAtOnce)} (${h.peakDate})` : nf(h.peakAtOnce)],
     ['PRs merged', nf(h.prsMerged)],
     ['Commits', nf(h.commits)],

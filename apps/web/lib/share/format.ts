@@ -1,3 +1,4 @@
+import { hoursSaved } from '@agentbox/usage-view';
 import type { UsageShare } from '@agentbox/usage-view';
 
 const whole = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
@@ -68,6 +69,14 @@ export const shareTitle = (share: UsageShare): string =>
 /** Below 1.1x there is no speed-up worth claiming (one agent at a time). */
 export const hasSpeedup = (share: UsageShare): boolean => share.hero.speedup >= 1.1;
 
+/** Hours saved worth a headline: a real speed-up and at least an hour. */
+export const hasSaving = (share: UsageShare): boolean =>
+  hasSpeedup(share) && hoursSaved(share.hero) >= 1;
+
+/** "401 hours saved" */
+export const savedText = (share: UsageShare): string =>
+  `${plural(hoursSaved(share.hero), 'hour')} saved`;
+
 /**
  * Title and description for the page metadata and the link preview. The title names
  * whose agents and when; the description carries the numbers. No free text but the handle.
@@ -77,7 +86,8 @@ export function shareMeta(share: UsageShare): { title: string; description: stri
   const peak = `${plural(h.peakAtOnce, 'agent')} running at the same time (peak)`;
   const work =
     `${plural(h.agentHours, 'hour')} of agent work in ${plural(h.wallHours, 'hour')}` +
-    (hasSpeedup(share) ? `, ${speedup(h.speedup)} faster than one agent` : '');
+    (hasSpeedup(share) ? `, ${speedup(h.speedup)} faster than one agent` : '') +
+    (hasSaving(share) ? `. ${savedText(share)} vs. running one agent at a time` : '');
   return {
     title: shareTitle(share),
     description:

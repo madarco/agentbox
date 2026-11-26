@@ -234,6 +234,7 @@ export function usageFixture(): UsageStats {
     kpis: {
       peak: { value: 9, delta: 4, runningNow: 4 },
       speedup: { value: 2.9, delta: 0.8 },
+      hoursSaved: { value: 401, delta: 132 },
       prs: { value: 47, delta: 9, waitingReview: 3 },
       boxHours: { value: 612, deltaPct: 24, boxes: 64, tokens: 126.4e6 },
     },

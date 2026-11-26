@@ -8,6 +8,7 @@ import {
   dayKey,
   dayStart,
   groupSessions,
+  hoursSaved,
   lanesFromSessions,
   maxOf,
   minOf,
@@ -295,7 +296,7 @@ describe('buildUsageStats', () => {
     ],
     boxRuns: [{ boxId: 'b1', provider: 'docker', start: at(8), end: at(13) }],
     sessionTitles: { M: 'Big refactor' },
-    previous: { peak: 1, speedup: 1, prsMerged: 0, boxHours: 2.5 },
+    previous: { peak: 1, speedup: 1, hoursSaved: 0.2, prsMerged: 0, boxHours: 2.5 },
   });
 
   it('produces a valid UsageStats', () => {
@@ -319,6 +320,8 @@ describe('buildUsageStats', () => {
     expect(stats.kpis.boxHours.deltaPct).toBe(100);
     expect(stats.kpis.peak.delta).toBe(2);
     expect(stats.kpis.boxHours.tokens).toBe(1000);
+    expect(stats.kpis.hoursSaved!.value).toBe(hoursSaved(stats.hero));
+    expect(stats.kpis.hoursSaved!.delta).toBeCloseTo(hoursSaved(stats.hero) - 0.2, 5);
   });
 
   it('fills daily splits', () => {
@@ -623,5 +626,26 @@ describe('Gantt lanes across midnight', () => {
     expect(stats.gantt[0]!.lanes[0]!.intervals[0]![0]).toBe(21);
     expect(stats.gantt[0]!.lanes[0]!.intervals.at(-1)![1]).toBeGreaterThan(26);
     expect(stats.gantt[1]!.lanes).toHaveLength(0);
+  });
+});
+
+describe('hoursSaved', () => {
+  it('is agent-hours minus wall hours', () => {
+    expect(hoursSaved({ agentHours: 612, wallHours: 211 })).toBe(401);
+  });
+
+  it('is all the agent work when nothing ran on the clock', () => {
+    expect(hoursSaved({ agentHours: 0, wallHours: 0 })).toBe(0);
+    expect(hoursSaved({ agentHours: 3.5, wallHours: 0 })).toBe(3.5);
+  });
+
+  it('clamps at 0 when wall hours exceed agent-hours', () => {
+    expect(hoursSaved({ agentHours: 2, wallHours: 2.4 })).toBe(0);
+  });
+
+  it('rounds to a tenth without float noise', () => {
+    expect(hoursSaved({ agentHours: 10.3, wallHours: 3.1 })).toBe(7.2);
+    expect(hoursSaved({ agentHours: 0.3, wallHours: 0.1 })).toBe(0.2);
+    expect(hoursSaved({ agentHours: 1.04, wallHours: 1 })).toBe(0);
   });
 });

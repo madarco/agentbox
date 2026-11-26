@@ -648,7 +648,13 @@ export interface BuildInput {
   /** Display titles for manager sessions, by manager id. */
   sessionTitles?: Readonly<Record<string, string>>;
   /** The previous window of the same length, for the KPI deltas. */
-  previous?: { peak: number; speedup: number; prsMerged: number; boxHours: number };
+  previous?: {
+    peak: number;
+    speedup: number;
+    hoursSaved: number;
+    prsMerged: number;
+    boxHours: number;
+  };
   runningNow?: number;
   waitingReview?: number;
   /** Days to lay out in the Gantt; default the three busiest of the range. */
@@ -663,6 +669,15 @@ const clipOrNull = (s: string | null | undefined): string | null =>
   s && s.trim() ? clip(s) : null;
 
 const round = (n: number, d = 2): number => Math.round(n * 10 ** d) / 10 ** d;
+
+/**
+ * Hours saved by running agents in parallel: how long the agent work would have taken
+ * one agent at a time (`agentHours`) minus how long it took on the clock (`wallHours`),
+ * to 0.1 h. Machine time against a serial run, not a person's time.
+ */
+export function hoursSaved(h: { agentHours: number; wallHours: number }): number {
+  return Math.max(0, round(h.agentHours - h.wallHours, 1));
+}
 
 function addSplit<K extends string>(
   rec: Partial<Record<K, SplitValues>>,
@@ -1092,6 +1107,10 @@ export function buildUsageStats(input: BuildInput): UsageStats {
       runningNow: input.runningNow ?? 0,
     },
     speedup: { value: hero.speedup, delta: prev ? round(hero.speedup - prev.speedup, 2) : null },
+    hoursSaved: {
+      value: hoursSaved(hero),
+      delta: prev ? round(hoursSaved(hero) - prev.hoursSaved, 1) : null,
+    },
     prs: {
       value: tot.prs,
       delta: prev ? tot.prs - prev.prsMerged : null,

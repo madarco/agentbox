@@ -1,14 +1,15 @@
 import { ImageResponse } from 'next/og';
 import type { ReactElement } from 'react';
+import { hoursSaved } from '@agentbox/usage-view';
 import type { AgentId, ProviderId, UsageShare } from '@agentbox/usage-view';
 import { OG, boxMark, loadOgFonts } from '@/lib/og';
-import { TAGLINE, dayMonth, hasSpeedup, num, shareTitle, speedup } from './format';
+import { TAGLINE, dayMonth, hasSaving, num, shareTitle, speedup } from './format';
 import { dailySeries } from './og-series';
 import type { DailySeries } from './og-series';
 
 export const OG_SIZE = { width: 1200, height: 630 } as const;
 export const OG_ALT =
-  'Usage shared from AgentBox: coding agents running at the same time, hours of agent work, and charts of agents at once and agent-hours over the period';
+  'Usage shared from AgentBox: coding agents running at the same time, hours of agent work, hours saved against one agent at a time, and charts of agents at once and agent-hours over the period';
 
 const mono = 'IBM Plex Mono';
 const sans = 'IBM Plex Sans';
@@ -306,8 +307,12 @@ function OgCard({ share }: { share: UsageShare }) {
   const names = providers.map((p) => PROVIDER[p.id].label);
   const one = (n: number, a: string, b: string): string => (num(n) === '1' ? a : b);
 
-  const third = hasSpeedup(share)
-    ? { value: speedup(h.speedup), label: 'faster than one agent' }
+  const saved = hoursSaved(h);
+  const third = hasSaving(share)
+    ? {
+        value: compact(saved),
+        label: `${one(saved, 'hour', 'hours')} saved, ${speedup(h.speedup)} faster than one agent`,
+      }
     : // The footer already counts PRs: show how many sandboxes the work used instead.
       { value: compact(h.boxes), label: one(h.boxes, 'sandbox used', 'sandboxes used') };
   const shipped =

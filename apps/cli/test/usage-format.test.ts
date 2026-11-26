@@ -69,5 +69,6 @@ describe('usageHeroLines', () => {
       expect(text).toContain(k);
     }
     expect(text).toMatch(/Agent-hours\s+612\.0 h/);
+    expect(text).toMatch(/Hours saved\s+401\.0 h vs\. one agent at a time/);
   });
 });

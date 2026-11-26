@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { addDays, maxOf } from '../aggregate.js';
+import { addDays, hoursSaved, maxOf } from '../aggregate.js';
 import { decodeDaily, decodeWall } from '../columns.js';
 import { AGENT_IDS, PROVIDER_IDS } from '../schema.js';
 import type {
@@ -42,6 +42,7 @@ import {
   duration,
   fmt,
   fmtLines,
+  hoursLabel,
   hrs,
   nf,
   previousLabel,
@@ -243,6 +244,7 @@ function Header({
 
 function Hero({ v }: { v: View }): ReactElement {
   const h = v.hero;
+  const saved = hoursSaved(h);
   const top = [...v.providers].sort((a, b) => b.hours - a.hours);
   const provTotal = top.reduce((a, p) => a + p.hours, 0);
   const faces = top.slice(0, 3);
@@ -265,8 +267,13 @@ function Hero({ v }: { v: View }): ReactElement {
             <CountUp value={h.agentHours} format={nf} /> hours
           </b>{' '}
           of work in <b>{nf(h.wallHours)} hours</b>. Side by side, they got{' '}
-          <b>{h.speedup.toFixed(1)}×</b> as much done as one agent alone.{' '}
-          <em>Up to {h.peakAtOnce} ran at the same time.</em>
+          <b>{h.speedup.toFixed(1)}×</b> as much done as one agent alone
+          {saved > 0 ? (
+            <>
+              , <b>{hoursLabel(saved)}</b> saved vs. one agent at a time
+            </>
+          ) : null}
+          . <em>Up to {h.peakAtOnce} ran at the same time.</em>
         </h2>
         <div className="chips">
           <span className="chip">
@@ -351,6 +358,13 @@ function Hero({ v }: { v: View }): ReactElement {
           </div>
           <div>
             <div className="n">
+              <CountUp value={saved} format={hrs} />
+              <small>h</small>
+            </div>
+            <div className="l">saved vs. one agent at a time</div>
+          </div>
+          <div>
+            <div className="n">
               <CountUp value={h.sessionsWith3Plus} format={nf} />
             </div>
             <div className="l">sessions with 3 or more boxes</div>
@@ -396,6 +410,8 @@ function Hero({ v }: { v: View }): ReactElement {
 
 function Kpis({ v }: { v: View }): ReactElement {
   const k = v.kpis;
+  // Shares made before the field existed: the value from the hero, no delta.
+  const saved = k.hoursSaved ?? { value: hoursSaved(v.hero), delta: null };
   const days = v.daily;
   const prev = previousLabel(v.range.id, v.range.since);
   return (
@@ -433,9 +449,26 @@ function Kpis({ v }: { v: View }): ReactElement {
         </div>
         <div className="meta">
           <Delta value={k.speedup.delta} suffix="×" />
-          {nf(v.hero.agentHours)} agent-hours in {nf(v.hero.wallHours)} h
+          {nf(v.hero.agentHours)} h of work in {nf(v.hero.wallHours)} h
         </div>
         <Spark values={days.map((d) => d.avgAtOnce)} color="var(--blue)" />
+      </div>
+      <div className="card kpi">
+        <div className="top">
+          <span className="eyebrow">Hours saved</span>
+          <span className="ico" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}>
+            {Icons.clock}
+          </span>
+        </div>
+        <div className="v">
+          {hrs(saved.value)}
+          <small>h</small>
+        </div>
+        <div className="meta">
+          <Delta value={saved.delta} suffix=" h" />
+          vs. one agent at a time
+        </div>
+        <Spark values={days.map((d) => hoursSaved(d))} color="var(--green)" />
       </div>
       <div className="card kpi">
         <div className="top">
