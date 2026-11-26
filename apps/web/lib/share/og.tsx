@@ -1,19 +1,29 @@
 import { ImageResponse } from 'next/og';
 import type { ReactElement } from 'react';
-import { decodeWall } from '@agentbox/usage-view';
-import type { ProviderId, UsageShare } from '@agentbox/usage-view';
+import type { AgentId, ProviderId, UsageShare } from '@agentbox/usage-view';
 import { OG, boxMark, loadOgFonts } from '@/lib/og';
-import { hoursText, num, rangeText, speedup } from './format';
+import { TAGLINE, dayMonth, hasSpeedup, num, shareTitle, speedup } from './format';
+import { dailySeries } from './og-series';
+import type { DailySeries } from './og-series';
 
 export const OG_SIZE = { width: 1200, height: 630 } as const;
-export const OG_ALT = 'Usage shared from AgentBox: agents at once, hours of work, what shipped';
+export const OG_ALT =
+  'Usage shared from AgentBox: coding agents running at the same time, hours of agent work, and charts of agents at once and agent-hours over the period';
 
 const mono = 'IBM Plex Mono';
 const sans = 'IBM Plex Sans';
 
-// The activity wall's ramp (packages/usage-view usage.css --w0..--w5).
-const WALL = ['#ebebe6', '#c3e6cf', '#86cfa2', '#3fae72', '#128a4f', '#0a5c34'];
-const WEEKS = 20;
+// Series colours per agent (packages/usage-view usage.css --s1..--s5, --faint).
+const AGENT_COLOR: Record<AgentId, string> = {
+  claude: '#2a78d6',
+  codex: '#eb6834',
+  pi: '#1baf7a',
+  opencode: '#eda100',
+  openclaw: '#e87ba4',
+  other: '#a4a9b0',
+};
+const INK_2 = '#3d434c';
+const BAR_EMPTY = '#ebebe6';
 
 // Round provider marks in brand colour, as drawn by usage-view's ProviderLogo. Copied
 // rather than imported: that module is client code, and satori needs plain SVG.
@@ -125,113 +135,184 @@ function ProviderAvatar({ id, size, overlap }: { id: ProviderId; size: number; o
   );
 }
 
-/** Font size that keeps `text` on one line within `width` (Plex at ~0.56em per glyph). */
+/** Font size that keeps `text` on one line within `width` (Plex at ~0.55em per glyph). */
 const fit = (text: string, max: number, width: number): number =>
   Math.min(max, Math.floor(width / (text.length * 0.55)));
 
-/** 9,999,999 stays readable on a tile up to 6 digits, then 1.2M. */
+/** 9,999,999 stays readable up to 6 digits, then 1.2M. */
 const compact = (v: number): string =>
   v < 1_000_000 ? num(v) : `${(Math.floor(v / 100_000) / 10).toFixed(1)}M`;
 
-/** The last WEEKS full columns of the wall, Sunday on top, as ramp levels 0..5. */
-function wallColumns(share: UsageShare): number[][] {
-  const days = decodeWall(share.wall).filter((d) => d.date <= share.range.today);
-  const last = days.at(-1);
-  if (!last) return Array.from({ length: WEEKS }, () => Array<number>(7).fill(-1));
-  const vals = days.map((d) => d.all);
-  const sorted = vals.filter((v) => v > 0).sort((a, b) => a - b);
-  const q = (p: number): number => sorted[Math.floor(p * (sorted.length - 1))] ?? 1;
-  const cuts = [q(0.2), q(0.45), q(0.7), q(0.9)];
-  const level = (v: number): number => (v <= 0 ? 0 : 1 + cuts.filter((c) => v > c).length);
+const W = 1072;
+const CHART_W = 516;
+const CHART_H = 150;
 
-  const lastDow = new Date(`${last.date}T00:00:00Z`).getUTCDay();
-  // Grid slot k (0 = top-left) maps to the day `total - 1 - k` steps before the last one.
-  const total = WEEKS * 7 - (6 - lastDow);
-  const byOffset = new Map<number, number>();
-  days.forEach((d, i) => byOffset.set(days.length - 1 - i, level(d.all)));
-  const cols: number[][] = [];
-  for (let w = 0; w < WEEKS; w++) {
-    const col: number[] = [];
-    for (let r = 0; r < 7; r++) {
-      const k = w * 7 + r;
-      // -1: after today (blank); a day before the data starts is an empty square.
-      col.push(k >= total ? -1 : (byOffset.get(total - 1 - k) ?? 0));
-    }
-    cols.push(col);
-  }
-  return cols;
-}
-
-function WallStrip({ share }: { share: UsageShare }) {
-  const cell = 15;
-  const gap = 4;
-  return (
-    <div style={{ display: 'flex', gap }}>
-      {wallColumns(share).map((col, w) => (
-        <div key={w} style={{ display: 'flex', flexDirection: 'column', gap }}>
-          {col.map((lv, r) => (
-            <div
-              key={r}
-              style={{
-                display: 'flex',
-                width: cell,
-                height: cell,
-                borderRadius: 3,
-                backgroundColor: lv < 0 ? 'transparent' : WALL[lv],
-              }}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Stat({
+/** A big number over a small label that says what it counts. */
+function Headline({
   value,
   label,
   color,
+  width,
 }: {
-  value: ReactElement | string;
+  value: string;
   label: string;
-  color?: string;
+  color: string;
+  width: number;
 }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width }}>
       <div
         style={{
           display: 'flex',
-          fontFamily: sans,
+          fontSize: fit(value, 76, width - 10),
           fontWeight: 600,
-          fontSize: 40,
-          color: color ?? OG.ink,
-          letterSpacing: '-0.02em',
-          lineHeight: 1.1,
+          color,
+          letterSpacing: '-0.03em',
+          lineHeight: 1,
         }}
       >
         {value}
       </div>
-      <div
-        style={{ display: 'flex', fontFamily: mono, fontSize: 17, color: OG.muted, marginTop: 6 }}
-      >
+      <div style={{ display: 'flex', fontSize: 21, color: INK_2, marginTop: 8, lineHeight: 1.25 }}>
         {label}
       </div>
     </div>
   );
 }
 
+function ChartTitle({ title, note }: { title: string; note?: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 10 }}>
+      <div style={{ display: 'flex', fontSize: 22, fontWeight: 600, color: OG.ink }}>{title}</div>
+      {note && (
+        <div
+          style={{
+            display: 'flex',
+            marginLeft: 'auto',
+            fontFamily: mono,
+            fontSize: 17,
+            color: OG.muted,
+          }}
+        >
+          {note}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Bar geometry shared by both charts: slot width and a gap that shrinks with it. */
+function slots(n: number): { step: number; bar: number } {
+  const step = CHART_W / n;
+  return { step, bar: Math.max(1, step - Math.min(4, step * 0.25)) };
+}
+
+/** A sliver for a day with no activity, so the timeline still reads as days. */
+const EMPTY_H = 3;
+
+// A plain function, not a component: satori serializes <svg> children as they are and
+// does not render components inside it.
+const emptySlot = (key: number, x: number, width: number): ReactElement => (
+  <rect key={key} x={x} y={CHART_H - EMPTY_H} width={width} height={EMPTY_H} fill={BAR_EMPTY} />
+);
+
+function PeakChart({ s }: { s: DailySeries }) {
+  const { step, bar } = slots(s.bars.length);
+  const max = Math.max(1, s.maxPeak);
+  return (
+    <svg width={CHART_W} height={CHART_H} viewBox={`0 0 ${CHART_W} ${CHART_H}`}>
+      {s.bars.map((b, i) => {
+        if (!b || b.peak === 0) return emptySlot(i, i * step, bar);
+        const h = Math.max(4, (b.peak / max) * CHART_H);
+        return (
+          <rect
+            key={i}
+            x={i * step}
+            y={CHART_H - h}
+            width={bar}
+            height={h}
+            rx={Math.min(3, bar / 3)}
+            fill={i === s.peakIndex ? OG.accent : '#86cfa2'}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+function HoursChart({ s }: { s: DailySeries }) {
+  const { step, bar } = slots(s.bars.length);
+  const max = s.maxHours > 0 ? s.maxHours : 1;
+  return (
+    <svg width={CHART_W} height={CHART_H} viewBox={`0 0 ${CHART_W} ${CHART_H}`}>
+      {s.bars.map((b, i) => {
+        const total = b ? b.hours.reduce((a, v) => a + v, 0) : 0;
+        if (!b || total <= 0) return emptySlot(i, i * step, bar);
+        let y = CHART_H;
+        return (
+          <g key={i}>
+            {b.hours.map((v, k) => {
+              if (v <= 0) return null;
+              const h = (v / max) * CHART_H;
+              y -= h;
+              return (
+                <rect
+                  key={k}
+                  x={i * step}
+                  y={y}
+                  width={bar}
+                  height={h}
+                  fill={AGENT_COLOR[s.agents[k]!]}
+                />
+              );
+            })}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function Legend({ agents }: { agents: AgentId[] }) {
+  return (
+    <div style={{ display: 'flex', gap: 14, marginTop: 10 }}>
+      {agents.map((a) => (
+        <div key={a} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div
+            style={{
+              display: 'flex',
+              width: 13,
+              height: 13,
+              borderRadius: 3,
+              backgroundColor: AGENT_COLOR[a],
+            }}
+          />
+          <div style={{ display: 'flex', fontFamily: mono, fontSize: 17, color: OG.muted }}>
+            {a}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function OgCard({ share }: { share: UsageShare }) {
   const h = share.hero;
-  const peak = `${num(h.peakAtOnce)}`;
-  // Satori trims spaces at span edges, so the joins are non-breaking spaces.
-  const peakRest = num(h.peakAtOnce) === '1' ? '\u00a0agent at once' : '\u00a0agents at once';
-  const heroSize = fit(peak + peakRest, 112, 1072);
-  const hoursA = hoursText(share);
-  // One agent at a time is no speed-up: leave the claim out rather than print "1x faster".
-  const hoursB = h.speedup >= 1.1 ? `\u00a0·\u00a0${speedup(h.speedup)} faster` : '';
-  const subSize = fit(hoursA + hoursB, 42, 1072);
+  const s = dailySeries(share);
+  const per =
+    s.bucketDays === 1 ? 'per day' : s.bucketDays === 7 ? 'per week' : `per ${s.bucketDays} days`;
+  const title = shareTitle(share);
   const providers = [...share.providers].sort((a, b) => b.hours - a.hours).slice(0, 3);
   const names = providers.map((p) => PROVIDER[p.id].label);
+  const one = (n: number, a: string, b: string): string => (num(n) === '1' ? a : b);
+
+  const third = hasSpeedup(share)
+    ? { value: speedup(h.speedup), label: 'faster than one agent' }
+    : // The footer already counts PRs: show how many sandboxes the work used instead.
+      { value: compact(h.boxes), label: one(h.boxes, 'sandbox used', 'sandboxes used') };
+  const shipped =
+    `${compact(h.prsMerged)} ${one(h.prsMerged, 'PR', 'PRs')} merged · ` +
+    `${compact(h.commits)} ${one(h.commits, 'commit', 'commits')}\u00a0·\u00a0`;
 
   return (
     <div
@@ -240,116 +321,101 @@ function OgCard({ share }: { share: UsageShare }) {
         flexDirection: 'column',
         width: '100%',
         height: '100%',
-        padding: '44px 64px 34px',
+        padding: '34px 64px 26px',
         backgroundColor: OG.paper,
         fontFamily: sans,
-        borderBottom: `16px solid ${OG.accent}`,
+        borderBottom: `12px solid ${OG.accent}`,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center' }}>
-        {boxMark(OG.ink, 34)}
+        {boxMark(OG.ink, 28)}
         <div
           style={{
             display: 'flex',
             fontFamily: mono,
             fontWeight: 600,
-            fontSize: 25,
+            fontSize: 22,
             color: OG.ink,
-            marginLeft: 12,
+            marginLeft: 10,
           }}
         >
           agent-box.sh
         </div>
-        <div
-          style={{
-            display: 'flex',
-            marginLeft: 'auto',
-            fontFamily: mono,
-            fontSize: 20,
-            color: OG.muted,
-          }}
-        >
-          {rangeText(share)}
+        <div style={{ display: 'flex', marginLeft: 'auto', fontSize: 19, color: OG.muted }}>
+          {TAGLINE}
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 40 }}>
-        <div
-          style={{
-            display: 'flex',
-            fontSize: heroSize,
-            fontWeight: 600,
-            color: OG.ink,
-            letterSpacing: '-0.03em',
-            lineHeight: 1.05,
-          }}
-        >
-          <span style={{ color: OG.accent }}>{peak}</span>
-          <span>{peakRest}</span>
+      <div
+        style={{
+          display: 'flex',
+          marginTop: 24,
+          fontSize: fit(title, 40, W),
+          fontWeight: 600,
+          color: OG.ink,
+          letterSpacing: '-0.01em',
+        }}
+      >
+        {title}
+      </div>
+
+      <div style={{ display: 'flex', marginTop: 22, gap: 32 }}>
+        <Headline
+          value={num(h.peakAtOnce)}
+          label={`${one(h.peakAtOnce, 'agent', 'agents')} running at the same time (peak)`}
+          color={OG.accent}
+          width={400}
+        />
+        <Headline
+          value={num(h.agentHours)}
+          label={`${one(h.agentHours, 'hour', 'hours')} of agent work in ${num(h.wallHours)} ${one(h.wallHours, 'hour', 'hours')}`}
+          color={OG.ink}
+          width={364}
+        />
+        <Headline value={third.value} label={third.label} color={OG.ink} width={244} />
+      </div>
+
+      <div style={{ display: 'flex', marginTop: 26, gap: 40 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', width: CHART_W }}>
+          <ChartTitle
+            title={`Agents at once, ${per}`}
+            note={s.peakDay ? `${num(s.maxPeak)} on ${dayMonth(s.peakDay)}` : undefined}
+          />
+          <PeakChart s={s} />
         </div>
-        <div
-          style={{
-            display: 'flex',
-            fontSize: subSize,
-            color: '#3d434c',
-            marginTop: 12,
-            letterSpacing: '-0.01em',
-          }}
-        >
-          <span>{hoursA}</span>
-          <span style={{ color: OG.accent, fontWeight: 600 }}>{hoursB}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', width: CHART_W }}>
+          <ChartTitle
+            title={`Agent-hours ${per}, by agent`}
+            note={s.partial ? `last ${s.days} days` : undefined}
+          />
+          <HoursChart s={s} />
+          {s.agents.length > 0 && <Legend agents={s.agents} />}
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'flex-end', marginTop: 'auto' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
-          <div style={{ display: 'flex', gap: 44 }}>
-            <Stat
-              value={compact(h.prsMerged)}
-              label={num(h.prsMerged) === '1' ? 'PR merged' : 'PRs merged'}
-            />
-            <Stat
-              value={compact(h.commits)}
-              label={num(h.commits) === '1' ? 'commit' : 'commits'}
-            />
-            <Stat
-              value={
-                <div style={{ display: 'flex' }}>
-                  <span style={{ color: '#1baf7a' }}>+{compact(h.additions)}</span>
-                  <span style={{ color: OG.faint, margin: '0 10px' }}>/</span>
-                  <span style={{ color: '#e34948' }}>-{compact(h.deletions)}</span>
-                </div>
-              }
-              label="lines"
-            />
+      <div style={{ display: 'flex', alignItems: 'center', marginTop: 'auto' }}>
+        {providers.map((p, i) => (
+          <ProviderAvatar key={p.id} id={p.id} size={30} overlap={i > 0} />
+        ))}
+        {names.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              fontFamily: mono,
+              fontSize: 16,
+              color: OG.muted,
+              marginLeft: 10,
+            }}
+          >
+            on {names.join(', ')}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            {providers.map((p, i) => (
-              <ProviderAvatar key={p.id} id={p.id} size={40} overlap={i > 0} />
-            ))}
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                marginLeft: providers.length ? 14 : 0,
-              }}
-            >
-              <div style={{ display: 'flex', fontSize: 25, fontWeight: 600, color: OG.ink }}>
-                {share.handle}
-              </div>
-              {names.length > 0 && (
-                <div style={{ display: 'flex', fontFamily: mono, fontSize: 16, color: OG.muted }}>
-                  on {names.join(', ')}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', marginLeft: 'auto', gap: 10 }}>
-          <div style={{ display: 'flex', fontFamily: mono, fontSize: 15, color: OG.faint }}>
-            last {WEEKS} weeks
-          </div>
-          <WallStrip share={share} />
+        )}
+        <div style={{ display: 'flex', marginLeft: 'auto', fontSize: 21, color: INK_2 }}>
+          <span>{shipped}</span>
+          <span style={{ color: '#1baf7a', fontWeight: 600 }}>+{compact(h.additions)}</span>
+          <span style={{ color: OG.faint }}>{'\u00a0/\u00a0'}</span>
+          <span style={{ color: '#e34948', fontWeight: 600 }}>-{compact(h.deletions)}</span>
+          <span>{'\u00a0lines'}</span>
         </div>
       </div>
     </div>
