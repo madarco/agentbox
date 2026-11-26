@@ -78,7 +78,9 @@ export function ProjectSeed({ projectId }: { projectId: string }) {
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-secondary-foreground">
                   {e.name}
                 </span>
-                <span className="font-mono text-[11px] text-muted-foreground">{e.sha256.slice(0, 10)}</span>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {e.sha256.slice(0, 10)}
+                </span>
                 <span className="font-mono text-xs text-muted-foreground">{fmtBytes(e.size)}</span>
                 <span className="font-mono text-[11px] text-muted-foreground">
                   <Ago ms={Date.parse(e.updatedAt) || Date.now()} />
@@ -91,8 +93,8 @@ export function ProjectSeed({ projectId }: { projectId: string }) {
         <EmptyBox>
           <div>No seed pushed yet.</div>
           <div className="mt-1 text-[12.5px] text-muted-foreground">
-            Run <code className="font-mono">agentbox hub project push</code> from the repo to register its
-            untracked files and secrets.
+            Run <code className="font-mono">agentbox hub project push</code> from the repo to
+            register its untracked files and secrets.
           </div>
         </EmptyBox>
       )}
@@ -103,8 +105,12 @@ export function ProjectSeed({ projectId }: { projectId: string }) {
 function Field({ k, v, mono }: { k: string; v: React.ReactNode; mono?: boolean }) {
   return (
     <div className="px-4.5 p-4">
-      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[#a4a9b0]">{k}</div>
-      <div className={mono ? 'truncate font-mono text-sm font-medium' : 'text-sm font-medium'}>{v}</div>
+      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[.06em] text-[var(--faint)]">
+        {k}
+      </div>
+      <div className={mono ? 'truncate font-mono text-sm font-medium' : 'text-sm font-medium'}>
+        {v}
+      </div>
     </div>
   );
 }

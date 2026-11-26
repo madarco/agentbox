@@ -64,14 +64,14 @@ export function SubsIndicator() {
   const idle = accounts.filter((a) => a.kind !== 'api-key' && a.boxes.length === 0).length;
 
   return (
-    <div className="relative max-sm:hidden" ref={ref} onMouseEnter={show} onMouseLeave={hide}>
+    <div className="relative" ref={ref} onMouseEnter={show} onMouseLeave={hide}>
       <button
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={`Subscriptions: ${shown.length ? shown.map(say).join('; ') : 'none in use'}`}
         className={cn(
-          'inline-flex h-9 cursor-pointer items-center gap-3.5 rounded-lg border border-transparent bg-transparent px-2.5 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+          'inline-flex h-9 cursor-pointer items-center gap-3.5 rounded-lg max-sm:px-1.5 border border-transparent bg-transparent px-2.5 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
           open && 'bg-secondary',
         )}
         // Opens only: hover has usually opened it already, and a toggle would
@@ -79,17 +79,21 @@ export function SubsIndicator() {
         onClick={show}
         onFocus={show}
       >
-        {shown.map((a) => {
+        {/* On a phone: the closest subscription's glyph and percent only. */}
+        {shown.map((a, i) => {
           const Icon = subGlyph(a);
           const full = a.limits?.atLimit === true;
           const pct = Math.min(100, topPct(a));
           // The highest windows, so the one the percent is read from is drawn.
           const windows = [...(a.limits?.windows ?? [])].sort((x, y) => y.pct - x.pct).slice(0, 2);
           return (
-            <span key={subscriptionKey(a)} className="flex items-center gap-2">
+            <span
+              key={subscriptionKey(a)}
+              className={cn('flex items-center gap-2', i > 0 && 'max-sm:hidden')}
+            >
               <Icon className="size-[13px] flex-none text-secondary-foreground" />
               {windows.length ? (
-                <span className="flex w-11 flex-col gap-[3px]" aria-hidden="true">
+                <span className="flex w-11 flex-col gap-[3px] max-sm:hidden" aria-hidden="true">
                   {windows.map((w) => (
                     <span
                       key={w.id}
@@ -109,7 +113,7 @@ export function SubsIndicator() {
                   full
                     ? 'font-medium text-[var(--red)]'
                     : pct >= 80
-                      ? 'text-[#6a4e0c]'
+                      ? 'text-[var(--amber-ink)]'
                       : 'text-secondary-foreground',
                 )}
               >
@@ -119,14 +123,14 @@ export function SubsIndicator() {
           );
         })}
         {ranked.length > shown.length ? (
-          <span className="font-mono text-[11px] text-muted-foreground">
+          <span className="font-mono text-[11px] text-muted-foreground max-sm:hidden">
             +{ranked.length - shown.length}
           </span>
         ) : null}
         {!shown.length ? (
           <span className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
             <Icons.gauge className="size-[13px]" />
-            Quota
+            <span className="max-sm:hidden">Quota</span>
           </span>
         ) : null}
       </button>
@@ -134,7 +138,7 @@ export function SubsIndicator() {
         <div
           role="dialog"
           aria-label="Subscriptions in use"
-          className="absolute right-0 top-[calc(100%+6px)] z-40 w-[340px] rounded-xl border border-border bg-card shadow-[0_18px_40px_-18px_rgba(20,24,30,.35)]"
+          className="absolute right-0 top-[calc(100%+6px)] z-40 w-[340px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-card shadow-[0_18px_40px_-18px_rgba(20,24,30,.35)]"
         >
           <div className="flex items-center border-b border-border/60 px-3.5 py-2.5 text-[13px] font-medium">
             Subscriptions in use
@@ -167,7 +171,7 @@ export function SubsIndicator() {
                 </div>
                 <SubMeters account={a} compact />
                 {full ? (
-                  <div className="mt-2.5 flex items-start gap-1.5 text-[11.5px] text-[#6a4e0c]">
+                  <div className="mt-2.5 flex items-start gap-1.5 text-[11.5px] text-[var(--amber-ink)]">
                     <Icons.warn className="mt-px size-3 flex-none" />
                     <span>At its limit: its boxes wait until a window resets.</span>
                   </div>

@@ -17,15 +17,16 @@ function ShellFrame({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   return (
-    <div className="grid min-h-[calc(100vh-var(--banner-h,0px))] grid-cols-[232px_minmax(0,1fr)] max-md:grid-cols-1">
+    <div className="app-grid grid min-h-[calc(100vh-var(--banner-h,0px))] bg-sidebar">
       <div
-        className="pointer-events-none fixed inset-0 z-40 bg-[rgba(20,24,30,.4)] opacity-0 transition-opacity [body.nav-open_&]:pointer-events-auto [body.nav-open_&]:opacity-100"
+        className="pointer-events-none fixed inset-0 z-40 bg-black/50 opacity-0 transition-opacity [body.nav-open_&]:pointer-events-auto [body.nav-open_&]:opacity-100"
         onClick={() => document.body.classList.remove('nav-open')}
       />
       <AppSidebar />
-      <main className="flex min-w-0 flex-col">
+      {/* The page sits on a raised panel inset from the sidebar's paper. */}
+      <main className="flex min-h-[calc(100vh-var(--banner-h,0px)-1rem)] min-w-0 flex-col rounded-xl bg-background shadow-sm ring-1 ring-black/[.04] md:my-2 md:mr-2 dark:ring-white/[.06] max-md:rounded-none">
         <Topbar />
-        {children}
+        <div className="min-w-0 flex-1">{children}</div>
       </main>
     </div>
   );

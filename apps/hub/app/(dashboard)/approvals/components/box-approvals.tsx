@@ -10,7 +10,9 @@ import { ApprovalActions } from './approval-actions';
 // the row (and the whole block when the box's last approval is answered).
 export function BoxApprovals({ boxId }: { boxId: string }) {
   const { state } = useStore();
-  const approvals = state.approvals.filter((a) => a.boxId === boxId).sort((a, b) => a.createdAt - b.createdAt);
+  const approvals = state.approvals
+    .filter((a) => a.boxId === boxId)
+    .sort((a, b) => a.createdAt - b.createdAt);
   if (approvals.length === 0) return null;
 
   return (
@@ -26,10 +28,20 @@ export function BoxApprovals({ boxId }: { boxId: string }) {
         {approvals.map((a) => (
           <div key={a.id} className="flex items-start gap-3 px-4 py-3">
             <div className="min-w-0 flex-1">
-              <div className="truncate font-mono text-[13px] text-secondary-foreground">{a.command ?? a.message}</div>
-              {a.detail ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{a.detail}</div> : null}
-              {a.cwd ? <div className="mt-0.5 truncate font-mono text-[11px] text-[#a4a9b0]">{a.cwd}</div> : null}
-              <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
+              <div className="truncate font-mono text-[13px] text-secondary-foreground">
+                {a.command ?? a.message}
+              </div>
+              {a.detail ? (
+                <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground">
+                  {a.detail}
+                </div>
+              ) : null}
+              {a.cwd ? (
+                <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--faint)]">
+                  {a.cwd}
+                </div>
+              ) : null}
+              <div className="mt-0.5 font-mono text-[11px] text-[var(--faint)]">
                 <Ago ms={a.createdAt} />
               </div>
             </div>

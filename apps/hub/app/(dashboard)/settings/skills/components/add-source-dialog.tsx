@@ -42,7 +42,7 @@ function Tab({
       className={cn(
         'cursor-pointer rounded-md border px-2.5 py-1 text-xs',
         active
-          ? 'border-[var(--green-line)] bg-accent text-primary'
+          ? 'border-[var(--green-line)] bg-[var(--green-soft)] text-primary'
           : 'border-border bg-card text-muted-foreground hover:text-foreground',
       )}
     >
@@ -78,7 +78,7 @@ function Candidate({
       <div className="min-w-0 flex-1">
         <div className="font-mono text-[13px]">{c.name}</div>
         <div className="line-clamp-2 text-xs text-muted-foreground">{c.description}</div>
-        <div className="mt-0.5 font-mono text-[11px] text-[#a4a9b0]">
+        <div className="mt-0.5 font-mono text-[11px] text-[var(--faint)]">
           {c.path || '.'} · {fmtBytes(c.size)} · {c.files} file{c.files === 1 ? '' : 's'}
         </div>
         {c.problems.map((p, i) => (
@@ -291,7 +291,7 @@ export function AddSourceDialog({
 
         {found ? (
           <>
-            <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[#a4a9b0]">
+            <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[var(--faint)]">
               {found.candidates.length} skill{found.candidates.length === 1 ? '' : 's'} at{' '}
               {found.commit.slice(0, 12)}
             </div>

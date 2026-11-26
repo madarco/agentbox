@@ -1,14 +1,26 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useTheme } from 'next-themes';
 import { useId, useState, type ReactNode } from 'react';
-import { cn } from '@/lib/utils';
+import { AddProjectButton } from '@/app/(dashboard)/boxes/components/add-project-modal';
 import { Icons, type Icon } from '@/components/icons';
-import { Avatar } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
+import { useSidebarCollapsed } from '@/components/shell-state';
+import { MenuItem, MenuLabel, MenuSeparator, Popover } from '@/components/ui/popover';
 import { useAccounts } from '@/lib/accounts-client';
+import { signOut } from '@/lib/auth.client';
 import { useStore } from '@/lib/boxes/store';
+import { cn } from '@/lib/utils';
+
+const itemClass = (active: boolean | undefined, sub?: boolean) =>
+  cn(
+    'sb-center group/item flex w-full cursor-pointer items-center gap-2 rounded-md border-0 bg-transparent text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
+    sub ? 'h-7 px-2 text-[13px]' : 'h-8 px-2 text-sm',
+    active
+      ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+      : 'text-sidebar-foreground hover:bg-sidebar-hover hover:text-foreground',
+  );
 
 function SideItem({
   active,
@@ -18,82 +30,96 @@ function SideItem({
   label,
   count,
   note,
-  ext,
-  child,
+  sub,
 }: {
   active?: boolean;
+  /** In-app route. */
   to?: string;
+  /** External link, opened in a new tab. */
   href?: string;
   icon?: Icon;
-  label: ReactNode;
+  label: string;
   count?: number;
   /** A short warning in place of a count (`1 at limit`). */
   note?: string;
-  ext?: boolean;
-  /** Nested under a parent item: smaller, no icon. */
-  child?: boolean;
+  sub?: boolean;
 }) {
-  const className = cn(
-    'flex w-full cursor-pointer items-center gap-2.5 rounded-lg border-0 bg-transparent px-2 text-left transition-colors',
-    child ? 'py-[5px] text-[13px]' : 'py-[7px] text-[13.5px]',
-    active
-      ? 'bg-accent font-medium text-accent-foreground'
-      : 'text-secondary-foreground hover:bg-secondary hover:text-foreground',
-  );
   const inner = (
     <>
-      {IconComp ? (
-        <IconComp
-          className={cn('size-4 flex-none', active ? 'text-primary' : 'text-muted-foreground')}
-        />
+      {IconComp ? <IconComp className="size-4 flex-none" /> : null}
+      <span className="sb-hide min-w-0 flex-1 truncate">{label}</span>
+      {count !== undefined ? (
+        <span className="sb-hide ml-auto min-w-5 rounded-md px-1.5 text-center text-xs font-medium tabular-nums text-muted-foreground">
+          {count}
+        </span>
       ) : null}
-      {label}
-      {count !== undefined ? <Count active={active}>{count}</Count> : null}
-      {note ? <span className="ml-auto font-mono text-[10.5px] text-[#6a4e0c]">{note}</span> : null}
-      {ext ? <Icons.ext className="ml-auto size-[13px] text-[#a4a9b0]" /> : null}
+      {note ? (
+        <span className="sb-hide ml-auto rounded-md bg-[var(--amber-soft)] px-1.5 text-xs font-medium text-[var(--amber-ink)]">
+          {note}
+        </span>
+      ) : null}
+      {href ? <Icons.ext className="sb-hide ml-auto size-3.5 text-muted-foreground" /> : null}
     </>
   );
-
   if (href) {
     return (
-      <a className={className} href={href} target="_blank" rel="noopener">
+      <a
+        className={itemClass(active, sub)}
+        href={href}
+        target="_blank"
+        rel="noopener"
+        title={label}
+      >
         {inner}
       </a>
     );
   }
   return (
-    <Link className={className} href={to ?? '#'} aria-current={active ? 'page' : undefined}>
+    <Link
+      className={itemClass(active, sub)}
+      href={to ?? '#'}
+      title={label}
+      aria-current={active ? 'page' : undefined}
+    >
       {inner}
     </Link>
   );
 }
 
-function Count({ active, children }: { active?: boolean; children: ReactNode }) {
+function SideGroup({
+  label,
+  action,
+  children,
+}: {
+  label: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <Badge
-      className={cn(
-        'ml-auto border-transparent px-2 py-0 text-[11px]',
-        active ? 'bg-card text-primary' : 'bg-secondary text-[#a4a9b0]',
-      )}
-    >
-      {children}
-    </Badge>
+    <div className="px-2 py-1.5">
+      <div className="sb-hide eyebrow flex h-8 items-center px-2">
+        {label}
+        {action ? <span className="ml-auto">{action}</span> : null}
+      </div>
+      <nav aria-label={label} className="flex flex-col gap-0.5">
+        {children}
+      </nav>
+    </div>
   );
 }
 
-type SubItem = { to: string; label: string; count?: number; note?: string; exact?: boolean };
+type SubItem = { to: string; label: string; note?: string; exact?: boolean };
 
 function onRoute(pathname: string, to: string, exact?: boolean): boolean {
   return pathname === to || (!exact && pathname.startsWith(to + '/'));
 }
 
 /**
- * A top-level item with nested links. It opens while the user is on one of its
- * routes and closes when they leave; the chevron toggles it in between. The
- * parent link is a route of its own (its first child), so it carries
- * `aria-current` only when the children are hidden and it stands in for them.
+ * An item with nested links. Open while the user is on one of its routes; the
+ * header toggles it in between. On the icon rail it is a link to its first
+ * child instead.
  */
-function SideGroup({
+function NavGroup({
   to,
   icon: IconComp,
   label,
@@ -105,10 +131,11 @@ function SideGroup({
   items: SubItem[];
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const collapsed = useSidebarCollapsed();
   const within = onRoute(pathname, to);
-  // A manual toggle holds until the user navigates into or out of the group,
-  // where it is dropped (state adjusted during render, React's pattern for
-  // resetting state on a prop change).
+  // A manual toggle holds until the user navigates into or out of the group
+  // (state adjusted during render, React's pattern for resetting on a prop change).
   const [open, setOpen] = useState(within);
   const [wasWithin, setWasWithin] = useState(within);
   if (wasWithin !== within) {
@@ -116,68 +143,46 @@ function SideGroup({
     setOpen(within);
   }
   const listId = useId();
-  const highlight = within && !open;
-
+  const note = items.find((i) => i.note)?.note;
   return (
     <div>
-      <div
-        className={cn(
-          'flex items-center rounded-lg transition-colors',
-          highlight
-            ? 'bg-accent text-accent-foreground'
-            : 'text-secondary-foreground hover:bg-secondary hover:text-foreground',
-        )}
+      <button
+        type="button"
+        title={label}
+        aria-expanded={collapsed ? undefined : open}
+        aria-controls={open && !collapsed ? listId : undefined}
+        onClick={() => (collapsed ? router.push(to) : setOpen(!open))}
+        className={itemClass(within && (collapsed || !open))}
       >
-        <Link
-          href={to}
-          aria-current={highlight ? 'page' : undefined}
+        <IconComp className="size-4 flex-none" />
+        <span className="sb-hide flex-1">{label}</span>
+        {note && !open ? (
+          <span className="sb-hide size-1.5 rounded-full bg-[var(--amber)]" aria-label={note} />
+        ) : null}
+        <Icons.chevR
           className={cn(
-            'flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-lg px-2 py-[7px] text-left text-[13.5px]',
-            within && 'font-medium text-foreground',
+            'sb-hide size-4 text-muted-foreground transition-transform',
+            open && 'rotate-90',
           )}
-        >
-          <IconComp
-            className={cn('size-4 flex-none', within ? 'text-primary' : 'text-muted-foreground')}
-          />
-          {label}
-        </Link>
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-controls={open ? listId : undefined}
-          aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
-          onClick={() => setOpen(!open)}
-          className="mr-1 grid size-6 flex-none cursor-pointer place-items-center rounded-md border-0 bg-transparent text-[#a4a9b0] hover:text-foreground"
-        >
-          <Icons.chevR className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
-        </button>
-      </div>
+        />
+      </button>
       {open ? (
         <div
           id={listId}
-          className="mb-1 ml-[15px] mt-px flex flex-col gap-px border-l border-border pl-2"
+          className="sb-hide ml-[15px] mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border px-2.5 py-0.5"
         >
           {items.map((it) => (
             <SideItem
               key={it.to}
-              child
+              sub
               active={onRoute(pathname, it.to, it.exact)}
               to={it.to}
               label={it.label}
-              count={it.count}
               note={it.note}
             />
           ))}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function SideLabel({ children }: { children: ReactNode }) {
-  return (
-    <div className="px-2 pb-1.5 pt-4 font-mono text-[10.5px] uppercase tracking-[.1em] text-[#a4a9b0]">
-      {children}
     </div>
   );
 }
@@ -190,6 +195,129 @@ const SETTINGS: SubItem[] = [
   { to: '/settings/devices', label: 'Devices' },
   { to: '/settings/system', label: 'System' },
 ];
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const s = parts.length > 1 ? parts[0]![0]! + parts[parts.length - 1]![0]! : name.slice(0, 2);
+  return s.toUpperCase() || '?';
+}
+
+function UserAvatar({ name, size }: { name: string; size: number }) {
+  return (
+    <span
+      className="grid flex-none place-items-center rounded-full bg-primary font-mono font-semibold text-primary-foreground"
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}
+      aria-hidden="true"
+    >
+      {initials(name)}
+    </span>
+  );
+}
+
+function HubHeader() {
+  const { state } = useStore();
+  const mode = state.authMode === 'password' ? 'remote hub' : 'local hub';
+  return (
+    <Link
+      href="/"
+      title="AgentBox hub"
+      className="sb-center flex h-12 w-full items-center gap-2 rounded-md px-2 transition-colors hover:bg-sidebar-hover"
+    >
+      <img src="/logo.svg" alt="" width={32} height={32} className="size-8 flex-none" />
+      <span className="sb-hide grid min-w-0 flex-1 leading-tight">
+        <span className="truncate font-mono text-sm font-semibold">
+          agentbox <span className="font-normal text-muted-foreground/70">/ hub</span>
+        </span>
+        <span className="truncate font-mono text-[11px] text-muted-foreground">{mode}</span>
+      </span>
+    </Link>
+  );
+}
+
+const THEMES = [
+  { id: 'light', label: 'Light', icon: Icons.sun },
+  { id: 'dark', label: 'Dark', icon: Icons.moon },
+  { id: 'system', label: 'System', icon: Icons.layout },
+] as const;
+
+function NavUser() {
+  const router = useRouter();
+  const { state } = useStore();
+  const { theme, setTheme } = useTheme();
+  const { name, login } = state.user;
+  return (
+    <Popover
+      align="start"
+      side="top"
+      className="w-60"
+      trigger={(open, toggle) => (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          title={name}
+          className="sb-center flex h-12 w-full cursor-pointer items-center gap-2 rounded-md border-0 bg-transparent px-2 text-left transition-colors hover:bg-sidebar-hover"
+        >
+          <UserAvatar name={name} size={32} />
+          <span className="sb-hide grid min-w-0 flex-1 leading-tight">
+            <span className="truncate text-sm font-medium">{name}</span>
+            <span className="truncate font-mono text-[11px] text-muted-foreground">@{login}</span>
+          </span>
+          <Icons.chevUD className="sb-hide size-4 text-muted-foreground" />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div>
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <UserAvatar name={name} size={32} />
+            <div className="grid leading-tight">
+              <span className="text-sm font-medium">{name}</span>
+              <span className="text-xs text-muted-foreground">@{login}</span>
+            </div>
+          </div>
+          <MenuSeparator />
+          <MenuLabel>Theme</MenuLabel>
+          {THEMES.map((t) => (
+            <MenuItem
+              key={t.id}
+              icon={t.icon}
+              checked={(theme ?? 'system') === t.id}
+              onClick={() => {
+                setTheme(t.id);
+                close();
+              }}
+            >
+              {t.label}
+            </MenuItem>
+          ))}
+          <MenuSeparator />
+          <MenuItem icon={Icons.book} href="https://agent-box.sh/docs" external onClick={close}>
+            Docs
+          </MenuItem>
+          {state.authMode === 'password' ? (
+            <>
+              <MenuSeparator />
+              <MenuItem
+                icon={Icons.logout}
+                onClick={() => {
+                  close();
+                  void signOut().then(() => {
+                    router.push('/signin');
+                    router.refresh();
+                  });
+                }}
+              >
+                Sign out
+              </MenuItem>
+            </>
+          ) : null}
+        </div>
+      )}
+    </Popover>
+  );
+}
 
 export function AppSidebar() {
   const { state, boxesFor } = useStore();
@@ -204,64 +332,79 @@ export function AppSidebar() {
   const dashActive = pathname === '/' || pathname.startsWith('/boxes');
 
   return (
-    <aside className="shad-side sticky top-[var(--banner-h,0px)] z-50 flex h-[calc(100vh-var(--banner-h,0px))] flex-col self-start overflow-y-auto border-r border-border bg-background px-3.5 pb-4 pt-4 max-md:w-64">
-      <div className="flex items-center gap-2.5 px-2 pb-4 font-mono text-sm font-semibold">
-        <img src="/logo.svg" alt="" width={20} height={20} className="h-5 w-5" />
-        agentbox
-        <span className="font-normal text-[#a4a9b0]">/ hub</span>
+    <aside className="shad-side sticky top-[var(--banner-h,0px)] z-50 flex h-[calc(100vh-var(--banner-h,0px))] flex-col self-start overflow-hidden bg-sidebar text-sidebar-foreground">
+      <div className="p-2">
+        <HubHeader />
       </div>
 
-      <SideLabel>Workspace</SideLabel>
-      <nav className="flex flex-col gap-px">
-        <SideItem
-          active={dashActive}
-          to="/"
-          icon={Icons.grid}
-          label="Dashboard"
-          count={state.boxes.length}
-        />
-        <SideItem
-          active={onRoute(pathname, '/approvals')}
-          to="/approvals"
-          icon={Icons.shield}
-          label="Approvals"
-          count={state.approvals.length}
-        />
-        <SideItem
-          active={onRoute(pathname, '/usage')}
-          to="/usage"
-          icon={Icons.activity}
-          label="Usage"
-        />
-        <SideGroup to="/settings" icon={Icons.settings} label="Settings" items={settingsItems} />
-        <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Docs" ext />
-        <SideItem href="/api/v1/docs" icon={Icons.terminal} label="API" ext />
-      </nav>
-
-      <SideLabel>Projects</SideLabel>
-      <nav className="flex flex-col gap-px">
-        {state.projects.map((p) => (
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <SideGroup label="Platform">
           <SideItem
-            key={p.id}
-            active={pathname === '/projects/' + p.id}
-            to={'/projects/' + p.id}
-            icon={Icons.folder}
-            label={p.name}
-            count={boxesFor(p.id).length}
+            active={dashActive}
+            to="/"
+            icon={Icons.grid}
+            label="Boxes"
+            count={state.boxes.length}
           />
-        ))}
-      </nav>
+          <SideItem
+            active={onRoute(pathname, '/approvals')}
+            to="/approvals"
+            icon={Icons.shield}
+            label="Approvals"
+            note={state.approvals.length > 0 ? String(state.approvals.length) : undefined}
+          />
+          <SideItem
+            active={onRoute(pathname, '/usage')}
+            to="/usage"
+            icon={Icons.activity}
+            label="Usage"
+          />
+        </SideGroup>
 
-      <div className="mt-auto border-t border-border pt-2.5">
-        <div className="flex items-center gap-2.5 px-1.5 pt-1.5">
-          <Avatar fallback="M" />
-          <div className="text-[12.5px] leading-tight">
-            {state.user.name}
-            <span className="block font-mono text-[11px] text-muted-foreground">
-              @{state.user.login}
-            </span>
-          </div>
+        {/* Multi-user slot: the Team group (Members, Triggers, Team settings) and
+            the "My profile" group go here once the hub has users and teams
+            (docs/hub-redesign-plan.md, Phase 2). Until then Settings is one group. */}
+        <SideGroup label="You">
+          <NavGroup to="/settings" icon={Icons.settings} label="Settings" items={settingsItems} />
+        </SideGroup>
+
+        <SideGroup
+          label="Projects"
+          action={
+            <AddProjectButton
+              trigger={(open) => (
+                <button
+                  type="button"
+                  aria-label="New project"
+                  title="New project"
+                  onClick={open}
+                  className="grid size-5 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted-foreground hover:bg-sidebar-hover hover:text-foreground"
+                >
+                  <Icons.plus className="size-3.5" />
+                </button>
+              )}
+            />
+          }
+        >
+          {state.projects.map((p) => (
+            <SideItem
+              key={p.id}
+              active={pathname === '/projects/' + p.id}
+              to={'/projects/' + p.id}
+              icon={Icons.folder}
+              label={p.name}
+              count={boxesFor(p.id).length}
+            />
+          ))}
+        </SideGroup>
+      </div>
+
+      <div className="p-2">
+        <div className="mb-1 flex flex-col gap-0.5">
+          <SideItem href="https://agent-box.sh/docs" icon={Icons.book} label="Documentation" />
+          <SideItem href="/api/v1/docs" icon={Icons.terminal} label="API reference" />
         </div>
+        <NavUser />
       </div>
     </aside>
   );

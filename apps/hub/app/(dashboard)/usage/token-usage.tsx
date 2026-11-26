@@ -315,7 +315,9 @@ function Tile({
 }) {
   return (
     <Card className="p-4 px-5" title={exact ?? value?.toLocaleString()}>
-      <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[#a4a9b0]">{label}</div>
+      <div className="font-mono text-[11px] uppercase tracking-[.1em] text-[var(--faint)]">
+        {label}
+      </div>
       <div className="mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.02em]">
         {text ?? fmt(value ?? 0)}
       </div>
@@ -391,7 +393,7 @@ function DailyChart({ groups, days }: { groups: Group[]; days: number }) {
       {asTable ? (
         <div className="overflow-x-auto">
           <table className="w-full text-[12.5px] tabular-nums">
-            <thead className="text-left font-mono text-[11px] uppercase text-[#a4a9b0]">
+            <thead className="text-left font-mono text-[11px] uppercase text-[var(--faint)]">
               <tr>
                 <th className="py-1 pr-4 font-normal">Day</th>
                 {agents.map((a) => (
@@ -439,7 +441,7 @@ function DailyChart({ groups, days }: { groups: Group[]; days: number }) {
                   x={padL - 6}
                   y={8 + plotH - y(t) + 4}
                   textAnchor="end"
-                  className="fill-[#a4a9b0] text-[11px]"
+                  className="fill-[var(--faint)] text-[11px]"
                 >
                   {fmt(Math.round(t))}
                 </text>
@@ -484,7 +486,7 @@ function DailyChart({ groups, days }: { groups: Group[]; days: number }) {
                       x={x + barW / 2}
                       y={H - 6}
                       textAnchor="middle"
-                      className="fill-[#a4a9b0] text-[11px]"
+                      className="fill-[var(--faint)] text-[11px]"
                     >
                       {d.slice(5)}
                     </text>
@@ -534,7 +536,7 @@ function Breakdown({
   return (
     <Card className="overflow-x-auto">
       <table className="w-full text-[12.5px] tabular-nums">
-        <thead className="text-left font-mono text-[11px] uppercase text-[#a4a9b0]">
+        <thead className="text-left font-mono text-[11px] uppercase text-[var(--faint)]">
           <tr>
             <th className="px-5 py-2 font-normal">
               {dim === 'host' ? 'PC' : dim === 'account' ? 'subscription' : dim}

@@ -1,11 +1,17 @@
 import type { ReactNode } from 'react';
-import { Icons } from '@/components/icons';
+import { Icons, type Icon } from '@/components/icons';
 
-export function EmptyBox({ children }: { children: ReactNode }) {
+export function EmptyBox({
+  children,
+  icon: IconComp = Icons.box,
+}: {
+  children: ReactNode;
+  icon?: Icon;
+}) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card px-5 py-9 text-center text-[13.5px] text-muted-foreground">
-      <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-lg border border-border text-[#a4a9b0]">
-        <Icons.box className="size-5" />
+    <div className="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+      <div className="mb-4 grid size-10 place-items-center rounded-lg border border-border bg-background text-foreground shadow-sm">
+        <IconComp className="size-5" />
       </div>
       {children}
     </div>

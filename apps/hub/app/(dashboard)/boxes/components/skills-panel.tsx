@@ -128,7 +128,7 @@ function BoxSkills({ id, running }: { id: string; running: boolean }) {
     <>
       <SectionLabel
         right={
-          <span className="font-mono text-[11px] tracking-normal text-[#a4a9b0]">
+          <span className="font-mono text-[11px] tracking-normal text-[var(--faint)]">
             {data.box.skills.length} in box
             {behind > 0 ? <span className="text-[var(--amber)]"> · {behind} behind</span> : null}
           </span>
@@ -188,7 +188,7 @@ function BoxSkills({ id, running }: { id: string; running: boolean }) {
                   <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-secondary-foreground">
                     {name}
                   </span>
-                  <span className="font-mono text-[11px] text-[#a4a9b0]">
+                  <span className="font-mono text-[11px] text-[var(--faint)]">
                     {!h
                       ? 'not in box'
                       : !inLibrary

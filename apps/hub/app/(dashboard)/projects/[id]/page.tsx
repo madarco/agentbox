@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation';
 import { Ago } from '@/components/ago';
 import { Icons } from '@/components/icons';
+import { Button } from '@/components/ui/button';
 import { useStore } from '@/lib/boxes/store';
 import { BackLink } from '../../boxes/components/back-link';
 import { BoxTable } from '../../boxes/components/box-table';
@@ -26,9 +27,9 @@ export default function ProjectDetailPage() {
 
   if (!proj) {
     return (
-      <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8">
-        <BackLink to="/">Dashboard</BackLink>
-        <EmptyBox>Project not found.</EmptyBox>
+      <div className="mx-auto w-full max-w-[1180px] px-6 pb-16 pt-6 max-sm:px-4">
+        <BackLink to="/">All boxes</BackLink>
+        <EmptyBox icon={Icons.folder}>Project not found.</EmptyBox>
       </div>
     );
   }
@@ -40,40 +41,37 @@ export default function ProjectDetailPage() {
   const href = origin ? originHref(origin) : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <BackLink to="/">All projects</BackLink>
+    <div className="mx-auto w-full max-w-[1180px] px-6 pb-16 pt-6 max-sm:px-4">
+      <BackLink to="/">All boxes</BackLink>
 
       <div className="flex items-start gap-4 max-md:flex-col">
         <div className="min-w-0">
-          <h1 className="flex items-center gap-3 text-[25px] font-semibold leading-tight tracking-[-0.025em]">
-            <span className="grid h-[26px] w-[26px] flex-none place-items-center rounded-md border border-[var(--green-line)] bg-accent text-primary">
+          <h1 className="flex items-center gap-3 text-[26px] font-semibold leading-tight tracking-[-0.025em]">
+            <span className="grid size-[26px] flex-none place-items-center rounded-md border border-[var(--green-line)] bg-[var(--green-soft)] text-[var(--green-ink)]">
               <Icons.folder className="size-[15px]" />
             </span>
-            {proj.name}
+            <span className="min-w-0 [overflow-wrap:anywhere]">{proj.name}</span>
           </h1>
-          <div className="mt-1.5 text-sm text-muted-foreground">
-            {origin ? (
-              href ? (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener"
-                  className="font-mono text-secondary-foreground hover:text-primary"
-                >
-                  {origin}
-                </a>
-              ) : (
-                <span className="font-mono text-secondary-foreground">{origin}</span>
-              )
-            ) : (
-              <span className="font-mono text-secondary-foreground">{proj.repo}</span>
-            )}{' '}
+          <div className="mt-1.5 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+            <span className="font-mono text-secondary-foreground">{origin ?? proj.repo}</span>
+            {branch ? (
+              <>
+                {' '}
+                · branch <span className="font-mono text-secondary-foreground">{branch}</span>
+              </>
+            ) : null}{' '}
             · {proj.provider}
           </div>
         </div>
-        <div className="ml-auto flex flex-none gap-2 max-md:ml-0">
-          <CreateBoxButton project={proj} />
+        <div className="ml-auto flex flex-none flex-wrap gap-2 max-md:ml-0">
+          {href ? (
+            <Button variant="outline" href={href} target="_blank" rel="noopener">
+              <Icons.repo />
+              Repo
+            </Button>
+          ) : null}
           {boxes.length === 0 ? <DeleteProjectButton project={proj} redirectHome /> : null}
+          <CreateBoxButton project={proj} />
         </div>
       </div>
 
@@ -82,7 +80,6 @@ export default function ProjectDetailPage() {
           <Stat k="Boxes" v={boxes.length} icon={Icons.box} />
           <Stat k="Running" v={running} icon={Icons.activity} />
           <Stat k="Provider" v={proj.provider} mono />
-          <Stat k="Branch" v={branch || '—'} mono icon={Icons.branch} />
           <Stat k="Created" v={<Ago ms={proj.createdAt} />} mono />
         </StatGrid>
       </div>
@@ -99,7 +96,8 @@ export default function ProjectDetailPage() {
         <BoxTable boxes={boxes} />
       ) : (
         <EmptyBox>
-          <div>No boxes yet.</div>
+          <div className="font-medium text-foreground">No boxes yet</div>
+          <div className="mt-1">Create one to start an agent on this project.</div>
         </EmptyBox>
       )}
     </div>

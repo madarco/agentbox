@@ -182,7 +182,7 @@ export default function SubscriptionsPage() {
               <div key={g.title}>
                 <SectionLabel
                   right={
-                    <span className="font-mono text-[11px] normal-case tracking-normal text-[#a4a9b0]">
+                    <span className="font-mono text-[11px] normal-case tracking-normal text-[var(--faint)]">
                       {g.title === 'API keys'
                         ? 'pay as you go'
                         : `${String(g.accounts.length)} ${g.accounts.length === 1 ? 'account' : 'accounts'}`}
@@ -410,7 +410,7 @@ function SubscriptionCard({
         <SubMeters account={a} />
       </div>
       {atLimit && n ? (
-        <div className="mt-3 flex items-start gap-2 border-t border-[var(--amber-line)] pt-2.5 text-xs text-[#6a4e0c]">
+        <div className="mt-3 flex items-start gap-2 border-t border-[var(--amber-line)] pt-2.5 text-xs text-[var(--amber-ink)]">
           <Icons.warn className="mt-px size-3.5 flex-none" />
           <span>
             {a.boxes.join(', ')} {n === 1 ? 'runs' : 'run'} on this account, which is at its limit

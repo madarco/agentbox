@@ -18,7 +18,7 @@ Use the /screenshot skill to capture screenshots of terminal windows and GUI win
 | `web-app.png` | web-apps-and-tunnels | done (2026-06-02, wrapped in a browser chrome showing the web.localhost address bar) | A |
 | `novnc-desktop.png` | access-your-box, browser-and-screen | **stale** — predates the JWM window manager + bottom dock; recapture so the dock is visible (it now paints the wallpaper's own #f5f3f0, so it reads as free-floating icons, not a dark strip) (last done 2026-06-02, in-box browser shows the app; wrapped in a fake browser chrome → browser-in-browser) | A |
 | `agentbox-ls.png` | background-and-parallel | done (2026-06-02, recaptured) | B |
-| `hub-dashboard.png` | hub (hero) | **stale** — the sidebar now nests Settings → General/Subscriptions/Skills/Files/Devices/System (hub settings Phase 1); rows now show the working-on line and a token figure with context fill (live status, Phase 4); recapture with an agent mid-turn (last done 2026-07-12, headless capture of the hub at 2x zoom) | A |
+| `hub-dashboard.png` | hub (hero) | recaptured 2026-11-26 for the hub redesign (Phase 1, `docs/hub-redesign-plan.md`): figures, Your day lanes, Live now, Recent activity. Taken on a fresh box with no pushes yet, so the week bars and lanes are thin; recapture after a day of real work with agents mid-turn | A |
 | `dashboard.png` | access-your-box, background-and-parallel, cli | done (2026-06-02, recaptured) | C |
 | `claude-tui.png` | run-an-agent, cli | done (2026-06-02) | C |
 | `cursor.png` | access-your-box (Cursor / Dev Containers) | done (2026-06-02) | C |
@@ -283,7 +283,7 @@ playwright-cli --session=v screenshot   # raw 1044x800 desktop canvas -> /tmp/no
 > # crop to 1140x978 (even 44px paper margin) -> novnc-desktop.png
 > ```
 
-**`hub-dashboard.png`** → hub. The hub's Boxes dashboard, boxes grouped by project.
+**`hub-dashboard.png`** → hub. The hub's Dashboard: today's figures, the lanes of each box's day, Live now and Recent activity (the box table is below the crop).
 
 Two things make or break this shot, and both are about *what the registry holds*,
 not about the capture:

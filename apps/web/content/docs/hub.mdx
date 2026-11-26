@@ -30,14 +30,22 @@ a cookie (30 days) and strips it from the address, so from then on a plain
 
 <Figure
   src="/screenshots/hub-dashboard.png"
-  caption="The hub dashboard — boxes grouped by project, with live status and lifecycle controls."
+  caption="The hub dashboard: today's figures, each box's day, live boxes and recent activity, then the box table."
 />
 
 ## What's in it
 
-- **Dashboard** — every box on this machine, grouped by project, with live status
-  (running / paused / stopped / error) and per-box **pause / resume / stop /
-  destroy** controls. Each row also shows what the agent is on: the session's
+- **Dashboard** — the day at a glance, then every box on this machine. Four
+  figures head it: boxes working now (with the last 12 hours' load), agent-hours
+  today, commits and merged pull requests today, and tokens today. **Your day**
+  draws one lane per box over the last 12 hours: running and paused stretches,
+  pushes and merged pull requests. **Live now** lists the running boxes,
+  **Recent activity** the newest pushes, pull requests and box events,
+  **Shipped this week** the commits per day, and **Needs a hand** the boxes in
+  error and the subscriptions at their limit. The box table under it filters by
+  text, status and project, and shows the boxes in one list or grouped by
+  project. Each row has a menu with **pause / resume / stop / rename /
+  destroy**, and shows what the agent is on: the session's
   title (when it differs from the box's task, which defaults to it), a **working-on** line (the tool call or step it is running, shown only
   while the agent is working, waiting on a permission or asking a question) and
   the session's **tokens**, with a context-fill bar; hover the figure for the
@@ -178,9 +186,14 @@ clean URL is what the box's desktop sees (the redirect also sends
 **password-profile** hub — a deployed control box — page routes require a real
 login instead, so the first such click of a session lands on `/signin`.
 
-The hub's configuration pages sit under **Settings** in the sidebar, which opens
-to its sub-pages: **General** (providers, remote docker hosts, GitHub),
-**Subscriptions**, **Skills**, **Files**, **Devices** and **System**.
+The sidebar holds **Boxes**, **Approvals** and **Usage**, then **Settings**,
+which opens to its sub-pages: **General** (providers, remote docker hosts, GitHub),
+**Subscriptions**, **Skills**, **Files**, **Devices** and **System**. Under them
+are your projects, with **+** to add one. **⌘B** (Ctrl+B) collapses the sidebar
+to icons, **⌘K** (Ctrl+K) opens a search over boxes, pages and projects, and the
+top bar's sun/moon button switches between light and dark. The menu under your
+name at the bottom of the sidebar picks **Light**, **Dark** or **System** (follow the
+OS, the default). The browser remembers both the sidebar and the theme.
 
 The **Settings → Subscriptions** page (`/settings/subscriptions`) lists the machine's named LLM accounts (logins, setup
 tokens, API keys per agent) as cards grouped by **Anthropic**, **OpenAI Codex** and

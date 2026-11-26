@@ -32,7 +32,7 @@ export function AgentLiveLine({ box }: { box: Box }) {
   return (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
       {title ? <span className="max-w-[50%] flex-none truncate">{title}</span> : null}
-      {title && activity ? <span className="flex-none text-[#a4a9b0]">·</span> : null}
+      {title && activity ? <span className="flex-none text-[var(--faint)]">·</span> : null}
       {activity ? <WorkingOn text={activity} /> : null}
     </div>
   );
@@ -62,7 +62,7 @@ export function UsageFigure({ usage, className }: { usage?: AgentLiveUsage; clas
       <TooltipTrigger asChild>
         <span
           className={cn(
-            'inline-flex cursor-default items-center gap-1.5 font-mono text-[11px] text-[#a4a9b0]',
+            'inline-flex cursor-default items-center gap-1.5 font-mono text-[11px] text-[var(--faint)]',
             className,
           )}
         >
@@ -94,7 +94,7 @@ function ContextBar({ pct }: { pct: number }) {
         <span
           className={cn(
             'absolute inset-y-0 left-0 rounded-full',
-            pct >= 90 ? 'bg-[var(--red)]' : pct >= 70 ? 'bg-[var(--amber)]' : 'bg-[#a4a9b0]',
+            pct >= 90 ? 'bg-[var(--red)]' : pct >= 70 ? 'bg-[var(--amber)]' : 'bg-[var(--faint)]',
           )}
           style={{ width: `${String(pct)}%` }}
         />
@@ -110,12 +110,6 @@ function ContextBar({ pct }: { pct: number }) {
  */
 function distinctTitle(title: string | undefined, task: string): string | undefined {
   return title && title.trim() !== task.trim() ? title : undefined;
-}
-
-/** Usage figure for a box row's status cell (the primary agent's). */
-export function BoxUsageFigure({ box }: { box: Box }) {
-  const live = primaryLive(box);
-  return <UsageFigure usage={live?.entry.usage} />;
 }
 
 /** One agent's live rows for the box detail page; empty when it has nothing. */
