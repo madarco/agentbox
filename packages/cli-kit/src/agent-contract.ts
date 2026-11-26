@@ -225,7 +225,7 @@ export interface AgentRuntime {
   /**
    * True when this runtime honours `ensureVolume({ account })` and
    * `signIn({ volume })`, so a named login lands in the account's own volume.
-   * `<agent> login --account` refuses a `login` account without it.
+   * `agentbox credentials add <agent>/<name> --login` refuses a `login` account without it.
    */
   supportsAccountLogin?: boolean;
   /** Guided-login binding — used by `agentbox <agent> login` machinery. */

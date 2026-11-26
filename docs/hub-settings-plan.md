@@ -1,5 +1,7 @@
 # Hub settings: one Settings section, subscriptions with limits and switching, skills, files — plan
 
+> **2026-11-26:** `agentbox accounts` and `<agent> login --account/--setup-token/--api-key` are now `agentbox credentials` (`list`, `add`, `renew`, `use`, `rm`, `label`, `switch`); see [`credentials-tui-plan.md`](./credentials-tui-plan.md). Command names below are as they were when this was written.
+
 **Status:** Phases 1, 2, 3a, 3b, 3c and 4 done (2026-11-25, `feat/hub-settings-nav`,
 `feat/hub-settings-skills`, `feat/hub-settings-subs`, `feat/hub-settings-limits`,
 `feat/hub-settings-switch`, `feat/hub-settings-files`), plus the per-skill skip

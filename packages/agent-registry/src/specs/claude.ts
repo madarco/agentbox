@@ -242,7 +242,7 @@ export const claudeSpec: AgentSyncSpec = {
       type: 'string',
       default: 'default',
       description:
-        "Named LLM account new boxes of this agent run on (`agentbox accounts` lists them; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
+        "Named LLM account new boxes of this agent run on (`agentbox credentials` lists them, `agentbox credentials use` sets it; `default` is the plain login). Read from your global or per-project config only - a repo's agentbox.yaml cannot choose it. Recorded on the box at create; `--account` overrides it.",
       // Not affectsBake and not launch env: the account is resolved at create
       // (resolveAgentAccount), recorded on the box, and never read again.
     },

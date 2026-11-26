@@ -1,5 +1,7 @@
 # LLM accounts — backlog
 
+> **2026-11-26:** `agentbox accounts` and `<agent> login --account/--setup-token/--api-key` are now `agentbox credentials` (`list`, `add`, `renew`, `use`, `rm`, `label`, `switch`); see [`credentials-tui-plan.md`](./credentials-tui-plan.md). Command names below are as they were when this was written.
+
 Live list of open items found while building [`llm-accounts-plan.md`](./llm-accounts-plan.md).
 Newest phase last.
 

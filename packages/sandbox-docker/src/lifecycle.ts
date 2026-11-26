@@ -205,7 +205,7 @@ export function boxAgentConfigVolumes(box: BoxRecord): { agent: string; volume?:
       e.volume !== undefined &&
       e.volume !== agentSpecById(e.agent)?.dockerVolume &&
       // A named LLM account's volume is the ACCOUNT's live login and history,
-      // shared by every box on it — not this box's. Only `agentbox accounts rm`
+      // shared by every box on it — not this box's. Only `agentbox credentials rm`
       // removes it (same rule as `prune`).
       !e.volume.includes(ACCOUNT_NAME_INFIX),
   );
@@ -970,7 +970,7 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
     orphanContainers = liveContainers.filter((c) => !expectedContainers.has(c));
     // A named LLM account's config volume is not an orphan when no box uses
     // it: it is the account's live login (llm-accounts Phase 3), removed only
-    // by `agentbox accounts rm`. `agent add` refuses the infix in a base volume
+    // by `agentbox credentials rm`. `agent add` refuses the infix in a base volume
     // name, so it identifies these exactly.
     orphanVolumes = liveVolumes.filter(
       (v) => !expectedVolumes.has(v) && !v.includes(ACCOUNT_NAME_INFIX),

@@ -160,7 +160,7 @@ export async function resolveBoxAccounts(o: {
     const row = findAccount(file, spec.id, id);
     if (!row) {
       throw new Error(
-        `no ${spec.id} account '${id}' on this machine: add it with \`agentbox ${spec.id} login --account ${id}\` (see \`agentbox accounts\`)`,
+        `no ${spec.id} account '${id}' on this machine: add it with \`agentbox credentials add ${spec.id}/${id}\` (see \`agentbox credentials\`)`,
       );
     }
     if (o.loginOnly?.includes(spec.id) && row.kind !== 'login') {

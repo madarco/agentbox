@@ -186,7 +186,7 @@ export class CredentialsFanout {
     // Only a LOGIN account takes a login. A pasted-kind account's secret is
     // its token (a login there would replace it and break every box on it),
     // and an account the store no longer has must not be re-created by a
-    // late update (`accounts rm` already removed it).
+    // late update (`credentials rm` already removed it).
     if (!isDefault) {
       const kind = await this.accountKindFor(update.agent, account).catch(() => undefined);
       if (kind !== 'login') {
