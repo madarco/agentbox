@@ -18,7 +18,8 @@ const pad = (n: number): string => String(n).padStart(2, '0');
 /**
  * The `/api/v1/usage/stats` query for a range. `today` is the viewer's local
  * day (YYYY-MM-DD) in `tz`. "This month" runs to the month's last day, so the
- * view draws the rest of it as forecast; the others end today.
+ * view draws the rest of it as forecast; the others end on the hub's today
+ * (no `until`), so a browser clock ahead of the hub's adds no forecast day.
  */
 export function usageStatsQuery(
   range: RangeId,
@@ -34,7 +35,6 @@ export function usageStatsQuery(
     q.set('until', `${String(y)}-${pad(m)}-${pad(last)}`);
   } else {
     q.set('since', range === 'year' ? '365d' : range);
-    q.set('until', today);
   }
   if (subscription) q.set('subscription', subscription);
   return q;

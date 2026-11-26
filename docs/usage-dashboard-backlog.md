@@ -20,6 +20,14 @@ Open items found while building the phases of
 - **The Recently merged feed and session titles are still empty / generic** (the
   Phase 2 items): the page passes nothing extra yet.
 - **Agent logos are still duplicated** between the hub and `usage-view`.
+- **"This month" is computed from the browser's clock.** The page sends the month's
+  first and last day; a browser clock past midnight on the last day of a month, ahead
+  of the hub's, asks for a `since` in the hub's future and gets a 400 until the hub's
+  day turns. The rolling ranges send no `until` and are safe. A `since=month` form on
+  the endpoint would remove it.
+- **`range.id` gained `30d`.** A client that decodes `range.id` with a closed enum
+  (the tray, an older agent-box.sh share endpoint) must accept it; deploy apps/web
+  before hubs share a `30d` window.
 - **CSV is per day only.** Sessions, boxes and projects are not exported; the token
   breakdown has its own view but no export.
 

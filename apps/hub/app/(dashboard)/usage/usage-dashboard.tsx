@@ -72,6 +72,8 @@ export function UsageDashboard({ tokensHref }: { tokensHref: string }) {
   const seq = useRef(0);
 
   const load = useCallback(async () => {
+    // A subscription this hub has never heard of has nothing to show.
+    if (unknown) return;
     const n = ++seq.current;
     try {
       const s = await fetchStats(usageStatsQuery(range, localDay(), browserZone(), subscription));
@@ -82,7 +84,7 @@ export function UsageDashboard({ tokensHref }: { tokensHref: string }) {
       if (n !== seq.current) return;
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [range, subscription]);
+  }, [range, subscription, unknown]);
 
   useEffect(() => {
     setStats(null);
@@ -143,7 +145,7 @@ export function UsageDashboard({ tokensHref }: { tokensHref: string }) {
         title: 'Unknown subscription.',
         body: `${subscription ?? ''} is not an account on this hub and has no recorded usage.`,
       }
-    : error
+    : error && !stats
       ? { title: 'Couldn’t load usage.', body: error }
       : stats && usageIsEmpty(stats)
         ? {
@@ -169,7 +171,11 @@ export function UsageDashboard({ tokensHref }: { tokensHref: string }) {
       </div>
     );
   }
-  return <UsageView data={stats} onRangeChange={setRange} actions={actions} />;
+  // A failed refresh keeps the numbers already on screen and says so.
+  const footer = error
+    ? `Couldn’t refresh (${error}). Showing the numbers from ${new Date(stats.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+    : undefined;
+  return <UsageView data={stats} onRangeChange={setRange} actions={actions} footer={footer} />;
 }
 
 /** The view's own header, for the loading, empty and error states. */

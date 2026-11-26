@@ -18,7 +18,6 @@ describe('usageStatsQuery', () => {
       tz: 'UTC',
       range: '7d',
       since: '7d',
-      until: '2026-11-26',
       subscription: 'claude/work',
     });
     expect(usageStatsQuery('30d', '2026-11-26', 'UTC').get('since')).toBe('30d');

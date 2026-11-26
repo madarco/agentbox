@@ -21,7 +21,8 @@ export default function UsagePage() {
 
 function UsageRoutes() {
   const params = useSearchParams();
-  // Switching views keeps the subscription filter and the dashboard's range.
+  // Switching views keeps the subscription filter, and carries the dashboard's
+  // range through the token view (which has its own) for the way back.
   const keep = new URLSearchParams();
   for (const k of ['subscription', 'range']) {
     const v = params.get(k)?.trim();
