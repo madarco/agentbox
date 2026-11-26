@@ -51,6 +51,37 @@ Open items found while building the phases of
 - **CSV is per day only.** Sessions, boxes and projects are not exported; the token
   breakdown has its own view but no export.
 
+## From Phase 4b (usage contributions to a remote hub)
+
+- **"Sync this PC" button**: the Usage page (Phase 3, #494) is merged but has no
+  button yet. Add one on the local hub's page that calls
+  `POST /api/v1/usage/contributions/sync` and shows its `status`, shown only when a
+  remote hub is configured (`no-remote` hides it).
+- **The shared API key may post under any machine id.** A device token can only
+  send its own id (the route checks it), but a PC on the shared `hub setup` key is
+  trusted for any id, and 64 made-up ids would fill the store.
+- **A box run that started before the periodic window keeps its stored end.** The
+  PC's 35-day read cannot see the start row of an older run, so the stored run is
+  kept as it was at the last full push (box-hours undercount until the next year
+  push, at hub start or `?full=1`).
+- **No subscription view of PC rows.** A contribution carries no account (an
+  account name is free text), so `?subscription=` shows the control box's rows
+  only. Sending a hash of the account would allow it.
+- **PC boxes read by id, and no project split.** Names and project keys stay on the
+  PC by design; the control box's boxes table, Gantt labels and "by project" split
+  show a PC box by its id and leave its rows out of the project split.
+- **`runningNow` ignores PC boxes.** The live counter is the control box's own
+  ledger; a PC box running now is in the box-hours (its run ends at the push
+  time) but not in "running now".
+- **Day buckets are the PC's zone.** Tokens and shipped counts travel per local day
+  in the PC hub's zone and land at noon of that day; a reader in a zone more than
+  12 hours away moves them by a day. Intervals and box runs are exact.
+- **File store.** Contributions are JSON files on the control box's disk, read
+  whole on each stats miss (memoized 10 s). A postgres control box would want a
+  table; a year of a busy PC is a few MB.
+- **Removing a PC.** There is no route to drop one machine's contribution; delete
+  `~/.agentbox/hub/usage-contributions/<machineId>.json` on the control box.
+
 ## From Phase 4a (flush on stop/pause, materialize)
 
 - **Codex, opencode and pi sessions are not materialized.** Claude only

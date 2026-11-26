@@ -8,7 +8,7 @@
 import { confirm, isCancel, log, text } from '@agentbox/cli-kit';
 import { HANDLE_RE } from '@agentbox/usage-view';
 import { Command } from 'commander';
-import { withHubClient } from '../control-plane/with-hub.js';
+import { withHubClient, withHubClientQuiet } from '../control-plane/with-hub.js';
 import { renderTable } from '../lib/text-table.js';
 import { parseUsageBy, usageHeroLines, usageTable } from '../lib/usage-format.js';
 
@@ -206,6 +206,18 @@ export const usageCommand = new Command('usage')
       local?: boolean;
       json?: boolean;
     }) => {
+      // With a remote hub configured, this PC's local boxes and sessions reach it as
+      // a usage contribution (metrics only): push the recent weeks first (skipped
+      // when unchanged) so the numbers are current.
+      // No-op without a remote hub; never auto-starts the local one.
+      if (!opts.local) {
+        const r = await withHubClientQuiet({ preferLocal: true }, (c) => c.syncUsageContribution());
+        // Only a refused or failed push is worth a word: a stopped local hub, an older
+        // one without the route, or no remote hub at all just means nothing to send.
+        if (!r.ok && r.error.includes('usage contribution not pushed')) {
+          log.warn(`This PC's usage was not sent to the remote hub: ${r.error}`);
+        }
+      }
       await withHubClient(opts.local ? { preferLocal: true } : {}, async (client) => {
         const stats = await client.usageStats({
           since: opts.since,
