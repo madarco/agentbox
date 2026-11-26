@@ -35,6 +35,14 @@ function lineModule(id: string): AgentHistoryModule {
       const partial = lines.pop() ?? '';
       const records: HistoryRecord[] = lines.map((raw) => {
         const l = JSON.parse(raw) as Record<string, string | number>;
+        if (l.auth) {
+          return {
+            kind: 'auth',
+            error: String(l.auth),
+            ...(l.ts ? { ts: String(l.ts) } : {}),
+            at: chunk.offset,
+          };
+        }
         if (l.limits) {
           return {
             kind: 'limits',
@@ -282,6 +290,39 @@ describe('usage (Phase 7)', () => {
     expect(await repo.accountLimits('codex/none')).toBeNull();
     // Limits are not turns or usage.
     expect((await svc.usage({ by: [], tzOffsetMin: 0, limit: 10 })).totals.messages).toBe(0);
+  });
+
+  it('keeps the newest refused credential and the newest real reply per subscription', async () => {
+    const { ship, repo } = await setup({ b1: 'work', b2: 'work', b3: '' });
+    expect(await repo.accountAuth('claude/work')).toEqual({
+      failedAt: null,
+      error: null,
+      failedBox: null,
+      okAt: null,
+    });
+    await ship({ boxId: 'b1', boxName: 'one' }, 'claude', 'a1', [
+      { id: 'm1', ts: day1, model: 'x', in: 1, out: 3 },
+    ]);
+    await ship({ boxId: 'b2', boxName: 'two' }, 'claude', 'a2', [
+      { auth: 'authentication_failed', ts: day1late },
+    ]);
+    // A zero-output reply (claude's synthetic error line) proves nothing.
+    await ship({ boxId: 'b2', boxName: 'two' }, 'claude', 'a3', [
+      { id: 'e1', ts: day2, model: '<synthetic>', in: 0, out: 0 },
+    ]);
+    expect(await repo.accountAuth('claude/work')).toEqual({
+      failedAt: day1late,
+      error: 'authentication_failed',
+      failedBox: 'two',
+      okAt: day1,
+    });
+    // Another subscription is untouched.
+    expect((await repo.accountAuth('claude/default')).failedAt).toBeNull();
+    // A real reply after the refusal: the account works again.
+    await ship({ boxId: 'b1', boxName: 'one' }, 'claude', 'a4', [
+      { id: 'm2', ts: day2, model: 'x', in: 1, out: 2 },
+    ]);
+    expect((await repo.accountAuth('claude/work')).okAt).toBe(day2);
   });
 
   it('migrates a pre-Phase-7 store: message times filled from ts', async () => {

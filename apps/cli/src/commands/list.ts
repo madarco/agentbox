@@ -211,13 +211,35 @@ function agentSummary(b: HubApiBox): string {
   if (effectiveState(b) !== 'running') return '-';
   const agents: string[] = [];
   for (const [agent, entry] of sortedAgentStatus(b)) {
-    // `@<account>` when the agent runs on a named LLM account (Phase 5).
-    const acct = b.accounts?.[agent];
-    const at = acct && acct !== 'default' ? `@${acct}` : '';
-    if (entry.state !== 'unknown') agents.push(`${agent}:${entry.state}${at}`);
-    else if (entry.sessionTitle) agents.push(`${agent}${at}`);
+    if (entry.state !== 'unknown') agents.push(`${agent}:${entry.state}`);
+    else if (entry.sessionTitle) agents.push(agent);
   }
   return agents.length > 0 ? agents.join(', ') : '-';
+}
+
+/**
+ * The SUBSCRIPTION column: the account each agent runs on, `default` for an
+ * agent on its own default login, else `<agent>/<account>` (a borrower shows
+ * its lender's, e.g. `codex/default`). Read off the Box payload alone (the hub's
+ * `subscriptions`, or `accounts` from an older hub): no request per box.
+ */
+export function subscriptionSummary(
+  b: Pick<HubApiBox, 'subscriptions' | 'accounts' | 'agents' | 'lastAgent'>,
+): string {
+  const subs =
+    b.subscriptions ??
+    Object.fromEntries(
+      (b.agents?.length ? b.agents : b.lastAgent ? [b.lastAgent] : []).map((a) => [
+        a,
+        `${a}/${b.accounts?.[a] ?? 'default'}`,
+      ]),
+    );
+  const cells = [
+    ...new Set(
+      Object.entries(subs).map(([agent, sub]) => (sub === `${agent}/default` ? 'default' : sub)),
+    ),
+  ];
+  return cells.length > 0 ? cells.join(', ') : '-';
 }
 
 /**
@@ -463,7 +485,17 @@ function renderTable(
   hub?: HubLinkTarget,
 ): string {
   const color = !!stream.isTTY && !process.env.NO_COLOR;
-  const header = ['N', 'NAME', 'STATE', 'AGENT', 'SHELLS', 'PROVIDER', 'URL', 'WORKSPACE'];
+  const header = [
+    'N',
+    'NAME',
+    'STATE',
+    'AGENT',
+    'SUBSCRIPTION',
+    'SHELLS',
+    'PROVIDER',
+    'URL',
+    'WORKSPACE',
+  ];
   const wsCol = header.length - 1;
   const lead: Cell[][] = boxes.map((b) => [
     plain(typeof b.projectIndex === 'number' ? String(b.projectIndex) : ''),
@@ -471,6 +503,7 @@ function renderTable(
     plain(stateCell(b)),
     // One column for every agent (claude / codex / opencode) — see agentSummary.
     plain(agentSummary(b)),
+    plain(subscriptionSummary(b)),
     // Live shell-session count from the hub payload; `-` for none (or a
     // non-docker box, which carries no shell count).
     plain(b.shellCount && b.shellCount > 0 ? String(b.shellCount) : '-'),

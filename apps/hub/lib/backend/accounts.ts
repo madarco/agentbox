@@ -405,7 +405,8 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         const id = b.account.trim();
         const problem = accountIdProblem(id);
         if (problem) return { ok: false, code: 'invalid_request', error: problem };
-        if (!findAccount(await readAccounts(store), spec.id, id)) {
+        // `default` is the agent's own login: always a valid choice, signed in or not.
+        if (!isDefaultAccount(id) && !findAccount(await readAccounts(store), spec.id, id)) {
           return {
             ok: false,
             code: 'not_found',

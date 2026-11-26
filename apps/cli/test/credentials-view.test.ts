@@ -8,6 +8,7 @@ import {
   statusText,
 } from '../src/lib/credentials-view.js';
 import type { HubApiAccount } from '../src/control-plane/hub-api-client.js';
+import { subscriptionSummary } from '../src/commands/list.js';
 
 const NOW = Date.parse('2026-11-26T12:00:00Z');
 
@@ -93,5 +94,23 @@ describe('renderDefaultsTable', () => {
     const [, claude, codex] = out.split('\n');
     expect(claude).toMatch(/^claude +claude\/work +project setting +claude\/home$/);
     expect(codex).toMatch(/^codex +codex\/default +the agent's default login$/);
+  });
+});
+
+describe('ls SUBSCRIPTION column', () => {
+  it('default for an agent on its own default login, else agent/account', () => {
+    expect(subscriptionSummary({ subscriptions: { claude: 'claude/default' } })).toBe('default');
+    expect(subscriptionSummary({ subscriptions: { claude: 'claude/work' } })).toBe('claude/work');
+    // A borrower shows its lender's subscription.
+    expect(
+      subscriptionSummary({ subscriptions: { openclaw: 'codex/default', codex: 'codex/default' } }),
+    ).toBe('codex/default, default');
+  });
+  it('falls back to accounts from an older hub, and - with no agent', () => {
+    expect(subscriptionSummary({ agents: ['claude'], accounts: { claude: 'ci' } })).toBe(
+      'claude/ci',
+    );
+    expect(subscriptionSummary({ lastAgent: 'codex' })).toBe('default');
+    expect(subscriptionSummary({})).toBe('-');
   });
 });
