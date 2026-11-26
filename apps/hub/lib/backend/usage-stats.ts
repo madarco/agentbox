@@ -23,6 +23,7 @@ import {
   daysBetween,
   lanesFromSessions,
   totalMs,
+  zoneSegments,
   type ActivityEvent as UsageEvent,
   type AgentId,
   type BoxInfo,
@@ -38,8 +39,6 @@ import type { HistoryRepo, UsageSessionMeta } from './history';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-/** Token sums are read in quarter-hour buckets: every zone's offset is a multiple of one. */
-const TOKEN_BUCKET_MS = 15 * 60_000;
 const LEDGER_PAGE = 50_000;
 
 export interface UsageStatsQuery {
@@ -245,7 +244,7 @@ export async function computeUsageStats(
       ? deps.history.usageTokens({
           sinceMs: readFrom,
           untilMs: to,
-          bucketMs: TOKEN_BUCKET_MS,
+          zone: zoneSegments(readFrom, to, tz),
           ...(account ? { account } : {}),
         })
       : [],
@@ -326,15 +325,17 @@ export async function computeUsageStats(
     const m = metas.get(t.sessionKey);
     if (!m) continue;
     const box = m.boxId ? boxes.get(m.boxId) : undefined;
+    // Noon of the local day: inside it whatever the day's length.
+    const tAt = dayStart(new Date(t.day * DAY).toISOString().slice(0, 10), tz) + 12 * HOUR;
     tokens.push({
-      at: t.at,
+      at: tAt,
       agent: asAgent(m.agent),
       provider: m.boxId ? (box?.provider ?? asProvider(m.provider)) : 'host',
       project: box?.project ?? projectName(m.projectKey),
       boxId: m.boxId,
       tokens: t.tokens,
     });
-    if (t.at >= from && t.at < to && m.account) {
+    if (tAt >= from && tAt < to && m.account) {
       const s = subs.get(m.account) ?? { tokens: 0, cost: null };
       s.tokens += t.tokens;
       if (t.costUsd !== null) s.cost = (s.cost ?? 0) + t.costUsd;

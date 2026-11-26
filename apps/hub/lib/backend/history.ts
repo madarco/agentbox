@@ -8,6 +8,7 @@
 // here, object storage later). This file holds no SQL and no paths.
 import { zstdCompressSync, zstdDecompressSync, gunzipSync, gzipSync } from 'node:zlib';
 import { repoKey } from '@agentbox/config';
+import type { ZoneSegment } from '@agentbox/usage-view';
 import {
   agentHistoryModule,
   agentHistoryModules,
@@ -272,13 +273,12 @@ export interface UsageSessionMeta {
   account: string | null;
 }
 
-/** Tokens of one session in one time bucket. */
-export interface UsageTokenBucket {
+/** Tokens of one session on one local day. */
+export interface UsageTokenDay {
   sessionKey: string;
-  /** Start of the bucket, epoch ms. */
-  at: number;
+  /** The local date, as days since 1970-01-01. */
+  day: number;
   tokens: number;
-  /** Null when no response in the bucket recorded a cost. */
   costUsd: number | null;
 }
 
@@ -335,8 +335,11 @@ export interface HistoryRepo {
    * intervals it kept when its turns were dropped.
    */
   usageSpans(q: UsageWindow & { idleGapMs: number }): Promise<UsageSpanRow[]>;
-  /** Tokens per session per `bucketMs` bucket (aligned to the epoch) in the window. */
-  usageTokens(q: UsageWindow & { bucketMs: number }): Promise<UsageTokenBucket[]>;
+  /**
+   * Tokens per session per local day in the window; `zone` is the zone's offsets
+   * over the window (`zoneSegments`), so the store needs no zone support.
+   */
+  usageTokens(q: UsageWindow & { zone: readonly ZoneSegment[] }): Promise<UsageTokenDay[]>;
   usageSessions(keys: readonly string[]): Promise<UsageSessionMeta[]>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;

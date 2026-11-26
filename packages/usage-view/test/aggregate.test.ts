@@ -18,6 +18,7 @@ import {
   streaks,
   summarizeSessions,
   timeAtLeast,
+  zoneSegments,
   totalMs,
   unionSpans,
   UsageStats,
@@ -510,6 +511,28 @@ describe('time zones across DST', () => {
     expect(stats.punchcard[1]![9]).toBeCloseTo(1, 6);
     expect(stats.punchcard.flat().reduce((a, b) => a + b, 0)).toBeCloseTo(2, 6);
     expect(stats.daily.find((d) => d.date === '2026-03-09')!.agentHours).toBeCloseTo(1, 2);
+  });
+
+  it('zoneSegments finds each change to the quarter hour', () => {
+    const from = Date.UTC(2026, 0, 1);
+    const to = Date.UTC(2027, 0, 1);
+    expect(zoneSegments(from, to, 'Europe/Rome')).toEqual([
+      { fromMs: from, offsetMs: HOUR },
+      { fromMs: Date.UTC(2026, 2, 29, 1), offsetMs: 2 * HOUR },
+      { fromMs: Date.UTC(2026, 9, 25, 1), offsetMs: HOUR },
+    ]);
+    expect(zoneSegments(from, to, 'America/New_York').map((s) => s.fromMs)).toEqual([
+      from,
+      Date.UTC(2026, 2, 8, 7),
+      Date.UTC(2026, 10, 1, 6),
+    ]);
+    expect(zoneSegments(from, to, 'UTC')).toEqual([{ fromMs: from, offsetMs: 0 }]);
+    // Every instant's local day from the segments matches dayKey.
+    const segs = zoneSegments(from, to, 'America/New_York');
+    for (let t = from; t < to; t += 7 * HOUR + 13 * MIN) {
+      const off = [...segs].reverse().find((s) => s.fromMs <= t)!.offsetMs;
+      expect(new Date(t + off).toISOString().slice(0, 10)).toBe(dayKey(t, 'America/New_York'));
+    }
   });
 
   it('precomputed spans give the same lanes as the turns', () => {

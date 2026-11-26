@@ -244,6 +244,38 @@ export function zoneOffset(ms: number, tz: string): number {
   return off;
 }
 
+/** From `fromMs` on (until the next segment), local time is UTC plus `offsetMs`. */
+export interface ZoneSegment {
+  fromMs: number;
+  offsetMs: number;
+}
+
+/**
+ * The offsets zone `tz` uses over `[fromMs, toMs)`, one segment per change: lets a
+ * store bucket rows into local days in SQL (`(ts + offset) / day`), with no zone
+ * support of its own. A year is a handful of segments.
+ */
+export function zoneSegments(fromMs: number, toMs: number, tz: string): ZoneSegment[] {
+  const out: ZoneSegment[] = [{ fromMs, offsetMs: zoneOffset(fromMs, tz) }];
+  // Zones change at most a few times a year, never twice in a day: probe daily, then
+  // narrow each change down to its quarter hour.
+  for (let t = fromMs + DAY; t < toMs + DAY; t += DAY) {
+    const last = out[out.length - 1]!;
+    const end = Math.min(t, toMs);
+    if (end <= last.fromMs || zoneOffset(end, tz) === last.offsetMs) continue;
+    // Quarter indices: `lo` still has the old offset, `hi` the new one.
+    let lo = Math.floor(Math.max(t - DAY, last.fromMs) / QUARTER);
+    let hi = Math.floor(end / QUARTER);
+    while (hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (zoneOffset(mid * QUARTER, tz) === last.offsetMs) lo = mid;
+      else hi = mid;
+    }
+    out.push({ fromMs: hi * QUARTER, offsetMs: zoneOffset(hi * QUARTER, tz) });
+  }
+  return out;
+}
+
 /** Local `YYYY-MM-DD` of an instant in zone `tz`. */
 export function dayKey(ms: number, tz: string): string {
   return new Date(ms + zoneOffset(ms, tz)).toISOString().slice(0, 10);

@@ -375,7 +375,8 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
     );
   }
   db.exec('CREATE INDEX IF NOT EXISTS history_usage_ts ON history_usage(ts_ms)');
-  // Usage dashboard Phase 2: active intervals are read by time, not by session.
+  // Usage dashboard Phase 2: each session's active intervals are kept in
+  // history_spans, recomputed from `ts_ms` only for sessions marked dirty.
   if (!columns(db, 'history_turns').has('ts_ms')) {
     db.exec('ALTER TABLE history_turns ADD COLUMN ts_ms INTEGER');
     db.exec(
@@ -384,8 +385,11 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
     );
   }
   db.exec(
-    'CREATE INDEX IF NOT EXISTS history_turns_ts ON history_turns(ts_ms, session_key) WHERE ts_ms IS NOT NULL',
+    'CREATE INDEX IF NOT EXISTS history_turns_session_ts ON history_turns(session_key, ts_ms) WHERE ts_ms IS NOT NULL',
   );
+  if (!columns(db, 'history_sessions').has('spans_dirty')) {
+    db.exec('ALTER TABLE history_sessions ADD COLUMN spans_dirty INTEGER NOT NULL DEFAULT 1');
+  }
   // Live status (docs/agent-live-status-plan.md, Phase 3): a cost where the
   // agent records one. Old rows stay NULL until the re-parse job redoes them.
   if (!columns(db, 'history_usage').has('cost_usd')) {
@@ -451,7 +455,7 @@ function totalsOf(r: Row): UsageTotals {
 /**
  * Turns into active intervals in SQL: a turn more than `?gap` ms after the one before
  * it starts a new interval, and a running sum of those breaks numbers the intervals.
- * Only `ts_ms` and `session_key` are read, from one covering index. Plain window
+ * Only `session_key` and `ts_ms` are read, from one covering index. Plain window
  * functions, so a postgres store can run the same statement.
  */
 function spansSql(scope: string): string {
@@ -648,6 +652,9 @@ export async function openSqliteHistoryRepo(
   };
 
   const deleteTurnsOfFile = (fileId: number, usage = true): void => {
+    db.prepare(
+      'UPDATE history_sessions SET spans_dirty = 1 WHERE key IN (SELECT DISTINCT session_key FROM history_turns WHERE file_id = ?)',
+    ).run(fileId);
     if (fts) {
       db.prepare(
         `INSERT INTO history_turns_fts(history_turns_fts, rowid, text)
@@ -656,6 +663,35 @@ export async function openSqliteHistoryRepo(
     }
     db.prepare('DELETE FROM history_turns WHERE file_id = ?').run(fileId);
     if (usage) db.prepare('DELETE FROM history_usage WHERE file_id = ?').run(fileId);
+  };
+
+  /**
+   * Recompute a session's intervals from its turns. Spans that end before its
+   * earliest turn are kept: they are a purged past the turns no longer hold.
+   */
+  const refreshSpansOf = (key: string): void => {
+    const first = db
+      .prepare(
+        'SELECT MIN(ts_ms) AS m FROM history_turns WHERE session_key = ? AND ts_ms IS NOT NULL',
+      )
+      .get(key) as Row | undefined;
+    if (first?.m !== null && first?.m !== undefined) {
+      db.prepare('DELETE FROM history_spans WHERE session_key = ? AND last_ms >= ?').run(
+        key,
+        n(first.m),
+      );
+      db.prepare(
+        `INSERT OR REPLACE INTO history_spans (session_key, start_ms, last_ms)
+         SELECT session_key, s, e FROM (${spansSql('AND session_key = ?')})`,
+      ).run(DEFAULT_IDLE_GAP_MS, key);
+    }
+    db.prepare('UPDATE history_sessions SET spans_dirty = 0 WHERE key = ?').run(key);
+  };
+  const refreshDirtySpans = (): void => {
+    const keys = (
+      db.prepare('SELECT key FROM history_sessions WHERE spans_dirty = 1').all() as Row[]
+    ).map((r) => String(r.key));
+    for (const key of keys) tx(() => refreshSpansOf(key));
   };
 
   /** Delete a session's files with their chunks and turns (its usage stays). */
@@ -817,6 +853,7 @@ export async function openSqliteHistoryRepo(
     },
     async insertRecords(sessionKey, fileId, records) {
       tx(() => {
+        db.prepare('UPDATE history_sessions SET spans_dirty = 1 WHERE key = ?').run(sessionKey);
         const turn = db.prepare(
           `INSERT OR IGNORE INTO history_turns (session_key, file_id, at, seq, kind, role, name, text, ts, ts_ms)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -915,14 +952,14 @@ export async function openSqliteHistoryRepo(
     async purgeSession(key, nowMs) {
       return tx(() => {
         // The intervals outlive the turns, so the usage dashboard's hours do too.
-        db.prepare(
-          `INSERT OR IGNORE INTO history_spans (session_key, start_ms, last_ms)
-           SELECT session_key, s, e FROM (${spansSql('AND session_key = ?')})`,
-        ).run(DEFAULT_IDLE_GAP_MS, key);
+        refreshSpansOf(key);
         const keys = dropFilesOf(key);
         db.prepare('DELETE FROM history_turns WHERE session_key = ?').run(key);
         db.prepare('DELETE FROM history_live WHERE session_key = ?').run(key);
-        db.prepare('UPDATE history_sessions SET purged_at = ? WHERE key = ?').run(nowMs, key);
+        db.prepare('UPDATE history_sessions SET purged_at = ?, spans_dirty = 0 WHERE key = ?').run(
+          nowMs,
+          key,
+        );
         return keys;
       });
     },
@@ -959,38 +996,50 @@ export async function openSqliteHistoryRepo(
       return usageReport(db, q);
     },
     async usageSpans(q) {
+      if (q.idleGapMs !== DEFAULT_IDLE_GAP_MS) {
+        throw new Error(`history_spans are cut at ${String(DEFAULT_IDLE_GAP_MS)} ms`);
+      }
+      refreshDirtySpans();
       const acct = q.account !== undefined;
-      const live = db
-        .prepare(spansSql(`AND ts_ms >= ? AND ts_ms < ? ${acct ? ACCOUNT_SCOPE : ''}`))
-        .all(q.idleGapMs, q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[];
-      const kept = db
-        .prepare(
-          `SELECT session_key, start_ms AS s, last_ms AS e FROM history_spans
-           WHERE last_ms >= ? AND start_ms < ? ${acct ? ACCOUNT_SCOPE : ''}`,
-        )
-        .all(q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[];
-      return [...live, ...kept].map((r) => ({
-        sessionKey: String(r.session_key),
-        start: n(r.s),
-        last: n(r.e),
-      }));
-    },
-    async usageTokens(q) {
-      const acct = q.account !== undefined;
-      const bucket = Math.max(60_000, Math.trunc(q.bucketMs));
       return (
         db
           .prepare(
-            `SELECT session_key, (ts_ms / ${String(bucket)}) * ${String(bucket)} AS b,
-               SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS tok,
-               SUM(cost_usd) AS cost
-             FROM history_usage WHERE ts_ms >= ? AND ts_ms < ? ${acct ? ACCOUNT_SCOPE : ''}
-             GROUP BY session_key, b`,
+            `SELECT session_key, start_ms, last_ms FROM history_spans
+             WHERE last_ms >= ? AND start_ms < ? ${acct ? ACCOUNT_SCOPE : ''}`,
           )
           .all(q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[]
       ).map((r) => ({
         sessionKey: String(r.session_key),
-        at: n(r.b),
+        start: n(r.start_ms),
+        last: n(r.last_ms),
+      }));
+    },
+    async usageTokens(q) {
+      const acct = q.account !== undefined;
+      const int = (v: number): string => {
+        if (!Number.isSafeInteger(v)) throw new Error(`not an integer: ${String(v)}`);
+        return String(v);
+      };
+      // Newest segment first; the numbers are inlined, so checked to be integers.
+      const offset = q.zone.length
+        ? `CASE ${[...q.zone]
+            .reverse()
+            .map((z) => `WHEN ts_ms >= ${int(z.fromMs)} THEN ${int(z.offsetMs)}`)
+            .join(' ')} ELSE ${int(q.zone[0]!.offsetMs)} END`
+        : '0';
+      return (
+        db
+          .prepare(
+            `SELECT session_key, (ts_ms + ${offset}) / 86400000 AS d,
+               SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) AS tok,
+               SUM(cost_usd) AS cost
+             FROM history_usage WHERE ts_ms >= ? AND ts_ms < ? ${acct ? ACCOUNT_SCOPE : ''}
+             GROUP BY session_key, d`,
+          )
+          .all(q.sinceMs, q.untilMs, ...(acct ? [q.account] : [])) as Row[]
+      ).map((r) => ({
+        sessionKey: String(r.session_key),
+        day: n(r.d),
         tokens: n(r.tok),
         costUsd: r.cost === null || r.cost === undefined ? null : n(r.cost),
       }));
