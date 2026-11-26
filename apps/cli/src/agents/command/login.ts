@@ -20,7 +20,11 @@ import { imageProgress } from '@agentbox/cli-kit';
 import { accountConfigVolume, findAccount } from '@agentbox/core';
 import { readAccounts } from '@agentbox/sandbox-core';
 import { captureAccountLogin } from '../../lib/account-login.js';
-import { fanOutDefaultLoginIfSignedIn, readDefaultVolumeLogin } from '../../lib/login-fanout.js';
+import {
+  captureDefaultLogin,
+  fanOutDefaultLogin,
+  readDefaultVolumeLogin,
+} from '../../lib/login-fanout.js';
 import type { AgentCliSpec } from '@agentbox/cli-kit';
 
 export interface LoginOptions {
@@ -66,6 +70,25 @@ export function namedAccountFlag(cmd: Command): string | undefined {
  * print-URL / `--code` pair) runs it with `extra` (its own flags) passed through.
  */
 export async function runAgentLogin(
+  a: AgentCliSpec,
+  args: string[],
+  opts: LoginOptions & { account?: LoginAccountTarget; extra?: Record<string, unknown> },
+): Promise<boolean> {
+  if (opts.account) {
+    await signIn(a, args, opts);
+    return false;
+  }
+  // The default login, as its volume holds it before and after: a change means
+  // a sign-in completed, and it becomes the stored login the fan-out pushes
+  // (docker boxes read their own file, not this volume).
+  const image = await helperImage(a.id);
+  const before = image ? await readDefaultVolumeLogin(a.id, image) : null;
+  await signIn(a, args, opts);
+  return image ? captureDefaultLogin(a.id, image, before) : false;
+}
+
+/** The sign-in itself, default or named. */
+async function signIn(
   a: AgentCliSpec,
   args: string[],
   opts: LoginOptions & { account?: LoginAccountTarget; extra?: Record<string, unknown> },
@@ -190,15 +213,14 @@ export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
     refuseNamedAccount(a, this);
     try {
       const { interactive, ...extra } = rawOpts;
-      // The default login, as its volume holds it before and after: a change
-      // means a sign-in completed, and the boxes on `default` get it.
-      const image = await helperImage(a.id);
-      const before = image ? await readDefaultVolumeLogin(a.id, image) : null;
-      await runAgentLogin(a, args, { ...(interactive ? { interactive } : {}), extra });
-      if (image) {
+      const signedIn = await runAgentLogin(a, args, {
+        ...(interactive ? { interactive } : {}),
+        extra,
+      });
+      if (signedIn) {
         // The sign-in itself succeeded; a box that missed the push is fixed by
         // `agentbox credentials renew <agent>/default --skip-sign-in`.
-        await fanOutDefaultLoginIfSignedIn(a.id, image, before).catch((err: unknown) => {
+        await fanOutDefaultLogin(a.id).catch((err: unknown) => {
           log.warn(
             `signed in, but the push to boxes failed: ${err instanceof Error ? err.message : String(err)}`,
           );

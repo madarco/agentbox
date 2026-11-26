@@ -85,10 +85,14 @@ export type SwitchResult =
  */
 export function loginSwitchRefusal(
   box: Pick<BoxRecord, 'name' | 'provider' | 'credentialFiles'>,
-  agent: string,
+  spec: Pick<AgentSyncSpec, 'id' | 'credential'>,
   state: string,
 ): string | null {
+  const agent = spec.id;
   if ((box.provider ?? 'docker') === 'docker') {
+    if (!spec.credential?.bindMountable) {
+      return `a docker box's ${agent} cannot switch to another login yet; use an API key`;
+    }
     return box.credentialFiles?.includes(agent)
       ? null
       : `${box.name} was created before boxes had their own ${agent} login file; destroy and create it again to switch its login`;
@@ -195,7 +199,7 @@ async function switchLocked(
   // re-reads its credential file on its own.
   let restart = true;
   if (kind === 'login') {
-    const refusal = loginSwitchRefusal(box, agent, state);
+    const refusal = loginSwitchRefusal(box, spec, state);
     if (refusal) return { kind: 'refused', error: refusal };
     how = 'file';
     const fromKind = isDefaultAccount(from) ? 'login' : await deps.accountKind(agent, from);

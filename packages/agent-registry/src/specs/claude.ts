@@ -181,6 +181,7 @@ export const claudeSpec: AgentSyncSpec = {
     // A running claude reads the file before every request (measured in
     // docs/hot-switch-subscriptions-plan.md), so a login switch needs no restart.
     liveReload: true,
+    bindMountable: true,
   },
   // Named LLM accounts (docs/llm-accounts-plan.md). `setup-token` is the long-lived
   // `claude setup-token` kind: it never refreshes, so it never revokes the other

@@ -47,31 +47,36 @@ export async function readDefaultVolumeLogin(agent: string, image: string): Prom
 }
 
 /**
- * After `agentbox <agent> login`: when the shared volume now holds a different,
- * real login than `before`, a sign-in completed (a headless start that only
- * printed a URL changed nothing). Store it as the default login and push it to
- * the boxes on `default`, if there are any.
+ * After a sign-in of the default login: when its shared volume now holds a
+ * different, real login than `before`, the sign-in completed (a headless start
+ * that only printed a URL changed nothing). Store it as the default login,
+ * which is what the fan-out pushes, and say whether it changed.
  */
-export async function fanOutDefaultLoginIfSignedIn(
+export async function captureDefaultLogin(
   agent: string,
   image: string,
   before: string | null,
-): Promise<void> {
+): Promise<boolean> {
   const spec = resolveAgentSpec(agent);
-  const cred = spec.credential;
-  if (!cred) return;
+  if (!spec.credential) return false;
   const after = await readDefaultVolumeLogin(agent, image);
-  if (after === null || after === before || !isRealAgentCredential(spec.id, after)) return;
+  if (after === null || after === before || !isRealAgentCredential(spec.id, after)) return false;
   // The person just signed this login in, so it replaces the stored one even
   // when it is another identity (no newest-wins or identity gate here).
   if ((await readCredentialBackup(spec.id)) !== after) {
     await writeCredentialBackup(spec.id, after);
   }
+  return true;
+}
+
+/** Push the default login to the boxes on `default`, when there are any. */
+export async function fanOutDefaultLogin(agent: string): Promise<void> {
+  const id = resolveAgentSpec(agent).id;
   const boxes = (await readState()).boxes.filter(
     (b) =>
-      (!b.agents || b.agents.includes(spec.id)) &&
-      (namedAccounts(b.accounts)?.[spec.id] ?? DEFAULT_ACCOUNT_ID) === DEFAULT_ACCOUNT_ID,
+      (!b.agents || b.agents.includes(id)) &&
+      (namedAccounts(b.accounts)?.[id] ?? DEFAULT_ACCOUNT_ID) === DEFAULT_ACCOUNT_ID,
   );
   if (boxes.length === 0) return;
-  await fanOutLogin(spec.id, DEFAULT_ACCOUNT_ID);
+  await fanOutLogin(id, DEFAULT_ACCOUNT_ID);
 }

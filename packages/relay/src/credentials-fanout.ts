@@ -69,6 +69,11 @@ export interface CredentialsFanoutDeps {
   runRepush?: (agent: CredentialAgentKind, boxId: string, account: string) => Promise<void>;
   /** Least time between two re-pushes to one box (default 60s), so a loop can't spin. */
   repushIntervalMs?: number;
+  /**
+   * When `agent` in box `boxId` last switched accounts (ms epoch), or undefined.
+   * Override for tests; default: the box record's `accountSwitches`.
+   */
+  lastSwitchAt?: (boxId: string, agent: CredentialAgentKind) => Promise<number | undefined>;
   /** Override the DEFAULT account's backup path (tests; default: the registry's). */
   backupPathFor?: (agent: CredentialAgentKind) => string;
   /**
@@ -118,6 +123,16 @@ export async function stateBoxAccount(boxId: string, agent: string): Promise<str
   return namedAccounts(box?.accounts)?.[agent];
 }
 
+/** How long after a switch a mismatched login is taken for a refresh race. */
+export const SWITCH_RACE_WINDOW_MS = 10 * 60_000;
+
+async function stateLastSwitchAt(boxId: string, agent: string): Promise<number | undefined> {
+  const box = (await readState()).boxes.find((b) => b.id === boxId);
+  const last = (box?.accountSwitches ?? []).filter((s) => s.agent === agent).at(-1);
+  const at = last ? Date.parse(last.at) : NaN;
+  return Number.isFinite(at) ? at : undefined;
+}
+
 /** The single write this needs from a custody store (structural: no import cycle). */
 export interface CredentialCustodyWriter {
   put(path: string, data: Buffer): Promise<unknown>;
@@ -155,6 +170,10 @@ export class CredentialsFanout {
   ) => Promise<void>;
   private readonly repushIntervalMs: number;
   private readonly lastRepush = new Map<string, number>();
+  private readonly lastSwitchAt: (
+    boxId: string,
+    agent: CredentialAgentKind,
+  ) => Promise<number | undefined>;
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly chains = new Map<string, Promise<void>>();
 
@@ -164,6 +183,7 @@ export class CredentialsFanout {
     this.runPropagate = deps.runPropagate ?? defaultRunPropagate;
     this.runRepush = deps.runRepush ?? defaultRunRepush;
     this.repushIntervalMs = deps.repushIntervalMs ?? 60_000;
+    this.lastSwitchAt = deps.lastSwitchAt ?? stateLastSwitchAt;
     this.backupPathFor = deps.backupPathFor;
     this.accountKindFor =
       deps.accountKindFor ??
@@ -219,7 +239,9 @@ export class CredentialsFanout {
     const existing = await readCredentialBackup(update.agent, { backupPath });
     const verdict = shouldAcceptCredentialUpdate(update.agent, update.content, existing);
     if (!verdict.accept) {
-      if (verdict.reason === IDENTITY_MISMATCH) this.repush(update.agent, sourceBoxId, account);
+      if (verdict.reason === IDENTITY_MISMATCH) {
+        await this.onIdentityMismatch(update.agent, sourceBoxId, account);
+      }
       return { accepted: false, reason: verdict.reason };
     }
     if (!isDefault && backupPath) {
@@ -279,10 +301,27 @@ export class CredentialsFanout {
   }
 
   /**
-   * The box holds another login than its record's account: a refresh of the
-   * account it switched away from, written back after the switch. The record
-   * is what the user chose, so the account's login goes back into the box.
+   * The box holds another login than its record's account. Shortly after a
+   * switch that is a refresh of the account it left, written back by a request
+   * in flight: the record is what the user chose, so the account's login goes
+   * back in. Otherwise a person signed another login in inside the box, which
+   * it keeps; it just never reaches the account's other boxes.
    */
+  private async onIdentityMismatch(
+    agent: CredentialAgentKind,
+    boxId: string,
+    account: string,
+  ): Promise<void> {
+    const switchedAt = await this.lastSwitchAt(boxId, agent).catch(() => undefined);
+    if (switchedAt === undefined || Date.now() - switchedAt > SWITCH_RACE_WINDOW_MS) {
+      this.log(
+        `credentials: box ${boxId} signed in another ${agent} login than account '${account}'; not fanned out`,
+      );
+      return;
+    }
+    this.repush(agent, boxId, account);
+  }
+
   private repush(agent: CredentialAgentKind, boxId: string, account: string): void {
     const key = `${agent}\u0000${boxId}`;
     const now = Date.now();

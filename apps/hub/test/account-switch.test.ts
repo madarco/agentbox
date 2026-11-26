@@ -11,7 +11,7 @@ import {
 
 const SPEC = {
   id: 'claude',
-  credential: { liveReload: true },
+  credential: { liveReload: true, bindMountable: true },
   accountEnv: { 'api-key': 'ANTHROPIC_API_KEY', 'setup-token': 'CLAUDE_CODE_OAUTH_TOKEN' },
   accountTokenPattern: { 'setup-token': '^sk-ant-oat01-[A-Za-z0-9_-]{60,}$' },
 } as unknown as AgentSyncSpec;
@@ -127,7 +127,10 @@ describe('switchBoxAccount', () => {
   });
 
   it('an agent that does not re-read its file is restarted after a login switch', async () => {
-    const { d, calls } = deps({ agentSpec: () => ({ ...SPEC, credential: {} }) as AgentSyncSpec });
+    const { d, calls } = deps({
+      findBox: async () => box({ provider: 'hetzner' }),
+      agentSpec: () => ({ ...SPEC, credential: {} }) as AgentSyncSpec,
+    });
     await switchBoxAccount(d, 'web', { account: 'work' });
     expect(calls.at(-1)).toBe('restart');
   });
@@ -154,14 +157,14 @@ describe('switchBoxAccount', () => {
   });
 
   it('refuses a docker box without its own file and a cloud box that is not running', () => {
-    expect(loginSwitchRefusal(box({ credentialFiles: undefined }), 'claude', 'running')).toMatch(
+    expect(loginSwitchRefusal(box({ credentialFiles: undefined }), SPEC, 'running')).toMatch(
       /destroy and create it again/,
     );
-    expect(loginSwitchRefusal(box({ provider: 'hetzner' }), 'claude', 'paused')).toMatch(
-      /start it/,
-    );
-    expect(loginSwitchRefusal(box({ provider: 'hetzner' }), 'claude', 'running')).toBeNull();
-    expect(loginSwitchRefusal(box(), 'claude', 'stopped')).toBeNull();
+    expect(loginSwitchRefusal(box({ provider: 'hetzner' }), SPEC, 'paused')).toMatch(/start it/);
+    expect(loginSwitchRefusal(box({ provider: 'hetzner' }), SPEC, 'running')).toBeNull();
+    expect(loginSwitchRefusal(box(), SPEC, 'stopped')).toBeNull();
+    const codex = { id: 'codex', credential: {} } as AgentSyncSpec;
+    expect(loginSwitchRefusal(box(), codex, 'running')).toMatch(/use an API key/);
   });
 
   it('rejects an unknown account, the current account and an agent the box lacks', async () => {

@@ -263,6 +263,7 @@ describe('CredentialsFanout — custody write-back', () => {
       debounceMs: 100,
       runPropagate: async (agent, box) => void runs.push(`${agent}:${box}`),
       runRepush: async (agent, box, account) => void repushes.push(`${agent}:${box}:${account}`),
+      lastSwitchAt: (box) => Promise.resolve(box === 'box-b' ? Date.now() - 5_000 : undefined),
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
       boxAccountFor: () => Promise.resolve(undefined),
     });
@@ -270,6 +271,9 @@ describe('CredentialsFanout — custody write-back', () => {
     const r = await fanout.handle('box-b', payload('claude', owned('someone', 200)));
     expect(r).toEqual({ accepted: false, reason: 'identity mismatch' });
     await fanout.handle('box-b', payload('claude', owned('someone', 300)));
+    expect(repushes).toEqual(['claude:box-b:default']);
+    // Long after any switch, another login is a person's own sign-in: refused, left alone.
+    await fanout.handle('box-c', payload('claude', owned('someone', 400)));
     expect(repushes).toEqual(['claude:box-b:default']);
     expect(await readFile(join(dir, 'claude-credentials.json'), 'utf8')).toBe(owned('me', 100));
     await fanout.flush();

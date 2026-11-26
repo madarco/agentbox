@@ -807,11 +807,11 @@ export async function reconcileAgentCredentialsViaTransport(
         log(`captured ${spec.id} credential from box (no host backup)`);
         continue;
       }
-      // The box holds another login than its account's (a refresh of the
-      // account it switched away from): the record wins, never the box.
+      // The box holds another login than its account's: a person signed it in
+      // inside the box. It keeps it, and it never replaces the account's copy.
+      // (A refresh race right after a switch is repaired live by the relay.)
       if (boxReal && hostReal && credentialIdentityMismatch(spec.id, boxText, hostText)) {
-        await pushCredentialToBox(transport, spec.id, hostText);
-        log(`replaced another login in box with its account's ${spec.id} credential`);
+        log(`box holds another ${spec.id} login than its account's; left as it is`);
         continue;
       }
       // Box->host capture needs an ORDERING to be safe, or a resumed box's

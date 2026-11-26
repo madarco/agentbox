@@ -123,6 +123,14 @@ const propagateCommand = new Command('propagate')
         account,
         credential: true,
       });
+      const targets =
+        plan.dockerVolumes.length +
+        plan.dockerBoxFiles.length +
+        plan.cloudBoxes.length +
+        plan.borrowingBoxes.length;
+      if (opts.box && targets === 0) {
+        throw new Error(`box ${opts.box} is not on ${agent} account '${account}'`);
+      }
 
       let pushed = 0;
       let failed = 0;

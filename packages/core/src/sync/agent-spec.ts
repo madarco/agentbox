@@ -196,6 +196,13 @@ export interface AgentCredential {
    * Absent: a switch to a login restarts the agent.
    */
   liveReload?: boolean;
+  /**
+   * True when the agent still saves the file when it is a bind mount: its
+   * rename onto the mount fails (EBUSY) and it falls back to writing in place
+   * (measured for claude). Only such an agent gets a docker per-box credential
+   * file, so only it can switch to another login on docker.
+   */
+  bindMountable?: boolean;
 }
 
 /**
