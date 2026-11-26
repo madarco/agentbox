@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { overlapProfile } from '../aggregate.js';
+import { maxOf, minOf, overlapProfile } from '../aggregate.js';
 import type { AgentId, ProviderId } from '../schema.js';
 import {
   AGENT_COLOR,
@@ -112,8 +112,8 @@ export function Gantt({ lanes }: { lanes: readonly GanttLane[] }): ReactElement 
   const AX = 22;
   const H = STRIP + 16 + lanes.length * LANE + AX;
   const spans = lanes.flatMap((l) => l.intervals.map(([start, end]) => ({ start, end })));
-  const minStart = spans.length ? Math.min(...spans.map((s) => s.start)) : 8;
-  const maxEnd = spans.length ? Math.max(...spans.map((s) => s.end)) : 20;
+  const minStart = spans.length ? minOf(spans.map((s) => s.start)) : 8;
+  const maxEnd = spans.length ? maxOf(spans.map((s) => s.end)) : 20;
   const T0 = Math.max(0, Math.floor(minStart / 2) * 2);
   const T1 = Math.max(T0 + 6, Math.ceil(maxEnd / 2) * 2);
   const x = (h: number): number => LBL + ((h - T0) / (T1 - T0)) * (W - LBL - R);

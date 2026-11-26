@@ -33,3 +33,8 @@ Open items from the phases of [`usage-dashboard-plan.md`](./usage-dashboard-plan
   page phase. The CSV export itself is not built.
 - **Leaderboard click-to-filter.** The mockup's "Click a row to filter the page" is not
   implemented; it needs a filter parameter on the stats endpoint.
+- **Share keeps fewer details than the page.** `toShare` keeps 62 days of the daily
+  chart, the 3 Gantt days, the 16 busiest lanes a day (neighbouring intervals merged
+  down to 8) and 10 sessions, so a maximal share fits 64 KB. If shares need more,
+  drop a column (per-provider splits) before raising a limit, and rerun the
+  maximal-share size test.

@@ -8,6 +8,8 @@ import {
   dayStart,
   groupSessions,
   lanesFromSessions,
+  maxOf,
+  minOf,
   overlapProfile,
   peakOverlap,
   shippedByDay,
@@ -425,5 +427,47 @@ describe('buildUsageStats edge cases', () => {
       expect(v.agentHours).toBeCloseTo(c.agentMs / HOUR, 6);
       expect(v.wallHours).toBeCloseTo(c.wallMs / HOUR, 6);
     }
+  });
+});
+
+describe('scale', () => {
+  it('summarizes a session of 300k intervals without overflowing the stack', () => {
+    const spans = Array.from({ length: 300_000 }, (_, i) => ({ start: i * 10, end: i * 10 + 5 }));
+    const lane: Lane = {
+      key: 'x',
+      boxId: 'x',
+      agent: 'claude',
+      provider: 'docker',
+      managerId: 'M',
+      spans,
+    };
+    const s = summarizeSessions(groupSessions([lane]), []);
+    expect(s[0]!.start).toBe(0);
+    expect(minOf(spans.map((x) => x.start))).toBe(0);
+    expect(maxOf(spans.map((x) => x.end))).toBe(2_999_995);
+    expect(maxOf([], 0)).toBe(0);
+  });
+});
+
+describe('Gantt lanes across midnight', () => {
+  it('a lane that started the evening before belongs to that day only', () => {
+    const stats = buildUsageStats({
+      range: {
+        id: '7d',
+        since: '2026-11-17',
+        until: '2026-11-19',
+        today: '2026-11-19',
+        tzOffset: 0,
+      },
+      now: at(20),
+      sessions: [session('s', 'b', every(-3, 2))],
+      events: [],
+      boxes: [{ boxId: 'b', name: 'night', agent: 'claude', provider: 'docker' }],
+      ganttDays: ['2026-11-18', '2026-11-19'],
+    });
+    expect(stats.gantt[0]!.lanes).toHaveLength(1);
+    expect(stats.gantt[0]!.lanes[0]!.intervals[0]![0]).toBe(21);
+    expect(stats.gantt[0]!.lanes[0]!.intervals.at(-1)![1]).toBeGreaterThan(26);
+    expect(stats.gantt[1]!.lanes).toHaveLength(0);
   });
 });

@@ -1,3 +1,4 @@
+import { maxOf } from './aggregate.js';
 import type {
   AgentId,
   DailyStats,
@@ -194,7 +195,7 @@ export function usageFixture(): UsageStats {
       return Math.max(0, dayPart * wk * (0.6 + rnd() * 0.8));
     }),
   );
-  const max = Math.max(...raw.flat());
+  const max = maxOf(raw.flat());
   const punchcard: number[][] = Array.from({ length: 7 }, () => []);
   order.forEach((dow, ri) => {
     punchcard[dow] = raw[ri]!.map((v) => Math.round((v / max) * 90) / 10);

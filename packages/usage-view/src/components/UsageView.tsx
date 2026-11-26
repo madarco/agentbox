@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { addDays } from '../aggregate.js';
+import { addDays, maxOf } from '../aggregate.js';
 import { decodeDaily, decodeWall } from '../columns.js';
 import { AGENT_IDS, PROVIDER_IDS } from '../schema.js';
 import type {
@@ -795,7 +795,10 @@ function Activity({ v }: { v: View }): ReactElement {
   const total = v.wall.reduce((a, d) => a + d[metric], 0);
   const title =
     metric === 'peak'
-      ? `Up to ${Math.max(0, ...v.wall.map((d) => d.peak))} boxes at once, ${v.wall.filter((d) => d.peak >= 3).length} days with 3 or more`
+      ? `Up to ${maxOf(
+          v.wall.map((d) => d.peak),
+          0,
+        )} boxes at once, ${v.wall.filter((d) => d.peak >= 3).length} days with 3 or more`
       : `${metric === 'tokens' ? fmt(total) : nf(total)} ${WALL_LABEL[metric]} in the last year`;
   const cells: WallCell[] = v.wall.map((d) => ({
     date: d.date,
@@ -903,7 +906,10 @@ function Boxes({ v }: { v: View }): ReactElement {
   const [metric, setMetric] = useState<'hours' | 'boxes'>('hours');
   const night = v.punchcard.reduce((a, row) => a + row.slice(0, 7).reduce((x, y) => x + y, 0), 0);
   const total = v.providers.reduce((a, p) => a + p[metric], 0) || 1;
-  const max = Math.max(1, ...v.providers.map((p) => p[metric]));
+  const max = maxOf(
+    v.providers.map((p) => p[metric]),
+    1,
+  );
   const hoursTotal = v.providers.reduce((a, p) => a + p.hours, 0);
   return (
     <>
@@ -1040,11 +1046,11 @@ function Code({ v }: { v: View }): ReactElement {
               )}
             </div>
             <div className="feed">
-              {v.feed.map((f) => {
+              {v.feed.map((f, fi) => {
                 const tot = f.additions + f.deletions || 1;
                 const ac = Math.round((f.additions / tot) * 5);
                 return (
-                  <div key={`${f.repo}#${f.number}`} className="feed-row">
+                  <div key={`${fi}-${f.repo}#${f.number}`} className="feed-row">
                     <div className="merged">{Icons.pr}</div>
                     <div style={{ minWidth: 0 }}>
                       <div className="t">{f.title}</div>

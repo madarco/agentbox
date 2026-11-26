@@ -26,8 +26,8 @@ export const HANDLE_RE = /^[a-z0-9-]{1,39}$/;
 /** Upper bounds. Generous for one person, tight enough that a share stays small. */
 export const LIMITS = {
   dailyDays: 400,
-  /** A share keeps the last 92 days of its daily chart; the wall still covers the year. */
-  shareDailyDays: 92,
+  /** Longest window: a year plus a leap day. */
+  rangeDays: 367,
   wallDays: 371,
   ganttDays: 7,
   lanes: 64,
@@ -40,6 +40,23 @@ export const LIMITS = {
   name: 200,
 } as const;
 
+/**
+ * The public share's own, tighter bounds: with every array full and every number at
+ * its longest, a share still serializes under `SHARE_MAX_BYTES` (tested). The share
+ * keeps the last two months of the daily chart and the three Gantt days the page shows.
+ */
+export const SHARE_LIMITS = {
+  dailyDays: 62,
+  ganttDays: 3,
+  lanes: 16,
+  intervalsPerLane: 8,
+  sessions: 10,
+} as const;
+export const SHARE_MAX_BYTES = 64 * 1024;
+
+const MIN_DAY = '2020-01-01';
+const MAX_DAY = '2100-12-31';
+
 const MAX_COUNT = 1e7;
 const MAX_HOURS = 1e6;
 const MAX_TOKENS = 1e13;
@@ -51,8 +68,12 @@ const tokens = z.number().min(0).max(MAX_TOKENS);
 const lines = z.number().int().min(0).max(MAX_LINES);
 const ratio = z.number().min(0).max(1000);
 const signedDelta = z.number().min(-MAX_TOKENS).max(MAX_TOKENS);
-/** A local calendar day, `YYYY-MM-DD`. */
-const day = z.iso.date();
+/** A local calendar day, `YYYY-MM-DD`, between 2020 and 2100. */
+const day = z.iso
+  .date()
+  .refine((d) => d >= MIN_DAY && d <= MAX_DAY, { message: 'date outside 2020-2100' });
+const daySpan = (from: string, to: string): number =>
+  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5);
 const name = z.string().min(1).max(LIMITS.name);
 /** Hours since the local midnight of the lane's day; past 24 runs into the next day. */
 const hourOfDay = z.number().min(-24).max(48);
@@ -106,6 +127,22 @@ export const WallDay = z.strictObject({
 });
 export type WallDay = z.infer<typeof WallDay>;
 
+// Share numbers. Hours carry at most one decimal (6 minutes), so no number can
+// serialize as a 17-digit float; toShare rounds to it.
+const oneDecimal = (v: number): boolean => Number(v.toFixed(1)) === v;
+const sHours = (max: number) =>
+  z.number().min(0).max(max).refine(oneDecimal, { message: 'more than one decimal' });
+const sInt = (max: number) => z.number().int().min(0).max(max);
+/** Per day: tokens, hours, counts and lines one person's boxes can plausibly reach. */
+const S = {
+  tokens: sInt(1e10),
+  hours: sHours(2000),
+  count: sInt(99_999),
+  lines: sInt(9_999_999),
+  peak: sInt(999),
+  ratio: sHours(999),
+};
+
 // A share stores the daily rows and the wall column by column (one array per metric,
 // day i is `start` + i): a year of rows is several times the 64 KB a share may weigh.
 const lengthsMatch = (arrays: readonly (readonly unknown[])[]): boolean =>
@@ -114,26 +151,26 @@ const splitArrays = (
   s: Record<string, { tokens: number[]; agentHours: number[]; commits: number[] } | undefined>,
 ) => Object.values(s).flatMap((v) => (v ? [v.tokens, v.agentHours, v.commits] : []));
 
-const dcol = <T extends z.ZodType>(t: T) => z.array(t).max(LIMITS.shareDailyDays);
+const dcol = <T extends z.ZodType>(t: T) => z.array(t).max(SHARE_LIMITS.dailyDays);
 export const SplitColumns = z.strictObject({
-  tokens: dcol(tokens),
-  agentHours: dcol(hours),
-  commits: dcol(count),
+  tokens: dcol(S.tokens),
+  agentHours: dcol(S.hours),
+  commits: dcol(S.count),
 });
 export const DailyColumns = z
   .strictObject({
     start: day,
-    tokens: dcol(tokens),
-    agentHours: dcol(hours),
-    wallHours: dcol(hours),
-    boxHours: dcol(hours),
-    peak: dcol(count),
-    avgAtOnce: dcol(ratio),
-    commits: dcol(count),
-    prsMerged: dcol(count),
-    additions: dcol(lines),
-    deletions: dcol(lines),
-    files: dcol(count),
+    tokens: dcol(S.tokens),
+    agentHours: dcol(S.hours),
+    wallHours: dcol(S.hours),
+    boxHours: dcol(S.hours),
+    peak: dcol(S.peak),
+    avgAtOnce: dcol(S.ratio),
+    commits: dcol(S.count),
+    prsMerged: dcol(S.count),
+    additions: dcol(S.lines),
+    deletions: dcol(S.lines),
+    files: dcol(S.count),
     byAgent: z.partialRecord(AgentId, SplitColumns),
     byProvider: z.partialRecord(ProviderId, SplitColumns),
   })
@@ -162,12 +199,12 @@ const wcol = <T extends z.ZodType>(t: T) => z.array(t).max(LIMITS.wallDays);
 export const WallColumns = z
   .strictObject({
     start: day,
-    all: wcol(count),
-    peak: wcol(count),
-    commits: wcol(count),
-    prs: wcol(count),
-    agentHours: wcol(hours),
-    tokens: wcol(tokens),
+    all: wcol(S.count),
+    peak: wcol(S.peak),
+    commits: wcol(S.count),
+    prs: wcol(S.count),
+    agentHours: wcol(S.hours),
+    tokens: wcol(S.tokens),
   })
   .refine((w) => lengthsMatch([w.all, w.peak, w.commits, w.prs, w.agentHours, w.tokens]), {
     message: 'wall columns differ in length',
@@ -221,14 +258,23 @@ export const Streaks = z.strictObject({
 });
 export type Streaks = z.infer<typeof Streaks>;
 
-const laneCore = {
+export const LaneShare = z.strictObject({
+  agent: AgentId,
+  provider: ProviderId,
+  intervals: z
+    .array(
+      z
+        .tuple([sHours(48), sHours(48)])
+        .refine(([a, b]) => b >= a, { message: 'interval end before start' }),
+    )
+    .min(1)
+    .max(SHARE_LIMITS.intervalsPerLane),
+  merged: z.boolean(),
+});
+export const LaneStats = z.strictObject({
   agent: AgentId,
   provider: ProviderId,
   intervals: z.array(Interval).min(1).max(LIMITS.intervalsPerLane),
-};
-export const LaneShare = z.strictObject({ ...laneCore, merged: z.boolean() });
-export const LaneStats = z.strictObject({
-  ...laneCore,
   box: name,
   /** `repo#123` of the PR merged at the end of the lane. */
   pr: name.nullable(),
@@ -238,7 +284,7 @@ export type LaneStats = z.infer<typeof LaneStats>;
 
 export const GanttDayShare = z.strictObject({
   date: day,
-  lanes: z.array(LaneShare).max(LIMITS.lanes),
+  lanes: z.array(LaneShare).max(SHARE_LIMITS.lanes),
 });
 export const GanttDayStats = z.strictObject({
   date: day,
@@ -259,7 +305,13 @@ const sessionCore = {
     .min(0)
     .max(MAX_HOURS * 60),
 };
-export const SessionShare = z.strictObject(sessionCore);
+export const SessionShare = z.strictObject({
+  ...sessionCore,
+  boxes: sInt(99_999),
+  peak: S.peak,
+  prsMerged: S.count,
+  minutes: sInt(9_999_999),
+});
 export const SessionStats = z.strictObject({
   ...sessionCore,
   title: name,
@@ -270,9 +322,14 @@ export type SessionStats = z.infer<typeof SessionStats>;
 
 /** Agent-hours by weekday (0 = Sunday) and hour of day, local time. */
 export const Punchcard = z.array(z.array(hours).length(24)).length(7);
+const PunchcardShare = z.array(z.array(sHours(99_999)).length(24)).length(7);
 
 const providerCore = { id: ProviderId, hours: hours, boxes: count };
-export const ProviderShare = z.strictObject(providerCore);
+export const ProviderShare = z.strictObject({
+  id: ProviderId,
+  hours: sHours(999_999),
+  boxes: sInt(99_999),
+});
 export const ProviderStats = z.strictObject({ ...providerCore, note: name.nullable() });
 export type ProviderShare = z.infer<typeof ProviderShare>;
 export type ProviderStats = z.infer<typeof ProviderStats>;
@@ -320,20 +377,35 @@ export const SubscriptionRow = z.strictObject({
 });
 export type SubscriptionRow = z.infer<typeof SubscriptionRow>;
 
-export const UsageRange = z.strictObject({
-  id: RangeId,
-  since: day,
-  until: day,
-  /** The last day with data; days after it up to `until` are forecast. */
-  today: day,
-  /** Local time minus UTC, in minutes (CET is 60). Days are bucketed with it. */
-  tzOffset: z
-    .number()
-    .int()
-    .min(-14 * 60)
-    .max(14 * 60),
-});
+export const UsageRange = z
+  .strictObject({
+    id: RangeId,
+    since: day,
+    until: day,
+    /** The last day with data; days after it up to `until` are forecast. */
+    today: day,
+    /** Local time minus UTC, in minutes (CET is 60). Days are bucketed with it. */
+    tzOffset: z
+      .number()
+      .int()
+      .min(-14 * 60)
+      .max(14 * 60),
+  })
+  .refine((r) => r.since <= r.today && r.today <= r.until, {
+    message: 'range must satisfy since <= today <= until',
+  })
+  .refine((r) => daySpan(r.since, r.until) < LIMITS.rangeDays, {
+    message: `range longer than ${LIMITS.rangeDays} days`,
+  });
 export type UsageRange = z.infer<typeof UsageRange>;
+
+const unique = (xs: readonly string[]): boolean => new Set(xs).size === xs.length;
+/** An array whose items must not repeat `key`: React keys rows by it. */
+const unq = <T extends z.ZodType>(
+  arr: z.ZodArray<T>,
+  key: (t: z.infer<T>) => string,
+  what: string,
+) => arr.refine((xs) => unique(xs.map(key)), { message: `duplicate ${what}` });
 
 const coreShape = {
   version: z.literal(1),
@@ -341,28 +413,29 @@ const coreShape = {
   hero: Hero,
   kpis: Kpis,
   streaks: Streaks,
-  punchcard: Punchcard,
 };
 
 export const UsageShare = z.strictObject({
   ...coreShape,
   handle: z.string().regex(HANDLE_RE),
+  punchcard: PunchcardShare,
   daily: DailyColumns,
   wall: WallColumns,
-  gantt: z.array(GanttDayShare).max(LIMITS.ganttDays),
-  sessions: z.array(SessionShare).max(LIMITS.sessions),
-  providers: z.array(ProviderShare).max(PROVIDER_IDS.length),
+  gantt: unq(z.array(GanttDayShare).max(SHARE_LIMITS.ganttDays), (g) => g.date, 'Gantt day'),
+  sessions: z.array(SessionShare).max(SHARE_LIMITS.sessions),
+  providers: unq(z.array(ProviderShare).max(PROVIDER_IDS.length), (p) => p.id, 'provider'),
 });
 export type UsageShare = z.infer<typeof UsageShare>;
 
 export const UsageStats = z.strictObject({
   ...coreShape,
   generatedAt: z.iso.datetime({ offset: true }),
-  daily: z.array(DailyStats).max(LIMITS.dailyDays),
-  wall: z.array(WallDay).max(LIMITS.wallDays),
-  gantt: z.array(GanttDayStats).max(LIMITS.ganttDays),
+  punchcard: Punchcard,
+  daily: unq(z.array(DailyStats).max(LIMITS.dailyDays), (d) => d.date, 'daily date'),
+  wall: unq(z.array(WallDay).max(LIMITS.wallDays), (w) => w.date, 'wall date'),
+  gantt: unq(z.array(GanttDayStats).max(LIMITS.ganttDays), (g) => g.date, 'Gantt day'),
   sessions: z.array(SessionStats).max(LIMITS.sessions),
-  providers: z.array(ProviderStats).max(PROVIDER_IDS.length),
+  providers: unq(z.array(ProviderStats).max(PROVIDER_IDS.length), (p) => p.id, 'provider'),
   feed: z.array(FeedItem).max(LIMITS.feed),
   /** Total merged PRs behind the feed ("All 47"). */
   feedTotal: count,

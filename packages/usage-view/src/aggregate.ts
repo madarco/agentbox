@@ -214,10 +214,31 @@ export function weekday(day: string): number {
   return new Date(`${day}T00:00:00Z`).getUTCDay();
 }
 
+/** Longest run `daysBetween` will build; well past any window the schema allows. */
+export const MAX_DAYS_BETWEEN = 4000;
+
+/** Every day from `from` to `to`, inclusive. Throws past MAX_DAYS_BETWEEN days. */
 export function daysBetween(from: string, to: string): string[] {
-  const out: string[] = [];
-  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
-  return out;
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) throw new RangeError(`bad day: ${from}..${to}`);
+  const n = Math.round((b - a) / DAY) + 1;
+  if (n <= 0) return [];
+  if (n > MAX_DAYS_BETWEEN) throw new RangeError(`${from}..${to} spans ${n} days`);
+  return Array.from({ length: n }, (_, i) => new Date(a + i * DAY).toISOString().slice(0, 10));
+}
+
+/** Math.min/max without spreading: a spread of a few hundred thousand values overflows the stack. */
+export function minOf(xs: Iterable<number>, empty = Infinity): number {
+  let m = empty;
+  for (const x of xs) if (x < m) m = x;
+  return m;
+}
+
+export function maxOf(xs: Iterable<number>, empty = -Infinity): number {
+  let m = empty;
+  for (const x of xs) if (x > m) m = x;
+  return m;
 }
 
 /** Split spans at local midnights. */
@@ -392,7 +413,7 @@ export function groupSessions(lanes: readonly Lane[]): SessionGroup[] {
     comps.set(r, [...(comps.get(r) ?? []), l]);
   });
   for (const ls of comps.values()) {
-    const first = Math.min(...ls.map((l) => l.spans[0]!.start));
+    const first = minOf(ls.map((l) => l.spans[0]!.start));
     groups.push({ key: `overlap:${first}`, managerId: null, lanes: ls });
   }
   return groups;
@@ -447,7 +468,7 @@ export function summarizeSessions(
         peak: peakOverlap(spans).peak,
         prsMerged: boxIds.reduce((a, id) => a + (prsByBox.get(id) ?? 0), 0),
         minutes: totalMs(unionSpans(spans)) / MIN,
-        start: Math.min(...spans.map((s) => s.start)),
+        start: minOf(spans.map((s) => s.start)),
         boxIds,
       };
     })
@@ -701,7 +722,7 @@ export function buildUsageStats(input: BuildInput): UsageStats {
   const commitsByDow = [0, 0, 0, 0, 0, 0, 0];
   for (const w of wall) commitsByDow[weekday(w.date)]! += w.commits;
   const totalCommitsWall = commitsByDow.reduce((a, b) => a + b, 0);
-  const busiest = totalCommitsWall > 0 ? commitsByDow.indexOf(Math.max(...commitsByDow)) : null;
+  const busiest = totalCommitsWall > 0 ? commitsByDow.indexOf(maxOf(commitsByDow)) : null;
   const bestWall = wall.reduce<WallDay | null>(
     (a, w) => (w.commits > (a?.commits ?? 0) ? w : a),
     null,
@@ -753,8 +774,13 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     const d0 = dayStart(date, tz);
     const laneRows: LaneStats[] = [];
     for (const l of lanes) {
-      // A lane belongs to the day it starts in; one that runs past midnight keeps going (up to 48 h).
-      const spans = clipSpans(l.spans, d0, d0 + 2 * DAY).filter((s) => s.start < d0 + DAY);
+      // An interval belongs to the day it starts in, and keeps going past midnight (up to
+      // 48 h). One that started the evening before is that day's, not this one's.
+      const spans = clipSpans(
+        l.spans.filter((s) => s.start >= d0 && s.start < d0 + DAY),
+        d0,
+        d0 + 2 * DAY,
+      );
       if (spans.length === 0) continue;
       const info = l.boxId ? boxInfo.get(l.boxId) : undefined;
       const lastEnd = spans[spans.length - 1]!.end;
@@ -939,7 +965,10 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     peakAtOnce: conc.peak,
     peakDate: conc.peakAt === null ? null : dayKey(conc.peakAt, tz),
     parallelHours: round(conc.parallelMs / HOUR, 1),
-    maxPrsInSession: Math.max(0, ...sessionSummaries.map((s) => s.prsMerged)),
+    maxPrsInSession: maxOf(
+      sessionSummaries.map((s) => s.prsMerged),
+      0,
+    ),
     sessionsWith3Plus: sessionSummaries.filter((s) => s.boxes >= 3).length,
     streakDays: st.current,
     prsMerged: tot.prs,
@@ -948,9 +977,18 @@ export function buildUsageStats(input: BuildInput): UsageStats {
     deletions: tot.deletions,
     files: tot.files,
     boxes: distinctBoxes.size,
-    bestDayPrs: Math.max(0, ...daily.map((d) => d.prsMerged)),
-    bestDayCommits: Math.max(0, ...daily.map((d) => d.commits)),
-    biggestPrAdditions: Math.max(0, ...merged.map((e) => e.additions ?? 0)),
+    bestDayPrs: maxOf(
+      daily.map((d) => d.prsMerged),
+      0,
+    ),
+    bestDayCommits: maxOf(
+      daily.map((d) => d.commits),
+      0,
+    ),
+    biggestPrAdditions: maxOf(
+      merged.map((e) => e.additions ?? 0),
+      0,
+    ),
   };
   const boxHours = round(boxMs / HOUR, 1);
   const prev = input.previous;
