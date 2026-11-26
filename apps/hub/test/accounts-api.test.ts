@@ -51,10 +51,7 @@ beforeEach(async () => {
   volumeAnswer = { removed: true };
   boxes = [{ name: 'b-work', accounts: { claude: 'work' } }, { name: 'b-default' }];
   const store = { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS };
-  await upsertAccount(
-    { agent: 'claude', id: 'work', kind: 'login', label: 'Work', createdAt: 't' },
-    store,
-  );
+  await upsertAccount({ agent: 'claude', id: 'work', kind: 'login', createdAt: 't' }, store);
   await writeAccountSecret('claude', 'work', LOGIN, store);
   await upsertAccount({ agent: 'claude', id: 'idle', kind: 'login', createdAt: 't' }, store);
 });
@@ -67,7 +64,6 @@ describe('GET /api/v1/accounts (backend)', () => {
     expect(work).toMatchObject({
       agent: 'claude',
       kind: 'login',
-      label: 'Work',
       hasSecret: true,
       boxes: ['b-work'],
     });
@@ -93,15 +89,31 @@ describe('POST /api/v1/accounts (backend)', () => {
       id: 'ci',
       kind: 'setup-token',
       token: TOKEN,
-      label: 'CI',
     });
     expect(r.ok && r.value).toMatchObject({
       id: 'ci',
       kind: 'setup-token',
-      label: 'CI',
       hasSecret: true,
     });
+    expect(r.ok && r.value).not.toHaveProperty('label');
     expect(JSON.stringify(r)).not.toContain(TOKEN);
+  });
+  it('normalizes a new name, keeps an existing one as is, refuses the rest', async () => {
+    const b = backend();
+    const r = await b.addPastedAccount({
+      agent: 'claude',
+      id: 'Work Max',
+      kind: 'setup-token',
+      token: TOKEN,
+    });
+    expect(r.ok && r.value.id).toBe('work_max');
+    const bad = await b.addPastedAccount({
+      agent: 'claude',
+      id: 'bad.name',
+      kind: 'setup-token',
+      token: TOKEN,
+    });
+    expect(!bad.ok && bad.error).toMatch(/not a usable name/);
   });
   it('refuses a login, an unknown agent, a bad id, a short token, an existing id, and an unsupported kind', async () => {
     const b = backend();
@@ -115,7 +127,7 @@ describe('POST /api/v1/accounts (backend)', () => {
     expect(await code({ agent: 'nope', id: 'x1', kind: 'api-key', token: TOKEN })).toBe(
       'invalid_request',
     );
-    expect(await code({ agent: 'claude', id: 'Bad Id', kind: 'api-key', token: TOKEN })).toBe(
+    expect(await code({ agent: 'claude', id: 'Bad.Id', kind: 'api-key', token: TOKEN })).toBe(
       'invalid_request',
     );
     expect(await code({ agent: 'claude', id: 'x1', kind: 'api-key', token: 'short' })).toBe(
@@ -130,15 +142,7 @@ describe('POST /api/v1/accounts (backend)', () => {
   });
 });
 
-describe('PATCH / DELETE /api/v1/accounts/:agent/:id (backend)', () => {
-  it('relabels and clears a label', async () => {
-    const b = backend();
-    const r1 = await b.labelAccount('claude', 'idle', 'Spare');
-    expect(r1.ok && r1.value.label).toBe('Spare');
-    const r2 = await b.labelAccount('claude', 'idle', null);
-    expect(r2.ok && r2.value.label).toBeUndefined();
-    expect((await b.labelAccount('claude', 'nope', 'x')).ok).toBe(false);
-  });
+describe('DELETE /api/v1/accounts/:agent/:id (backend)', () => {
   it('removes an unused account and its volume; refuses one in use and the default', async () => {
     const b = backend();
     const inUse = await b.removeAccount('claude', 'work');
@@ -154,14 +158,12 @@ describe('PATCH / DELETE /api/v1/accounts/:agent/:id (backend)', () => {
 });
 
 describe('accountsInfoOf (Box.accountsInfo)', () => {
-  it('adds label + kind from the store; an unknown account keeps only its id', () => {
+  it('adds the kind from the store; an unknown account keeps only its id', () => {
     const file = {
-      accounts: [
-        { agent: 'claude', id: 'work', kind: 'login' as const, label: 'Work', createdAt: 't' },
-      ],
+      accounts: [{ agent: 'claude', id: 'work', kind: 'login' as const, createdAt: 't' }],
     };
     expect(accountsInfoOf({ claude: 'work', codex: 'gone' }, file)).toEqual([
-      { agent: 'claude', account: 'work', label: 'Work', kind: 'login' },
+      { agent: 'claude', account: 'work', kind: 'login' },
       { agent: 'codex', account: 'gone' },
     ]);
     expect(accountsInfoOf(undefined, file)).toBeUndefined();

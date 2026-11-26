@@ -79,6 +79,8 @@ describe('the list', () => {
       ],
       NOW,
     );
+    expect(table.split('\n')[0]).toMatch(/^ACCOUNT +KIND +IDENTITY +STATUS/);
+    expect(table).not.toContain('LABEL');
     expect(table.split('\n')[1]).toMatch(
       /^claude\/default +login +me@example\.com, max +ok +5-hour 42%, Weekly 80% +global +web, api$/,
     );

@@ -69,9 +69,8 @@ export function LimitPolicyCard() {
         When a box&apos;s subscription hits its limit
       </div>
       <div className="mt-0.5 text-[12.5px] text-muted-foreground">
-        A setup token or API key restarts the agent on it; a login rebuilds a docker box on that
-        account. The conversation resumes either way. Cloud boxes can switch only to a setup token
-        or API key.
+        A setup token or API key restarts the agent on it; a login is written into the box and
+        Claude keeps running. The conversation carries on either way.
       </div>
       <div
         role="radiogroup"

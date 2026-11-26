@@ -3,7 +3,7 @@
 // The box page's account rows (hub settings 3c): which LLM account each of the
 // box's agents runs on, a selector to move it to another one, and the box's
 // recent switches. A setup token or API key restarts the agent with it; a login
-// rebuilds a docker box on that account's volume. Both resume the conversation.
+// is written into the box's own credential file. Both keep the conversation.
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
@@ -29,7 +29,7 @@ async function errorOf(res: Response): Promise<string> {
 
 function optionText(a: Account): string {
   const pct = topPct(a);
-  const parts = [a.label ? `${a.id} (${a.label})` : a.id, KIND_TEXT[a.kind]];
+  const parts = [a.id, KIND_TEXT[a.kind]];
   if (pct >= 100) parts.push('at its limit');
   return parts.join(' · ');
 }
@@ -135,7 +135,7 @@ export function AccountRows({ box }: { box: Box }) {
           <DRow
             key={`acct-${a.agent}`}
             k={`${a.agent} account`}
-            v={[a.account, a.label, a.kind].filter(Boolean).join(' · ')}
+            v={[a.account, a.kind].filter(Boolean).join(' · ')}
             mono
           />
         ))

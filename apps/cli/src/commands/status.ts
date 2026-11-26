@@ -193,7 +193,7 @@ async function renderAccounts(accounts: Record<string, string> | undefined): Pro
   const file = await readAccounts().catch(() => null);
   return Object.entries(named).map(([agent, id]) => {
     const row = file ? findAccount(file, agent, id) : undefined;
-    const meta = [row?.label, row?.kind].filter((x): x is string => Boolean(x)).join(', ');
+    const meta = row?.kind ?? '';
     return `  ${agent}  ${id}${meta ? ` (${meta})` : row ? '' : " (not in this machine's store)"}`;
   });
 }

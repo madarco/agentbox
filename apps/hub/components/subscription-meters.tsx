@@ -165,5 +165,5 @@ export function subLine(a: Account): string {
 }
 
 export function subName(a: Account): string {
-  return a.label ?? (a.id === 'default' ? 'Default login' : a.id);
+  return a.id === 'default' ? 'Default login' : a.id;
 }

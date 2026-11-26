@@ -124,3 +124,22 @@ export {
   type PtyHostSpec,
 } from './pty-host.js';
 export { PTY_REPLAY_RESET, PtyEscScanner, PtyRing, type PtyRingOptions } from './pty-ring.js';
+export {
+  tableSelect,
+  renderTableSelect,
+  moveCursor,
+  keyOf,
+  scrollFor,
+  visibleRows,
+  fitColumns,
+  textWidth,
+  truncate,
+  indexOf as tableIndexOf,
+  type TableAction,
+  type TableRow,
+  type TableTone,
+  type TableSelectSpec,
+  type TableSelectResult,
+  type TableKey,
+  type CursorState,
+} from './table-select.js';

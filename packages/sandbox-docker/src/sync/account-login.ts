@@ -60,7 +60,7 @@ export interface AccountIdentityReader {
 
 export interface CaptureVolumeLoginOptions {
   spec: AgentSyncSpec;
-  account: { id: string; label?: string };
+  account: { id: string };
   read: VolumeFileReader;
   identity?: AccountIdentityReader;
   store?: AccountStoreOptions;
@@ -109,8 +109,6 @@ export async function captureVolumeLogin(
     kind: 'login',
     createdAt: existing?.createdAt ?? (o.now ?? (() => new Date()))().toISOString(),
   };
-  const label = o.account.label ?? existing?.label;
-  if (label) row.label = label;
   // The row must exist before its secret, but it must not describe a login the
   // store then refuses: an existing account keeps its old identity until the
   // new secret is actually written.

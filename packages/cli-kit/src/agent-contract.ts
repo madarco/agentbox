@@ -100,11 +100,7 @@ export interface AgentLoginHost {
    * host account store and report the outcome. Throws when nothing usable was
    * captured.
    */
-  captureAccountLogin(o: {
-    account: { id: string; label?: string };
-    volume: string;
-    image: string;
-  }): Promise<void>;
+  captureAccountLogin(o: { account: { id: string }; volume: string; image: string }): Promise<void>;
 }
 
 export interface AgentRuntime {

@@ -3,7 +3,8 @@
  * three moves between them: upload to the hub, download to this PC (to align one
  * PC with another), discard from the hub (docs/hub-skills-plan.md, Phase 1).
  *
- * With no action flag on a TTY it is a @clack/prompts flow; every action also
+ * With no action flag on a TTY it is one table screen (cli-kit `tableSelect`):
+ * the bulk actions above the skills, each row selectable for its own actions; every action also
  * has a flag for scripts. Upload is never destructive (the hub keeps old
  * versions); discard and a download that replaces a different local copy are,
  * so under a non-TTY they need `--yes`. A skill the secret scan flags is
@@ -12,6 +13,7 @@
 import { Command } from 'commander';
 import { cancel, confirm, isCancel, log, multiselect, note, select, spinner } from '@clack/prompts';
 import { loadEffectiveConfig } from '@agentbox/config';
+import { tableSelect, type TableTone } from '@agentbox/cli-kit';
 import { homedir } from 'node:os';
 import { withHubClient } from '../control-plane/with-hub.js';
 import {
@@ -71,35 +73,60 @@ function baseStatus(r: SkillRow): string {
   }
 }
 
-/** The side-by-side table, plain text so it renders in `note` and a pipe alike. */
+const SKILL_HEADERS = ['SKILL', 'LOCAL', 'HUB', 'STATUS', 'SIZE', 'FROM', 'UPDATED'];
+
+function localFlag(r: SkillRow): string {
+  if (!r.local) return '-';
+  if (r.local.problems.length > 0) return 'invalid';
+  return r.local.findings.length > 0 ? 'flagged' : 'yes';
+}
+
+/** One table row's cells, shared by the plain table and the TUI. */
+function skillCells(r: SkillRow): string[] {
+  return [
+    r.name,
+    localFlag(r),
+    r.hub ? 'yes' : '-',
+    statusCell(r),
+    formatBytes(r.hub?.size ?? r.local?.size ?? 0),
+    r.hub?.source.host ?? '-',
+    r.hub ? r.hub.updatedAt.slice(0, 10) : '-',
+  ];
+}
+
+/** The TUI's cells: a skipped skill reads plainly "skipped". */
+function skillTuiCells(r: SkillRow): string[] {
+  const cells = skillCells(r);
+  if (r.status === 'skipped') cells[3] = 'skipped';
+  return cells;
+}
+
+function skillTones(r: SkillRow): (TableTone | undefined)[] {
+  // A skipped skill reaches no box: the whole row is dimmed.
+  if (r.status === 'skipped') return SKILL_HEADERS.map(() => 'dim');
+  const flag = localFlag(r);
+  const status: TableTone | undefined =
+    r.status === 'same' ? 'green' : r.status === 'differs' ? 'yellow' : undefined;
+  return [
+    undefined,
+    flag === 'invalid' ? 'red' : flag === 'flagged' ? 'yellow' : undefined,
+    undefined,
+    status,
+  ];
+}
+
+/** The side-by-side table, plain text so it renders in a pipe. */
 export function renderSkillsTable(rows: readonly SkillRow[]): string {
-  const header = ['SKILL', 'LOCAL', 'HUB', 'STATUS', 'SIZE', 'FROM', 'UPDATED'];
-  const body = rows.map((r) => {
-    const flag = r.local
-      ? r.local.problems.length > 0
-        ? 'invalid'
-        : r.local.findings.length > 0
-          ? 'flagged'
-          : 'yes'
-      : '-';
-    const size = r.hub?.size ?? r.local?.size ?? 0;
-    return [
-      r.name,
-      flag,
-      r.hub ? 'yes' : '-',
-      statusCell(r),
-      formatBytes(size),
-      r.hub?.source.host ?? '-',
-      r.hub ? r.hub.updatedAt.slice(0, 10) : '-',
-    ];
-  });
-  const widths = header.map((h, i) => Math.max(h.length, ...body.map((row) => row[i]!.length)));
+  const body = rows.map(skillCells);
+  const widths = SKILL_HEADERS.map((h, i) =>
+    Math.max(h.length, ...body.map((row) => row[i]!.length)),
+  );
   const line = (cells: string[]) =>
     cells
       .map((c, i) => c.padEnd(widths[i]!))
       .join('  ')
       .trimEnd();
-  return [line(header), ...body.map(line)].join('\n');
+  return [line(SKILL_HEADERS), ...body.map(line)].join('\n');
 }
 
 async function loadRows(client: HubApiClient, ctx: SkillsContext): Promise<SkillRow[]> {
@@ -303,120 +330,202 @@ async function runFlags(
   return ok;
 }
 
+type BulkAction = '+upload' | '+download' | '+skip' | '+discard';
+
 async function runTui(client: HubApiClient, ctx: SkillsContext): Promise<void> {
+  let cursorAt: string | undefined;
   for (;;) {
     const s = spinner();
     s.start('Reading local and hub skills');
     const rows = await loadRows(client, ctx);
-    s.stop(
-      `${String(rows.filter((r) => r.local).length)} local, ${String(rows.filter((r) => r.hub).length)} on the hub`,
-    );
-    note(rows.length > 0 ? renderSkillsTable(rows) : 'No skills here or on the hub.', 'Skills');
+    s.stop('Skills read');
     for (const r of rows) {
       if (r.local && r.local.problems.length > 0)
         log.warn(`${r.name}: ${r.local.problems.join('; ')}`);
     }
-
-    const action = await select({
-      message: 'What next?',
-      options: [
+    const picked = await tableSelect<string>({
+      title: 'Skills',
+      subtitle: `${String(rows.filter((r) => r.local).length)} local, ${String(rows.filter((r) => r.hub).length)} on the hub`,
+      actions: [
         {
-          value: 'upload',
-          label: 'Upload to hub',
+          value: '+upload',
+          label: 'Upload to hub…',
           hint: 'local skills the hub lacks or has differently',
         },
-        { value: 'download', label: 'Download to this PC', hint: 'into ~/.agents/skills' },
+        { value: '+download', label: 'Download to this PC…', hint: 'into ~/.agents/skills' },
         {
-          value: 'skip',
-          label: 'Choose which skills sync',
-          hint: 'unticked ones are skipped for good; the hub remembers it',
+          value: '+skip',
+          label: 'Choose which skills sync…',
+          hint: 'unticked ones are skipped for good',
         },
-        { value: 'discard', label: 'Discard from hub' },
-        { value: 'done', label: 'Done' },
+        { value: '+discard', label: 'Discard from hub…' },
       ],
+      headers: SKILL_HEADERS,
+      // SKILL, STATUS, LOCAL, HUB, SIZE, UPDATED, FROM: what a narrow terminal keeps.
+      priority: [0, 3, 1, 2, 4, 6, 5],
+      rows: rows.map((r) => ({ value: r.name, cells: skillTuiCells(r), tones: skillTones(r) })),
+      emptyText: 'No skills here or on the hub.',
+      ...(cursorAt ? { cursorAt } : {}),
     });
-    if (isCancel(action) || action === 'done') return;
-
-    if (action === 'upload') {
-      const eligible = rows.filter((r) => r.local && movable(r) && r.local.problems.length === 0);
-      if (eligible.length === 0) {
-        log.info('Nothing to upload: every valid local skill is already on the hub.');
-        continue;
-      }
-      const chosen = await multiselect({
-        message: 'Upload which skills?',
-        required: false,
-        options: eligible.map((r) => ({
-          value: r.name,
-          label: r.name,
-          hint: `${statusCell(r)}${r.local!.findings.length > 0 ? ', secret-scan findings' : ''}`,
-        })),
-      });
-      if (isCancel(chosen) || chosen.length === 0) continue;
-      await doUpload(client, pick(rows, chosen), { allowFindings: false, ask: true });
-    } else if (action === 'download') {
-      const eligible = rows.filter((r) => r.hub && movable(r));
-      if (eligible.length === 0) {
-        log.info('Nothing to download: this PC already has every hub skill.');
-        continue;
-      }
-      const chosen = await multiselect({
-        message: 'Download which skills?',
-        required: false,
-        options: eligible.map((r) => ({
-          value: r.name,
-          label: r.name,
-          hint: `${statusCell(r)}, ${formatBytes(r.hub!.size)}, from ${r.hub!.source.host ?? '?'}`,
-        })),
-      });
-      if (isCancel(chosen) || chosen.length === 0) continue;
-      await doDownload(client, pick(rows, chosen), ctx, { yes: false, ask: true });
-    } else if (action === 'skip') {
-      // A local folder whose name is no valid skill name can't be uploaded
-      // anyway, and the hub refuses to skip it (400): name it, don't offer it.
-      const skippable = rows.filter((r) => SKILL_NAME_RE.test(r.name));
-      const odd = rows.filter((r) => !SKILL_NAME_RE.test(r.name)).map((r) => r.name);
-      if (odd.length > 0) log.info(`Not skippable (not a valid skill name): ${odd.join(', ')}`);
-      if (skippable.length === 0) {
-        log.info('No skills here or on the hub.');
-        continue;
-      }
-      const synced = await multiselect({
-        message: 'Which skills sync? (untick to skip)',
-        required: false,
-        initialValues: skippable.filter((r) => r.status !== 'skipped').map((r) => r.name),
-        options: skippable.map((r) => ({ value: r.name, label: r.name, hint: statusCell(r) })),
-      });
-      if (isCancel(synced)) continue;
-      const keep = new Set(synced);
-      for (const r of skippable) {
-        const skip = !keep.has(r.name);
-        if (skip === (r.status === 'skipped')) continue;
-        await setSkipped(client, r.name, skip);
-      }
-    } else {
-      const onHub = rows.filter((r) => r.hub);
-      if (onHub.length === 0) {
-        log.info('The hub holds no skills.');
-        continue;
-      }
-      const chosen = await multiselect({
-        message: 'Discard which skills from the hub?',
-        required: false,
-        options: onHub.map((r) => ({
-          value: r.name,
-          label: r.name,
-          hint: `${formatBytes(r.hub!.size)}, ${String(r.hub!.versions)} version(s)`,
-        })),
-      });
-      if (isCancel(chosen) || chosen.length === 0) continue;
-      const yes = await confirm({
-        message: `Discard ${String(chosen.length)} skill(s) from the hub? Every stored version is deleted.`,
-        initialValue: false,
-      });
-      if (isCancel(yes) || !yes) continue;
-      await doDiscard(client, chosen);
+    if (picked.kind === 'quit') return;
+    if (picked.kind === 'cancel') {
+      cancel('Cancelled.');
+      process.exitCode = 130;
+      return;
     }
+    cursorAt = picked.value;
+    if (picked.kind === 'row') {
+      const row = rows.find((r) => r.name === picked.value);
+      if (row) await skillMenu(client, ctx, row);
+      continue;
+    }
+    await bulkAction(client, ctx, rows, picked.value as BulkAction);
+  }
+}
+
+function skillDetail(r: SkillRow): string {
+  const lines = [`status    ${statusCell(r)}`];
+  if (r.local) {
+    lines.push(`local     ${r.local.dir} (${formatBytes(r.local.size)})`);
+    if (r.local.problems.length > 0) lines.push(`problems  ${r.local.problems.join('; ')}`);
+    if (r.local.findings.length > 0) lines.push(`findings  ${describeFindings(r.local)}`);
+  }
+  if (r.hub) {
+    lines.push(
+      `hub       ${formatBytes(r.hub.size)}, ${String(r.hub.versions)} version(s), from ${r.hub.source.host ?? '?'}, ${r.hub.updatedAt.slice(0, 10)}`,
+    );
+  }
+  return lines.join('\n');
+}
+
+/** What can be done with one skill: the single-skill form of the bulk actions. */
+async function skillMenu(client: HubApiClient, ctx: SkillsContext, r: SkillRow): Promise<void> {
+  note(skillDetail(r), r.name);
+  const options: Array<{ value: string; label: string; hint?: string }> = [];
+  if (r.local && movable(r) && r.local.problems.length === 0) {
+    options.push({ value: 'upload', label: 'Upload to hub' });
+  }
+  if (r.hub && movable(r)) {
+    options.push({
+      value: 'download',
+      label: 'Download to this PC',
+      ...(r.status === 'differs' ? { hint: 'replaces the local copy' } : {}),
+    });
+  }
+  if (SKILL_NAME_RE.test(r.name)) {
+    options.push(
+      r.status === 'skipped'
+        ? { value: 'unskip', label: 'Unskip', hint: 'boxes get it again' }
+        : {
+            value: 'skip',
+            label: 'Skip (boxes stop getting it)',
+            hint: 'never synced or delivered; nothing is deleted',
+          },
+    );
+  }
+  if (r.hub) options.push({ value: 'discard', label: 'Discard from hub', hint: 'every version' });
+  options.push({ value: 'back', label: 'Back' });
+  const action = await select({ message: r.name, options });
+  if (isCancel(action) || action === 'back') return;
+  if (action === 'upload') await doUpload(client, [r], { allowFindings: false, ask: true });
+  else if (action === 'download') await doDownload(client, [r], ctx, { yes: false, ask: true });
+  else if (action === 'skip' || action === 'unskip')
+    await setSkipped(client, r.name, action === 'skip');
+  else {
+    const yes = await confirm({
+      message: `Discard ${r.name} from the hub? Every stored version is deleted.`,
+      initialValue: false,
+    });
+    if (isCancel(yes) || !yes) return;
+    await doDiscard(client, [r.name]);
+  }
+}
+
+async function bulkAction(
+  client: HubApiClient,
+  ctx: SkillsContext,
+  rows: readonly SkillRow[],
+  action: BulkAction,
+): Promise<void> {
+  if (action === '+upload') {
+    const eligible = rows.filter((r) => r.local && movable(r) && r.local.problems.length === 0);
+    if (eligible.length === 0) {
+      log.info('Nothing to upload: every valid local skill is already on the hub.');
+      return;
+    }
+    const chosen = await multiselect({
+      message: 'Upload which skills?',
+      required: false,
+      options: eligible.map((r) => ({
+        value: r.name,
+        label: r.name,
+        hint: `${statusCell(r)}${r.local!.findings.length > 0 ? ', secret-scan findings' : ''}`,
+      })),
+    });
+    if (isCancel(chosen) || chosen.length === 0) return;
+    await doUpload(client, pick(rows, chosen), { allowFindings: false, ask: true });
+  } else if (action === '+download') {
+    const eligible = rows.filter((r) => r.hub && movable(r));
+    if (eligible.length === 0) {
+      log.info('Nothing to download: this PC already has every hub skill.');
+      return;
+    }
+    const chosen = await multiselect({
+      message: 'Download which skills?',
+      required: false,
+      options: eligible.map((r) => ({
+        value: r.name,
+        label: r.name,
+        hint: `${statusCell(r)}, ${formatBytes(r.hub!.size)}, from ${r.hub!.source.host ?? '?'}`,
+      })),
+    });
+    if (isCancel(chosen) || chosen.length === 0) return;
+    await doDownload(client, pick(rows, chosen), ctx, { yes: false, ask: true });
+  } else if (action === '+skip') {
+    // A local folder whose name is no valid skill name can't be uploaded
+    // anyway, and the hub refuses to skip it (400): name it, don't offer it.
+    const skippable = rows.filter((r) => SKILL_NAME_RE.test(r.name));
+    const odd = rows.filter((r) => !SKILL_NAME_RE.test(r.name)).map((r) => r.name);
+    if (odd.length > 0) log.info(`Not skippable (not a valid skill name): ${odd.join(', ')}`);
+    if (skippable.length === 0) {
+      log.info('No skills here or on the hub.');
+      return;
+    }
+    const synced = await multiselect({
+      message: 'Which skills sync? (untick to skip)',
+      required: false,
+      initialValues: skippable.filter((r) => r.status !== 'skipped').map((r) => r.name),
+      options: skippable.map((r) => ({ value: r.name, label: r.name, hint: statusCell(r) })),
+    });
+    if (isCancel(synced)) return;
+    const keep = new Set(synced);
+    for (const r of skippable) {
+      const skip = !keep.has(r.name);
+      if (skip === (r.status === 'skipped')) continue;
+      await setSkipped(client, r.name, skip);
+    }
+  } else {
+    const onHub = rows.filter((r) => r.hub);
+    if (onHub.length === 0) {
+      log.info('The hub holds no skills.');
+      return;
+    }
+    const chosen = await multiselect({
+      message: 'Discard which skills from the hub?',
+      required: false,
+      options: onHub.map((r) => ({
+        value: r.name,
+        label: r.name,
+        hint: `${formatBytes(r.hub!.size)}, ${String(r.hub!.versions)} version(s)`,
+      })),
+    });
+    if (isCancel(chosen) || chosen.length === 0) return;
+    const yes = await confirm({
+      message: `Discard ${String(chosen.length)} skill(s) from the hub? Every stored version is deleted.`,
+      initialValue: false,
+    });
+    if (isCancel(yes) || !yes) return;
+    await doDiscard(client, chosen);
   }
 }
 

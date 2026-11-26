@@ -11,6 +11,7 @@ import {
   DEFAULT_ACCOUNT_ID,
   findAccount,
   migrateAccountsFile,
+  normalizeAccountName,
   type AgentSyncSpec,
 } from '../src/index.js';
 
@@ -31,15 +32,32 @@ const spec = (over: Partial<AgentSyncSpec> = {}): AgentSyncSpec =>
   }) as AgentSyncSpec;
 
 describe('accountIdProblem', () => {
-  it.each(['default', 'work', 'a', 'team-2', 'b1234abcd', 'x'.repeat(32)])('accepts %s', (id) => {
-    expect(accountIdProblem(id)).toBeNull();
-  });
-  it.each(['', 'Work', '-a', 'a-', 'a.b', 'a/b', 'a_b', 'auth.json', 'x'.repeat(33), '..'])(
+  it.each(['default', 'work', 'a', 'team-2', 'work_max', 'b1234abcd', 'x'.repeat(32)])(
+    'accepts %s',
+    (id) => {
+      expect(accountIdProblem(id)).toBeNull();
+    },
+  );
+  it.each(['', 'Work', '-a', 'a-', '_a', 'a.b', 'a/b', 'auth.json', 'x'.repeat(33), '..'])(
     'rejects %j',
     (id) => {
       expect(accountIdProblem(id)).toMatch(/lowercase/);
     },
   );
+});
+
+describe('normalizeAccountName', () => {
+  it.each([
+    ['Work Max', 'work_max'],
+    ['work-max', 'work_max'],
+    ['  Team  -  2 ', 'team_2'],
+    ['personal', 'personal'],
+  ])('%j -> %s', (input, name) => {
+    expect(normalizeAccountName(input)).toEqual({ name });
+  });
+  it.each(['bad.name', 'a/b', '', '-x', 'x'.repeat(33), 'café'])('refuses %j', (input) => {
+    expect(normalizeAccountName(input).problem).toMatch(/not a usable name/);
+  });
 });
 
 describe('account kinds', () => {
@@ -164,7 +182,9 @@ describe('migrateAccountsFile', () => {
     };
     const out = migrateAccountsFile(raw, legacy);
     expect(out.accounts).toHaveLength(1);
-    expect(out.accounts[0]!.label).toBe('Personal');
+    expect(out.accounts[0]!.createdAt).toBe('x');
+    // A stored label is ignored: an account has one name, its id.
+    expect(out.accounts[0]).not.toHaveProperty('label');
   });
 
   it('drops malformed rows and duplicates, keeps the rest', () => {
@@ -239,8 +259,6 @@ describe('migrateAccountsFile canonicalAgent (review #8)', () => {
     const out = migrateAccountsFile(raw, [], {
       canonicalAgent: (a) => (a === 'claude-code' ? 'claude' : a),
     });
-    expect(out.accounts).toEqual([
-      { agent: 'claude', id: 'work', kind: 'login', label: 'A', createdAt: 't' },
-    ]);
+    expect(out.accounts).toEqual([{ agent: 'claude', id: 'work', kind: 'login', createdAt: 't' }]);
   });
 });

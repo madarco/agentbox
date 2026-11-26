@@ -2309,4 +2309,18 @@ export function isForce(req: Request): boolean {
  * and `@agentbox/core`'s entry pulls in node builtins. `accounts-backend.test.ts`
  * pins the two together.
  */
-export const ACCOUNT_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
+export const ACCOUNT_ID_RE = /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/;
+
+/**
+ * The name a NEW account gets for a typed one (`normalizeAccountName` in
+ * `@agentbox/core`, restated for the browser like {@link ACCOUNT_ID_RE}):
+ * lowercased, runs of spaces or `-` turned into `_`; null when it still isn't
+ * a name.
+ */
+export function newAccountName(typed: string): string | null {
+  const name = typed
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  return /^[a-z0-9](?:[a-z0-9_]{0,30}[a-z0-9])?$/.test(name) ? name : null;
+}

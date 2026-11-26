@@ -32,7 +32,6 @@ import {
   addCommand,
   credentialsInteractive,
   fail,
-  labelCommand,
   listCommand,
   removeCommand,
   renewCommand,
@@ -329,14 +328,16 @@ export const credentialsCommand = new Command('credentials')
       .description(
         'add a named account: sign a login in here, or store a setup token / API key (read from a hidden prompt or stdin, never argv)',
       )
-      .argument('<agent/name>', 'e.g. claude/work')
+      .argument(
+        '<agent/name>',
+        "e.g. claude/work; a new name is lowercased, spaces and '-' become '_' ('claude/Work Max' is claude/work_max)",
+      )
       .option('--login', 'sign in with the browser (the OAuth login)')
       .option(
         '--setup-token',
         'store a long-lived setup token (never refreshes; fine for many boxes at once)',
       )
       .option('--api-key', 'store an API key')
-      .option('--label <text>', 'display label')
       .option(
         '--replace',
         'paste a new token over an existing setup token or API key (boxes on it keep it)',
@@ -375,21 +376,9 @@ export const credentialsCommand = new Command('credentials')
       .action(withRef((ref: string, opts: { yes?: boolean }) => removeCommand(ref, opts))),
   )
   .addCommand(
-    new Command('label')
-      .description("set or clear an account's display label")
-      .argument('<agent/account>', 'e.g. claude/work')
-      .argument('[label]', 'the new label')
-      .option('--clear', 'remove the label')
-      .action(
-        withRef((ref: string, label: string | undefined, opts: { clear?: boolean }) =>
-          labelCommand(ref, label, opts),
-        ),
-      ),
-  )
-  .addCommand(
     new Command('switch')
       .description(
-        "move a box's agent to another account: a setup token or API key restarts the agent with it, a login rebuilds a docker box on that account's volume; the conversation resumes",
+        "move a box's agent to another account: a login is written into the box and the agent keeps running, a setup token or API key restarts the agent with it; the conversation carries on",
       )
       .argument('<box>', 'box id or name')
       .argument('<agent/account>', 'e.g. claude/work, or claude/default')

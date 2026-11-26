@@ -17,12 +17,11 @@ const { throwing } = vi.hoisted(() => ({
 vi.mock('../app/(dashboard)/api/v1/lib/backend', () => ({
   backendOrNull: () => ({
     addPastedAccount: throwing,
-    labelAccount: throwing,
     removeAccount: throwing,
   }),
 }));
 const { POST } = await import('../app/(dashboard)/api/v1/accounts/route');
-const { DELETE, PATCH } = await import('../app/(dashboard)/api/v1/accounts/[agent]/[id]/route');
+const { DELETE } = await import('../app/(dashboard)/api/v1/accounts/[agent]/[id]/route');
 
 const ctx = { params: Promise.resolve({ agent: 'claude', id: 'work' }) };
 const json = (body: unknown) =>
@@ -43,9 +42,6 @@ describe('accounts routes answer a store failure with the error envelope (#444 r
     await expectEnvelope(
       await POST(json({ agent: 'claude', id: 'ci', kind: 'api-key', token: 'x' })),
     );
-  });
-  it('PATCH', async () => {
-    await expectEnvelope(await PATCH(json({ label: 'x' }), ctx));
   });
   it('DELETE', async () => {
     await expectEnvelope(await DELETE(new Request('http://hub/x', { method: 'DELETE' }), ctx));
