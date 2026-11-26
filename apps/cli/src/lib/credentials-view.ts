@@ -1,7 +1,7 @@
 /**
  * How `agentbox credentials` shows accounts (docs/credentials-tui-plan.md):
- * the list table, the status cell and the `use` table. Pure, plain text, so
- * the TUI's `note` and a pipe render the same thing.
+ * the list table, the status cell and the `use` table. Pure, plain text; the
+ * TUI draws the same cells in its bordered table.
  */
 import type { HubApiAccount, HubApiAccountDefault } from '../control-plane/hub-api-client.js';
 
@@ -92,20 +92,41 @@ export function formatTable(headers: readonly string[], rows: readonly string[][
   return [line(headers), ...rows.map(line)].join('\n');
 }
 
+export const ACCOUNT_HEADERS = [
+  'NAME',
+  'KIND',
+  'IDENTITY',
+  'STATUS',
+  'LIMITS',
+  'DEFAULT',
+  'BOXES',
+] as const;
+
+/** One account's cells, shared by the plain table and the TUI. */
+export function accountCells(a: HubApiAccount, now = Date.now()): string[] {
+  return [
+    `${a.agent}/${a.id}`,
+    KIND_TEXT[a.kind] ?? a.kind,
+    identityText(a),
+    statusText(a, now),
+    limitsText(a),
+    defaultText(a),
+    a.boxes.join(', '),
+  ];
+}
+
+/** The status column's color: revoked red, anything needing a look amber, ok green. */
+export function statusTone(a: HubApiAccount): 'red' | 'yellow' | 'green' {
+  if (a.auth?.state === 'revoked') return 'red';
+  if (!a.hasSecret || a.limits?.atLimit || a.auth?.state === 'expiring') return 'yellow';
+  return 'green';
+}
+
 /** The `credentials list` table. */
 export function renderAccountsTable(accounts: readonly HubApiAccount[], now = Date.now()): string {
   return formatTable(
-    ['ACCOUNT', 'KIND', 'LABEL', 'IDENTITY', 'STATUS', 'LIMITS', 'DEFAULT', 'BOXES'],
-    sortAccounts(accounts).map((a) => [
-      `${a.agent}/${a.id}`,
-      KIND_TEXT[a.kind] ?? a.kind,
-      a.label ?? '',
-      identityText(a),
-      statusText(a, now),
-      limitsText(a),
-      defaultText(a),
-      a.boxes.join(', '),
-    ]),
+    ACCOUNT_HEADERS,
+    sortAccounts(accounts).map((a) => accountCells(a, now)),
   );
 }
 

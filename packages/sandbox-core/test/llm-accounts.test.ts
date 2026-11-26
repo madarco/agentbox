@@ -103,12 +103,12 @@ describe('default migration', () => {
 
   it('a stored default is listed only while its legacy login is real', async () => {
     writeFileSync(claudeBackup, REAL_CLAUDE);
-    await upsertAccount(acct({ id: 'default', kind: 'login', label: 'Personal' }), opts);
+    await upsertAccount(acct({ id: 'default', kind: 'login' }), opts);
     rmSync(claudeBackup);
     expect((await readAccounts(opts)).accounts).toEqual([]);
     writeFileSync(claudeBackup, REAL_CLAUDE);
     expect((await readAccounts(opts)).accounts).toEqual([
-      expect.objectContaining({ id: 'default', label: 'Personal' }),
+      expect.objectContaining({ id: 'default' }),
     ]);
   });
 
@@ -182,10 +182,10 @@ describe('upsert / remove / secrets', () => {
   it('upsert replaces the same (agent, id) and keeps other agents apart', async () => {
     await upsertAccount(acct(), opts);
     await upsertAccount(acct({ agent: 'codex', kind: 'api-key' }), opts);
-    await upsertAccount(acct({ label: 'Work' }), opts);
+    await upsertAccount(acct({ kind: 'setup-token' }), opts);
     const file = await readAccounts(opts);
     expect(file.accounts).toHaveLength(2);
-    expect(file.accounts.find((a) => a.agent === 'claude')?.label).toBe('Work');
+    expect(file.accounts.find((a) => a.agent === 'claude')?.kind).toBe('setup-token');
   });
 
   it('named secrets live under credentials/<agent>/<id>.json at 0600', async () => {
@@ -382,18 +382,18 @@ describe('alias rows (review #8)', () => {
       JSON.stringify({
         version: 1,
         accounts: [
-          { agent: 'claude-code', id: 'work', kind: 'setup-token', label: 'A', createdAt: 't' },
-          { agent: 'claude', id: 'work', kind: 'setup-token', label: 'B', createdAt: 't' },
+          { agent: 'claude-code', id: 'work', kind: 'setup-token', createdAt: 'A' },
+          { agent: 'claude', id: 'work', kind: 'setup-token', createdAt: 'B' },
         ],
       }),
     );
     expect((await readAccounts(opts)).accounts).toEqual([
-      expect.objectContaining({ agent: 'claude', id: 'work', label: 'A' }),
+      expect.objectContaining({ agent: 'claude', id: 'work', createdAt: 'A' }),
     ]);
     // An upsert replaces both spellings.
-    await upsertAccount(acct({ label: 'C' }), opts);
+    await upsertAccount(acct({ createdAt: 'C' }), opts);
     const onDisk = JSON.parse(readFileSync(opts.path!, 'utf8')) as { accounts: LlmAccount[] };
-    expect(onDisk.accounts).toEqual([expect.objectContaining({ agent: 'claude', label: 'C' })]);
+    expect(onDisk.accounts).toEqual([expect.objectContaining({ agent: 'claude', createdAt: 'C' })]);
   });
 });
 
@@ -417,13 +417,8 @@ describe('resolveLoginAccount (Phase 2)', () => {
     expect(resolveLoginAccount(claude, { account: 'default' })).toBeNull();
   });
 
-  it('a named login, with an optional label', () => {
+  it('a named login', () => {
     expect(resolveLoginAccount(claude, { account: 'work' })).toEqual({ id: 'work', kind: 'login' });
-    expect(resolveLoginAccount(claude, { account: 'work', label: ' Work ' })).toEqual({
-      id: 'work',
-      kind: 'login',
-      label: 'Work',
-    });
   });
 
   it('pasted kinds need a named account and a supporting agent', () => {
@@ -440,9 +435,8 @@ describe('resolveLoginAccount (Phase 2)', () => {
     ).toThrow(/choose one/);
   });
 
-  it('refuses a bad id, a label without an account, and an agent with no accounts', () => {
+  it('refuses a bad id and an agent with no accounts', () => {
     expect(() => resolveLoginAccount(claude, { account: 'Work' })).toThrow(/lowercase/);
-    expect(() => resolveLoginAccount(claude, { label: 'x' })).toThrow(/--label/);
     expect(() => resolveLoginAccount({ id: 'pi' } as AgentSyncSpec, { account: 'work' })).toThrow(
       /does not support named accounts/,
     );

@@ -158,7 +158,7 @@ function CreateBoxModal({
   // per-agent account picker. Empty until it lands — and on a hub without the
   // endpoint, where the picker simply never shows.
   const [namedAccounts, setNamedAccounts] = useState<
-    Array<{ agent: string; id: string; label?: string; kind: string; hasSecret: boolean }>
+    Array<{ agent: string; id: string; kind: string; hasSecret: boolean }>
   >([]);
   // '' = no opinion: the hub resolves `<agent>.account`, else the default login.
   const [accountChoice, setAccountChoice] = useState('');
@@ -1051,7 +1051,7 @@ function CreateBoxModal({
                   <option value="">Default (or this project&apos;s {agent}.account)</option>
                   {agentAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.label ? `${a.id} — ${a.label}` : a.id} ({a.kind})
+                      {a.id} ({a.kind})
                     </option>
                   ))}
                 </Select>

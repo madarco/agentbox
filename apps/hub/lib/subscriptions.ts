@@ -8,7 +8,6 @@ export type AccountKind = 'login' | 'setup-token' | 'api-key';
 export interface SubscriptionAccount {
   agent: string;
   id: string;
-  label?: string;
   kind: AccountKind;
 }
 
@@ -26,9 +25,9 @@ export function subscriptionKey(a: { agent: string; id: string }): string {
   return `${a.agent}/${a.id}`;
 }
 
-/** `Personal · Anthropic`; an API key says so, since it bills per token, not a plan. */
+/** `personal · Anthropic`; an API key says so, since it bills per token, not a plan. */
 export function subscriptionLabel(a: SubscriptionAccount): string {
-  const name = a.label ?? a.id;
+  const name = a.id;
   return a.kind === 'api-key'
     ? `${name} · ${vendorOf(a.agent)} API key`
     : `${name} · ${vendorOf(a.agent)}`;

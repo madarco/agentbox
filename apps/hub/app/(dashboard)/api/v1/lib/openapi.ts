@@ -1251,9 +1251,8 @@ export function buildOpenApi(): Record<string, unknown> {
                             id: {
                               type: 'string',
                               description:
-                                '`default` or a named id (lowercase letters, digits, inner dashes).',
+                                "The account's name: `default` or a named one (lowercase letters, digits, `_`; older names may hold inner dashes).",
                             },
-                            label: { type: 'string' },
                             kind: { type: 'string', enum: ['login', 'setup-token', 'api-key'] },
                             identity: {
                               type: 'object',
@@ -1387,7 +1386,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Accounts'],
           summary: 'Add a setup token or API key account',
           description:
-            'Store a pasteable account (`api-key` / `setup-token`). A `login` is interactive and runs on the machine (`agentbox credentials add <agent>/<id> --login`), so it is refused here. With `replace: true` the token goes over an existing account of the same kind (a rotated or expiring setup token), keeping its label; the boxes on it stay on it. `409` when the id exists and `replace` is not set, or the existing account is of another kind; `404` for `replace` on no account. The token is never echoed back.',
+            'Store a pasteable account (`api-key` / `setup-token`). A `login` is interactive and runs on the machine (`agentbox credentials add <agent>/<id> --login`), so it is refused here. With `replace: true` the token goes over an existing account of the same kind (a rotated or expiring setup token); the boxes on it stay on it. `409` when the id exists and `replace` is not set, or the existing account is of another kind; `404` for `replace` on no account. The token is never echoed back.',
           requestBody: {
             required: true,
             content: {
@@ -1396,10 +1395,13 @@ export function buildOpenApi(): Record<string, unknown> {
                   type: 'object',
                   properties: {
                     agent: { type: 'string' },
-                    id: { type: 'string' },
+                    id: {
+                      type: 'string',
+                      description:
+                        'The name. A new one is normalized (lowercased, runs of spaces or `-` become `_`: "Work Max" is stored as `work_max`); anything else outside letters, digits and `_` is a 400. An existing name is matched as is.',
+                    },
                     kind: { type: 'string', enum: ['api-key', 'setup-token'] },
                     token: { type: 'string', writeOnly: true },
-                    label: { type: 'string' },
                     replace: {
                       type: 'boolean',
                       description:
@@ -1510,27 +1512,6 @@ export function buildOpenApi(): Record<string, unknown> {
           { name: 'agent', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
         ],
-        patch: {
-          tags: ['Accounts'],
-          summary: "Set or clear an account's label",
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: { label: { type: 'string', nullable: true } },
-                },
-              },
-            },
-          },
-          responses: {
-            '200': { description: 'The account' },
-            '400': errorResponse,
-            '401': errorResponse,
-            '404': errorResponse,
-          },
-        },
         delete: {
           tags: ['Accounts'],
           summary: 'Remove a named account',
@@ -7130,7 +7111,7 @@ export function buildOpenApi(): Record<string, unknown> {
               type: 'object',
               additionalProperties: { type: 'string' },
               description:
-                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Chosen at create, changed by a switch (`POST /boxes/{id}/account`). Absent = every agent on its default login. Labels and kinds are in `accountsInfo`.',
+                'Named LLM account per agent, e.g. `{ "claude": "work" }` (`agentbox <agent> --account`). Chosen at create, changed by a switch (`POST /boxes/{id}/account`). Absent = every agent on its default login. Kinds are in `accountsInfo`.',
             },
             accountSwitches: {
               type: 'array',
@@ -7158,13 +7139,12 @@ export function buildOpenApi(): Record<string, unknown> {
             accountsInfo: {
               type: 'array',
               description:
-                "Label and kind for each entry of `accounts`, from the hub machine's account store. An account the store does not have keeps only its id.",
+                "The kind of each entry of `accounts`, from the hub machine's account store. An account the store does not have keeps only its id.",
               items: {
                 type: 'object',
                 properties: {
                   agent: { type: 'string' },
                   account: { type: 'string' },
-                  label: { type: 'string' },
                   kind: { type: 'string', enum: ['login', 'setup-token', 'api-key'] },
                 },
                 required: ['agent', 'account'],

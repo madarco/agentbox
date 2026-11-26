@@ -1,8 +1,9 @@
 /**
  * `agentbox credentials` — this machine's subscriptions and keys
- * (docs/credentials-tui-plan.md): list, add, renew, make default, relabel,
- * remove, move a box. Bare on a terminal it is a @clack/prompts TUI; every
- * action is also a subcommand for scripts.
+ * (docs/credentials-tui-plan.md): list, add, renew, make default, remove,
+ * move a box. Bare on a terminal it is one table screen (cli-kit `tableSelect`):
+ * the accounts as selectable rows under the add/defaults actions; every action
+ * is also a subcommand for scripts. An account has one name, its id.
  *
  * Every action drives the LOCAL hub's `/api/v1/accounts` (the store is per
  * machine, so a configured remote control box is not asked). Signing a login
@@ -10,7 +11,13 @@
  * in a throwaway container here, as `agentbox <agent> login` does.
  */
 import { cancel, confirm, isCancel, log, note, outro, select, spinner, text } from '@clack/prompts';
-import { accountConfigVolume, accountIdProblem, isDefaultAccount } from '@agentbox/core';
+import {
+  accountConfigVolume,
+  accountIdProblem,
+  isDefaultAccount,
+  normalizeAccountName,
+} from '@agentbox/core';
+import { tableSelect } from '@agentbox/cli-kit';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
 import { withHubClient } from '../control-plane/with-hub.js';
 import type {
@@ -21,7 +28,9 @@ import type {
 import { agentLoginSpec, runAgentLogin } from '../agents/command/login.js';
 import { PASTED_KIND_NOUN, readPastedSecret } from '../lib/account-login.js';
 import {
+  ACCOUNT_HEADERS,
   KIND_TEXT,
+  accountCells,
   identityText,
   limitsText,
   parseAccountRef,
@@ -29,6 +38,7 @@ import {
   renderDefaultsTable,
   sortAccounts,
   statusText,
+  statusTone,
 } from '../lib/credentials-view.js';
 
 type Kind = HubApiAccount['kind'];
@@ -96,7 +106,6 @@ export interface AddOpts {
   login?: boolean;
   setupToken?: boolean;
   apiKey?: boolean;
-  label?: string;
   headless?: boolean;
   code?: string;
 }
@@ -116,7 +125,6 @@ async function addPasted(
   agent: string,
   id: string,
   kind: Exclude<Kind, 'login'>,
-  label: string | undefined,
   replace = false,
 ): Promise<boolean> {
   const noun = PASTED_KIND_NOUN[kind];
@@ -129,7 +137,6 @@ async function addPasted(
       id,
       kind,
       token,
-      ...(label ? { label } : {}),
       ...(replace ? { replace: true } : {}),
     }),
   );
@@ -152,13 +159,12 @@ async function addPasted(
 async function addLogin(
   agent: string,
   id: string,
-  label: string | undefined,
   opts: Pick<AddOpts, 'headless' | 'code'>,
 ): Promise<void> {
   const spec = agentLoginSpec(agent);
   if (!spec) throw new Error(`${agent} has no login`);
   await runAgentLogin(spec, [], {
-    account: { id, ...(label ? { label } : {}) },
+    account: { id },
     extra: loginExtra(opts),
   });
 }
@@ -170,16 +176,38 @@ function loginExtra(opts: Pick<AddOpts, 'headless' | 'code'>): Record<string, un
   };
 }
 
+/**
+ * The stored name for a typed one: an existing account's name as is (older
+ * ones may hold '-'), a new one normalized ("Work Max" -> work_max). Throws a
+ * message for a name that can't be one.
+ */
+export function accountNameFor(typed: string, existing: readonly string[]): string {
+  const raw = typed.trim();
+  if (existing.includes(raw) && accountIdProblem(raw) === null) return raw;
+  const n = normalizeAccountName(raw);
+  if (n.problem !== undefined) throw new Error(n.problem);
+  return n.name;
+}
+
 export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
-  const { agent: name, id } = parseAccountRef(ref);
+  const { agent: name, id: typed } = parseAccountRef(ref);
   const agent = agentId(name);
+  if (isDefaultAccount(typed.trim())) {
+    throw new Error(
+      `the default account is the agent's own login: \`agentbox ${agent} login\` signs it in`,
+    );
+  }
+  const known = (await loadList())?.accounts.filter((a) => a.agent === agent) ?? [];
+  const id = accountNameFor(
+    typed,
+    known.map((a) => a.id),
+  );
   if (isDefaultAccount(id)) {
     throw new Error(
       `the default account is the agent's own login: \`agentbox ${agent} login\` signs it in`,
     );
   }
-  const problem = accountIdProblem(id);
-  if (problem) throw new Error(problem);
+  if (id !== typed) log.info(`name: ${agent}/${id}`);
   let kind = kindOf(opts);
   if (!kind) {
     if (!interactive()) throw new Error('pick a kind: --login, --setup-token or --api-key');
@@ -192,11 +220,10 @@ export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
     if (isCancel(picked)) return;
     kind = picked;
   }
-  const label = opts.label?.trim() || undefined;
   if (kind === 'login') {
     if (opts.replace) throw new Error('--replace is for a setup token or API key; renew a login');
     // Signing an existing login in again here would skip the push to its boxes.
-    const existing = (await loadList())?.accounts.find((a) => a.agent === agent && a.id === id);
+    const existing = known.find((a) => a.id === id);
     if (existing) {
       throw new Error(
         existing.kind === 'login'
@@ -204,8 +231,8 @@ export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
           : `${agent}/${id} already exists as a ${KIND_TEXT[existing.kind]}; remove it first`,
       );
     }
-    await addLogin(agent, id, label, opts);
-  } else if (!(await addPasted(agent, id, kind, label, opts.replace === true))) {
+    await addLogin(agent, id, opts);
+  } else if (!(await addPasted(agent, id, kind, opts.replace === true))) {
     process.exitCode = 1;
   }
 }
@@ -232,7 +259,7 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
   if (!account) throw new Error(`no account ${agent}/${id} (see \`agentbox credentials\`)`);
   if (account.kind !== 'login') {
     // A pasted kind is renewed by pasting its new token over it.
-    if (!(await addPasted(agent, id, account.kind, undefined, true))) process.exitCode = 1;
+    if (!(await addPasted(agent, id, account.kind, true))) process.exitCode = 1;
     return;
   }
   if (!opts.skipSignIn) {
@@ -246,9 +273,7 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
       opts.code === undefined &&
       (opts.headless === true || !process.stdin.isTTY);
     await runAgentLogin(spec, [], {
-      ...(isDefaultAccount(id)
-        ? {}
-        : { account: { id, ...(account.label ? { label: account.label } : {}) } }),
+      ...(isDefaultAccount(id) ? {} : { account: { id } }),
       // Finishing through `renew` again is what pushes the new login out.
       extra: {
         ...loginExtra(opts),
@@ -331,25 +356,6 @@ export async function removeCommand(ref: string, opts: { yes?: boolean }): Promi
         `new ${agent} boxes there now use ${agent}/default: ${r.defaultsCleared.map((d) => (d === 'global' ? 'the global setting' : d)).join(', ')}`,
       );
     }
-  });
-}
-
-export async function labelCommand(
-  ref: string,
-  label: string | undefined,
-  opts: { clear?: boolean },
-): Promise<void> {
-  const { agent: name, id } = parseAccountRef(ref);
-  const agent = agentId(name);
-  const value = label?.trim();
-  if (!opts.clear && !value) throw new Error('give a label, or --clear to remove it');
-  await withHubClient(LOCAL, async (client) => {
-    const next = await client.labelAccount(agent, id, opts.clear ? null : (value ?? null));
-    log.success(
-      next.label
-        ? `labelled ${agent}/${id} '${next.label}'`
-        : `cleared the label of ${agent}/${id}`,
-    );
   });
 }
 
@@ -440,23 +446,6 @@ async function setDefault(
 
 // ---- the TUI ---------------------------------------------------------------
 
-function accountOption(a: HubApiAccount): { value: string; label: string; hint: string } {
-  const marks = [
-    a.default?.project ? 'project default' : '',
-    a.default?.global ? 'global default' : '',
-  ].filter(Boolean);
-  return {
-    value: `${a.agent}/${a.id}`,
-    label: `${a.agent}/${a.id}${a.label ? ` (${a.label})` : ''}`,
-    hint: [
-      KIND_TEXT[a.kind],
-      statusText(a),
-      `${String(a.boxes.length)} box${a.boxes.length === 1 ? '' : 'es'}`,
-      ...marks,
-    ].join(', '),
-  };
-}
-
 function detailNote(a: HubApiAccount): string {
   return [
     `kind      ${KIND_TEXT[a.kind]}`,
@@ -465,6 +454,21 @@ function detailNote(a: HubApiAccount): string {
     `limits    ${limitsText(a) || '-'}`,
     `boxes     ${a.boxes.join(', ') || '-'}`,
   ].join('\n');
+}
+
+const KIND_NAME: Record<Kind, string> = {
+  login: 'work',
+  'setup-token': 'setup_token',
+  'api-key': 'api_key',
+};
+
+/** The name a new account of `kind` is offered: the kind's, made free. */
+export function suggestName(kind: Kind, taken: readonly string[]): string {
+  const base = KIND_NAME[kind];
+  if (!taken.includes(base)) return base;
+  for (let i = 2; ; i++) {
+    if (!taken.includes(`${base}_${String(i)}`)) return `${base}_${String(i)}`;
+  }
 }
 
 async function tuiAdd(list: HubApiAccountList): Promise<void> {
@@ -493,24 +497,23 @@ async function tuiAdd(list: HubApiAccountList): Promise<void> {
     })),
   });
   if (isCancel(kind)) return;
-  const id = await text({
-    message: 'Name (lowercase letters, digits, dashes)',
-    placeholder: 'work',
-    validate: (v) =>
-      isDefaultAccount(v ?? '')
-        ? "default is the agent's own login"
-        : (accountIdProblem(v ?? '') ?? undefined),
+  const taken = list.accounts.filter((a) => a.agent === agent).map((a) => a.id);
+  const typed = await text({
+    message: 'Name (letters, digits and spaces; saved lowercase with _)',
+    initialValue: suggestName(kind, taken),
+    validate: (v) => {
+      const n = normalizeAccountName(v ?? '');
+      if (n.problem !== undefined) return n.problem;
+      if (isDefaultAccount(n.name)) return "default is the agent's own login";
+      if (taken.includes(n.name)) return `${agent}/${n.name} already exists`;
+      return undefined;
+    },
   });
-  if (isCancel(id)) return;
-  const label = await text({ message: 'Label (optional)', placeholder: 'Work Max' });
-  if (isCancel(label)) return;
-  const l = String(label ?? '').trim() || undefined;
-  if (list.accounts.some((a) => a.agent === agent && a.id === id)) {
-    log.warn(`${agent}/${id} already exists; remove it first to replace it`);
-    return;
-  }
-  if (kind === 'login') await addLogin(agent, id, l, {});
-  else await addPasted(agent, id, kind, l);
+  if (isCancel(typed)) return;
+  const id = normalizeAccountName(typed).name!;
+  log.step(`Name: ${agent}/${id}`);
+  if (kind === 'login') await addLogin(agent, id, {});
+  else await addPasted(agent, id, kind);
 }
 
 async function tuiMoveBox(client: HubApiClient, a: HubApiAccount): Promise<void> {
@@ -554,7 +557,6 @@ async function tuiAccount(
   if (canDefault && !a.default?.global)
     options.push({ value: 'global', label: 'Use everywhere', hint: 'the global default' });
   if (canDefault) options.push({ value: 'move', label: 'Move a box to this account' });
-  options.push({ value: 'label', label: a.label ? 'Relabel' : 'Add a label' });
   if (named) {
     options.push({
       value: 'rm',
@@ -580,16 +582,6 @@ async function tuiAccount(
       case 'move':
         await tuiMoveBox(client, a);
         return;
-      case 'label': {
-        const next = await text({
-          message: `Label for ${ref} (empty clears it)`,
-          initialValue: a.label ?? '',
-        });
-        if (isCancel(next)) return;
-        const v = String(next ?? '').trim();
-        await labelCommand(ref, v || undefined, { clear: !v });
-        return;
-      }
       case 'rm':
         if (a.boxes.length > 0) {
           log.warn(`${ref} is used by ${a.boxes.join(', ')}; move or destroy those boxes first`);
@@ -605,40 +597,54 @@ async function tuiAccount(
 
 export async function runCredentialsTui(): Promise<void> {
   await withHubClient(LOCAL, async (client) => {
+    let cursorAt: string | undefined;
     try {
       for (;;) {
         const s = spinner();
         s.start('Reading subscriptions');
         const list = await client.listAccounts({ project: process.cwd() });
+        s.stop('Subscriptions read');
         const revoked = list.accounts.filter((a) => a.auth?.state === 'revoked').length;
-        s.stop(
-          `${String(list.accounts.length)} account(s)${revoked > 0 ? `, ${String(revoked)} revoked` : ''}`,
-        );
-        if (list.accounts.length > 0) note(renderAccountsTable(list.accounts), 'Subscriptions');
-        const choice = await select({
-          message: 'Pick an account, or add one',
-          options: [
-            ...sortAccounts(list.accounts).map(accountOption),
-            { value: '+add', label: 'Add an account' },
+        const accounts = sortAccounts(list.accounts);
+        const now = Date.now();
+        const picked = await tableSelect<string>({
+          title: 'Subscriptions',
+          subtitle: `${String(list.accounts.length)} account(s)${revoked > 0 ? `, ${String(revoked)} revoked` : ''}`,
+          actions: [
+            { value: '+add', label: 'Add an account…' },
             { value: '+use', label: 'What do new boxes here use?' },
-            { value: '+done', label: 'Done' },
           ],
+          headers: ACCOUNT_HEADERS,
+          rows: accounts.map((a) => ({
+            value: `${a.agent}/${a.id}`,
+            cells: accountCells(a, now),
+            tones: [undefined, undefined, undefined, statusTone(a)],
+          })),
+          emptyText:
+            'No accounts yet. Sign in with `agentbox <agent> login`, or add a named one above.',
+          ...(cursorAt ? { cursorAt } : {}),
         });
-        if (isCancel(choice) || choice === '+done') {
+        if (picked.kind === 'quit') {
           outro('done');
           return;
         }
-        if (choice === '+add') {
+        if (picked.kind === 'cancel') {
+          cancel('Cancelled.');
+          process.exitCode = 130;
+          return;
+        }
+        cursorAt = picked.value;
+        if (picked.value === '+add') {
           await tuiAdd(list).catch((err: unknown) =>
             log.error(err instanceof Error ? err.message : String(err)),
           );
           continue;
         }
-        if (choice === '+use') {
+        if (picked.value === '+use') {
           note(renderDefaultsTable(list.defaults ?? {}), 'New boxes in this project');
           continue;
         }
-        const a = list.accounts.find((x) => `${x.agent}/${x.id}` === choice);
+        const a = list.accounts.find((x) => `${x.agent}/${x.id}` === picked.value);
         if (a)
           await tuiAccount(
             client,

@@ -417,7 +417,6 @@ export interface LoginAccountRequest {
   /** A named account id; never `default` (that is the plain login). */
   id: string;
   kind: LlmAccountKind;
-  label?: string;
 }
 
 /**
@@ -430,7 +429,7 @@ export interface LoginAccountRequest {
  */
 export function resolveLoginAccount(
   spec: AgentSyncSpec,
-  opts: { account?: string; label?: string; apiKey?: boolean; setupToken?: boolean },
+  opts: { account?: string; apiKey?: boolean; setupToken?: boolean },
 ): LoginAccountRequest | null {
   if (opts.apiKey && opts.setupToken) {
     throw new Error('choose one of --api-key and --setup-token');
@@ -443,16 +442,12 @@ export function resolveLoginAccount(
         `${kind === 'api-key' ? 'an API key' : 'a setup token'} needs a named account: add --account <name> (the default account is the agent's login)`,
       );
     }
-    if (opts.label !== undefined) {
-      throw new Error('--label names a named account: add --account <name>');
-    }
     return null;
   }
   requireAccountId(id);
   const kindProblem = accountKindProblem(spec, kind);
   if (kindProblem) throw new Error(kindProblem);
-  const label = opts.label?.trim();
-  return label ? { id, kind, label } : { id, kind };
+  return { id, kind };
 }
 
 /**
