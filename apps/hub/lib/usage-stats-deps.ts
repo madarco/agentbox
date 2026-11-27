@@ -7,10 +7,12 @@ import type { UsageStatsDeps } from './backend/usage-stats';
 
 export function hubUsageStatsDeps(): UsageStatsDeps {
   const selfMachineId = tryGetMachineId();
+  const backend = globalThis.__AGENTBOX_HUB_BACKEND;
   return {
     history: globalThis.__AGENTBOX_HUB_HISTORY?.repo ?? null,
     ledger: globalThis.__AGENTBOX_HUB_ACTIVITY ?? null,
     contributions: globalThis.__AGENTBOX_HUB_USAGE_CONTRIBUTIONS ?? null,
+    ...(backend ? { prDetails: () => backend.prDetails() } : {}),
     ...(selfMachineId ? { selfMachineId } : {}),
   };
 }

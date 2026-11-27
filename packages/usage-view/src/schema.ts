@@ -403,6 +403,8 @@ const zoneList = (): ReadonlySet<string> => {
   return set;
 };
 let zones: ReadonlySet<string> | null = null;
+/** `Area/Location[/Sub]`, each part capitalized as IANA writes it. */
+const ZONE_SHAPE = /^[A-Z][A-Za-z]+(?:\/[A-Z][A-Za-z0-9_+-]*){1,2}$/;
 
 /**
  * Whether `tz` is a zone name this runtime's `Intl` lists: a closed set, so a share's
@@ -411,7 +413,18 @@ let zones: ReadonlySet<string> | null = null;
 export function isTimeZone(tz: string): boolean {
   if (tz.length === 0 || tz.length > TZ_MAX_LENGTH) return false;
   zones ??= zoneList();
-  return zones.has(tz);
+  if (zones.has(tz)) return true;
+  // An alias the list leaves out: Node lists `Asia/Calcutta` but not `Asia/Kolkata`, a
+  // browser may list only the modern name. Accepted when `Intl` resolves it to a listed
+  // zone, so runtimes with different lists agree and the set stays closed.
+  // Only in IANA's own spelling: `Intl` matches any case, a share's zone is exact.
+  if (!ZONE_SHAPE.test(tz)) return false;
+  try {
+    const resolved = new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
+    return resolved !== tz && zones.has(resolved);
+  } catch {
+    return false;
+  }
 }
 
 /**

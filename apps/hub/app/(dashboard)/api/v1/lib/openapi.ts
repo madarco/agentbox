@@ -2286,7 +2286,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['History'],
           summary: 'Share usage publicly',
           description:
-            'Builds the public `UsageShare` of a window (metrics, dates and agent/provider ids plus an optional display name; no box, project, branch, PR or session names) and posts it to `share.endpoint` (default `https://agent-box.sh/api/share`) from the hub. The site answers with a random id (the page is `/s/<id>`) and a delete secret, which the hub keeps in `~/.agentbox/hub/share.json` (0600) and never returns. The name is plain text on the page, not an identity: never in the URL, never unique. With `preview: true` nothing is posted and the share is returned.',
+            "Builds the public `UsageShare` of a window (metrics, dates, agent/provider ids, the IANA time zone the days are in, plus an optional display name; no box, project, branch, PR or session names) and posts it to `share.endpoint` (default `https://agent-box.sh/api/share`) from the hub. With `share` (a preview's `share`, its `name` set) the hub posts that object as it is after checking it against the share schema (an invalid one is a 400), and `name` is ignored: the preview the caller showed is what goes out. The site answers with a random id (the page is `/s/<id>`) and a delete secret, which the hub keeps in `~/.agentbox/hub/share.json` (0600) and never returns. The name is plain text on the page, not an identity: never in the URL, never unique. With `preview: true` nothing is posted and the share is returned.",
           requestBody: {
             required: true,
             content: {
@@ -2301,6 +2301,11 @@ export function buildOpenApi(): Record<string, unknown> {
                     tz: { type: 'string' },
                     range: { type: 'string', enum: ['7d', '30d', 'month', '90d', 'year'] },
                     subscription: { type: 'string' },
+                    share: {
+                      type: 'object',
+                      description:
+                        'A `UsageShare` from a preview, its `name` set: posted as it is once it passes the share schema.',
+                    },
                   },
                 },
               },
