@@ -10,6 +10,7 @@ export const SETUPS = {
     what: "apps/hub's own production build, served by scripts/fixture-hub.mjs on 127.0.0.1:3126 with a fixture backend (fixtures/acme.mjs) and every /api/v1 route answered from fixtures/api.mjs. No relay, no boxes, no sign-in; HOME is .cache/home.",
     commands: [
       "pnpm --filter @agentbox/hub build   # only when apps/hub changed since the last build (from the repo root)",
+      "pnpm --filter @agentbox/usage-view build   # fixtures/activity.mjs runs its buildUsageStats; after a usage-view change",
       "pnpm fixture-hub                    # http://127.0.0.1:3126, leave it running",
       "pnpm shoot <file> <path>            # in another terminal",
     ],
@@ -47,6 +48,16 @@ export const SETUPS = {
       "The prompt line (\"~/Projects/commerce ❯ agentbox ...\") is drawn, not typed.",
       "Checks that read the real machine (the system compatibility step of the wizard) show this Mac's result.",
     ],
+  },
+
+  "web-dev": {
+    title: "The public site (apps/web) in next dev",
+    what: "apps/web served by `next dev` on 127.0.0.1:3140, shot with the same scripts/shoot.mjs via --base. /s/example renders a share from the usage-view design fixture, so it needs no database.",
+    commands: [
+      "cd ../apps/web && npx next dev -p 3140 -H 127.0.0.1   # leave it running",
+      "pnpm shoot web/share-page.png /s/example --base http://127.0.0.1:3140 --full --hide nextjs-portal",
+    ],
+    notes: ["--hide nextjs-portal drops the Next dev-mode badge."],
   },
 
   "docs-site": {

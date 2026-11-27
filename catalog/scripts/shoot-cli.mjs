@@ -36,6 +36,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { MACHINES, skillCompare, skillMd } from "../fixtures/acme.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = resolve(root, "..");
@@ -77,6 +78,14 @@ if (!file || !cmd.length) throw new Error("need a file and a command after --");
 mkdirSync(join(home, ".agentbox/hub"), { recursive: true });
 writeFileSync(join(home, ".agentbox/config.yaml"), "relay:\n  port: 3126\n");
 writeFileSync(join(home, ".agentbox/hub/token"), "fixture-not-a-secret\n");
+/* This PC's own skills, as the hub's comparison of studio-mac lists them
+   (acme.mjs), so `agentbox skills` has a local side to compare. */
+for (const r of skillCompare[MACHINES.studio].rows) {
+  if (!r.pc) continue;
+  const dir = join(home, r.pc.dirs[0], r.name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "SKILL.md"), skillMd[r.name] ?? `---\nname: ${r.name}\ndescription: ${r.description}\n---\n\n# ${r.name}\n`);
+}
 const marker = join(home, ".agentbox/setup-complete.json");
 if (opts.firstRun) rmSync(marker, { force: true });
 else writeFileSync(marker, JSON.stringify({ version: 1, completedAt: "2026-11-01T09:00:00.000Z", provider: "docker" }) + "\n");

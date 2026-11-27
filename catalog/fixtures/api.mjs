@@ -28,10 +28,16 @@ import {
   skillCompare,
   skillMachines,
   skillStatus,
+  skillSkips,
   system,
   usageRows,
   workspaces,
+  MACHINES,
 } from "./acme.mjs";
+import { activity, generatedUsageRows, usageStats, usageStatsQuery } from "./activity.mjs";
+import { toShare } from "../../packages/usage-view/dist/index.js";
+
+const allUsageRows = [...usageRows, ...generatedUsageRows(MACHINES)];
 
 const GET = [
   [/^\/api\/v1\/health$/, () => ({ ok: true, apiVersion: "v1", version: system.hub.version, profile: system.hub.profile })],
@@ -69,6 +75,11 @@ const GET = [
   [/^\/api\/v1\/system$/, () => system],
   [/^\/api\/v1\/custody$/, (_, q) => ({ ...custody, entries: custody.entries.filter((e) => !q.get("prefix") || `${e.path}/`.startsWith(`${q.get("prefix")}/`)) })],
   [/^\/api\/v1\/usage$/, (_, q) => usage(q)],
+  [/^\/api\/v1\/usage\/stats$/, (_, q) => usageStats(usageStatsQuery(Object.fromEntries(q)))],
+  [/^\/api\/v1\/usage\/share$/, () => ({ endpoint: SHARE_ENDPOINT, shares: SHARES, lastName: "acme-commerce" })],
+  [/^\/api\/v1\/activity$/, (_, q) => activity(q)],
+  [/^\/api\/v1\/skill-skips$/, () => ({ skipped: skillSkips })],
+  [/^\/api\/v1\/accounts\/default$/, () => ({ defaults: Object.fromEntries(accounts.accounts.filter((a) => a.default?.global).map((a) => [a.agent, { account: a.id, source: "global", global: a.id }])) })],
   [/^\/api\/v1\/devices$/, () => devices],
   [/^\/api\/v1\/devices\/pending$/, () => pendingDevices],
 ];
@@ -136,7 +147,7 @@ function usage(q) {
   const by = (q.get("by") || "").split(",").map((d) => d.trim()).filter(Boolean);
   const limit = Number(q.get("limit") || 200);
   const keyOf = (d, r) => (d === "day" ? new Date(r.at + tz).toISOString().slice(0, 10) : DIM[d](r));
-  const rows = usageRows.filter((r) => {
+  const rows = allUsageRows.filter((r) => {
     if (r.at < since || r.at >= until) return false;
     if (q.get("box") && r.box !== q.get("box") && r.boxName !== q.get("box")) return false;
     if (q.get("project") && !r.project.includes(q.get("project")) && !r.projectUrl.includes(q.get("project"))) return false;
@@ -167,7 +178,25 @@ function usage(q) {
   return { totals, groups, truncated };
 }
 
+/* The usage share. Nothing is ever posted: the POST answers here, a preview
+   with the share the hub would send, a "share" with a made-up link. */
+const SHARE_ENDPOINT = "https://agent-box.sh/api/share";
+const SHARES = [{ endpoint: SHARE_ENDPOINT, origin: "https://agent-box.sh", id: "q4Xb7Lm2", url: "https://agent-box.sh/s/q4Xb7Lm2", createdAt: new Date(NOW - 6 * 86_400_000).toISOString() }];
+function share(body) {
+  let b = {};
+  try {
+    b = JSON.parse(body || "{}");
+  } catch {
+    return { status: 400, json: { error: { code: "invalid_request", message: "body must be JSON" } } };
+  }
+  const q = usageStatsQuery({ since: b.since, until: b.until, tz: b.tz, range: b.range, subscription: b.subscription });
+  const shared = toShare(usageStats(q), typeof b.name === "string" && b.name ? b.name : undefined);
+  if (b.preview === true) return { json: { share: shared, endpoint: SHARE_ENDPOINT, bytes: Buffer.byteLength(JSON.stringify(shared)) } };
+  return { status: 201, json: { url: "https://agent-box.sh/s/Z8kP3nQa", id: "Z8kP3nQa", createdAt: new Date(NOW).toISOString() } };
+}
+
 export function route(method, path, query, body) {
+  if (method === "POST" && path === "/api/v1/usage/share") return share(body);
   if (method !== "GET") return { json: { ok: true } };
   for (const [re, fn] of GET) {
     const m = re.exec(path);
