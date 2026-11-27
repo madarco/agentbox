@@ -17,44 +17,50 @@ import {
 import { setupPortlessHost } from './portless-prompt.js';
 
 /**
- * Providers whose box web URL is a host loopback port (a docker publish or an
- * SSH forward), which Portless turns into `<box>.localhost`. The public-URL
- * clouds (daytona, vercel, e2b) hand out a reachable URL already.
+ * The providers that use a `<box>.localhost` alias without Docker Desktop: their
+ * box web URL is an SSH-forwarded loopback port. Named in the optional prompt.
  */
-const LOOPBACK_URL_PROVIDERS = new Set(['docker', 'hetzner', 'digitalocean', 'remote-docker']);
+const ALIAS_CLOUDS = 'hetzner, DigitalOcean or remote-docker';
 
-export type PortlessStepDecision = 'skip' | 'ask' | 'setup';
+/**
+ * `ask`: default-yes prompt. `ask-optional`: default-no prompt, because this
+ * host only needs Portless if the user later picks an alias-using cloud.
+ */
+export type PortlessStepDecision = 'skip' | 'ask' | 'ask-optional' | 'setup';
 
 export interface PortlessStepInput {
-  provider: string;
   platform: NodeJS.Platform;
   engine: DockerEngine;
   /** Effective `portless.enabled`; `undefined` = never decided. */
   enabled: boolean | undefined;
   yes: boolean;
+  /** The Portless CLI answers, or a proxy does. */
+  installed: boolean;
   /** Portless CLI present, a proxy serving, and its boot-time service installed. */
   fullySetUp: boolean;
 }
 
 /**
  * Whether the install wizard should ask about Portless, set it up without
- * asking, or leave it alone. Pure, for tests.
+ * asking, or leave it alone. Runs before the provider picker, so it decides
+ * from the host alone. Pure, for tests.
  *
- * Docker: macOS with Docker Desktop only. OrbStack serves `<container>.orb.local`,
- * and `'other'` (Colima, Rancher, Podman, or a `docker info` that failed —
- * OrbStack stopped, no docker at all) is not a reason to install anything.
- * An explicit `false` is a past "no" and is never re-asked; a `true` on a host
- * that lost part of the setup is repaired without a question.
+ * Default-yes on macOS with Docker Desktop (local docker boxes get
+ * `<box>.localhost`), and on any host where Portless is already installed (the
+ * user clearly wants it). OrbStack serves `<container>.orb.local`, and `'other'`
+ * (Colima, Rancher, Podman, or a `docker info` that failed) is no reason to
+ * install anything for docker, so those hosts — and Linux — get a default-no
+ * prompt naming the clouds that would use it; `-y` skips that one. An explicit
+ * `false` is a past "no" and is never re-asked; a `true` on a host that lost
+ * part of the setup is repaired without a question.
  */
 export function decidePortlessStep(i: PortlessStepInput): PortlessStepDecision {
-  if (!LOOPBACK_URL_PROVIDERS.has(i.provider)) return 'skip';
-  if (i.provider === 'docker' && (i.platform !== 'darwin' || i.engine !== 'docker-desktop')) {
-    return 'skip';
-  }
-  if (i.platform === 'win32') return 'skip';
+  if (i.platform !== 'darwin' && i.platform !== 'linux') return 'skip';
   if (i.enabled === false) return 'skip';
   if (i.enabled === true) return i.fullySetUp ? 'skip' : 'setup';
-  return i.yes ? 'setup' : 'ask';
+  const wanted = (i.platform === 'darwin' && i.engine === 'docker-desktop') || i.installed;
+  if (i.yes) return wanted ? 'setup' : 'skip';
+  return wanted ? 'ask' : 'ask-optional';
 }
 
 async function persistEnabled(value: boolean): Promise<void> {
@@ -77,43 +83,41 @@ async function persistEnabled(value: boolean): Promise<void> {
  * Never throws: a Portless failure leaves box URLs on loopback ports.
  */
 export async function runPortlessInstallStep(args: {
-  provider: string;
   enabled: boolean | undefined;
   yes: boolean;
 }): Promise<void> {
   try {
-    const engine = args.provider === 'docker' ? await detectEngine() : 'other';
+    const engine = process.platform === 'darwin' ? await detectEngine() : 'other';
+    const state = await detectPortless();
     let fullySetUp = false;
-    if (args.enabled === true) {
-      const state = await detectPortless();
-      const service: PortlessServiceState = state.installed
-        ? await portlessServiceStatus()
-        : { installed: false };
+    if (args.enabled === true && state.installed) {
+      const service: PortlessServiceState = await portlessServiceStatus();
       // A crash-looping service brings nothing back after a reboot.
-      fullySetUp =
-        state.installed && state.proxyRunning && service.installed && service.failing !== true;
+      fullySetUp = state.proxyRunning && service.installed && service.failing !== true;
     }
     const decision = decidePortlessStep({
-      provider: args.provider,
       platform: process.platform,
       engine,
       enabled: args.enabled,
       yes: args.yes,
+      installed: state.installed,
       fullySetUp,
     });
     if (decision === 'skip') return;
 
-    if (decision === 'ask') {
+    if (decision === 'ask' || decision === 'ask-optional') {
+      const optional = decision === 'ask-optional';
       note(
         [
           'Portless gives each box web app a stable https://<box>.localhost URL,',
           'the same one that works inside the box, instead of a random 127.0.0.1 port.',
+          ...(optional ? [`Only needed for ${ALIAS_CLOUDS} boxes on this machine.`] : []),
           'It installs the portless CLI, starts its proxy, and can start it at boot',
           '(you may be asked for your password).',
         ].join('\n'),
         'Box URLs',
       );
-      const answer = await confirm({ message: 'Set up Portless?', initialValue: true });
+      const answer = await confirm({ message: 'Set up Portless?', initialValue: !optional });
       // A cancel is not a "no": leave it undecided so it is asked again.
       if (isCancel(answer)) return;
       await persistEnabled(answer === true);

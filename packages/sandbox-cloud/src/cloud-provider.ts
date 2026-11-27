@@ -77,6 +77,7 @@ import {
   ensurePortlessForUrl,
   livePortlessMode,
   livePortlessUrl,
+  routedPortlessUrl,
   portlessAlias,
   portlessGetUrl,
   portlessUnalias,
@@ -1974,7 +1975,18 @@ export function createCloudProvider(
       // Asked of the live proxy rather than read off the record, whose URL names
       // the proxy mode at the time it was written.
       if (!opts?.loopback && alias !== undefined) {
-        const url = livePortlessUrl(alias, await ensurePortlessForUrl());
+        // Re-alias onto the current forward: an SSH `-L` port is fresh per start.
+        const aliasPort =
+          kind === 'vnc'
+            ? CLOUD_VNC_PORT
+            : (box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT);
+        const url = await routedPortlessUrl(alias, await ensurePortlessForUrl(), {
+          reAlias: async () => {
+            const preview = await backend.previewUrl(h, aliasPort);
+            const localPort = parseLoopbackPort(preview.url);
+            return localPort !== undefined && (await portlessAlias(alias, localPort));
+          },
+        });
         if (url !== undefined) return url;
       }
       // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).

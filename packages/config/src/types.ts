@@ -1480,7 +1480,7 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     key: 'portless.stateDir',
     type: 'string',
     description:
-      'Host Portless state directory to share into boxes (advanced; default: Portless’s own location).',
+      'Host Portless state directory whose CA (ca.pem) boxes trust, shared read-only (advanced; default: Portless’s own location).',
     advanced: true,
   },
   {

@@ -35,16 +35,16 @@ import {
 } from '../src/install-portless-step.js';
 
 const fresh: PortlessStepInput = {
-  provider: 'docker',
   platform: 'darwin',
   engine: 'docker-desktop',
   enabled: undefined,
   yes: false,
+  installed: false,
   fullySetUp: false,
 };
 
 describe('decidePortlessStep', () => {
-  it('asks on a fresh Mac with Docker Desktop', () => {
+  it('asks (default yes) on a fresh Mac with Docker Desktop', () => {
     expect(decidePortlessStep(fresh)).toBe('ask');
   });
 
@@ -52,39 +52,49 @@ describe('decidePortlessStep', () => {
     expect(decidePortlessStep({ ...fresh, yes: true })).toBe('setup');
   });
 
-  it('skips OrbStack (it has .orb.local) and non-mac docker hosts', () => {
-    expect(decidePortlessStep({ ...fresh, engine: 'orbstack' })).toBe('skip');
-    expect(decidePortlessStep({ ...fresh, platform: 'linux' })).toBe('skip');
+  it('asks default-no on hosts that only need it for the alias clouds', () => {
+    // OrbStack has .orb.local; 'other' is Colima/Rancher/Podman or no reachable docker.
+    expect(decidePortlessStep({ ...fresh, engine: 'orbstack' })).toBe('ask-optional');
+    expect(decidePortlessStep({ ...fresh, engine: 'other' })).toBe('ask-optional');
+    expect(decidePortlessStep({ ...fresh, platform: 'linux', engine: 'other' })).toBe(
+      'ask-optional',
+    );
   });
 
-  it('skips docker when the engine is not Docker Desktop (docker info failed, Colima, …)', () => {
-    expect(decidePortlessStep({ ...fresh, engine: 'other' })).toBe('skip');
-    expect(decidePortlessStep({ ...fresh, engine: 'other', yes: true })).toBe('skip');
+  it('skips the optional offer under -y', () => {
+    expect(decidePortlessStep({ ...fresh, engine: 'orbstack', yes: true })).toBe('skip');
+    expect(decidePortlessStep({ ...fresh, platform: 'linux', yes: true })).toBe('skip');
   });
 
-  it('covers the loopback-URL clouds, not the public-URL ones', () => {
-    for (const provider of ['hetzner', 'digitalocean', 'remote-docker']) {
-      expect(decidePortlessStep({ ...fresh, provider, engine: 'other', platform: 'linux' })).toBe(
-        'ask',
-      );
-    }
-    for (const provider of ['daytona', 'vercel', 'e2b']) {
-      expect(decidePortlessStep({ ...fresh, provider })).toBe('skip');
-    }
+  it('asks default-yes wherever Portless is already installed', () => {
+    expect(decidePortlessStep({ ...fresh, engine: 'orbstack', installed: true })).toBe('ask');
+    expect(decidePortlessStep({ ...fresh, platform: 'linux', installed: true })).toBe('ask');
+    expect(decidePortlessStep({ ...fresh, platform: 'linux', installed: true, yes: true })).toBe(
+      'setup',
+    );
+  });
+
+  it('skips Windows', () => {
+    expect(decidePortlessStep({ ...fresh, platform: 'win32' })).toBe('skip');
+    expect(decidePortlessStep({ ...fresh, platform: 'win32', enabled: true })).toBe('skip');
   });
 
   it('never re-asks a past "no"', () => {
     expect(decidePortlessStep({ ...fresh, enabled: false })).toBe('skip');
     expect(decidePortlessStep({ ...fresh, enabled: false, yes: true })).toBe('skip');
+    expect(decidePortlessStep({ ...fresh, enabled: false, installed: true })).toBe('skip');
   });
 
   it('repairs an opted-in host that lost part of the setup, silently when complete', () => {
     expect(decidePortlessStep({ ...fresh, enabled: true })).toBe('setup');
+    expect(
+      decidePortlessStep({ ...fresh, platform: 'linux', engine: 'other', enabled: true }),
+    ).toBe('setup');
     expect(decidePortlessStep({ ...fresh, enabled: true, fullySetUp: true })).toBe('skip');
   });
 });
 
-// hetzner: the same flow as docker without the macOS gate this Linux test host fails.
+// The test host is Linux: no Docker Desktop, so a fresh host gets the optional prompt.
 describe('runPortlessInstallStep', () => {
   beforeEach(() => {
     h.engine = 'docker-desktop';
@@ -98,22 +108,40 @@ describe('runPortlessInstallStep', () => {
   const setupOpts = () => h.setup.mock.calls.map((c) => c[0] as Record<string, unknown>);
 
   it('never asks for a password under -y', async () => {
-    await runPortlessInstallStep({ provider: 'hetzner', enabled: undefined, yes: true });
-    await runPortlessInstallStep({ provider: 'hetzner', enabled: true, yes: true });
+    h.portless = { installed: true, proxyRunning: false };
+    await runPortlessInstallStep({ enabled: undefined, yes: true });
+    await runPortlessInstallStep({ enabled: true, yes: true });
     expect(setupOpts().length).toBe(2);
     expect(setupOpts().every((o) => o['allowRootPrompt'] === false)).toBe(true);
   });
 
+  it('offers default-no on a host without Docker Desktop, and -y leaves it alone', async () => {
+    h.confirm.mockResolvedValue(false);
+    await runPortlessInstallStep({ enabled: undefined, yes: false });
+    expect(h.confirm).toHaveBeenCalledWith(expect.objectContaining({ initialValue: false }));
+    expect(h.setConfig).toHaveBeenCalledWith(
+      'global',
+      'portless.enabled',
+      false,
+      expect.anything(),
+      { raw: false },
+    );
+    h.setConfig.mockClear();
+    await runPortlessInstallStep({ enabled: undefined, yes: true });
+    expect(h.setConfig).not.toHaveBeenCalled();
+    expect(h.setup).not.toHaveBeenCalled();
+  });
+
   it('does not save a cancelled prompt as a "no"', async () => {
     h.confirm.mockResolvedValue(h.cancel);
-    await runPortlessInstallStep({ provider: 'hetzner', enabled: undefined, yes: false });
+    await runPortlessInstallStep({ enabled: undefined, yes: false });
     expect(h.setConfig).not.toHaveBeenCalled();
     expect(h.setup).not.toHaveBeenCalled();
   });
 
   it('saves a "yes" and sets up with the password prompt allowed', async () => {
     h.confirm.mockResolvedValue(true);
-    await runPortlessInstallStep({ provider: 'hetzner', enabled: undefined, yes: false });
+    await runPortlessInstallStep({ enabled: undefined, yes: false });
     expect(h.setConfig).toHaveBeenCalledWith(
       'global',
       'portless.enabled',
@@ -127,7 +155,7 @@ describe('runPortlessInstallStep', () => {
   });
 
   it('repairs an opted-in host without asking, and never changes the proxy mode', async () => {
-    await runPortlessInstallStep({ provider: 'hetzner', enabled: true, yes: false });
+    await runPortlessInstallStep({ enabled: true, yes: false });
     expect(h.confirm).not.toHaveBeenCalled();
     expect(setupOpts()[0]).toEqual({ allowRootPrompt: true, allowModeChange: false });
   });
@@ -135,11 +163,11 @@ describe('runPortlessInstallStep', () => {
   it('treats a crash-looping boot service as needing repair', async () => {
     h.portless = { installed: true, proxyRunning: true };
     h.service = { installed: true, failing: true };
-    await runPortlessInstallStep({ provider: 'hetzner', enabled: true, yes: false });
+    await runPortlessInstallStep({ enabled: true, yes: false });
     expect(h.setup).toHaveBeenCalledTimes(1);
     h.setup.mockClear();
     h.service = { installed: true };
-    await runPortlessInstallStep({ provider: 'hetzner', enabled: true, yes: false });
+    await runPortlessInstallStep({ enabled: true, yes: false });
     expect(h.setup).not.toHaveBeenCalled();
   });
 });

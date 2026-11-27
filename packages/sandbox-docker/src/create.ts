@@ -69,7 +69,8 @@ import {
   portlessBrowserEnv,
   portlessGetUrl,
   portlessStartHint,
-  resolvePortlessHostStateDir,
+  BOX_PORTLESS_CA_PATH,
+  portlessCaMount,
 } from './portless.js';
 import { DEFAULT_BOX_IMAGE, ensureImage } from './image.js';
 import {
@@ -308,9 +309,10 @@ export interface CreateBoxOptions {
    */
   portless?: boolean;
   /**
-   * Override for the host Portless state directory shared into the box (the
-   * `portless.stateDir` config key). When unset, `createBox` resolves Portless's
-   * own default. Only consulted when `portless` is true.
+   * Override for the host Portless state directory whose `ca.pem` is shared
+   * read-only into the box (the `portless.stateDir` config key). When unset,
+   * `createBox` resolves Portless's own default. Only consulted when `portless`
+   * is true.
    */
   portlessStateDir?: string;
   /**
@@ -391,14 +393,14 @@ async function pathExists(p: string): Promise<boolean> {
 /**
  * Trust the (TLS) host Portless CA inside a docker box so the in-box VNC
  * browser (Chrome or Chromium) and Playwright accept `https://<name>.localhost`. The CA is the
- * host's, bind-mounted at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR).
+ * host's, bind-mounted read-only at BOX_PORTLESS_CA_PATH (`portlessCaMount`).
  * The baked `agentbox-portless-trust` helper installs it into the system store
  * + the vscode NSS db; we then drop a profile.d export of NODE_EXTRA_CA_CERTS
  * for Node-based agents. Best-effort: never throws.
  */
 async function trustInBoxPortlessCa(container: string, log: (line: string) => void): Promise<void> {
   const script =
-    'agentbox-portless-trust /home/vscode/.portless/ca.pem >/dev/null 2>&1 || true; ' +
+    `agentbox-portless-trust ${BOX_PORTLESS_CA_PATH} >/dev/null 2>&1 || true; ` +
     "echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/agentbox-portless-ca.crt' " +
     '> /etc/profile.d/agentbox-portless-ca.sh 2>/dev/null || true';
   const r = await execa('docker', ['exec', '--user', 'root', container, 'bash', '-lc', script], {
@@ -897,24 +899,17 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
 
   // Portless: when enabled (and not OrbStack), (1) make the in-box browser
   // route the box's `<name>.localhost` URL out to the host proxy
-  // (`portlessBrowserEnv`), and (2) bind-mount the host's Portless state dir so
-  // the in-box `portless` CLI shares the host's route registry (discovery).
-  // Best-effort; a missing host dir is created so the bind has a source.
-  // PORTLESS_STATE_DIR pins both sides to the same path.
+  // (`portlessBrowserEnv`), and (2) share the host's Portless CA, read-only and
+  // alone, so the box can trust a TLS host proxy. Never the whole state dir:
+  // `portless alias` runs on the host, nothing in the box reads the host's
+  // routes, and a box that wrote there (an in-box proxy rewriting
+  // `routes.json` by rename) left the host proxy watching a dead inode. Any
+  // Portless state the box writes stays box-local (its own `~/.portless`).
   const portlessEnv: Record<string, string> = {};
   if (opts.portless === true && (await detectEngine()) !== 'orbstack') {
     Object.assign(portlessEnv, portlessBrowserEnv(name, { mapTarget: 'host.docker.internal' }));
-    try {
-      const hostStateDir = await resolvePortlessHostStateDir(opts.portlessStateDir);
-      await mkdir(hostStateDir, { recursive: true });
-      const boxStateDir = '/home/vscode/.portless';
-      extraVolumes.push(`${hostStateDir}:${boxStateDir}`);
-      portlessEnv['PORTLESS_STATE_DIR'] = boxStateDir;
-    } catch (err) {
-      log(
-        `portless: state-dir share skipped (${err instanceof Error ? err.message : String(err)})`,
-      );
-    }
+    const caMount = await portlessCaMount(opts.portlessStateDir);
+    if (caMount !== null) extraVolumes.push(caMount);
   }
 
   for (const v of extraVolumes) log(`mounting agent dir: ${v}`);
@@ -1417,8 +1412,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
               log(`portless alias ${portlessUrl} -> 127.0.0.1:${String(webHostPort)}`);
               // When the host proxy is TLS, the in-box VNC Chromium / Playwright
               // hit `https://<name>.localhost` (via host.docker.internal) and
-              // reject the host's self-signed CA. The CA is already bind-mounted
-              // at /home/vscode/.portless/ca.pem (PORTLESS_STATE_DIR); trust it
+              // reject the host's self-signed CA. The CA is bind-mounted read-only
+              // at BOX_PORTLESS_CA_PATH; trust it
               // in the box (system store + vscode NSS db) and point Node at it.
               // agent-browser already gets IGNORE_HTTPS_ERRORS via portlessEnv;
               // this covers everything else. http (no-TLS :1355) has no cert.

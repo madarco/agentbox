@@ -3,9 +3,10 @@ import type { BoxRecord, Provider } from '@agentbox/core';
 
 // The live proxy mode is the test's: the network probe and the start are stubbed,
 // as are the host reads (`state.json`, status snapshot, engine).
-const { mode, records } = vi.hoisted(() => ({
+const { mode, records, aliasCalls } = vi.hoisted(() => ({
   mode: { value: null as { port: number; tls: boolean } | null },
   records: { value: [] as unknown[] },
+  aliasCalls: [] as Array<[string, number]>,
 }));
 vi.mock('../src/portless.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/portless.js')>();
@@ -13,6 +14,11 @@ vi.mock('../src/portless.js', async (importOriginal) => {
     ...actual,
     ensurePortlessForUrl: vi.fn(async () => mode.value),
     livePortlessMode: vi.fn(async () => mode.value),
+    // Never the real CLI: it would write the route registry of whoever runs the tests.
+    portlessAlias: vi.fn(async (name: string, port: number) => {
+      aliasCalls.push([name, port]);
+      return true;
+    }),
   };
 });
 vi.mock('../src/sync/host-export.js', async (importOriginal) => ({
@@ -26,6 +32,7 @@ vi.mock('../src/state.js', async (importOriginal) => ({
 }));
 
 import { dockerProvider } from '../src/docker-provider.js';
+import { setPortlessRouteProbeForTests, type PortlessRouteState } from '../src/portless.js';
 import { listBoxes } from '../src/lifecycle.js';
 import { resolveVncViewerUrl } from '../src/vnc.js';
 
@@ -69,9 +76,21 @@ const cloudBox = {
   },
 } as BoxRecord;
 
+/** Route answers per hostname, consumed in order; the last one sticks. */
+let routeAnswers: Record<string, PortlessRouteState[]> = {};
+
 beforeEach(() => {
   mode.value = null;
   records.value = [];
+  aliasCalls.length = 0;
+  routeAnswers = {};
+  setPortlessRouteProbeForTests(async (hostname) => {
+    const queue = routeAnswers[hostname];
+    if (!queue || queue.length === 0) return 'routed';
+    return queue.length > 1
+      ? (queue.shift() as PortlessRouteState)
+      : (queue[0] as PortlessRouteState);
+  });
 });
 
 describe('docker resolveUrl (the hub /web route the tray opens)', () => {
@@ -86,6 +105,32 @@ describe('docker resolveUrl (the hub /web route the tray opens)', () => {
     expect(await dockerProvider.resolveUrl(dockerBox, { kind: 'web' })).toBe(
       'http://127.0.0.1:50080',
     );
+  });
+
+  it('re-registers an alias the proxy answers with its 404, then hands it out', async () => {
+    mode.value = HTTPS;
+    routeAnswers['web1.localhost'] = ['not-routed', 'routed'];
+    expect(await dockerProvider.resolveUrl(dockerBox, { kind: 'web' })).toBe(
+      'https://web1.localhost',
+    );
+    expect(aliasCalls).toEqual([['web1', 50080]]);
+  });
+
+  it('falls back to loopback when the proxy still does not route it', async () => {
+    mode.value = HTTPS;
+    routeAnswers['web1.localhost'] = ['not-routed'];
+    const warn = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    let warned = '';
+    try {
+      expect(await dockerProvider.resolveUrl(dockerBox, { kind: 'web' })).toBe(
+        'http://127.0.0.1:50080',
+      );
+      warned = String(warn.mock.calls[0]?.[0]);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(aliasCalls).toEqual([['web1', 50080]]);
+    expect(warned).toMatch(/not reloading its routes.*Restart the Portless service/);
   });
 });
 
@@ -118,5 +163,19 @@ describe('resolveVncViewerUrl (docker)', () => {
     expect(await resolveVncViewerUrl(dockerBox, provider)).toBe(
       'http://127.0.0.1:50600/vnc.html?autoconnect=1&password=pw',
     );
+  });
+
+  it('falls back to the loopback viewer when the VNC alias is not routed', async () => {
+    mode.value = HTTPS;
+    routeAnswers['vnc-web1.localhost'] = ['not-routed'];
+    const warn = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(await resolveVncViewerUrl(dockerBox, provider)).toBe(
+        'http://127.0.0.1:50600/vnc.html?autoconnect=1&password=pw',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+    expect(aliasCalls).toEqual([['vnc-web1', 50600]]);
   });
 });

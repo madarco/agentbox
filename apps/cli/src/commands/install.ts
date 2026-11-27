@@ -2,14 +2,15 @@
  * `agentbox install` — interactive setup wizard:
  *
  *   1. Compact system compatibility check (one line).
+ *   1b. Portless (`https://<box>.localhost`), decided from the host: default
+ *       yes on macOS + Docker Desktop or where Portless is installed, default
+ *       no elsewhere; persists `portless.enabled`.
  *   2. Provider picker (single-select; docker default).
  *   3. Provider login (skipped for docker; reuses each provider's existing
  *      `ensure*Credentials` flow, including Vercel's "install sandbox CLI
  *      then browser login" handling).
  *   4. Confirm-then-run base image / snapshot prepare (default-yes for docker).
  *   4b. Confirm-then-pin it as `box.provider` (the backend new boxes go to).
- *   4c. Portless (`https://<box>.localhost`) for docker on Docker Desktop and
- *       the loopback-URL clouds; persists `portless.enabled`.
  *   5. Install the host `/agentbox` skill files into Claude / Codex / OpenCode.
  *   6. Write the first-run marker.
  *   7. Tutorial outro.
@@ -633,12 +634,20 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     }
   }
 
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+
+  // 1b) Portless (`https://<box>.localhost`), asked from the host alone, before
+  // the provider picker. A separate step — see install-portless-step.ts.
+  await runPortlessInstallStep({
+    enabled: cfg?.effective.portless.enabled,
+    yes: opts.yes ?? false,
+  });
+
   // 2) Provider picker.
   // Docker off under a remote hub (Step 12): a control box (or hub.mode=thin) gates
   // docker/remote-docker off, so don't offer them in the picker AND refuse an
   // explicit `--provider docker` — otherwise the wizard would pin box.provider to a
   // backend `create`/`prepare` then refuse. `hub.mode=local` keeps docker on.
-  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
   const hideDocker = cfg ? dockerProvidersHidden(cfg.effective) : false;
   let providerName: ProviderName;
   if (opts.provider) {
@@ -727,14 +736,6 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
 
   // 4b) Pin it as the default backend for new boxes (`box.provider`).
   const isDefaultProvider = await maybeSetDefaultProvider(providerName, opts.yes ?? false);
-
-  // 4c) Portless: `https://<box>.localhost` for providers whose box URL is a
-  // host loopback port. A separate step — see install-portless-step.ts.
-  await runPortlessInstallStep({
-    provider: providerName,
-    enabled: cfg?.effective.portless.enabled,
-    yes: opts.yes ?? false,
-  });
 
   // 5) Host /agentbox skill (idempotent).
   const sp = spinner();
