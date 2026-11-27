@@ -99,7 +99,11 @@ try {
   });
   await context.clock.setFixedTime(new Date(NOW));
   if (opts.storage) {
-    const entries = opts.storage.map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]);
+    const entries = opts.storage.map((kv) => {
+      const at = kv.indexOf("=");
+      if (at < 1) throw new Error(`--storage wants <key>=<value>, got "${kv}"`);
+      return [kv.slice(0, at), kv.slice(at + 1)];
+    });
     await context.addInitScript((list) => {
       for (const [k, v] of list) localStorage.setItem(k, v);
     }, entries);

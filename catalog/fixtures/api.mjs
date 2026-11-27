@@ -32,12 +32,19 @@ import {
   system,
   usageRows,
   workspaces,
-  MACHINES,
 } from "./acme.mjs";
-import { activity, generatedUsageRows, usageStats, usageStatsQuery } from "./activity.mjs";
-import { toShare } from "../../packages/usage-view/dist/index.js";
-
-const allUsageRows = [...usageRows, ...generatedUsageRows(MACHINES)];
+/* The usage stats run packages/usage-view's aggregation from its dist. Loaded
+   apart, so an unbuilt usage-view fails only the routes that need it. */
+let usageView = null;
+let usageViewError = null;
+try {
+  usageView = { ...(await import("./activity.mjs")), ...(await import("../../packages/usage-view/dist/index.js")) };
+} catch (e) {
+  usageViewError = `usage fixtures unavailable (build packages/usage-view): ${e.message}`;
+  console.warn(`[fixtures] ${usageViewError}`);
+}
+const needUsage = (fn) => (...a) => (usageView ? fn(...a) : { __status: 503, __message: usageViewError });
+const allUsageRows = () => (usageView ? usageView.tokenRows() : usageRows);
 
 const GET = [
   [/^\/api\/v1\/health$/, () => ({ ok: true, apiVersion: "v1", version: system.hub.version, profile: system.hub.profile })],
@@ -75,9 +82,9 @@ const GET = [
   [/^\/api\/v1\/system$/, () => system],
   [/^\/api\/v1\/custody$/, (_, q) => ({ ...custody, entries: custody.entries.filter((e) => !q.get("prefix") || `${e.path}/`.startsWith(`${q.get("prefix")}/`)) })],
   [/^\/api\/v1\/usage$/, (_, q) => usage(q)],
-  [/^\/api\/v1\/usage\/stats$/, (_, q) => usageStats(usageStatsQuery(Object.fromEntries(q)))],
+  [/^\/api\/v1\/usage\/stats$/, needUsage((_, q) => usageView.usageStats(usageView.usageStatsQuery(Object.fromEntries(q))))],
   [/^\/api\/v1\/usage\/share$/, () => ({ endpoint: SHARE_ENDPOINT, shares: SHARES, lastName: "acme-commerce" })],
-  [/^\/api\/v1\/activity$/, (_, q) => activity(q)],
+  [/^\/api\/v1\/activity$/, needUsage((_, q) => usageView.activity(q))],
   [/^\/api\/v1\/skill-skips$/, () => ({ skipped: skillSkips })],
   [/^\/api\/v1\/accounts\/default$/, () => ({ defaults: Object.fromEntries(accounts.accounts.filter((a) => a.default?.global).map((a) => [a.agent, { account: a.id, source: "global", global: a.id }])) })],
   [/^\/api\/v1\/devices$/, () => devices],
@@ -147,7 +154,7 @@ function usage(q) {
   const by = (q.get("by") || "").split(",").map((d) => d.trim()).filter(Boolean);
   const limit = Number(q.get("limit") || 200);
   const keyOf = (d, r) => (d === "day" ? new Date(r.at + tz).toISOString().slice(0, 10) : DIM[d](r));
-  const rows = allUsageRows.filter((r) => {
+  const rows = allUsageRows().filter((r) => {
     if (r.at < since || r.at >= until) return false;
     if (q.get("box") && r.box !== q.get("box") && r.boxName !== q.get("box")) return false;
     if (q.get("project") && !r.project.includes(q.get("project")) && !r.projectUrl.includes(q.get("project"))) return false;
@@ -183,14 +190,17 @@ function usage(q) {
 const SHARE_ENDPOINT = "https://agent-box.sh/api/share";
 const SHARES = [{ endpoint: SHARE_ENDPOINT, origin: "https://agent-box.sh", id: "q4Xb7Lm2", url: "https://agent-box.sh/s/q4Xb7Lm2", createdAt: new Date(NOW - 6 * 86_400_000).toISOString() }];
 function share(body) {
+  if (!usageView) return { status: 503, json: { error: { code: "backend_unavailable", message: usageViewError } } };
   let b = {};
   try {
     b = JSON.parse(body || "{}");
   } catch {
     return { status: 400, json: { error: { code: "invalid_request", message: "body must be JSON" } } };
   }
-  const q = usageStatsQuery({ since: b.since, until: b.until, tz: b.tz, range: b.range, subscription: b.subscription });
-  const shared = toShare(usageStats(q), typeof b.name === "string" && b.name ? b.name : undefined);
+  if (typeof b !== "object" || b === null || Array.isArray(b))
+    return { status: 400, json: { error: { code: "invalid_request", message: "body must be a JSON object" } } };
+  const q = usageView.usageStatsQuery({ since: b.since, until: b.until, tz: b.tz, range: b.range, subscription: b.subscription });
+  const shared = usageView.toShare(usageView.usageStats(q), typeof b.name === "string" && b.name ? b.name : undefined);
   if (b.preview === true) return { json: { share: shared, endpoint: SHARE_ENDPOINT, bytes: Buffer.byteLength(JSON.stringify(shared)) } };
   return { status: 201, json: { url: "https://agent-box.sh/s/Z8kP3nQa", id: "Z8kP3nQa", createdAt: new Date(NOW).toISOString() } };
 }
@@ -202,6 +212,7 @@ export function route(method, path, query, body) {
     const m = re.exec(path);
     if (!m) continue;
     const json = fn(m.slice(1), query, body);
+    if (json && json.__status === 503) return { status: 503, json: { error: { code: "backend_unavailable", message: json.__message } } };
     if (json && json.__status) return { status: json.__status, json: { error: { code: "not_found", message: "not found" } } };
     return { json };
   }

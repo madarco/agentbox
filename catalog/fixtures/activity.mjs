@@ -10,7 +10,7 @@
    - around them, six weeks of two-week sprints at Acme, generated from a
      seeded random walk: quiet weekends, a ramp to each sprint's last
      Thursday, and a short PR per box. Their token rows join GET /usage
-     (`generatedUsageRows`), so both views count the same tokens. */
+     (`tokenRows`), so both views count the same tokens. */
 import {
   addDays,
   buildUsageStats,
@@ -22,7 +22,7 @@ import {
   totalMs,
   clipSpans,
 } from '../../packages/usage-view/dist/index.js';
-import { NOW, boxes as liveBoxes, sessions as recorded } from './acme.mjs';
+import { MACHINES, NOW, boxes as liveBoxes, sessions as recorded, usageRows } from './acme.mjs';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -217,7 +217,7 @@ for (let ago = BACK; ago >= 0; ago--) {
   const dayMs = today0 - ago * DAY;
   const w = Math.max(0, dayWeight(dayMs));
   /* Today: a few boxes that merged their PR this morning and are gone. */
-  const fresh = ago === 0 ? 3 : Math.round((w * 3.2 + rnd() * 0.8 - 0.3) * (ago <= 8 ? 0.6 : 1));
+  const fresh = ago === 0 ? 6 : Math.round((w * 3.2 + rnd() * 0.8 - 0.3) * (ago <= 8 ? 0.6 : 1));
   for (let i = 0; i < fresh; i++) {
     const repo = projectPick();
     if (!TITLES[repo].length) continue;
@@ -395,14 +395,19 @@ for (const { box: b, sessions } of history) {
     const opened = b.merged
       ? b.merged - (40 + rnd() * 200) * MIN
       : Math.min(spans[spans.length - 1].end, NOW - 50 * MIN);
-    ev('pr.opened', Math.max(b.start + 20 * MIN, opened), b, { pr });
-    if (b.live?.pr?.state === 'ready') ev('pr.ready', opened + 20 * MIN, b, { pr });
+    const openedAt = Math.min(Math.max(b.start + 20 * MIN, opened), NOW - 30 * MIN);
+    ev('pr.opened', openedAt, b, { pr });
+    if (b.live?.pr?.state === 'ready')
+      ev('pr.ready', Math.min(openedAt + 20 * MIN, NOW - 10 * MIN), b, { pr });
     if (b.merged) ev('pr.merged', b.merged, b, { pr });
   }
   if (b.live) {
     if (b.live.status === 'paused')
-      ev('box.paused', b.live.lastActivity + 20 * MIN, b, { actor: 'autopause' });
-    if (b.live.status === 'stopped') ev('box.stopped', b.live.lastActivity + 5 * MIN, b);
+      ev('box.paused', Math.min(b.live.lastActivity + 5 * MIN, NOW - MIN), b, {
+        actor: 'autopause',
+      });
+    if (b.live.status === 'stopped')
+      ev('box.stopped', Math.min(b.live.lastActivity + 5 * MIN, NOW - MIN), b);
   } else ev('box.destroyed', b.end, b);
 }
 /* The create that failed this morning (acme.mjs's refund-limits). */
@@ -435,6 +440,19 @@ for (const j of liveBoxes.filter((b) => b.id.startsWith('job:'))) {
 }
 ledger.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 const atMs = (e) => Date.parse(e.at);
+/* Each box's rows up to NOW, and its pushed line totals: read per request. */
+const rowsByBox = new Map();
+for (const e of ledger) {
+  if (!e.boxId || atMs(e) > NOW) continue;
+  rowsByBox.set(e.boxId, [...(rowsByBox.get(e.boxId) ?? []), e]);
+}
+const linesOf = (boxId) =>
+  (rowsByBox.get(boxId) ?? [])
+    .filter((x) => x.type === 'git.push')
+    .reduce(
+      (a, x) => ({ additions: a.additions + x.additions, deletions: a.deletions + x.deletions }),
+      { additions: 0, deletions: 0 },
+    );
 
 /* A box's running time: from ready or resumed to paused, stopped or destroyed. */
 const UP = new Set(['box.ready', 'box.resumed', 'box.started']);
@@ -442,8 +460,7 @@ const DOWN = new Set(['box.paused', 'box.stopped', 'box.destroyed']);
 function runsOf(b) {
   const runs = [];
   let up = null;
-  for (const e of ledger) {
-    if (e.boxId !== b.id || atMs(e) > NOW) continue;
+  for (const e of rowsByBox.get(b.id) ?? []) {
     if (UP.has(e.type) && up === null) up = atMs(e);
     if (DOWN.has(e.type) && up !== null) {
       runs.push({ boxId: b.id, provider: b.provider, start: up, end: atMs(e) });
@@ -485,12 +502,20 @@ export function activity(q) {
 
 /* ---- GET /api/v1/usage/stats ---- */
 const RANGE_IDS = ['7d', '30d', 'month', '90d', 'year'];
-export function usageStatsQuery(raw) {
+export function usageStatsQuery(input) {
+  /* A share body is any JSON: only strings count, as in the real route. */
+  const raw = Object.fromEntries(
+    Object.entries(input).filter(([, v]) => typeof v === 'string' && v.trim() !== ''),
+  );
   const tz = raw.tz || 'UTC';
   const today = dayKey(NOW, tz);
   const until = raw.until || today;
   const rel = /^(\d{1,4})([dw])$/.exec(raw.since || '30d');
-  const since = rel ? addDays(until, -(Number(rel[1]) * (rel[2] === 'w' ? 7 : 1) - 1)) : raw.since;
+  const since = rel
+    ? addDays(until, -(Number(rel[1]) * (rel[2] === 'w' ? 7 : 1) - 1))
+    : /^\d{4}-\d{2}-\d{2}$/.test(raw.since)
+      ? raw.since
+      : addDays(until, -29);
   const days = Math.round((Date.parse(until) - Date.parse(since)) / DAY) + 1;
   const id = RANGE_IDS.includes(raw.range)
     ? raw.range
@@ -527,31 +552,6 @@ export function usageStats(q) {
   const sessions = [];
   const tokens = [];
   const subs = new Map();
-  const addTokens = (s, provider, boxId, project) => {
-    for (const sp of clipNow(s.spans)) {
-      const n = Math.round(((sp.end - sp.start) / HOUR) * TOKENS_PER_HOUR[s.agent]);
-      tokens.push({
-        at: sp.start,
-        agent: s.agent,
-        provider,
-        project,
-        boxId,
-        ...(boxId ? {} : { sessionId: s.sessionId }),
-        tokens: n,
-      });
-      if (sp.start >= from && sp.start < to) {
-        const key = `${s.agent}/${s.account}`;
-        const cur = subs.get(key) ?? {
-          tokens: 0,
-          cost: s.agent === 'codex' && s.account === 'personal' ? 0 : null,
-        };
-        cur.tokens += n;
-        /* The API-key account pays per token; plans include theirs. */
-        if (cur.cost !== null) cur.cost += n * 1.1e-6;
-        subs.set(key, cur);
-      }
-    }
-  };
   const boxInfo = [];
   const boxRuns = [];
   const events = [];
@@ -578,7 +578,6 @@ export function usageStats(q) {
         turns: [],
         spans: clipNow(s.spans),
       });
-      addTokens(s, b.provider, b.id, b.repo);
     }
     boxRuns.push(...runsOf(b));
   }
@@ -592,9 +591,33 @@ export function usageStats(q) {
       turns: [],
       spans: clipNow(s.spans),
     });
-    addTokens(s, 'host', null, null);
   }
   const byBox = new Map(history.map((h) => [h.box.id, h.box]));
+  /* Tokens: the very rows GET /usage serves, so the Work and AI usage views agree. */
+  for (const r of tokenRows()) {
+    if (sub && r.account !== sub) continue;
+    const n = r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens;
+    const b = r.box ? byBox.get(r.box) : undefined;
+    tokens.push({
+      at: r.at,
+      agent: r.agent,
+      provider: b ? b.provider : 'host',
+      project: r.project.slice('github.com/'.length),
+      boxId: r.box ?? null,
+      ...(r.box ? {} : { sessionId: r.session }),
+      tokens: n,
+    });
+    if (r.at >= from && r.at < to) {
+      /* The API-key account pays per token; plans include theirs. */
+      const cur = subs.get(r.account) ?? {
+        tokens: 0,
+        cost: r.account === 'codex/personal' ? 0 : null,
+      };
+      cur.tokens += n;
+      if (cur.cost !== null) cur.cost += n * 1.1e-6;
+      subs.set(r.account, cur);
+    }
+  }
   for (const e of ledger) {
     if (atMs(e) > NOW || !e.boxId || !boxesOfSub.has(e.boxId)) continue;
     if (e.type === 'git.push')
@@ -610,12 +633,7 @@ export function usageStats(q) {
       });
     if (e.type === 'pr.merged') {
       const b = byBox.get(e.boxId);
-      const additions = ledger
-        .filter((x) => x.boxId === e.boxId && x.type === 'git.push')
-        .reduce((a, x) => a + x.additions, 0);
-      const deletions = ledger
-        .filter((x) => x.boxId === e.boxId && x.type === 'git.push')
-        .reduce((a, x) => a + x.deletions, 0);
+      const { additions, deletions } = linesOf(e.boxId);
       events.push({
         type: 'pr.merged',
         at: atMs(e),
@@ -701,7 +719,11 @@ const MIX = {
   },
 };
 const HOSTS = { studio: 'studio', laptop: 'laptop' };
-export function generatedUsageRows(machines) {
+let allRows = null;
+/* acme.mjs's recorded rows plus the generated boxes' rows: GET /usage reads these too. */
+export const tokenRows = () => (allRows ??= [...usageRows, ...generatedUsageRows(MACHINES)]);
+
+function generatedUsageRows(machines) {
   const rows = [];
   for (const { box: b, sessions } of history) {
     if (b.live || recorded.some((r) => r.box === b.name)) continue;

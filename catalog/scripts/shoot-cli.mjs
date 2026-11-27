@@ -80,6 +80,7 @@ writeFileSync(join(home, ".agentbox/config.yaml"), "relay:\n  port: 3126\n");
 writeFileSync(join(home, ".agentbox/hub/token"), "fixture-not-a-secret\n");
 /* This PC's own skills, as the hub's comparison of studio-mac lists them
    (acme.mjs), so `agentbox skills` has a local side to compare. */
+for (const dir of [".claude/skills", ".agents/skills"]) rmSync(join(home, dir), { recursive: true, force: true });
 for (const r of skillCompare[MACHINES.studio].rows) {
   if (!r.pc) continue;
   const dir = join(home, r.pc.dirs[0], r.name);
