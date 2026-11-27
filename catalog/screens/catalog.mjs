@@ -299,6 +299,65 @@ export const SCREENS = [
 
   /* ======== macOS tray ======== */
 
+  /* The setup wizard reads no scenario data (canned system check, providers and folders in
+     fixture mode), so its three steps are taken once; the menu it hands off to and the New Box
+     card do differ, so those have a simple picture too. */
+  tray({
+    id: "tray/setup-welcome",
+    title: "Tray setup: Welcome",
+    what: "The setup wizard's first step: what AgentBox does in three cards, the System check (Docker, git and gh, sshfs, Portless) and the Open at Login switch.",
+    via: "Opens on its own the first time the app runs, or Finish Setup… in the menu",
+    files: [{ shoot: "pnpm shoot:tray tray/setup-welcome.png --setup welcome" }],
+    notes: ["Fixture mode fills the System check with canned rows; the wizard looks the same in every scenario."],
+  }),
+  tray({
+    id: "tray/setup-provider",
+    title: "Tray setup: Provider",
+    what: "Where boxes run: Docker recommended on top, then a card per cloud provider (Daytona, Hetzner, Vercel, E2B, DigitalOcean, Remote Docker) with its strength and whether its image is ready or how long the bake takes.",
+    from: "tray/setup-welcome",
+    via: "Get started",
+    files: [{ shoot: "pnpm shoot:tray tray/setup-provider.png --setup provider" }],
+    notes: ["shoot:tray switches Open at Login off before Get started, so the fixture app is never registered as a login item; that switch is on the Welcome step only."],
+  }),
+  tray({
+    id: "tray/setup-project",
+    title: "Tray setup: Project",
+    what: "The last step: try the demo project or pick one of your own recent folders, choose the agent to start the Manager with, and the first prompt to give it, with Copy.",
+    from: "tray/setup-provider",
+    via: "Continue",
+    files: [
+      { state: "demo project", shoot: "pnpm shoot:tray tray/setup-project.png --setup project" },
+      { state: "own folder", shoot: "pnpm shoot:tray tray/setup-project-folder.png --setup project-folder" },
+    ],
+    notes: ["The recent folders (acme-saas, storefront-web, docs) are the tray's canned fixture list, not read from the Mac."],
+    social: { title: "From install to a running Manager in three steps" },
+  }),
+  tray({
+    id: "tray/setup-menu-tip",
+    title: "Tray setup: the New Box tip",
+    what: "Where the wizard hands off: the Manager starts, then the tray menu drops down with New Box ringed and a \"Start a box here\" tip beside it.",
+    from: "tray/setup-project",
+    via: "Start Manager",
+    files: [
+      { shoot: "pnpm shoot:tray tray/setup-menu-tip.png --menu-tip" },
+      { shoot: "pnpm shoot:tray tray/setup-menu-tip.simple.png --menu-tip --scenario simple" },
+    ],
+    edits: ["The menu and the tip are two windows, captured one by one and put back together at their screen positions."],
+    notes: ["--menu-tip shows the tip in its longest form (Claude Code, prompt not prefilled), so it includes the line about the copied prompt."],
+  }),
+  tray({
+    id: "tray/new-box",
+    title: "Tray: New Box",
+    what: "The New Box card: project, provider, branch, agent and name. For a project with no agentbox.yaml yet, a Run setup wizard checkbox under Project, with a help button.",
+    from: "tray/setup-menu-tip",
+    via: "New Box (also in the menu's header)",
+    files: [
+      { state: "project without agentbox.yaml", shoot: "pnpm shoot:tray tray/new-box.png --restart --press agentbox.header.newBox --select agentbox.create.project ios-app --window" },
+      { state: "project already set up", shoot: "pnpm shoot:tray tray/new-box.simple.png --restart --press agentbox.header.newBox --window --scenario simple" },
+    ],
+    notes: ["In simple every project has an agentbox.yaml, so the setup wizard row does not show there."],
+  }),
+
   tray({
     id: "tray/menu",
     title: "Tray menu",
@@ -345,9 +404,10 @@ export const SCREENS = [
     from: "tray/menu",
     via: "Manage… on the Subscriptions band",
     files: [
-      { shoot: "pnpm shoot:tray tray/subscriptions.png --restart --press agentbox.subscriptions.manage" },
-      { shoot: "pnpm shoot:tray tray/subscriptions.simple.png --restart --press agentbox.subscriptions.manage --scenario simple" },
+      { shoot: "pnpm shoot:tray tray/subscriptions.png --settings subscriptions" },
+      { shoot: "pnpm shoot:tray tray/subscriptions.simple.png --settings subscriptions --scenario simple" },
     ],
+    notes: ["Opened at launch (--settings) rather than through Manage…: the same page, captured as a plain window, with no menu backdrop drawn over the Settings palette."],
   }),
   tray({
     id: "tray/settings-skills",
@@ -356,7 +416,7 @@ export const SCREENS = [
     from: "tray/skill-updates",
     via: "Open Skills Settings… under the Environment row",
     files: [
-      { shoot: "pnpm shoot:tray tray/settings-skills.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings" },
+      { shoot: "pnpm shoot:tray tray/settings-skills.png --settings skills" },
       { state: "Mac is newer", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-behind.png --settings skills --scenario simple-skill-behind" },
       { state: "new on the Hub", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-new.png --settings skills --scenario simple-skill-new" },
     ],
