@@ -1,10 +1,24 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addRcLine,
+  cliInvocation,
+  moveLegacyCloudflared,
+  spawnEnvFor,
+  stableNode,
+  zshenvFile,
   ensureLauncher,
   envWithRunningNode,
   launcherDirOnPath,
@@ -139,6 +153,51 @@ describe('the launcher script', () => {
     expect(r.status).toBe(127);
   });
 
+  it('runs dist/index.js when an older (pre-launcher) version was installed over it', () => {
+    const { script } = fakeNpmInstall(join(tmp, 'a'));
+    const pkg = dirname(dirname(script));
+    rmSync(join(pkg, 'bin'), { recursive: true });
+    writeFileSync(join(pkg, 'dist', 'index.js'), 'console.log("legacy", process.argv[2])\n');
+    ensureLauncher({ node: process.execPath, script }, tmp);
+    const r = run(launcherPath(tmp), '/usr/bin:/bin');
+    expect(r.stdout).toBe('legacy x\n');
+    expect(r.stderr).toBe('');
+  });
+
+  it('skips a symlink or copy of the launcher elsewhere on PATH (no exec loop)', () => {
+    ensureLauncher({ node: process.execPath, script: join(tmp, 'gone.js') }, tmp);
+    const other = join(tmp, 'otherbin');
+    const copy = join(tmp, 'copybin');
+    mkdirSync(other);
+    mkdirSync(copy);
+    symlinkSync(launcherPath(tmp), join(other, 'agentbox'));
+    writeFileSync(join(copy, 'agentbox'), readFileSync(launcherPath(tmp)));
+    chmodSync(join(copy, 'agentbox'), 0o755);
+    const r = spawnSync('/bin/sh', [launcherPath(tmp)], {
+      encoding: 'utf8',
+      env: { PATH: `${other}:${copy}:/usr/bin:/bin`, HOME: tmp },
+      timeout: 5000,
+    });
+    expect(r.status).toBe(127);
+    expect(r.stderr).toMatch(/Reinstall/);
+  });
+
+  it('stops after one hop when the fallback leads back to a launcher', () => {
+    ensureLauncher({ node: process.execPath, script: join(tmp, 'gone.js') }, tmp);
+    // An unmarked wrapper that re-runs the launcher: only the hop guard stops it.
+    const other = join(tmp, 'wrapbin');
+    mkdirSync(other);
+    writeFileSync(join(other, 'agentbox'), `#!/bin/sh\nexec /bin/sh ${launcherPath(tmp)} "$@"\n`);
+    chmodSync(join(other, 'agentbox'), 0o755);
+    const r = spawnSync('/bin/sh', [launcherPath(tmp)], {
+      encoding: 'utf8',
+      env: { PATH: `${other}:/usr/bin:/bin`, HOME: tmp },
+      timeout: 5000,
+    });
+    expect(r.status).toBe(127);
+    expect(r.stderr).toMatch(/is a launcher too/);
+  });
+
   it('says how to reinstall when nothing is left', () => {
     ensureLauncher({ node: process.execPath, script: join(tmp, 'gone.js') }, tmp);
     const r = run(launcherPath(tmp), `${dirname(launcherPath(tmp))}:/usr/bin:/bin`);
@@ -160,9 +219,22 @@ describe('the launcher script', () => {
 });
 
 describe('shell rc', () => {
+  it('writes ~/.zshenv unless zsh really reads $ZDOTDIR/.zshenv', () => {
+    const z = join(tmp, '.config', 'zsh');
+    // ZDOTDIR set inside ~/.zshenv: zsh never reads $ZDOTDIR/.zshenv.
+    writeFileSync(join(tmp, '.zshenv'), `export ZDOTDIR="$HOME/.config/zsh"\n`);
+    expect(zshenvFile(tmp, z)).toBe(join(tmp, '.zshenv'));
+    // ZDOTDIR from the environment, no ~/.zshenv: $ZDOTDIR/.zshenv it is.
+    rmSync(join(tmp, '.zshenv'));
+    expect(zshenvFile(tmp, z)).toBe(join(z, '.zshenv'));
+    // A ZDOTDIR outside HOME (a scratch HOME inheriting the real one) is ignored.
+    expect(zshenvFile(tmp, '/Users/real/.config/zsh')).toBe(join(tmp, '.zshenv'));
+    expect(zshenvFile(tmp, undefined)).toBe(join(tmp, '.zshenv'));
+  });
+
   it('picks the file per shell', () => {
     expect(shellRcFor('/bin/zsh', '/h', 'linux', {})?.file).toBe('/h/.zshenv');
-    expect(shellRcFor('/bin/zsh', '/h', 'linux', { ZDOTDIR: '/z' })?.file).toBe('/z/.zshenv');
+    expect(shellRcFor('/bin/zsh', '/h', 'linux', { ZDOTDIR: '/z' })?.file).toBe('/h/.zshenv');
     expect(shellRcFor('/bin/bash', '/h', 'darwin')?.file).toBe('/h/.bash_profile');
     expect(shellRcFor('/usr/bin/bash', '/h', 'linux')?.file).toBe('/h/.bashrc');
     expect(shellRcFor('/usr/bin/fish', '/h')?.file).toBe('/h/.config/fish/config.fish');
@@ -190,7 +262,7 @@ describe('shell rc', () => {
     expect(readFileSync(rc.file, 'utf8')).toBe(`${rc.line}\n`);
   });
 
-  it('puts the launcher dir ahead of version-manager paths', () => {
+  it("appends the launcher dir, so the active Node's agentbox wins", () => {
     const rc = shellRcFor('/bin/zsh', tmp, 'linux', {})!;
     addRcLine(rc);
     const out = execFileSync(
@@ -198,7 +270,10 @@ describe('shell rc', () => {
       ['-c', `PATH=/nvm/v20/bin:/usr/bin:/bin; HOME=${tmp}; . ${rc.file}; echo "$PATH"`],
       { encoding: 'utf8' },
     );
-    expect(out.trim().split(':')[0]).toBe(join(tmp, '.agentbox', 'bin'));
+    const parts = out.trim().split(':');
+    expect(parts[0]).toBe('/nvm/v20/bin');
+    expect(parts.at(-1)).toBe(join(tmp, '.agentbox', 'bin'));
+    expect(shellRcFor('/usr/bin/fish', tmp)!.line).toContain('--append');
   });
 
   it('detects the dir on PATH', () => {
@@ -212,5 +287,71 @@ describe('envWithRunningNode', () => {
     const bin = dirname(process.execPath);
     const env = envWithRunningNode({ PATH: `/other/node/bin:${bin}:/opt/x/bin` });
     expect(env['PATH']).toBe(`${bin}:/other/node/bin:/opt/x/bin`);
+  });
+});
+
+describe('spawnEnvFor', () => {
+  it('moves the running node first for npm only', () => {
+    const bin = dirname(process.execPath);
+    const env = { PATH: `/stale/node/bin:/opt/x/bin` };
+    expect(spawnEnvFor('npm', env)['PATH']?.split(':')[0]).toBe(bin);
+    for (const cmd of ['pnpm', 'agentbox', '/usr/bin/git']) {
+      expect(spawnEnvFor(cmd, env), cmd).toBe(env);
+    }
+  });
+});
+
+describe('stableNode', () => {
+  it('prefers <brew>/opt/<formula>/bin/node for a keg-only Cellar node', () => {
+    const brew = join(tmp, 'brew');
+    const cellarBin = join(brew, 'Cellar', 'node@22', '22.12.0', 'bin');
+    mkdirSync(cellarBin, { recursive: true });
+    writeFileSync(join(cellarBin, 'node'), '');
+    mkdirSync(join(brew, 'opt'), { recursive: true });
+    symlinkSync(join(brew, 'Cellar', 'node@22', '22.12.0'), join(brew, 'opt', 'node@22'));
+    // A custom npm prefix with no node next to it: only the opt path qualifies.
+    const script = join(
+      tmp,
+      'npm-global',
+      'lib',
+      'node_modules',
+      '@madarco',
+      'agentbox',
+      'bin',
+      'agentbox.js',
+    );
+    expect(stableNode(join(cellarBin, 'node'), script)).toBe(
+      join(brew, 'opt', 'node@22', 'bin', 'node'),
+    );
+  });
+
+  it('keeps execPath when nothing stabler resolves to the same binary', () => {
+    expect(stableNode(process.execPath, '/nowhere/lib/node_modules/x/bin/agentbox.js')).toBe(
+      process.execPath,
+    );
+  });
+});
+
+describe('cliInvocation', () => {
+  it('is the launcher alone when this is a global install that has one', () => {
+    const t = { node: process.execPath, script: '/p/bin/agentbox.js' };
+    ensureLauncher(t, tmp);
+    expect(cliInvocation(t, tmp)).toEqual([launcherPath(tmp)]);
+  });
+
+  it('is node + entry otherwise', () => {
+    expect(cliInvocation(null, tmp)).toEqual([process.execPath, process.argv[1] ?? 'agentbox']);
+    const t = { node: process.execPath, script: '/p/bin/agentbox.js' };
+    expect(cliInvocation(t, join(tmp, 'no-launcher'))[0]).toBe(process.execPath);
+  });
+});
+
+describe('moveLegacyCloudflared', () => {
+  it('moves a cached cloudflared out of the PATH dir', () => {
+    mkdirSync(join(tmp, '.agentbox', 'bin'), { recursive: true });
+    writeFileSync(join(tmp, '.agentbox', 'bin', 'cloudflared'), 'bin');
+    moveLegacyCloudflared(tmp);
+    expect(existsSync(join(tmp, '.agentbox', 'bin', 'cloudflared'))).toBe(false);
+    expect(readFileSync(join(tmp, '.agentbox', 'cache', 'bin', 'cloudflared'), 'utf8')).toBe('bin');
   });
 });

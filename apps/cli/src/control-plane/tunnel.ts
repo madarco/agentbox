@@ -22,13 +22,16 @@ import { homedir, tmpdir, arch as osArch, platform } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execa } from 'execa';
+import { moveLegacyCloudflared } from '../lib/launcher.js';
 
 export type TunnelKind = 'cloudflare' | 'tailscale';
 
 const CP_DIR = join(homedir(), '.agentbox', 'control-plane');
 const TUNNEL_PID_FILE = join(CP_DIR, 'tunnel.pid');
 const TUNNEL_LOG_FILE = join(CP_DIR, 'tunnel.log');
-const BIN_DIR = join(homedir(), '.agentbox', 'bin');
+// Not ~/.agentbox/bin: that dir is on PATH (the agentbox launcher), and a
+// cached cloudflared there would shadow the user's own.
+const BIN_DIR = join(homedir(), '.agentbox', 'cache', 'bin');
 
 export interface TunnelHandle {
   kind: TunnelKind;
@@ -85,6 +88,7 @@ async function onPath(cmd: string): Promise<string | null> {
  * HTTPS). Returns the executable path.
  */
 export async function ensureCloudflared(onLog: (l: string) => void = () => {}): Promise<string> {
+  moveLegacyCloudflared();
   const sys = await onPath('cloudflared');
   if (sys) return sys;
   const cached = join(BIN_DIR, 'cloudflared');

@@ -27,6 +27,7 @@ import {
   launcherDirOnPath,
   launcherPath,
   launcherTarget,
+  moveLegacyCloudflared,
   rcHasLine,
   shellRcFor,
 } from '../lib/launcher.js';
@@ -480,6 +481,7 @@ async function setupLauncher(yes: boolean): Promise<void> {
   if (!target) return;
   try {
     ensureLauncher(target);
+    moveLegacyCloudflared();
   } catch (err) {
     log.warn(`launcher: could not write ${tilde(launcherPath())}: ${errMessage(err)}`);
     return;
@@ -490,7 +492,7 @@ async function setupLauncher(yes: boolean): Promise<void> {
     if (launcherDirOnPath()) return;
     log.info(
       `To keep agentbox working when your Node version changes, add\n` +
-        `${tilde(launcherDir())} to PATH, ahead of nvm/fnm/volta.`,
+        `${tilde(launcherDir())} to the end of your PATH.`,
     );
     return;
   }

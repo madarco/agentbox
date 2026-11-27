@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { envWithRunningNode, launcherTarget } from '../lib/launcher.js';
+import { launcherTarget, spawnEnvFor } from '../lib/launcher.js';
 import { confirm, intro, log, outro } from '@agentbox/cli-kit';
 import { DEFAULT_BOX_IMAGE } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
@@ -157,10 +157,10 @@ async function resolveHubUpdate(args: {
 
 function runInherit(cmd: string, args: string[]): Promise<number> {
   return new Promise<number>((resolveP, rejectP) => {
-    // The running Node's bin dir first: under ~/.agentbox/bin/agentbox, PATH's
-    // node/npm may be another version, whose `npm i -g` would update a different
-    // install than the one this process (and the launcher) runs.
-    const child = spawn(cmd, args, { stdio: 'inherit', env: envWithRunningNode() });
+    // npm only: under ~/.agentbox/bin/agentbox, PATH's node/npm may be another
+    // version, whose `npm i -g` would update a different install than the one
+    // this process (and the launcher) runs. pnpm and `agentbox` keep PATH as is.
+    const child = spawn(cmd, args, { stdio: 'inherit', env: spawnEnvFor(cmd) });
     child.on('error', rejectP);
     child.on('close', (code) => resolveP(code ?? 0));
   });

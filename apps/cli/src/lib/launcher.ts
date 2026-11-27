@@ -4,8 +4,11 @@
  * `npm i -g` puts agentbox under the CURRENT Node's prefix. With nvm/fnm/volta/
  * asdf, a project pinning another Node swaps PATH to that version's bin dir and
  * `agentbox` is gone. The launcher pins the Node and the install that ran it by
- * absolute path, so it works whatever `node` PATH resolves to; `~/.agentbox/bin`
- * goes on PATH once, via one line in the shell rc.
+ * absolute path, so it works whatever `node` PATH resolves to. `~/.agentbox/bin`
+ * is APPENDED to PATH once, via one line in the shell rc: the agentbox of the
+ * active Node wins when it has one (and its run re-points the launcher), and the
+ * launcher is the fallback when it doesn't. Appending is also the only order
+ * that holds on every OS (macOS path_helper and nvm reorder anything prepended).
  */
 import {
   existsSync,
@@ -13,6 +16,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -38,16 +42,23 @@ function shq(s: string): string {
 }
 
 /**
- * The launcher script. Fallbacks, in order: the recorded Node is gone (its nvm
- * version was uninstalled) → `node` on PATH with a warning; the install itself
- * is gone (it lived under that Node's prefix) → another `agentbox` on PATH; else
- * a reinstall hint. The next run from a global install re-points the launcher.
+ * The launcher script. Fallbacks, in order:
+ * - the recorded install has the pre-launcher layout (an older version was
+ *   installed over it, whose bin is `dist/index.js`) → run that;
+ * - the recorded Node is gone (its nvm version was uninstalled) → `node` on PATH;
+ * - the install itself is gone → another `agentbox` on PATH that isn't a
+ *   launcher, at most one hop (`AGENTBOX_LAUNCHER_HOP`);
+ * - else a reinstall hint. The next run from a global install re-points it.
  */
 export function renderLauncher(node: string, script: string, version?: string): string {
   return `#!/bin/sh
 ${MARKER} (written by agentbox; rewritten on install and self-update)
 ${version ? `# version: ${version}\n` : ''}node=${shq(node)}
 script=${shq(script)}
+if [ ! -f "$script" ]; then
+  legacy="\${script%/bin/agentbox.js}/dist/index.js"
+  [ -f "$legacy" ] && script=$legacy
+fi
 if [ -f "$script" ]; then
   if [ -x "$node" ]; then
     exec "$node" "$script" "$@"
@@ -55,13 +66,20 @@ if [ -f "$script" ]; then
   echo "agentbox: $node no longer exists; using node from PATH. Run 'agentbox install' to re-point ~/.agentbox/bin/agentbox." >&2
   exec node "$script" "$@"
 fi
+if [ -n "$AGENTBOX_LAUNCHER_HOP" ]; then
+  echo "agentbox: $script no longer exists, and the agentbox it fell back to is a launcher too. Reinstall: npm install -g @madarco/agentbox" >&2
+  exit 127
+fi
 self_dir=$(cd "$(dirname "$0")" && pwd -P)
 IFS=:
 for d in $PATH; do
   d_real=$(cd "$d" 2>/dev/null && pwd -P) || continue
   [ "$d_real" = "$self_dir" ] && continue
+  grep -q '^${MARKER}' "$d/agentbox" 2>/dev/null && continue
   if [ -x "$d/agentbox" ]; then
     unset IFS
+    AGENTBOX_LAUNCHER_HOP=1
+    export AGENTBOX_LAUNCHER_HOP
     echo "agentbox: $script no longer exists; using $d/agentbox. Run 'agentbox install' to re-point ~/.agentbox/bin/agentbox." >&2
     exec "$d/agentbox" "$@"
   fi
@@ -112,18 +130,42 @@ function isVolta(p: string): boolean {
   return p.includes('/.volta/');
 }
 
-function stableNode(execPath: string, script: string): string {
+export function stableNode(execPath: string, script: string): string {
+  const candidates: string[] = [];
   const i = script.lastIndexOf('/lib/node_modules/');
-  if (i < 0) return execPath;
-  const candidate = join(script.slice(0, i), 'bin', 'node');
+  if (i >= 0) candidates.push(join(script.slice(0, i), 'bin', 'node'));
+  // Keg-only formulae (node@22) never link into <prefix>/bin, but
+  // <prefix>/opt/<formula> survives upgrades the way the Cellar path doesn't.
+  const cellar = /^(.*)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (cellar) candidates.push(join(cellar[1]!, 'opt', cellar[2]!, 'bin', 'node'));
+  let real: string;
   try {
-    if (candidate !== execPath && realpathSync(candidate) === realpathSync(execPath)) {
-      return candidate;
-    }
+    real = realpathSync(execPath);
   } catch {
-    // No node next to the install (custom npm prefix) — use the one running.
+    return execPath;
+  }
+  for (const c of candidates) {
+    try {
+      if (c !== execPath && realpathSync(c) === real) return c;
+    } catch {
+      // Not there (custom npm prefix, not Homebrew) — try the next.
+    }
   }
   return execPath;
+}
+
+/**
+ * The argv prefix that runs agentbox, for things persisted outside this process
+ * (the hub autostart unit, the herdr shim): the launcher when this is a global
+ * install that has one, so they survive a Node switch and keep the version
+ * check; otherwise this Node + this entry, as before.
+ */
+export function cliInvocation(
+  target: LauncherTarget | null = launcherTarget(),
+  home: string = homedir(),
+): string[] {
+  if (target && existsSync(launcherPath(home))) return [launcherPath(home)];
+  return [process.execPath, process.argv[1] ?? 'agentbox'];
 }
 
 /**
@@ -168,10 +210,28 @@ function keepCurrent(current: string, target: LauncherTarget): boolean {
   return isNewer(version, target.version);
 }
 
+/**
+ * Older builds cached a downloaded `cloudflared` in `~/.agentbox/bin`, the dir
+ * that now goes on PATH. Move it to `~/.agentbox/cache/bin` so it is neither
+ * exposed on PATH nor found first by the tunnel's own PATH lookup.
+ */
+export function moveLegacyCloudflared(home: string = homedir()): void {
+  const old = join(launcherDir(home), 'cloudflared');
+  if (!existsSync(old)) return;
+  const dest = join(home, '.agentbox', 'cache', 'bin', 'cloudflared');
+  try {
+    mkdirSync(dirname(dest), { recursive: true });
+    if (existsSync(dest)) rmSync(old, { force: true });
+    else renameSync(old, dest);
+  } catch {
+    // Best effort: a leftover copy only costs a stale binary on PATH.
+  }
+}
+
 /** Startup hook: never throws, never prints. */
 export function ensureLauncherQuietly(): void {
   try {
-    ensureLauncher();
+    if (ensureLauncher()) moveLegacyCloudflared();
   } catch {
     // Read-only home, odd FS — the launcher is a convenience, not a requirement.
   }
@@ -192,6 +252,15 @@ export function envWithRunningNode(env: NodeJS.ProcessEnv = process.env): NodeJS
   return { ...env, PATH: [bin, ...parts].join(delimiter) };
 }
 
+/**
+ * The env to spawn `cmd` with: the running Node first on PATH for `npm` only.
+ * For anything else (pnpm, `agentbox`) PATH stays as is, or a stale npm
+ * `agentbox` or a corepack `pnpm` shim in this Node's bin dir would win.
+ */
+export function spawnEnvFor(cmd: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return basename(cmd) === 'npm' ? envWithRunningNode(env) : env;
+}
+
 // ---------- shell rc ----------
 
 export type ShellKind = 'zsh' | 'bash' | 'fish';
@@ -205,12 +274,33 @@ export interface ShellRc {
 }
 
 const RC_MARKER = '# added by agentbox';
+const POSIX_LINE = `export PATH="$PATH:$HOME/.agentbox/bin" ${RC_MARKER}`;
+
+/**
+ * Which `.zshenv` zsh actually reads. zsh reads `$ZDOTDIR/.zshenv` only when
+ * ZDOTDIR is set before zsh starts; the common setup sets it INSIDE
+ * `~/.zshenv`, and then `$ZDOTDIR/.zshenv` is never read. So `~/.zshenv`,
+ * unless ZDOTDIR points inside HOME and `~/.zshenv` doesn't set it itself.
+ * A ZDOTDIR outside HOME (a scratch HOME inheriting the real one) is ignored.
+ */
+export function zshenvFile(home: string, zdotdir: string | undefined): string {
+  const homeFile = join(home, '.zshenv');
+  if (!zdotdir || zdotdir === home || !zdotdir.startsWith(home + '/')) return homeFile;
+  let body: string | undefined;
+  try {
+    body = readFileSync(homeFile, 'utf8');
+  } catch {
+    // No ~/.zshenv — ZDOTDIR comes from the environment.
+  }
+  if (body !== undefined && /\bZDOTDIR=/.test(body)) return homeFile;
+  return join(zdotdir, '.zshenv');
+}
 
 /**
  * The rc file and line for the user's login shell, or null for a shell we don't
- * edit. zsh uses `~/.zshenv`: it is read by every zsh, including the
+ * edit. zsh uses `.zshenv`: it is read by every zsh, including the
  * non-interactive `zsh -lc 'agentbox …'` the menu-bar app and the hub's
- * integrations spawn — `~/.zshrc` is read by interactive shells only.
+ * integrations spawn — `.zshrc` is read by interactive shells only.
  */
 export function shellRcFor(
   shellPath: string | undefined = process.env['SHELL'],
@@ -220,12 +310,7 @@ export function shellRcFor(
 ): ShellRc | null {
   const name = basename(shellPath ?? '');
   if (name === 'zsh') {
-    const zdot = env['ZDOTDIR'];
-    return {
-      shell: 'zsh',
-      file: join(zdot && zdot.length > 0 ? zdot : home, '.zshenv'),
-      line: `export PATH="$HOME/.agentbox/bin:$PATH" ${RC_MARKER}`,
-    };
+    return { shell: 'zsh', file: zshenvFile(home, env['ZDOTDIR']), line: POSIX_LINE };
   }
   if (name === 'bash') {
     // macOS Terminal opens login shells, Linux terminals interactive non-login
@@ -237,14 +322,14 @@ export function shellRcFor(
     return {
       shell: 'bash',
       file: join(home, platform === 'darwin' ? (login ?? '.bash_profile') : '.bashrc'),
-      line: `export PATH="$HOME/.agentbox/bin:$PATH" ${RC_MARKER}`,
+      line: POSIX_LINE,
     };
   }
   if (name === 'fish') {
     return {
       shell: 'fish',
       file: join(home, '.config', 'fish', 'config.fish'),
-      line: `fish_add_path --global --move --path $HOME/.agentbox/bin ${RC_MARKER}`,
+      line: `fish_add_path --global --append --path $HOME/.agentbox/bin ${RC_MARKER}`,
     };
   }
   return null;

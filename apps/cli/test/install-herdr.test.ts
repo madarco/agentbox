@@ -61,9 +61,14 @@ describe('committed plugin stays in sync with the builders', () => {
 
 describe('herdrShimContent', () => {
   it('exec-launches the CLI by absolute node + entry, shell-quoted', () => {
-    const shim = herdrShimContent('/usr/local/bin/node', '/opt/agentbox/dist/index.js');
+    const shim = herdrShimContent(['/usr/local/bin/node', '/opt/agentbox/dist/index.js']);
     expect(shim).toContain("exec '/usr/local/bin/node' '/opt/agentbox/dist/index.js' \"$@\"");
     expect(shim.startsWith('#!/bin/sh')).toBe(true);
+  });
+
+  it('exec-launches the launcher alone when there is one', () => {
+    const shim = herdrShimContent(["/Users/me/it's/.agentbox/bin/agentbox"]);
+    expect(shim).toContain(`exec '/Users/me/it'\\''s/.agentbox/bin/agentbox' "$@"`);
   });
 });
 
