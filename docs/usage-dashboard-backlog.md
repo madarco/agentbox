@@ -278,3 +278,11 @@ Open items found while building the phases of
   down to 8) and 10 sessions, so a maximal share fits 64 KB. If shares need more,
   drop a column (per-provider splits) before raising a limit, and rerun the
   maximal-share size test.
+- **Busy spans: openclaw heartbeats.** openclaw's periodic heartbeat prompts are stored
+  as typed prompts (`auto = 0`), so a heartbeat answered with `HEARTBEAT_OK` counts its
+  short turn. Classify them in the openclaw parser (its heartbeat prompt or the
+  `HEARTBEAT_OK` reply) and bump its parser version.
+- **Busy spans: purged sessions keep old-rule spans.** A session purged before the
+  busy-spans rule has no turns left to recompute, so its spans still bridge waits under
+  10 minutes. Windows that reach back before the rule read slightly high, and the
+  "vs previous window" deltas compare the two rules until those windows age out.
