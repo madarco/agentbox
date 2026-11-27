@@ -19,7 +19,8 @@ import {
   isRealAgentCredential,
   readCredentialBackup,
   resolveAgentSpec,
-  resolveCarryVenv,
+  resolveCarryAll,
+  GIT_MODE_EXCLUDE_DIRS,
   STATE_DIR,
   type RegistrationOrigin,
 } from '@agentbox/sandbox-core';
@@ -647,8 +648,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       });
     }
   }
-  // `box.carryVenv`: whether the seed keeps the host's Python env dirs.
-  const includeVenv = await resolveCarryVenv(opts.projectRoot ?? workspace);
+  // `box.carryAll`: whether the seed keeps the host's untracked generated dirs.
+  const carryAll = await resolveCarryAll(opts.projectRoot ?? workspace);
   if (!checkpointImage) {
     const repos = await detectGitRepos(workspace);
     if (repos.length > 0) {
@@ -699,7 +700,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       const branch = await pickFreshBranch(r.hostMainRepo, branchBase);
       const gitWorktreePath = gitWorktreePathFor(branch);
       const carry = await collectRepoCarryOver(r, branch, containerPath, gitWorktreePath, {
-        includeVenv,
+        all: carryAll,
       });
       repoCarryOvers.push(carry);
       gitWorktreeRecords.push({
@@ -726,7 +727,11 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
   if (opts.useSnapshot && snapshotIsUseful) {
     snapshotDir = snapshotPathFor({ id, name, projectIndex });
     log(`cloning workspace to ${snapshotDir} (APFS clone where available)`);
-    const snap = await createSnapshot({ source: workspace, destination: snapshotDir });
+    const snap = await createSnapshot({
+      source: workspace,
+      destination: snapshotDir,
+      ...(carryAll ? { excluded: new Set(GIT_MODE_EXCLUDE_DIRS) } : {}),
+    });
     log(`pruned ${snap.prunedPaths.length} platform-dependent dirs from snapshot`);
   } else if (opts.useSnapshot && !checkpointImage) {
     log(
@@ -1231,7 +1236,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       await seedWorkspaceFromDir({
         container: containerName,
         hostSource: source,
-        includeVenv,
+        carryAll,
         onLog: log,
       });
     }

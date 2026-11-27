@@ -166,7 +166,7 @@ describe('resyncCloudWorkspace pre-fetch', () => {
     const MAX_ARG_STRLEN = 128 * 1024;
     const untracked = Array.from(
       { length: 9000 },
-      (_, i) => `build/artifacts/chunk-${String(i).padStart(6, '0')}.js`,
+      (_, i) => `assets/chunk-${String(i).padStart(6, '0')}.js`,
     );
     const probes: string[] = [];
     const backend = {

@@ -932,9 +932,10 @@ export function buildOpenApi(): Record<string, unknown> {
                       description:
                         "Whose state to capture (default: the box's own recorded agent).",
                     },
-                    includeNodeModules: {
+                    all: {
                       type: 'boolean',
-                      description: 'Carry node_modules into the workspace half as well.',
+                      description:
+                        'Keep the generated dirs (node_modules, dist, build, .venv, ...) in the workspace half.',
                     },
                   },
                 },
@@ -993,9 +994,10 @@ export function buildOpenApi(): Record<string, unknown> {
                 schema: {
                   type: 'object',
                   properties: {
-                    includeNodeModules: {
+                    all: {
                       type: 'boolean',
-                      description: 'Push node_modules too (non-git workspaces only).',
+                      description:
+                        'Push the generated dirs (node_modules, dist, build, .venv, ...) too; non-git workspaces only (a git workspace reads `box.carryAll`).',
                     },
                   },
                 },
@@ -1054,7 +1056,11 @@ export function buildOpenApi(): Record<string, unknown> {
                       description:
                         "Dir for the clone's workspace ON THE HUB'S MACHINE (default `~/.agentbox/clones/<name>`, in the hub user's home); must be absent or empty. MUST BE ABSOLUTE — a working directory is client state that does not travel over an API, so a relative path is rejected with `invalid_request` rather than resolved against whatever directory the hub daemon was started in. `agentbox clone --into` resolves it against your cwd before sending.",
                     },
-                    includeNodeModules: { type: 'boolean' },
+                    all: {
+                      type: 'boolean',
+                      description:
+                        'Keep the generated dirs (node_modules, dist, build, .venv, ...) in the exported workspace.',
+                    },
                     persistent: {
                       type: 'boolean',
                       description:

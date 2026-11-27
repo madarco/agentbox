@@ -96,17 +96,14 @@ describe('lifecycle CLI surface', () => {
     expect(longs).toEqual(expect.arrayContaining(['--force', '--dry-run']));
   });
 
-  it('download can be told about node_modules and agent-generated files', () => {
+  it('download has one --all switch for the generated dirs, and agent-generated files', () => {
     const longs = downloadCommand.options.map((o) => o.long);
-    expect(longs).toEqual(
-      expect.arrayContaining(['--include-node-modules', '--include-venv', '--include-agent-files']),
-    );
-    // node_modules is now one switch for BOTH modes. The old text promised the
-    // opposite ("no effect in gitignore mode"), which is what made a repo that
-    // does not gitignore it fail the pull outright.
-    const nm = downloadCommand.options.find((o) => o.long === '--include-node-modules');
-    expect(nm?.description).not.toMatch(/no effect/i);
-    expect(nm?.description).toMatch(/both/i);
+    expect(longs).toEqual(expect.arrayContaining(['--all', '--include-agent-files']));
+    // One switch replaced the per-dir ones, cleanly.
+    expect(longs).not.toContain('--include-node-modules');
+    expect(longs).not.toContain('--include-venv');
+    const all = downloadCommand.options.find((o) => o.long === '--all');
+    expect(all?.description).toMatch(/\.git or \.agentbox/);
   });
 
   it('open is files-only (Finder + --path), no --browser/--loopback/--upper', () => {

@@ -3,32 +3,20 @@ import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { join, resolve } from 'node:path';
 import { sanitizeMnemonic } from '@agentbox/config';
+import { GENERATED_DIR_NAMES, GIT_MODE_EXCLUDE_DIRS } from '@agentbox/sandbox-core';
 
 /**
- * Directories whose contents are either platform-specific (built native modules,
- * compiled outputs) or large enough to be wasteful to include in a frozen
- * workspace snapshot. Pruned from the snapshot tree *after* the APFS clone
- * — removing CoW-cloned entries is essentially free.
+ * Directories pruned from a frozen workspace snapshot: the shared
+ * `GENERATED_DIR_NAMES` (dependencies, build output, caches, venvs: rebuilt in
+ * the box, often for another platform) plus `.agentbox`, AgentBox's own durable
+ * host dir (`download --backup` writes a bot's workspace and gateway identity
+ * under it). The same list every other workspace move uses, so the snapshot
+ * seed and the tar seed cannot drift. Pruned *after* the APFS clone — removing
+ * CoW-cloned entries is essentially free.
  */
 export const EXCLUDE_DIRS: ReadonlySet<string> = new Set([
-  // AgentBox's own durable host dir (`download --backup` writes a bot's
-  // workspace and gateway identity under it). The tar seed excludes it too;
-  // pruning it here as well keeps the clone from copying gigabytes of backups
-  // that are then dropped on the way in.
-  '.agentbox',
-  'node_modules',
-  '.next',
-  '.nuxt',
-  '.turbo',
-  '.svelte-kit',
-  'dist',
-  'build',
-  'out',
-  'target',
-  '.venv',
-  '__pycache__',
-  '.cache',
-  '.parcel-cache',
+  ...GIT_MODE_EXCLUDE_DIRS,
+  ...GENERATED_DIR_NAMES,
 ]);
 
 export const SNAPSHOTS_ROOT = join(homedir(), '.agentbox', 'snapshots');

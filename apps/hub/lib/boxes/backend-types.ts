@@ -931,7 +931,7 @@ export interface BackupBoxInput {
   keep?: number;
   /** Whose state to capture (default: the box's own recorded agent). */
   agent?: string;
-  includeNodeModules?: boolean;
+  all?: boolean;
 }
 
 export type BackupBoxResult =
@@ -958,8 +958,8 @@ export type BackupBoxResult =
 
 // Options for POST /boxes/:id/sync.
 export interface UploadBoxInput {
-  /** Push node_modules too (non-git workspaces only). */
-  includeNodeModules?: boolean;
+  /** Push the generated dirs (`node_modules`, `dist`, `.venv`, ...) too (non-git only). */
+  all?: boolean;
 }
 
 export type UploadBoxResult =
@@ -987,7 +987,7 @@ export interface CloneBoxInput {
    * no defensible meaning. `parseCloneBox` enforces it at the API boundary.
    */
   into?: string;
-  includeNodeModules?: boolean;
+  all?: boolean;
   /**
    * `--persistent` / `--no-persistent` on the clone. Absent inherits the SOURCE
    * box's persistence — cloning an always-on service box gives an always-on

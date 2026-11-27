@@ -211,10 +211,10 @@ export {
   withServiceSignIn,
   type ServiceUrlFieldValue,
 } from './concerns/service-url.js';
-export { resolveCarryVenv } from './concerns/carry-venv.js';
+export { resolveCarryAll } from './concerns/carry-all.js';
 export {
+  GENERATED_DIR_NAMES,
   GIT_MODE_EXCLUDE_DIRS,
-  PYTHON_ENV_DIR_NAMES,
   WORKSPACE_EXCLUDE_DIR_NAMES,
   agentStateExcludePaths,
   agentCloneDropPaths,
@@ -222,7 +222,7 @@ export {
   buildWorkspaceListScript,
   dropHostOnlyPaths,
   existingPathsIn,
-  gitModeExcludePathspecs,
+  untrackedExcludePathspecs,
   seedExcludeTarArgs,
   isAgentWorkspaceArtifact,
   parseItemizedEntries,

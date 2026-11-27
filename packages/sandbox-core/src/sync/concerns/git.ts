@@ -20,7 +20,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import type { RepoResyncResult, ResyncWorktree, WorkspaceResyncPorts } from '@agentbox/core';
-import { resolveCarryVenv } from './carry-venv.js';
+import { resolveCarryAll } from './carry-all.js';
 import { dropHostOnlyPaths } from './workspace-files.js';
 
 /**
@@ -271,10 +271,10 @@ export function makeHostGitPorts(): Pick<
         { reject: false },
       );
       if (untracked.exitCode !== 0) return [];
-      // Same drop as the create-time carry-over: `.agentbox/`, and the host's
-      // Python env dirs unless `box.carryVenv` keeps them.
-      const includeVenv = await resolveCarryVenv(hostMain);
-      return splitNul(dropHostOnlyPaths(untracked.stdout, { includeVenv }));
+      // Same drop as the create-time carry-over: `.agentbox/`, and the
+      // generated dirs unless `box.carryAll` keeps them.
+      const all = await resolveCarryAll(hostMain);
+      return splitNul(dropHostOnlyPaths(untracked.stdout, { all }));
     },
     async hashHostFile(hostMain, relPath) {
       return createHash('sha256')

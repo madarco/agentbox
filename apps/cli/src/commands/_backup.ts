@@ -46,7 +46,7 @@ export {
 export async function runBackup(args: {
   box: BoxRecord;
   target: BackupTarget;
-  includeNodeModules?: boolean;
+  all?: boolean;
 }): Promise<{ manifest: BackupManifest; pruned: string[]; wroteGitignore: boolean }> {
   const { box, target } = args;
 
@@ -79,7 +79,7 @@ export async function runBackup(args: {
     ...(target.agent ? { agent: target.agent } : {}),
     state,
     ...(databases && databases.length > 0 ? { databases } : {}),
-    ...(args.includeNodeModules ? { includeNodeModules: true } : {}),
+    ...(args.all ? { all: true } : {}),
   };
   await writeBackupManifest(target.dir, manifest);
   await linkLatest(target.projectRoot, target.bot, target.stamp);

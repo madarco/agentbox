@@ -218,8 +218,8 @@ export interface BackupManifest {
   state: boolean;
   /** Relative paths captured through the SQLite online-backup API. */
   databases?: string[];
-  /** Whether `node_modules` was kept in the workspace half. */
-  includeNodeModules?: boolean;
+  /** Whether the generated dirs (`download --all`) were kept in the workspace half. */
+  all?: boolean;
   createdBy?: string;
 }
 

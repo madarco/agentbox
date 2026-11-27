@@ -177,7 +177,7 @@ export interface UserConfig {
     sizeRemoteDocker?: string;
     withPlaywright?: boolean;
     withEnv?: boolean;
-    carryVenv?: boolean;
+    carryAll?: boolean;
     resyncOnStart?: boolean;
     vnc?: boolean;
     autoApproveHostActions?: boolean;
@@ -455,7 +455,7 @@ export interface EffectiveConfig {
     sizeRemoteDocker: string;
     withPlaywright: boolean;
     withEnv: boolean;
-    carryVenv: boolean;
+    carryAll: boolean;
     resyncOnStart: boolean;
     vnc: boolean;
     autoApproveHostActions: boolean;
@@ -675,7 +675,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
     sizeRemoteDocker: '',
     withPlaywright: false,
     withEnv: false,
-    carryVenv: false,
+    carryAll: false,
     resyncOnStart: true,
     vnc: true,
     autoApproveHostActions: false,
@@ -1094,10 +1094,10 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
       'Copy host env/config files (.env*, secrets.toml, agentbox.yaml, ...) into /workspace at box create time (gitignore-bypassing).',
   },
   {
-    key: 'box.carryVenv',
+    key: 'box.carryAll',
     type: 'bool',
     description:
-      'Carry Python environment dirs (.venv, venv, __pycache__) from the host into a box (create seed, upload, resync). Off by default: they are built for one platform and break on the other. The pull side is `download --include-venv`.',
+      'Carry untracked generated dirs (node_modules, dist, build, .venv, __pycache__, ...) from the host into a box (create seed, upload, resync). Off by default: the box rebuilds them, often for another platform. Tracked files always arrive through git. The pull side is `download --all`.',
   },
   {
     key: 'box.resyncOnStart',

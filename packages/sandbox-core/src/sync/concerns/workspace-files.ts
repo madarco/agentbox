@@ -34,37 +34,68 @@ import { classifyUntrackedOverlay } from './git.js';
 import { AGENT_SYNC_SPECS } from '../registry.js';
 
 /**
+ * Generated directories, by basename at ANY depth: dependencies, build output,
+ * caches and Python envs. A workspace move between host and box skips them by
+ * default, in BOTH directions, on top of whatever gitignore already skips.
+ *
+ * They are rebuilt on the side that uses them, and most are built for one
+ * platform: a box's `uv sync` writes a Linux `.venv`, its `pnpm install` a Linux
+ * `node_modules`, and neither works on a Mac (nor a Mac one in the box).
+ * Gitignore alone is not enough, because git inside the box never sees the
+ * host's GLOBAL gitignore -- a project that relied on one had the box's `.venv`
+ * pulled over the Mac's.
+ *
+ * Applied to UNTRACKED files only. A tracked file under a committed `dist/` is
+ * the user's own content and moves like any other tracked file. Where there is
+ * no git (exclude-list mode, the non-git seed) every file is untracked, so the
+ * list applies to all of them.
+ *
+ * One switch turns the whole list off: `download --all` / `clone --all` on the
+ * way out, `box.carryAll` (or `upload --all`) on the way in. The docker host
+ * snapshot prunes the same list (`EXCLUDE_DIRS` in sandbox-docker).
+ */
+export const GENERATED_DIR_NAMES: readonly string[] = [
+  'node_modules',
+  '.next',
+  '.nuxt',
+  '.turbo',
+  '.svelte-kit',
+  'dist',
+  'build',
+  'out',
+  'target',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.cache',
+  '.parcel-cache',
+];
+
+/**
  * Directories excluded from an exclude-list-mode workspace pull, by basename,
- * at any depth. `.git` and `node_modules` are the historical pair; `media` is
- * new — a service agent (an AI gateway, a chat backend) accumulates uploaded
- * attachments under `media/` and they are not source.
+ * at any depth, whatever `--all` says.
  *
  * `.agentbox` is ours, not the user's: a box-local dir AgentBox regenerates
  * every boot (openclaw's derived box facts live there, because openclaw will
  * only read a system prompt from inside its own workspace). Pulling it back
  * would put a generated file describing THIS box into the user's project.
  *
- * This list covers exclude-list mode and `clone` only, since `download` on a
- * git workspace deliberately does not apply it (see `dropExcludedInGitMode`).
- * `.agentbox` is dropped in git mode too, by {@link GIT_MODE_EXCLUDE_DIRS}.
+ * `media` is a default only (see {@link workspaceExcludes}): a service agent
+ * accumulates uploaded attachments under `media/` and they are not source.
  */
-export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
-  '.git',
-  'node_modules',
-  'media',
-  '.agentbox',
-];
+export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = ['.git', '.agentbox'];
 
 /**
- * Directories dropped from the GIT-mode selection as well, by pathspec.
+ * Directories dropped from the GIT-mode selection as well, tracked or not, by
+ * pathspec.
  *
- * Git mode otherwise carries everything `git ls-files --cached --others
- * --exclude-standard` reports, on purpose: a tracked `.claude/` there is the
- * user's own content and dropping it would be a regression. `.agentbox` is the
- * one thing that is never the user's content — AgentBox generates it in the box
- * every boot (openclaw's derived box facts, which have to live inside the
- * workspace because openclaw will not read a system prompt from outside it), so
- * pulling it back would write a file describing THIS box into the project.
+ * Git mode otherwise carries every tracked file, on purpose: a tracked `.claude/`
+ * there is the user's own content and dropping it would be a regression.
+ * `.agentbox` is the one thing that is never the user's content — AgentBox
+ * generates it in the box every boot (openclaw's derived box facts, which have to
+ * live inside the workspace because openclaw will not read a system prompt from
+ * outside it), so pulling it back would write a file describing THIS box into the
+ * project.
  *
  * A pathspec rather than the box's `.git/info/exclude`, which cannot do the job:
  * in a docker box `/workspace/.git` is a linked-worktree FILE whose per-worktree
@@ -73,47 +104,40 @@ export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
  */
 export const GIT_MODE_EXCLUDE_DIRS: readonly string[] = ['.agentbox'];
 
-/**
- * Python environment dirs, by basename at ANY depth, dropped from every
- * host <-> box workspace move unless the caller opts back in (`includeVenv`).
- *
- * They are built for one platform: a box's `uv sync` writes a Linux `.venv`
- * whose interpreter symlinks and compiled wheels are useless on a Mac, and a
- * Mac venv is as useless in the box. Gitignore is not enough to keep them out,
- * because git inside the box never sees the host's GLOBAL gitignore -- a project
- * that relies on one for `.venv` had the box's venv pulled over the Mac's.
- * Handled like `node_modules`: a default drop with one switch, not a gitignore
- * question.
- */
-export const PYTHON_ENV_DIR_NAMES: readonly string[] = ['.venv', 'venv', '__pycache__'];
+export interface WorkspaceExcludeOptions {
+  /**
+   * Default false. When true, keep the {@link GENERATED_DIR_NAMES} dirs (and
+   * `media/` in exclude-list mode): `download --all`, `clone --all`,
+   * `box.carryAll`. `.git` and `.agentbox` are dropped regardless.
+   */
+  all?: boolean;
+}
 
-/** The basenames a host -> box seed drops: ours, plus the Python env dirs unless kept. */
+/** The basenames a host -> box seed drops: ours, plus the generated dirs unless kept. */
 function seedDropNames(opts: WorkspaceExcludeOptions): string[] {
-  return [...GIT_MODE_EXCLUDE_DIRS, ...(opts.includeVenv ? [] : PYTHON_ENV_DIR_NAMES)];
+  return [...GIT_MODE_EXCLUDE_DIRS, ...(opts.all ? [] : GENERATED_DIR_NAMES)];
 }
 
 /**
- * The same dirs, as `tar --exclude` arguments for a host -> box workspace SEED.
+ * The same dirs, as `tar --exclude` arguments for a host -> box NON-GIT seed
+ * (the docker and cloud no-git tarballs). With no git, every file is untracked,
+ * so the generated dirs go too unless `box.carryAll` keeps them.
  *
  * The invariant this closes: **`.agentbox/` never crosses the box boundary, in
- * either direction.** The pull half was already true ({@link
- * GIT_MODE_EXCLUDE_DIRS} and {@link WORKSPACE_EXCLUDE_DIR_NAMES}); the seed half
- * was not, and `<project>/.agentbox/bots/` — where `download --backup` writes a
- * bot's workspace AND its gateway identity — would otherwise be copied into
- * every new box created from that project, growing with each backup.
- *
- * Derived from the pull-side list rather than repeated, so the two cannot drift.
+ * either direction.** `<project>/.agentbox/bots/` — where `download --backup`
+ * writes a bot's workspace AND its gateway identity — would otherwise be copied
+ * into every new box created from that project, growing with each backup.
  *
  * ANY-DEPTH, not root-anchored, and that is forced as well as wanted. Forced:
  * neither tar anchors an exclude — MEASURED on bsdtar 3.5.3 (macOS) and true of
- * GNU tar, which defaults to `--no-anchored`, so `--exclude=./.agentbox` drops a
- * nested `sub/.agentbox` just the same and only a `--anchored` GNU tar could
- * tell them apart. Wanted: a nested one is ours too — `download --backup` run
- * from a monorepo sub-project writes `packages/foo/.agentbox/`, which has no
- * more business in a box than the root one. This matches
- * {@link WORKSPACE_EXCLUDE_DIR_NAMES}, whose bare names already match at any
- * depth; the git-mode PULL pathspec stays root-anchored, so the seed refuses
- * slightly more than the pull brings back, which is the safe direction.
+ * GNU tar, which defaults to `--no-anchored`. Wanted: a nested one is ours too —
+ * `download --backup` run from a monorepo sub-project writes
+ * `packages/foo/.agentbox/`.
+ *
+ * A bare name also matches a FILE of that name (a file called `build`), and
+ * nothing portable fixes that: bsdtar reads `--exclude=build/` as "file or dir"
+ * as well, and GNU tar never matches the trailing-slash form at all (both
+ * MEASURED). The git carry-over ({@link dropHostOnlyPaths}) is dir-only.
  */
 export function seedExcludeTarArgs(opts: WorkspaceExcludeOptions = {}): string[] {
   return seedDropNames(opts).map((d) => `--exclude=${d}`);
@@ -121,58 +145,45 @@ export function seedExcludeTarArgs(opts: WorkspaceExcludeOptions = {}): string[]
 
 /**
  * Drop the same dirs from a NUL-joined `git ls-files --others` list — the
- * untracked carry-over leg of a git-backed seed, which tars a vetted file list
- * rather than a whole directory.
+ * untracked carry-over leg of a git-backed seed and of the resync, which tar a
+ * vetted file list rather than a whole directory. Tracked files reach the box
+ * through git, so they never pass through here.
  *
- * Belt-and-braces, and deliberately so: `--exclude-standard` already skips a
- * gitignored `.agentbox/`, and `download --backup` writes that gitignore entry.
- * The invariant must not depend on that write having succeeded — in a project
- * whose `.gitignore` the user has since edited, this is what still holds.
+ * Belt-and-braces for `.agentbox/`: `--exclude-standard` already skips a
+ * gitignored one, and `download --backup` writes that gitignore entry. The
+ * invariant must not depend on that write having succeeded.
  *
- * Matched at any depth, through {@link isExcludedPath}'s bare-name rule, so this
- * agrees with {@link seedExcludeTarArgs} — the two halves of one seed must not
- * disagree about what a path list means.
+ * The generated dirs are matched as DIRECTORIES at any depth (`isExcludedPath`'s
+ * `name/` rule), so an untracked file merely named `build` still goes.
  *
  * Tolerates an unterminated tail: `git ls-files -z` NUL-TERMINATES rather than
  * NUL-separates, and treating the two the same is how the last path in a list
  * has been dropped here before.
  */
 export function dropHostOnlyPaths(nulList: string, opts: WorkspaceExcludeOptions = {}): string {
-  const drop = seedDropNames(opts);
+  const drop = [
+    ...GIT_MODE_EXCLUDE_DIRS,
+    ...(opts.all ? [] : GENERATED_DIR_NAMES.map((d) => `${d}/`)),
+  ];
   const kept = nulList.split('\0').filter((p) => p.length > 0 && !isExcludedPath(p, drop));
   return kept.length > 0 ? `${kept.join('\0')}\0` : '';
 }
 
 /**
- * The git-mode pathspecs, as `git ls-files -- . <these>` arguments.
+ * The pathspecs for the UNTRACKED leg of the git-mode selection (`git ls-files
+ * --others --exclude-standard -- . <these>`). The tracked leg only drops
+ * {@link GIT_MODE_EXCLUDE_DIRS}.
  *
- * `node_modules` joins `.agentbox` here unless the caller asked to keep it, and
- * the two are anchored DIFFERENTLY on purpose:
- *
- *  - `.agentbox` is one dir at the workspace root, so one root-anchored pathspec
- *    says exactly what is meant.
- *  - `node_modules` is whatever rsync's `--exclude=node_modules` means in the
- *    docker mirror, and that matches the basename at ANY depth. A single
- *    root-anchored `:(exclude)node_modules` would leave a monorepo's
- *    `packages/x/node_modules` selected but unmirrored — which is the exact
- *    listed-but-absent failure this whole change exists to remove. Measured
- *    against git 2.39 in this repo: the root-anchored form alone still lists
- *    3310 nested paths; all three forms list none.
- *
- * Excluding it in git mode at all is a deliberate behaviour choice, not a
- * mechanical one: a repo that does not gitignore `node_modules` used to have it
- * pulled back, and `--include-node-modules` is now the single switch in both
- * modes. Pulling a box-built (Linux) `node_modules` onto the host was never
- * something to do by accident.
+ * `.agentbox` is one dir at the workspace root, so one root-anchored pathspec
+ * says exactly what is meant. Each generated dir is matched at ANY depth, as a
+ * directory: `d/*` and `*` + `/d/*` (a pathspec `*` crosses `/`). Neither form
+ * matches a file merely named `d`, nor `distribution/` or `my_build.py` —
+ * MEASURED against git 2.39.
  */
-export function gitModeExcludePathspecs(opts: WorkspaceExcludeOptions = {}): string[] {
+export function untrackedExcludePathspecs(opts: WorkspaceExcludeOptions = {}): string[] {
   const specs = GIT_MODE_EXCLUDE_DIRS.map((d) => `:(exclude)${d}`);
-  const anyDepth = [
-    ...(opts.includeNodeModules ? [] : ['node_modules']),
-    ...(opts.includeVenv ? [] : PYTHON_ENV_DIR_NAMES),
-  ];
-  for (const d of anyDepth) {
-    specs.push(`:(exclude)${d}`, `:(exclude)*/${d}`, `:(exclude)*/${d}/*`);
+  if (!opts.all) {
+    for (const d of GENERATED_DIR_NAMES) specs.push(`:(exclude)${d}/*`, `:(exclude)*/${d}/*`);
   }
   return specs;
 }
@@ -196,34 +207,38 @@ export function agentStateExcludePaths(): string[] {
   return [...out].sort();
 }
 
-export interface WorkspaceExcludeOptions {
-  /** Default false. When true, keep `node_modules` in the selection. */
-  includeNodeModules?: boolean;
-  /** Default false. When true, keep the {@link PYTHON_ENV_DIR_NAMES} dirs. */
-  includeVenv?: boolean;
-}
-
 /**
- * Every exclude pattern an exclude-list-mode pull applies, as rsync/tar
- * patterns. Consumed both by {@link buildWorkspaceListScript} (which compiles
- * them into a `find` expression) and by {@link rsyncPullToHost} when there is
- * no file list at all.
+ * Every exclude pattern an exclude-list-mode move applies, as rsync/find
+ * patterns. Consumed by {@link buildWorkspaceListScript} (which compiles them
+ * into a `find` expression), by {@link rsyncPullToHost} when there is no file
+ * list at all, and by the non-git `upload`.
+ *
+ * The generated dirs are written `name/`: rsync's directory-only form, which
+ * `find` and {@link isExcludedPath} read the same way.
+ *
+ * `all` keeps the generated dirs and `media/`. It does NOT keep the agent state
+ * dirs or live databases: those are not junk but identity (a gateway token) and
+ * a half-written sqlite file, and no "give me everything" should copy either.
  */
 export function workspaceExcludes(opts: WorkspaceExcludeOptions = {}): string[] {
-  const dirs = WORKSPACE_EXCLUDE_DIR_NAMES.filter(
-    (d) => d !== 'node_modules' || !opts.includeNodeModules,
-  );
-  const venvs = opts.includeVenv ? [] : PYTHON_ENV_DIR_NAMES;
-  return [...dirs, ...venvs, ...agentStateExcludePaths(), ...LIVE_DATABASE_EXCLUDES];
+  const defaults = opts.all ? [] : ['media', ...GENERATED_DIR_NAMES.map((d) => `${d}/`)];
+  return [
+    ...WORKSPACE_EXCLUDE_DIR_NAMES,
+    ...defaults,
+    ...agentStateExcludePaths(),
+    ...LIVE_DATABASE_EXCLUDES,
+  ];
 }
 
-/** Split an exclude pattern list into the three shapes `find` needs. */
+/** Split an exclude pattern list into the shapes `find` needs. */
 function partitionExcludes(patterns: readonly string[]): {
   dirNames: string[];
+  dirOnlyNames: string[];
   dirPaths: string[];
   fileGlobs: string[];
 } {
   const dirNames: string[] = [];
+  const dirOnlyNames: string[] = [];
   const dirPaths: string[] = [];
   const fileGlobs: string[] = [];
   for (const raw of patterns) {
@@ -231,9 +246,10 @@ function partitionExcludes(patterns: readonly string[]): {
     if (p.length === 0) continue;
     if (p.includes('*')) fileGlobs.push(p);
     else if (p.includes('/')) dirPaths.push(p);
+    else if (raw.endsWith('/')) dirOnlyNames.push(p);
     else dirNames.push(p);
   }
-  return { dirNames, dirPaths, fileGlobs };
+  return { dirNames, dirOnlyNames, dirPaths, fileGlobs };
 }
 
 /** Single-quote a value for the POSIX shell. */
@@ -244,21 +260,17 @@ function sq(s: string): string {
 /** Mode marker the list script prints on its first line. */
 export type WorkspaceListMode = 'git' | 'exclude';
 
-export interface WorkspaceListScriptOptions {
+export interface WorkspaceListScriptOptions extends WorkspaceExcludeOptions {
   /** In-box workspace dir (default `/workspace`). */
   workspaceDir?: string;
   /** Default true. When false, skip the git probe and always use the exclude list. */
   respectGitignore?: boolean;
-  /** Exclude patterns for the non-git branch (see {@link workspaceExcludes}). */
-  excludes: readonly string[];
   /**
-   * Default false. Keep `node_modules` in the GIT-mode selection too — the
-   * non-git branch reads the same choice out of `excludes`. Both halves must be
-   * told, or the two modes disagree about the one flag the user set.
+   * Exclude patterns for the non-git branch (see {@link workspaceExcludes}).
+   * The git branch reads `all` instead: both must be told, or the two modes
+   * disagree about the one flag the user set.
    */
-  includeNodeModules?: boolean;
-  /** Default false. Same contract as `includeNodeModules`, for the Python env dirs. */
-  includeVenv?: boolean;
+  excludes: readonly string[];
 }
 
 /**
@@ -273,9 +285,9 @@ export interface WorkspaceListScriptOptions {
  */
 export function buildWorkspaceListScript(opts: WorkspaceListScriptOptions): string {
   const dir = opts.workspaceDir ?? '/workspace';
-  const { dirNames, dirPaths, fileGlobs } = partitionExcludes(opts.excludes);
+  const { dirNames, dirOnlyNames, dirPaths, fileGlobs } = partitionExcludes(opts.excludes);
   const pruneTerms = [
-    ...dirNames.map((n) => `-name ${sq(n)}`),
+    ...[...dirNames, ...dirOnlyNames].map((n) => `-name ${sq(n)}`),
     ...dirPaths.map((p) => `-path ${sq(`./${p}`)}`),
   ];
   const prune =
@@ -283,7 +295,8 @@ export function buildWorkspaceListScript(opts: WorkspaceListScriptOptions): stri
   // The excludes apply to FILES as well, not just to pruned directories: in a
   // linked git worktree `.git` is a regular file, and a `find` that only pruned
   // `-type d -name .git` let it through — rsync then failed outright trying to
-  // replace the destination's `.git` DIRECTORY with it.
+  // replace the destination's `.git` DIRECTORY with it. A `name/` pattern is
+  // the exception: directory-only, so a file merely called `build` survives.
   const fileFilter = [
     ...dirNames.map((n) => `! -name ${sq(n)}`),
     ...dirPaths.flatMap((p) => [`! -path ${sq(`./${p}`)}`, `! -path ${sq(`./${p}/*`)}`]),
@@ -296,7 +309,8 @@ export function buildWorkspaceListScript(opts: WorkspaceListScriptOptions): stri
   const findCmd = `find . ${prune}\\( \\( -type f -o -type l \\) ${fileFilter} -print0 \\)`;
   const gitProbe =
     opts.respectGitignore === false ? 'false' : 'git rev-parse --is-inside-work-tree';
-  const gitExcludePathspecs = gitModeExcludePathspecs(opts).map(sq).join(' ');
+  const trackedPathspecs = GIT_MODE_EXCLUDE_DIRS.map((d) => sq(`:(exclude)${d}`)).join(' ');
+  const untrackedPathspecs = untrackedExcludePathspecs(opts).map(sq).join(' ');
   // Everything the git branch prints is passed through an existence test, so the
   // list can only ever name a path that is really there.
   //
@@ -325,7 +339,11 @@ export function buildWorkspaceListScript(opts: WorkspaceListScriptOptions): stri
     `cd ${sq(dir)} 2>/dev/null || exit 3`,
     `if ${gitProbe} >/dev/null 2>&1; then`,
     `  printf 'MODE=git\\n'`,
-    `  git ls-files -z --cached --others --exclude-standard -- . ${gitExcludePathspecs} |`,
+    // Two legs, so the generated-dir list only ever touches UNTRACKED files: a
+    // tracked file under a committed `dist/` is the user's and comes back. `&&`
+    // so a failing first leg fails the group, and pipefail reports it.
+    `  { git ls-files -z --cached -- . ${trackedPathspecs} &&`,
+    `    git ls-files -z --others --exclude-standard -- . ${untrackedPathspecs}; } |`,
     `    ${existingOnly}`,
     `else`,
     `  printf 'MODE=exclude\\n'`,
@@ -370,7 +388,9 @@ export function parseWorkspaceList(stdout: string): ParsedWorkspaceList {
  *  - a pattern with `/` matches that path prefix (`.config/opencode` hides that
  *    subtree, and nothing else under `.config`);
  *  - a pattern with `*` is a basename glob (`*.sqlite*`), matched at any depth;
- *  - a bare name matches any path SEGMENT (`node_modules`, `.git`).
+ *  - a bare name matches any path SEGMENT (`media`, `.git`);
+ *  - a bare name with a trailing `/` (`dist/`) matches a DIRECTORY segment only,
+ *    as rsync reads it: `dist/a` yes, a file called `scripts/dist` no.
  *
  * Used where the selection did not come from `find` — the git-mode list, which
  * `agentbox clone` still has to strip an agent state dir out of.
@@ -390,7 +410,8 @@ export function isExcludedPath(relPath: string, patterns: readonly string[]): bo
       if (relPath === p || relPath.startsWith(`${p}/`)) return true;
       continue;
     }
-    if (segments.includes(p)) return true;
+    const dirSegments = raw.endsWith('/') ? segments.slice(0, -1) : segments;
+    if (dirSegments.includes(p)) return true;
   }
   return false;
 }

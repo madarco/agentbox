@@ -8,8 +8,8 @@
  * everyone else has one tar hop, which is {@link stageBoxWorkspace} here.
  * Stage 2 — the `rsync -a --checksum` into the working dir, and the itemized
  * change list `--dry-run` prints — is `rsyncPullToHost`, shared by both. That
- * split is what makes `--dry-run`, the gitignore selection and
- * `--include-node-modules` work on a cloud box: they all live in the half both
+ * split is what makes `--dry-run`, the gitignore selection and `--all` work
+ * on a cloud box: they all live in the half both
  * providers run.
  *
  * The staged file list is written next to the scratch dir so a second call with
@@ -51,10 +51,11 @@ export interface StageWorkspaceArgs {
   scratchDir: string;
   /** Default true. When false, always use the exclude list. */
   respectGitignore?: boolean;
-  /** Default false. Keep `node_modules` — in BOTH git and exclude-list mode. */
-  includeNodeModules?: boolean;
-  /** Default false. Keep `.venv` / `venv` / `__pycache__` — in BOTH modes. */
-  includeVenv?: boolean;
+  /**
+   * Default false. Keep the untracked generated dirs (`GENERATED_DIR_NAMES`) —
+   * in BOTH git and exclude-list mode. `download --all`.
+   */
+  all?: boolean;
   /**
    * Extra env/config basename globs pulled regardless of gitignore (the
    * `--with-env` set). Composes WITH the primary selection.
@@ -106,18 +107,14 @@ function fileListPath(scratchDir: string): string {
 export async function stageBoxWorkspace(args: StageWorkspaceArgs): Promise<StagedWorkspace> {
   const boxDir = args.boxWorkspaceDir ?? '/workspace';
   const ports = providerBoxFilePorts(args.provider, args.box);
-  const excludes = workspaceExcludes({
-    includeNodeModules: args.includeNodeModules,
-    includeVenv: args.includeVenv,
-  });
+  const excludes = workspaceExcludes({ all: args.all });
 
   const listed = await ports.run(
     buildWorkspaceListScript({
       workspaceDir: boxDir,
       respectGitignore: args.respectGitignore,
       excludes,
-      includeNodeModules: args.includeNodeModules,
-      includeVenv: args.includeVenv,
+      all: args.all,
     }),
     { asRoot: true },
   );
@@ -235,10 +232,7 @@ export async function pullWorkspaceToHost(args: PullWorkspaceArgs): Promise<Pull
     scratchDir: staged.scratchDir,
     destDir: args.destDir,
     fileList: staged.fileList,
-    excludes: workspaceExcludes({
-      includeNodeModules: args.includeNodeModules,
-      includeVenv: args.includeVenv,
-    }),
+    excludes: workspaceExcludes({ all: args.all }),
     dryRun: args.dryRun,
     skipPaths: args.skipPaths,
   });

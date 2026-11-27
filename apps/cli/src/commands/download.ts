@@ -34,8 +34,7 @@ interface DownloadOpts {
   yes?: boolean;
   dryRun?: boolean;
   respectGitignore: boolean; // commander gives `--no-respect-gitignore` => false
-  includeNodeModules?: boolean;
-  includeVenv?: boolean;
+  all?: boolean;
   includeAgentFiles?: boolean;
   refresh: boolean; // commander gives `--no-refresh` => false
   withEnv?: boolean;
@@ -78,12 +77,8 @@ export const downloadCommand = new Command('download')
     'force exclude-list mode (skip git ls-files) even in a git workspace',
   )
   .option(
-    '--include-node-modules',
-    'keep node_modules in the selection (both gitignore and exclude-list mode)',
-  )
-  .option(
-    '--include-venv',
-    'keep Python env dirs (.venv, venv, __pycache__) in the selection (both modes)',
+    '--all',
+    'also take untracked generated dirs (node_modules, dist, build, .venv, ...) that are skipped by default; never .git or .agentbox',
   )
   .option(
     '--include-agent-files',
@@ -141,8 +136,7 @@ export const downloadCommand = new Command('download')
             scratchDir,
             destDir,
             respectGitignore: opts.respectGitignore,
-            includeNodeModules: opts.includeNodeModules,
-            includeVenv: opts.includeVenv,
+            all: opts.all,
             envPatterns,
             dryRun: o.dryRun,
             noRefresh: o.noRefresh,
@@ -165,8 +159,7 @@ export const downloadCommand = new Command('download')
             dryRun: o.dryRun,
             destDir,
             respectGitignore: opts.respectGitignore,
-            includeNodeModules: opts.includeNodeModules,
-            includeVenv: opts.includeVenv,
+            all: opts.all,
             envPatterns,
             noRefresh: o.noRefresh,
             skipPaths: o.skipPaths,
@@ -264,7 +257,7 @@ export const downloadCommand = new Command('download')
         const { manifest, pruned, wroteGitignore } = await runBackup({
           box,
           target,
-          includeNodeModules: opts.includeNodeModules,
+          all: opts.all,
         });
         if (manifest.state) {
           process.stdout.write(

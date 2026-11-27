@@ -25,7 +25,7 @@
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { detectGitRepos } from '../../git-detect.js';
 import { boxOverlayPorts, providerBoxFilePorts } from './box-files.js';
-import { resolveCarryVenv } from './carry-venv.js';
+import { resolveCarryAll } from './carry-all.js';
 import { overlayHostDirIntoBox, workspaceExcludes } from './workspace-files.js';
 
 export interface UploadWorkspaceArgs {
@@ -33,10 +33,12 @@ export interface UploadWorkspaceArgs {
   box: BoxRecord;
   /** In-box workspace dir (default `/workspace`). */
   boxWorkspaceDir?: string;
-  /** Default false. Keep `node_modules` in the non-git push. */
-  includeNodeModules?: boolean;
-  /** Keep the host's Python env dirs in the non-git push. Unset reads `box.carryVenv`. */
-  includeVenv?: boolean;
+  /**
+   * Keep the generated dirs (`node_modules`, `dist`, `.venv`, ...) in the
+   * non-git push. Unset reads `box.carryAll`. The git leg always reads
+   * `box.carryAll`, through the resync.
+   */
+  all?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -80,8 +82,7 @@ export async function uploadWorkspaceToBox(
   const overlay = await overlayHostDirIntoBox({
     hostDir: args.box.workspacePath,
     excludes: workspaceExcludes({
-      includeNodeModules: args.includeNodeModules,
-      includeVenv: args.includeVenv ?? (await resolveCarryVenv(args.box.workspacePath)),
+      all: args.all ?? (await resolveCarryAll(args.box.workspacePath)),
     }),
     ports: boxOverlayPorts(ports, boxDir),
     onLog: log,

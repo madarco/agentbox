@@ -372,7 +372,7 @@ describe('parseCloneBox', () => {
   it('rejects wrong-typed fields rather than coercing them', () => {
     expect(parseCloneBox({ name: 7 }).ok).toBe(false);
     expect(parseCloneBox({ persistent: 'yes' }).ok).toBe(false);
-    expect(parseCloneBox({ includeNodeModules: 1 }).ok).toBe(false);
+    expect(parseCloneBox({ all: 1 }).ok).toBe(false);
     expect(parseCloneBox('nope').ok).toBe(false);
   });
 });

@@ -34,8 +34,12 @@ export interface ExportWorkspaceArgs {
   destDir: string;
   /** In-box workspace dir (default `/workspace`). */
   boxWorkspaceDir?: string;
-  /** Default false. Carry `node_modules` into the clone as well. */
-  includeNodeModules?: boolean;
+  /**
+   * Default false. Keep the generated dirs (`node_modules`, `dist`, `.venv`,
+   * ...) in the export: `clone --all`. A clone drops them tracked or not, since
+   * the new box's non-git seed would drop them anyway.
+   */
+  all?: boolean;
   /** The agent the source box runs, so the drop is scoped to its `clone.drop`. */
   agent?: string;
   /**
@@ -111,7 +115,7 @@ export async function exportBoxWorkspace(
     box: args.box,
     boxWorkspaceDir: args.boxWorkspaceDir,
     scratchDir: args.destDir,
-    includeNodeModules: args.includeNodeModules,
+    all: args.all,
     dropExcludedInGitMode: true,
     writeSidecar: false,
     ...(args.dropAgentScaffolding === false ? {} : { agent: args.agent }),
