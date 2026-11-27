@@ -6,9 +6,9 @@
  *   pnpm shoot:tray <file under shots/> [--press <ax id>]... [options]
  *
  *   pnpm shoot:tray tray/menu.png
- *   pnpm shoot:tray tray/skill-updates.png --press agentbox.footer.skillUpdates
+ *   pnpm shoot:tray tray/skill-updates.png --press agentbox.environment
  *   pnpm shoot:tray tray/box-skills-behind.png --press agentbox.box.queue-retries
- *   pnpm shoot:tray tray/skill-approve-confirm.png --press agentbox.footer.skillUpdates --press agentbox.skillUpdates.review-pr --alert
+ *   pnpm shoot:tray tray/skill-approve-confirm.png --press agentbox.environment --press agentbox.skillUpdates.review-pr --alert
  *   pnpm shoot:tray tray/manager.png --manager fx-commerce
  *
  * What it drives: a SECOND tray instance, AgentBoxE2E.app (`make e2e-app` in
