@@ -642,7 +642,9 @@ async function portlessRouteStateOn(
         if (status === 404) {
           resolve(isPortlessNotFound(404, res.headers, body, hostname) ? 'not-routed' : 'routed');
         } else {
-          resolve(isPortlessBadGateway(502, res.headers, body, hostname) ? 'bad-gateway' : 'routed');
+          resolve(
+            isPortlessBadGateway(502, res.headers, body, hostname) ? 'bad-gateway' : 'routed',
+          );
         }
       });
       res.on('error', () => {
@@ -718,7 +720,9 @@ export function setPortlessRouteProbeForTests(
 }
 
 /** Tests only: replace the direct loopback-port check (null restores the real one). */
-export function setPortlessDirectProbeForTests(fn: ((port: number) => Promise<boolean>) | null): void {
+export function setPortlessDirectProbeForTests(
+  fn: ((port: number) => Promise<boolean>) | null,
+): void {
   directProbe = fn ?? ((p) => loopbackPortAnswers(p));
 }
 
@@ -753,6 +757,10 @@ export function portlessRestartHint(platform: NodeJS.Platform = process.platform
 }
 
 const warnedUnrouted = new Set<string>();
+
+function clearWarned(alias: string): void {
+  for (const k of warnedUnrouted) if (k.startsWith(`${alias}:`)) warnedUnrouted.delete(k);
+}
 
 let reAliasFn: (name: string, port: number) => Promise<boolean> = (n, p) => portlessAlias(n, p);
 
@@ -800,24 +808,29 @@ export async function routedPortlessUrl(
   let problem: 'not-routed' | 'stale-port' | null;
   try {
     const first = await probeRoute(hostname, mode);
-    problem = first === 'bad-gateway' ? await routeProblem(first, await port()) : await routeProblem(first, undefined);
+    problem =
+      first === 'bad-gateway'
+        ? await routeProblem(first, await port())
+        : await routeProblem(first, undefined);
     if (problem === null) {
-      warnedUnrouted.delete(alias);
+      clearWarned(alias);
       return composePortlessUrl(alias, mode);
     }
     const target = await port();
     if (target !== undefined && (await reAliasFn(alias, target).catch(() => false))) {
       problem = await routeProblem(await probeRoute(hostname, mode), target);
       if (problem === null) {
-        warnedUnrouted.delete(alias);
+        clearWarned(alias);
         return composePortlessUrl(alias, mode);
       }
     }
   } catch {
     return composePortlessUrl(alias, mode);
   }
-  if (!warnedUnrouted.has(alias)) {
-    warnedUnrouted.add(alias);
+  // Once per outage and reason: a stale port after a "no route" is news.
+  const warnKey = `${alias}:${problem ?? ''}`;
+  if (!warnedUnrouted.has(warnKey)) {
+    warnedUnrouted.add(warnKey);
     const warn =
       opts.onWarn ??
       ((msg: string) => {
@@ -1164,7 +1177,11 @@ export async function startPortlessProxyRoot(): Promise<RootProxyStartResult> {
       return 'failed';
     }
     // Non-macOS: let Portless's own sudo prompt reach the terminal.
-    const r = await execa(bin, ['proxy', 'start'], { reject: false, stdio: 'inherit', env: portlessChildEnv() });
+    const r = await execa(bin, ['proxy', 'start'], {
+      reject: false,
+      stdio: 'inherit',
+      env: portlessChildEnv(),
+    });
     if (r.exitCode !== 0) return 'failed';
     await execa(bin, ['trust'], { reject: false, stdio: 'inherit', env: portlessChildEnv() });
     return 'started';
@@ -1265,7 +1282,11 @@ export async function installPortlessServiceDetailed(): Promise<{
       if (/User canceled|-128/i.test(r.stderr ?? '')) return { result: 'cancelled' };
       return { result: 'failed', detail: lastLine(r.stderr ?? '') };
     }
-    const r = await execa(bin, SUB_SERVICE_INSTALL, { reject: false, stdio: 'inherit', env: portlessChildEnv() });
+    const r = await execa(bin, SUB_SERVICE_INSTALL, {
+      reject: false,
+      stdio: 'inherit',
+      env: portlessChildEnv(),
+    });
     if (r.exitCode !== 0) return { result: 'failed' };
     await execa(bin, ['trust'], { reject: false, stdio: 'inherit', env: portlessChildEnv() });
     return { result: 'started' };
@@ -1297,7 +1318,11 @@ export async function uninstallPortlessService(): Promise<boolean> {
       const r = await execa('osascript', ['-e', script], { reject: false });
       return r.exitCode === 0;
     }
-    const r = await execa(bin, SUB_SERVICE_UNINSTALL, { reject: false, stdio: 'inherit', env: portlessChildEnv() });
+    const r = await execa(bin, SUB_SERVICE_UNINSTALL, {
+      reject: false,
+      stdio: 'inherit',
+      env: portlessChildEnv(),
+    });
     return r.exitCode === 0;
   } catch {
     return false;

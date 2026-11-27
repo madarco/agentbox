@@ -174,6 +174,17 @@ describe('routedPortlessUrl', () => {
     expect(onWarn.mock.calls[0]?.[0]).toContain('sends st.localhost to a port it has not reloaded');
   });
 
+  it('warns again when the reason changes (no route, then a stale port)', async () => {
+    const onWarn = vi.fn();
+    probe('not-routed');
+    await routedPortlessUrl('two', HTTPS, { port: 50093, onWarn });
+    livePorts.add(50093);
+    probe('bad-gateway');
+    await routedPortlessUrl('two', HTTPS, { port: 50093, onWarn });
+    expect(onWarn).toHaveBeenCalledTimes(2);
+    expect(onWarn.mock.calls[1]?.[0]).toContain('a port it has not reloaded');
+  });
+
   it('a stale-port 502 that the re-alias fixes hands out the alias', async () => {
     livePorts.add(50091);
     probe('bad-gateway', 'routed');
