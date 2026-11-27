@@ -38,6 +38,7 @@ import {
   type UsageContribution,
   type UsageStats,
 } from '@agentbox/usage-view';
+import type { PrDetail } from '../boxes/backend-types';
 import type { HistoryRepo, UsageSessionMeta } from './history';
 
 const HOUR = 3_600_000;
@@ -63,6 +64,11 @@ export interface UsageStatsDeps {
   contributions?: { list(): Promise<UsageContribution[]> } | null;
   /** This hub's own machine id: a contribution under it is never merged. */
   selfMachineId?: string;
+  /**
+   * PR titles and line counts by lowercased `owner/name#number`, from the workspace timelines:
+   * the ledger keeps only a PR's repo and number.
+   */
+  prDetails?: () => Promise<ReadonlyMap<string, PrDetail>>;
   now?: () => number;
 }
 
@@ -391,20 +397,32 @@ export async function loadUsageRows(
       deletions: e.deletions ?? 0,
     });
   }
+  // Timelines are read only when there is a merged PR to name.
+  const prDetails =
+    deps.prDetails && ledgerRows.some((e) => e.type === 'pr.merged')
+      ? await deps.prDetails().catch(() => null)
+      : null;
   const mergedSeen = new Set<string>();
   const prState = new Map<string, string>();
   for (const e of rows) {
     if (!e.type.startsWith('pr.')) continue;
-    const prKey = e.pr ? `${e.pr.repo}#${String(e.pr.number)}` : e.id;
+    // Lowercased: GitHub and a git remote may spell `owner/name` in different case.
+    const prKey = e.pr ? `${e.pr.repo}#${String(e.pr.number)}`.toLowerCase() : e.id;
     prState.set(prKey, e.type);
     if (e.type !== 'pr.merged' || mergedSeen.has(prKey)) continue;
     mergedSeen.add(prKey);
+    // "Recently merged" lists a PR only with a title: the timeline's, else its branch.
+    const detail = e.pr ? prDetails?.get(prKey) : undefined;
+    const title = detail?.title ?? e.branch;
     events.push({
       type: 'pr.merged',
       at: atMs(e),
       boxId: e.boxId ?? null,
       project: projectName(e.projectKey),
       ...(e.pr ? { repo: e.pr.repo, number: e.pr.number } : {}),
+      ...(e.pr && title ? { title } : {}),
+      ...(detail?.additions !== undefined ? { additions: detail.additions } : {}),
+      ...(detail?.deletions !== undefined ? { deletions: detail.deletions } : {}),
     });
   }
 

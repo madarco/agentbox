@@ -76,6 +76,12 @@
   flex-wrap: wrap;
   margin-bottom: 22px;
 }
+.usage.untitled {
+  padding-top: 18px;
+}
+.usage.untitled .head {
+  margin-bottom: 18px;
+}
 .usage .head h1 {
   margin: 0;
   font-size: 30px;
@@ -555,6 +561,16 @@
 .usage rect.cell {
   transition: opacity 0.2s;
 }
+.usage .wall-svg text.wall-day {
+  font: 500 10px var(--mono);
+  fill: var(--muted);
+  pointer-events: none;
+}
+.usage .wall-svg text.wall-day.l3,
+.usage .wall-svg text.wall-day.l4,
+.usage .wall-svg text.wall-day.l5 {
+  fill: #fff;
+}
 .usage .wall-svg.dim rect.cell {
   opacity: 0.35;
 }
@@ -728,6 +744,11 @@
 /* PR feed */
 .usage .feed {
   padding: 6px 0 8px;
+}
+.usage .feed-empty {
+  padding: 18px 20px 22px;
+  font-size: 13px;
+  color: var(--muted);
 }
 .usage .feed-row {
   display: grid;
@@ -1239,6 +1260,19 @@
   --px3: #236b46;
   --px4: #2d8756;
   --px5: #3aa569;
+}
+.dark .usage .wall-svg text.wall-day.l3,
+.usage.dark .wall-svg text.wall-day.l3,
+[data-theme='dark'] .usage .wall-svg text.wall-day.l3 {
+  fill: var(--ink);
+}
+.dark .usage .wall-svg text.wall-day.l4,
+.dark .usage .wall-svg text.wall-day.l5,
+.usage.dark .wall-svg text.wall-day.l4,
+.usage.dark .wall-svg text.wall-day.l5,
+[data-theme='dark'] .usage .wall-svg text.wall-day.l4,
+[data-theme='dark'] .usage .wall-svg text.wall-day.l5 {
+  fill: #0b1a12;
 }
 .dark .usage .tip,
 .usage.dark .tip,

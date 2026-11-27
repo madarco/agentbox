@@ -35,7 +35,11 @@ import { reattachRef } from '../../box-ref.js';
 import { warnCheckpointAgentMismatch } from '../../checkpoint-lookup.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../../lib/queue/build-prompt-args.js';
-import { cloudSizingProviderOptions } from '../../lib/cloud-sizing.js';
+import {
+  cloudSizingFlags,
+  cloudSizingProviderOptions,
+  locationIgnoredWarning,
+} from '../../lib/cloud-sizing.js';
 import { buildHubCreateOpts } from '../../lib/hub-create-opts.js';
 import {
   assignTasksBestEffort,
@@ -129,7 +133,7 @@ function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<U
 }
 
 /** The subset of the create flags the background-queue worker replays. */
-function pickQueueCreateOpts(
+export function pickQueueCreateOpts(
   a: AgentCliSpec,
   opts: AgentCreateOptions,
 ): import('@agentbox/relay').QueueJobCreateOpts {
@@ -153,6 +157,8 @@ function pickQueueCreateOpts(
     cpus: opts.cpus,
     pidsLimit: opts.pidsLimit,
     disk: opts.disk,
+    ...cloudSizingFlags(opts),
+    ...(cloudSizingFlags(opts).location ? { locationPinned: true } : {}),
   };
 }
 
@@ -359,6 +365,8 @@ export async function runAgentCreate(
   // this machine's hub owns while every fleet read goes to the control box.
   const localDockerWarning = await localDockerUnsupportedWarning(cfg, providerName);
   if (localDockerWarning) log.warn(localDockerWarning);
+  const locationWarning = locationIgnoredWarning(providerName, opts.location);
+  if (locationWarning) log.warn(locationWarning);
 
   // Always-on box. `undefined` means "no opinion" and leaves the call to the
   // config layers — passing `false` there would turn a silent default into an
@@ -549,6 +557,7 @@ export async function runAgentCreate(
             : {}),
           ...(opts.hostSnapshot !== undefined ? { hostSnapshot: opts.hostSnapshot === true } : {}),
           ...(opts.portless !== undefined ? { portless: opts.portless === true } : {}),
+          ...cloudSizingFlags(opts),
         },
         resolved: {
           ...(persistent !== undefined ? { persistent } : {}),
@@ -856,6 +865,7 @@ export async function runAgentCreate(
             : {}),
           ...(opts.hostSnapshot !== undefined ? { hostSnapshot: opts.hostSnapshot === true } : {}),
           ...(opts.portless !== undefined ? { portless: opts.portless === true } : {}),
+          ...cloudSizingFlags(opts),
         },
         resolved: {
           ...(persistent !== undefined ? { persistent } : {}),
@@ -962,7 +972,10 @@ export async function runAgentCreate(
         gitPushMode: cfg.git.pushMode,
         hubGitAuth: cfg.hub.gitAuth,
         // Per-provider session-lifetime (e2b/vercel timeout); mirrors create.
-        providerOptions: cloudSizingProviderOptions(provider.name, cfg, { remoteHost }),
+        providerOptions: cloudSizingProviderOptions(provider.name, cfg, {
+          ...cloudSizingFlags(opts),
+          remoteHost,
+        }),
       },
       binary: a.spec.binary,
       sessionName,

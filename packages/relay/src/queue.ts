@@ -279,6 +279,13 @@ export interface QueueJobCreateOpts {
   size?: string;
   /** `--location`: datacenter/region (hetzner / digitalocean). */
   location?: string;
+  /**
+   * True when `location` was typed for this create (`--location`), so a
+   * backend that fails over on a capacity refusal (hetzner) must not move the
+   * box. Absent = a configured/derived location (a clone's, a web create's)
+   * that may fail over.
+   */
+  locationPinned?: boolean;
   /** `--inbound`: VPS firewall access policy (locked | open | CIDR list). */
   inbound?: string;
   /** `--remote-host`: SSH destination whose docker engine runs a remote-docker box. */

@@ -2,6 +2,7 @@
 // written by every mutation point), aggregated for reading, plus the rows that
 // are only ever true NOW — a box working a task, a PR waiting to be merged —
 // which are built at read time and never stored.
+import { stat } from 'node:fs/promises';
 import {
   findManager,
   parseShortstat,
@@ -11,6 +12,8 @@ import {
   readTasks,
   readTimeline,
   readWorkspace,
+  resolveWorkspaceDir,
+  timelineFile,
   appendTimelineEvent,
   pushLinesOnly,
   timelineSink,
@@ -38,6 +41,7 @@ import { measurePushResult, type PushTarget } from './push-measure';
 import { assignLanes, jobIdOfKey } from './timeline-lanes';
 import type {
   HubBackend,
+  PrDetail,
   TimelineBackend,
   TimelineItem,
   TimelineLiveItem,
@@ -386,6 +390,58 @@ function hostOf(deps: BackendDeps): MachineRef {
   return hubMachine(deps);
 }
 
+/** A PR as one log knows it: lowercased `owner/name#number` → title and line counts. */
+export interface PrDetailRow {
+  title?: string;
+  additions?: number;
+  deletions?: number;
+}
+
+/**
+ * One timeline (newest first, as `readTimeline` returns it): the newest title wins,
+ * and line counts come from the newest row that has them (the merge, once the sync
+ * measured it). Keys are lowercased: GitHub's `owner/name` and the ledger's may
+ * differ in case.
+ */
+export function indexPrDetails(events: readonly TimelineEvent[]): Map<string, PrDetailRow> {
+  const out = new Map<string, PrDetailRow>();
+  for (const ev of events) {
+    const pr = ev.pr;
+    if (!pr) continue;
+    const key = `${pr.repo}#${String(pr.number)}`.toLowerCase();
+    const d = out.get(key) ?? {};
+    if (d.title === undefined && pr.title) d.title = pr.title;
+    if (d.additions === undefined && pr.additions !== undefined) d.additions = pr.additions;
+    if (d.deletions === undefined && pr.deletions !== undefined) d.deletions = pr.deletions;
+    out.set(key, d);
+  }
+  return out;
+}
+
+/** Several workspaces' indexes into one: a PR named by any of them, earlier ones first. */
+export function mergePrDetails(logs: readonly Map<string, PrDetailRow>[]): Map<string, PrDetail> {
+  const all = new Map<string, PrDetailRow>();
+  for (const log of logs) {
+    for (const [key, row] of log) {
+      const d = all.get(key) ?? {};
+      d.title ??= row.title;
+      d.additions ??= row.additions;
+      d.deletions ??= row.deletions;
+      all.set(key, d);
+    }
+  }
+  const out = new Map<string, PrDetail>();
+  for (const [key, d] of all) {
+    if (!d.title) continue;
+    out.set(key, {
+      title: d.title,
+      ...(d.additions !== undefined ? { additions: d.additions } : {}),
+      ...(d.deletions !== undefined ? { deletions: d.deletions } : {}),
+    });
+  }
+  return out;
+}
+
 export function createTimelineBackend(
   deps: BackendDeps,
   opts: TimelineBackendOptions = {},
@@ -396,6 +452,23 @@ export function createTimelineBackend(
   const diffTimeout = opts.diffTimeoutMs ?? DIFF_TIMEOUT_MS;
   /** The exec promise, not its result: overlapping reads share one exec. */
   const diffCache = new Map<string, { at: number; value: Promise<DiffStat | null> }>();
+  /** Per workspace, its PR details, kept while `timeline.jsonl` keeps its mtime and size. */
+  const prDetailCache = new Map<string, { stamp: string; prs: Map<string, PrDetailRow> }>();
+
+  async function prDetailsOfWorkspace(wsId: string): Promise<Map<string, PrDetailRow>> {
+    const dir = await resolveWorkspaceDir(wsId).catch(() => null);
+    const st = dir ? await stat(timelineFile(dir)).catch(() => null) : null;
+    if (!st) {
+      prDetailCache.delete(wsId);
+      return new Map();
+    }
+    const stamp = `${String(st.mtimeMs)}:${String(st.size)}`;
+    const hit = prDetailCache.get(wsId);
+    if (hit?.stamp === stamp) return hit.prs;
+    const prs = indexPrDetails(await readTimeline(wsId).catch(() => []));
+    prDetailCache.set(wsId, { stamp, prs });
+    return prs;
+  }
 
   function diffOf(box: TimelineBoxFact): Promise<DiffStat | null> {
     if (!deps.boxDiffStat || box.state !== 'running') return Promise.resolve(null);
@@ -466,6 +539,14 @@ export function createTimelineBackend(
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
+    },
+
+    async prDetails(): Promise<Map<string, PrDetail>> {
+      const workspaces = await listWorkspaces().catch(() => []);
+      const seen = new Set(workspaces.map((ws) => ws.id));
+      for (const id of prDetailCache.keys()) if (!seen.has(id)) prDetailCache.delete(id);
+      const logs = await Promise.all(workspaces.map((ws) => prDetailsOfWorkspace(ws.id)));
+      return mergePrDetails(logs);
     },
 
     async getTimeline(wsId: string, q: TimelineQuery = {}): Promise<TimelineResponse | null> {

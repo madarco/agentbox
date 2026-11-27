@@ -278,6 +278,19 @@ Open items found while building the phases of
   down to 8) and 10 sessions, so a maximal share fits 64 KB. If shares need more,
   drop a column (per-provider splits) before raising a limit, and rerun the
   maximal-share size test.
+- **PR titles come from the workspace timelines.** The activity ledger stores a PR's
+  repo, number and url only, so "Recently merged" takes the title and line counts from
+  any workspace `timeline.jsonl` that saw the PR, else names it by its head branch. A
+  PR merged outside every workspace has no title or line counts. A `pr_title` column
+  (plus additions/deletions) on `activity_events` would fix it at the source; the store
+  has no migration step yet, and old rows would still need the timeline join.
+  On a PC whose workspace store lives on a remote control box, this hub has no
+  timelines to read, so its PRs fall back to their branch names too.
+- **The share still carries a year of wall data.** The page draws only the last 30
+  days, but `toShare` keeps the full wall (the hero's pixel background reads 30 weeks of
+  it). Trim it to what the page draws if the hero stops needing it.
+- **Share dialog at 390 px scrolls sideways a little.** The preview's content is wider
+  than the dialog on a phone; the controls still fit.
 - **Busy spans: openclaw heartbeats.** openclaw's periodic heartbeat prompts are stored
   as typed prompts (`auto = 0`), so a heartbeat answered with `HEARTBEAT_OK` counts its
   short turn. Classify them in the openclaw parser (its heartbeat prompt or the
@@ -286,3 +299,7 @@ Open items found while building the phases of
   busy-spans rule has no turns left to recompute, so its spans still bridge waits under
   10 minutes. Windows that reach back before the rule read slightly high, and the
   "vs previous window" deltas compare the two rules until those windows age out.
+- **Busy spans: PCs on an older hub.** A control box merges the intervals each PC pushes
+  as they come. A PC still on a hub before the busy-spans rule sends old-rule intervals
+  (waits under 10 minutes bridged), so its hours read high on the control box until it
+  upgrades.

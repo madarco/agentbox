@@ -7,7 +7,6 @@
 // filter (`agent/account`) lives in the URL (`?subscription=claude/personal`)
 // so a Subscriptions card links here. No cost: prices are not modelled yet.
 
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
@@ -16,6 +15,7 @@ import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
 import { usageKeyLabel, type SubscriptionAccount } from '@/lib/subscriptions';
 import { useSubscriptionFilter } from './subscription-filter';
+import { UsageHeader } from './usage-header';
 
 type Dim = 'day' | 'agent' | 'account' | 'box' | 'project' | 'host' | 'model' | 'session';
 type FilterDim = Exclude<Dim, 'day' | 'session'>;
@@ -108,7 +108,7 @@ async function fetchUsage(params: Record<string, string>): Promise<Report> {
   return body;
 }
 
-export function TokenUsage({ overviewHref }: { overviewHref: string }) {
+export function TokenUsage() {
   // The subscription filter is the URL's; the other filters are page state.
   const {
     subscription,
@@ -170,18 +170,8 @@ export function TokenUsage({ overviewHref }: { overviewHref: string }) {
   const days = RANGES.find((r) => r.id === range)!.days;
 
   return (
-    <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <Link
-        href={overviewHref}
-        className="inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:text-foreground"
-      >
-        <Icons.arrowL className="size-3.5" /> Usage overview
-      </Link>
-      <h1 className="mt-2 text-[25px] font-semibold leading-tight tracking-[-0.025em]">Tokens</h1>
-      <div className="mt-1.5 text-sm text-muted-foreground">
-        Tokens spent by the agent sessions this hub recorded, from every box, provider and PC that
-        ships to it. Counted per model response; days in your time zone.
-      </div>
+    <div className="mx-auto w-full max-w-[1240px] px-6 pb-16 pt-7 max-sm:px-4 max-sm:pt-5">
+      <UsageHeader view="tokens" />
 
       <div className="mt-6 flex flex-wrap items-center gap-2">
         {RANGES.map((r) => (

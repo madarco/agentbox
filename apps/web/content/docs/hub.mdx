@@ -236,8 +236,10 @@ shipped: agent-hours against wall-clock hours (the speed-up over one agent; an
 hour counts while at least one agent is busy in a turn, never while it waits for
 your next prompt, see [how hours are counted](/docs/cli#usage)), the
 most boxes running at once, merged pull requests, commits, lines and files, a
-Gantt of the busiest days, the biggest sessions, a year-long activity wall, when
-your agents work, the providers they ran on and the top boxes and projects. Pick
+Gantt of the busiest days, the biggest sessions, the last 30 days as an activity
+grid (one square per day, a sprint at a glance), the pull requests merged lately
+(named by their GitHub title, or their branch when no workspace timeline saw the
+PR), when your agents work, the providers they ran on and the top boxes and projects. Pick
 a window with **7 days**, **30 days** (the default, the window the tray's header
 pill shows), **This month**, **90 days** or **Year**; days are in your browser's
 time zone. The **Subscription** selector narrows the page to one subscription.
@@ -247,7 +249,9 @@ row per day of the window (hours, peak, tokens, commits, PRs, lines, files, and
 agent-hours per agent and per provider). The page reads the same numbers as
 [`agentbox usage`](/docs/cli#usage).
 
-**Tokens** (`/usage?view=tokens`) keeps the token breakdown: totals for a window
+The header's **Work** / **AI usage** switch flips between that view and the
+token view; the choice is in the URL too, so a reload or a link keeps it.
+**AI usage** (`/usage?view=tokens`) is the token breakdown: totals for a window
 (24 hours to all time), tokens per day stacked by agent, and breakdowns by agent,
 model, subscription, project, box, PC and session. Clicking a row filters the
 page to it. It reads the same numbers as
@@ -261,10 +265,13 @@ from them. The id is random (24 letters and digits), so a share is reached only
 by its link. [`/s/example`](https://agent-box.sh/s/example) shows one made from
 sample data.
 
-To share, click **Share** on the Usage page. The dialog shows a preview of
-exactly what will be sent (the window and subscription the page shows, drawn by
-the same layout), and an optional **Name to show**. **Share** then posts it and
-shows the public URL with a **Copy link** button. Below, the dialog lists the
+To share, click **Share** in the Usage page's header. The dialog shows the link
+the page will get (the site picks its random id when it is published, so the id
+appears after **Share**), a preview of exactly what will be sent (the window and
+subscription the page shows) as **Page**, drawn by the same layout, or as
+**JSON**, the payload itself, and an optional **Name to show**. **Share** posts
+that same object, unchanged, and shows the public URL with a **Copy link**
+button. Below, the dialog lists the
 shares this hub made, each with **Delete**. From a terminal,
 [`agentbox usage share`](/docs/cli#usage-share) does the same. The hub itself
 posts to agent-box.sh: your browser and the CLI only talk to the hub. To test
@@ -273,10 +280,11 @@ on the hub's machine.
 
 - **What is sent**: numbers, dates, and agent and provider ids (`claude`,
   `hetzner`, …): agents at once, agent-hours and wall hours (the card's hours saved is one minus the other), PRs merged, commits,
-  lines and files changed, the daily chart, the activity wall, the three Gantt
+  lines and files changed, the daily chart, the activity grid, the three Gantt
   days and the biggest sessions, each labeled only "claude on hetzner". The only
   text is the name to show, if you type one (lowercase letters, digits and `-`,
-  up to 39 characters).
+  up to 39 characters), and the IANA time zone the days are counted in
+  (`Europe/Rome`).
 - **What is not sent**: project, repo, box, branch, pull request and session
   names, prompts, transcripts, and the subscription view. agent-box.sh accepts
   only that schema (at most 64 KB, unknown fields refused) and stores the parsed

@@ -2969,6 +2969,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             gitPushMode: o.gitPushMode,
             size: o.size,
             location: o.location,
+            // A pin only when the caller says so: a create built by
+            // `buildHubCreateOpts` carries it in providerOptions, the CLI's own
+            // hub create as a field. A bare `location` (web, clone) may fail over.
+            ...(o.locationPinned === true || o.providerOptions?.['locationPinned'] === true
+              ? { locationPinned: true }
+              : {}),
             inbound: o.inbound,
             remoteHost: o.remoteHost,
             // Resolved server-side by the gates above, so a tray/web create

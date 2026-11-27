@@ -293,6 +293,16 @@ describe('time zone', () => {
     expect(canonicalTimeZone('Mars/Olympus')).toBeNull();
     expect(canonicalTimeZone('x'.repeat(65))).toBeNull();
   });
+
+  it('takes a zone under its modern or its legacy name, whichever this runtime lists', () => {
+    // Node lists Asia/Calcutta and Europe/Kiev; a browser may list only the modern names.
+    for (const tz of ['Asia/Kolkata', 'Asia/Calcutta', 'Europe/Kyiv', 'Europe/Kiev']) {
+      expect(isTimeZone(tz), tz).toBe(true);
+      expect(isTimeZone(canonicalTimeZone(tz)!), tz).toBe(true);
+      expect(UsageRange.safeParse({ ...range, tz }).success, tz).toBe(true);
+    }
+    expect(isTimeZone('asia/kolkata')).toBe(false);
+  });
 });
 
 describe('daysBetween', () => {

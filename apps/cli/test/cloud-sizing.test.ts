@@ -117,10 +117,23 @@ describe('cloudSizingProviderOptions', () => {
     const cfg = makeCfg();
     expect(cloudSizingProviderOptions('hetzner', cfg, { location: ' fsn1 ' })).toEqual({
       location: 'fsn1',
+      locationPinned: true,
     });
     // --location is a hetzner/digitalocean flag; daytona's region comes from
     // box.daytonaRegion, not from the flag.
     expect(cloudSizingProviderOptions('daytona', cfg, { location: 'fsn1' })).toEqual(DAYTONA_BASE);
+  });
+
+  it('pins only a --location flag, never a configured location', () => {
+    // box.hetznerLocation is config: hetzner may fail over from it.
+    expect(cloudSizingProviderOptions('hetzner', makeCfg())).not.toHaveProperty('locationPinned');
+    expect(cloudSizingProviderOptions('hetzner', makeCfg(), { location: '  ' })).not.toHaveProperty(
+      'locationPinned',
+    );
+    // A flag on a provider without locations is ignored, so nothing is pinned.
+    expect(
+      cloudSizingProviderOptions('vercel', makeCfg(), { location: 'fsn1' }),
+    ).not.toHaveProperty('locationPinned');
   });
 
   it('threads only an explicitly pinned daytona region, never the class-derived one', () => {

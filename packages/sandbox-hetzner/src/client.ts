@@ -92,6 +92,28 @@ export interface HetznerServerType {
   deprecated?: boolean;
   deprecation?: { announced?: string; unavailable_after?: string } | null;
   prices: Array<{ location: string }>;
+  /**
+   * Where the type is offered, with Hetzner's capacity hint. Replaces the
+   * removed `GET /datacenters` availability (2026-06). `available` is a hint
+   * only: creates have succeeded in locations reported `available: false`, so
+   * it orders failover candidates and never rules one out.
+   */
+  locations?: Array<{
+    id?: number;
+    name: string;
+    available?: boolean;
+    recommended?: boolean;
+    deprecation?: { announced?: string; unavailable_after?: string } | null;
+  }>;
+}
+
+export interface HetznerLocation {
+  id: number;
+  name: string;
+  city: string;
+  country: string;
+  /** `eu-central` | `us-east` | `us-west` | `ap-southeast`. */
+  network_zone?: string;
 }
 
 export interface HetznerFirewall {
@@ -213,7 +235,7 @@ export interface HetznerClient {
    * with a cheap unauthenticated-shape call (the endpoint requires a valid
    * token but returns a small, stable response).
    */
-  listLocations(): Promise<Array<{ id: number; name: string; city: string; country: string }>>;
+  listLocations(): Promise<HetznerLocation[]>;
 }
 
 interface MakeClientOptions {
@@ -244,7 +266,11 @@ export function makeHetznerClient(opts: MakeClientOptions = {}): HetznerClient {
   // Bind to a const so the type narrows for the closures below — without
   // this the `req()` closure sees the original `string | undefined` shape.
   const token: string = rawToken.trim();
-  const endpoint = (opts.endpoint ?? process.env.HCLOUD_ENDPOINT ?? DEFAULT_HCLOUD_ENDPOINT).replace(/\/$/, '');
+  const endpoint = (
+    opts.endpoint ??
+    process.env.HCLOUD_ENDPOINT ??
+    DEFAULT_HCLOUD_ENDPOINT
+  ).replace(/\/$/, '');
   const fetchImpl = opts.fetchImpl ?? fetch;
 
   async function req<T>(
@@ -423,9 +449,7 @@ export function makeHetznerClient(opts: MakeClientOptions = {}): HetznerClient {
       await req<unknown>('DELETE', `/firewalls/${String(id)}`);
     },
     async listLocations() {
-      const r = await reqExpect<{
-        locations: Array<{ id: number; name: string; city: string; country: string }>;
-      }>('GET', '/locations');
+      const r = await reqExpect<{ locations: HetznerLocation[] }>('GET', '/locations');
       return r.locations;
     },
   };

@@ -34,8 +34,14 @@ function suggestTypes(catalog: HetznerServerType[], limit = 6): string[] {
     .slice(0, limit);
 }
 
-/** Locations (from `prices[].location`) where a given type is offered. */
-function offeredLocations(t: HetznerServerType): string[] {
+/**
+ * Locations where a type is offered: its non-deprecated `locations[]` entries
+ * when the API sends them, else `prices[].location`.
+ */
+export function offeredLocations(t: HetznerServerType): string[] {
+  if (t.locations && t.locations.length > 0) {
+    return t.locations.filter((l) => !l.deprecation).map((l) => l.name);
+  }
   const seen = new Set<string>();
   for (const p of t.prices) {
     if (p.location) seen.add(p.location);
@@ -63,8 +69,7 @@ export function validateServerChoice(
 
   if (!type) {
     const suggestions = suggestTypes(catalog);
-    const hint =
-      suggestions.length > 0 ? ` Valid types include: ${suggestions.join(', ')}.` : '';
+    const hint = suggestions.length > 0 ? ` Valid types include: ${suggestions.join(', ')}.` : '';
     throw new UserFacingError(
       `Hetzner server type "${serverType}" does not exist.${hint}\n` +
         'Set one with `--size <type>` or `agentbox config set box.sizeHetzner <type>`.',
@@ -112,12 +117,11 @@ export function validateServerChoice(
  * Map a Hetzner provision error (from `createServer`) into a friendlier
  * `UserFacingError`, preserving the original message. Non-Hetzner errors and
  * unrecognized codes pass through unchanged so we never hide an unexpected
- * failure. Called around the `createServer` call in the backend.
+ * failure. Capacity errors also pass through: `createWithLocationFailover`
+ * (failover.ts) owns those, since they depend on which locations were tried.
  */
-export function mapHetznerProvisionError(err: unknown, choice: ServerChoice): unknown {
+export function mapHetznerProvisionError(err: unknown): unknown {
   if (!(err instanceof HetznerApiError)) return err;
-  const { serverType, location } = choice;
-
   if (err.code === 'resource_limit_exceeded') {
     return new UserFacingError(
       `Hetzner refused to create the server: your account resource limit was exceeded ` +
@@ -125,15 +129,6 @@ export function mapHetznerProvisionError(err: unknown, choice: ServerChoice): un
         'New Hetzner Cloud accounts start with a low server limit. Request an increase in ' +
         'the Hetzner Console (Limits page: https://console.hetzner.cloud/ → your project → ' +
         'Limits), then retry.',
-    );
-  }
-
-  if (err.code === 'resource_unavailable' || err.code === 'placement_error') {
-    return new UserFacingError(
-      `Hetzner has no capacity for "${serverType}" in "${location}" right now ` +
-        `(${err.message}).\n` +
-        'Retry, or pick another datacenter with `--location fsn1` / `hel1` / `ash` ' +
-        '(or `agentbox config set box.hetznerLocation <name>`).',
     );
   }
 

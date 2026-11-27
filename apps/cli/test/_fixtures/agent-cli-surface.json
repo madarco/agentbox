@@ -245,6 +245,20 @@
         "negate": false
       },
       {
+        "flags": "--size <spec>",
+        "description": "VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--location <name>",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--from-branch <ref>",
         "description": "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
         "defaultValue": null,
@@ -755,6 +769,20 @@
         "negate": false
       },
       {
+        "flags": "--size <spec>",
+        "description": "VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--location <name>",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
         "flags": "--from-branch <ref>",
         "description": "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
         "defaultValue": null,
@@ -1043,6 +1071,20 @@
       {
         "flags": "--snapshot <ref>",
         "description": "start from a project checkpoint (see `agentbox checkpoint`)",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--size <spec>",
+        "description": "VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--location <name>",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -1488,6 +1530,20 @@
       {
         "flags": "--provider <name>",
         "description": "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--size <spec>",
+        "description": "VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--location <name>",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -1970,6 +2026,20 @@
       {
         "flags": "--provider <name>",
         "description": "sandbox backend: 'docker' (default) or 'daytona' for a cloud box",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--size <spec>",
+        "description": "VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.",
+        "defaultValue": null,
+        "mandatory": false,
+        "negate": false
+      },
+      {
+        "flags": "--location <name>",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false

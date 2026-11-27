@@ -217,6 +217,8 @@ export interface CreateBoxOpts {
   providerOptions?: Record<string, string | number | boolean>;
   /** Datacenter / region (hetzner / digitalocean). */
   location?: string;
+  /** `location` came from a typed `--location`: a pin, never failed over. */
+  locationPinned?: boolean;
   /** VPS firewall access policy (locked | open | CIDR list). */
   inbound?: string;
   /** `-b`: reuse an existing branch instead of forking agentbox/<name>. */
@@ -1210,6 +1212,18 @@ export interface TimelineBackend {
     wsId: string,
     input: TimelineEventInput,
   ): Promise<TimelineRecordResult | null>;
+  /**
+   * Title and line counts of every PR any workspace timeline has seen, keyed
+   * `owner/name#number` lowercased. The activity ledger keeps only a PR's repo and number,
+   * so the usage page's "Recently merged" names a PR from here.
+   */
+  prDetails(): Promise<Map<string, PrDetail>>;
+}
+
+export interface PrDetail {
+  title: string;
+  additions?: number;
+  deletions?: number;
 }
 
 export type WorkspaceResult = { ok: true; workspace: WorkspaceView } | { ok: false; error: string };

@@ -4,10 +4,12 @@
 //   GET:  { endpoint, endpointError?, shares, lastName } — the site (null with the
 //         reason when share.endpoint is invalid), and the shares this hub made
 //         (never their delete secrets).
-//   POST: { name?, preview?, since?, until?, tz?, range?, subscription? } — the
-//         window takes the same values as GET /usage/stats. `preview: true`
+//   POST: { name?, preview?, share?, since?, until?, tz?, range?, subscription? } —
+//         the window takes the same values as GET /usage/stats. `preview: true`
 //         returns the share that would be sent and posts nothing; otherwise
-//         returns { url, id, createdAt }.
+//         returns { url, id, createdAt }. `share` (a preview's share, its `name`
+//         set) is posted as it is, after the share schema's check, so what the
+//         dialog showed is what goes out; `name` is then ignored.
 // DELETE /usage/share/<id> lives in ./[id]/route.ts.
 import { homedir } from 'node:os';
 import { loadEffectiveConfig } from '@agentbox/config';
@@ -106,7 +108,7 @@ export async function POST(req: Request): Promise<Response> {
   };
   try {
     if (b.preview === true) return ok(await previewUsageShare(deps, b.name));
-    return ok(await postUsageShare(deps, b.name), 201);
+    return ok(await postUsageShare(deps, b.name, b.share), 201);
   } catch (e) {
     return failShare(e);
   }

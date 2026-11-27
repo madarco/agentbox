@@ -310,6 +310,50 @@ describe('computeUsageStats', () => {
     expect(JSON.stringify(stats)).not.toContain('secret prompt text');
   });
 
+  it('names every merged PR in "Recently merged": the timeline title, else the branch', async () => {
+    const ledger = fakeLedger([
+      ev('box.ready', at(9), { boxId: 'a', provider: 'docker', agent: 'claude' }),
+      ev('pr.merged', at(10), {
+        boxId: 'a',
+        branch: 'feat/a',
+        pr: { repo: 'Acme/API', number: 7 },
+      }),
+      ev('pr.merged', at(11), {
+        boxId: 'a',
+        branch: 'feat/b',
+        pr: { repo: 'acme/api', number: 8 },
+      }),
+    ]);
+    const prDetails = async () =>
+      new Map([['acme/api#7', { title: 'Add the thing', additions: 40, deletions: 2 }]]);
+    // The ledger's repo spelled differently from GitHub's still matches.
+    const stats = await computeUsageStats(
+      { history: null, ledger, prDetails, now: () => NOW },
+      window,
+    );
+    expect(stats.feedTotal).toBe(2);
+    expect(stats.feed.map((f) => [f.number, f.title, f.additions])).toEqual([
+      [8, 'feat/b', 0],
+      [7, 'Add the thing', 40],
+    ]);
+    // The same PR spelled in another case is one merge, not two.
+    const twice = await computeUsageStats(
+      {
+        history: null,
+        ledger: fakeLedger([
+          ev('pr.merged', at(10), { boxId: 'a', pr: { repo: 'Acme/API', number: 7 } }),
+          ev('pr.merged', at(10.5), { boxId: 'a', pr: { repo: 'acme/api', number: 7 } }),
+        ]),
+        now: () => NOW,
+      },
+      window,
+    );
+    expect(twice.hero.prsMerged).toBe(1);
+    // Without timelines the branch still names each one: the list matches the count.
+    const bare = await computeUsageStats({ history: null, ledger, now: () => NOW }, window);
+    expect(bare.feed).toHaveLength(2);
+  });
+
   it('shows no live counters on a past window', async () => {
     const ledger = fakeLedger([ev('box.ready', at(1), { boxId: 'a' })]);
     const past = parseUsageStatsQuery({ since: '2026-11-19', until: '2026-11-20' }, NOW);
