@@ -18,7 +18,7 @@ import { DEFAULT_BOX_IMAGE, imageInfo } from './image.js';
 import { volumeExists } from './docker.js';
 import { detectEngine } from './sync/host-export.js';
 import { currentDockerBaseFileHashes } from './prepared-state.js';
-import { detectPortless, portlessDoctorRow, portlessServiceStatus } from './portless.js';
+import { portlessDoctorCheck } from './portless.js';
 
 async function probeVersion(bin: string, args: string[] = ['--version']): Promise<string | null> {
   try {
@@ -79,7 +79,7 @@ export async function dockerChecks(): Promise<CheckResult[]> {
     (async (): Promise<CheckResult | null> => {
       const engine = await detectEngine().catch(() => 'other' as const);
       if (engine === 'orbstack') return null;
-      return portlessDoctorRow(await detectPortless(), await portlessServiceStatus());
+      return await portlessDoctorCheck();
     })(),
   ]);
 

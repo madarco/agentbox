@@ -12,7 +12,7 @@ import {
   ensurePortlessForUrl,
   getBoxHostPaths,
   inspectBox,
-  livePortlessUrl,
+  routedPortlessUrl,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
@@ -86,11 +86,12 @@ async function resolveViaProvider(box: BoxRecord, opts: UrlOptions): Promise<str
     if (record.portlessAlias && !opts.loopback) {
       // At the URL the live proxy serves now. The notice goes to stderr so
       // `--print` stays pipeable.
-      const url = livePortlessUrl(
+      const url = await routedPortlessUrl(
         record.portlessAlias,
         await ensurePortlessForUrl((m) => {
           process.stderr.write(`${m}\n`);
         }),
+        record.webHostPort !== undefined ? { port: record.webHostPort } : {},
       );
       if (url !== undefined) return url;
     }

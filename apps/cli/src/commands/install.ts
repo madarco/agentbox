@@ -2,14 +2,15 @@
  * `agentbox install` — interactive setup wizard:
  *
  *   1. Compact system compatibility check (one line).
+ *   1b. Portless (`https://<box>.localhost`), decided from the host: default
+ *       yes on macOS + Docker Desktop or where Portless is installed, default
+ *       no elsewhere; persists `portless.enabled`.
  *   2. Provider picker (single-select; docker default).
  *   3. Provider login (skipped for docker; reuses each provider's existing
  *      `ensure*Credentials` flow, including Vercel's "install sandbox CLI
  *      then browser login" handling).
  *   4. Confirm-then-run base image / snapshot prepare (default-yes for docker).
  *   4b. Confirm-then-pin it as `box.provider` (the backend new boxes go to).
- *   4c. Portless (`https://<box>.localhost`) for docker on Docker Desktop and
- *       the loopback-URL clouds; persists `portless.enabled`.
  *   5. Install the host `/agentbox` skill files into Claude / Codex / OpenCode.
  *   6. Write the first-run marker.
  *   7. Tutorial outro.
@@ -76,7 +77,7 @@ import { AGENTBOX_VERSION } from '../version.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { installHerdrCommand } from './install-herdr.js';
 import { installPortlessCommand } from './install-portless.js';
-import { runPortlessInstallStep } from '../install-portless-step.js';
+import { runPortlessInstallStep, shouldReaskAfterPick } from '../install-portless-step.js';
 import { installCodexCommand } from './install-codex.js';
 import { installCodexPlugin } from '@agentbox/agent-codex/cli';
 import { resolveDevRepoRoot } from '../lib/source-checkout.js';
@@ -633,21 +634,43 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     }
   }
 
-  // 2) Provider picker.
+  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+
   // Docker off under a remote hub (Step 12): a control box (or hub.mode=thin) gates
   // docker/remote-docker off, so don't offer them in the picker AND refuse an
   // explicit `--provider docker` — otherwise the wizard would pin box.provider to a
   // backend `create`/`prepare` then refuse. `hub.mode=local` keeps docker on.
-  const cfg = await loadEffectiveConfig(process.cwd()).catch(() => null);
+  // An explicit `--provider` is checked here, before the Portless step, so a
+  // refused provider never gets Portless set up for it first.
   const hideDocker = cfg ? dockerProvidersHidden(cfg.effective) : false;
-  let providerName: ProviderName;
-  if (opts.provider) {
-    const candidate = opts.provider.trim();
-    if (!isProviderName(candidate)) {
-      log.error(`unknown --provider: ${candidate}`);
+  const namedProvider = opts.provider?.trim();
+  if (namedProvider !== undefined && namedProvider !== '') {
+    if (!isProviderName(namedProvider)) {
+      log.error(`unknown --provider: ${namedProvider}`);
       return false;
     }
-    providerName = candidate;
+    if (hideDocker && isDockerProvider(namedProvider) && cfg) {
+      log.error(dockerHiddenMessage(cfg.effective, 'setup'));
+      return false;
+    }
+  }
+
+  // 1b) Portless (`https://<box>.localhost`), asked from the host alone, before
+  // the provider picker. A separate step — see install-portless-step.ts.
+  const portlessArgs = {
+    dockerOffered: !hideDocker,
+    yes: opts.yes ?? false,
+  };
+  const portlessOutcome = await runPortlessInstallStep({
+    ...portlessArgs,
+    ...(namedProvider ? { provider: namedProvider } : {}),
+    enabled: cfg?.effective.portless.enabled,
+  });
+
+  // 2) Provider picker.
+  let providerName: ProviderName;
+  if (namedProvider && isProviderName(namedProvider)) {
+    providerName = namedProvider;
   } else {
     const offered = KNOWN_PROVIDERS.filter((p) => !hideDocker || !isDockerProvider(p));
     const picked = await select<ProviderName>({
@@ -670,6 +693,12 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   if (cfg) {
     const warning = await localDockerUnsupportedWarning(cfg.effective, providerName);
     if (warning) log.warn(warning);
+  }
+
+  // 2b) An alias cloud picked while Portless is still undecided (the optional
+  // prompt's "no" is not saved): ask once more, now that it matters.
+  if (shouldReaskAfterPick(portlessOutcome, namedProvider, providerName)) {
+    await runPortlessInstallStep({ ...portlessArgs, provider: providerName, enabled: undefined });
   }
 
   // 3) Login (skip docker).
@@ -727,14 +756,6 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
 
   // 4b) Pin it as the default backend for new boxes (`box.provider`).
   await maybeSetDefaultProvider(providerName, opts.yes ?? false);
-
-  // 4c) Portless: `https://<box>.localhost` for providers whose box URL is a
-  // host loopback port. A separate step — see install-portless-step.ts.
-  await runPortlessInstallStep({
-    provider: providerName,
-    enabled: cfg?.effective.portless.enabled,
-    yes: opts.yes ?? false,
-  });
 
   // 5) Host /agentbox skill (idempotent).
   const sp = spinner();

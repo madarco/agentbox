@@ -5,7 +5,7 @@
 # Why this exists: when the host Portless proxy runs in TLS mode, AgentBox
 # serves the same `https://<box>.localhost` URL inside the box (Hetzner: an
 # in-VPS mirror proxy with its own CA at /root/.portless/ca.pem; Docker: the
-# host CA bind-mounted at /home/vscode/.portless/ca.pem). `portless proxy start`
+# host CA copied in at create to /etc/agentbox/portless-host-ca.pem). `portless proxy start`
 # at best trusts the CA in the Linux *system* store — it does NOT populate the
 # per-user NSS database that Chrome / Chromium / Playwright-Chromium read on Linux, so
 # the VNC browser window and Playwright fail with a cert error. We close that

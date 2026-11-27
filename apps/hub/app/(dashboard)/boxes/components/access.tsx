@@ -156,13 +156,14 @@ export function Access({ box }: { box: Box }) {
   // in `webOpenTarget`, with tests.
   const { href: webHref, reason: webReason } = webOpenTarget(box);
 
-  // A cloud box carries no static vncUrl — its signed preview URL expires — so
-  // link at the hub's own redirect, which mints one server-side on navigation.
+  // Always the hub's own redirect, never the payload's `vncUrl`: it resolves the
+  // URL at click time (a cloud box's signed preview URL expires) and checks that
+  // the Portless proxy really routes the box's VNC alias, falling back to
+  // loopback when it does not. It also points the in-box browser at the web app.
   const vncHref =
-    vncUrl ??
-    (box.vncEnabled && box.status === 'running'
+    vncUrl || (box.vncEnabled && box.status === 'running')
       ? `/boxes/${encodeURIComponent(box.id)}/vnc`
-      : null);
+      : null;
   const vncReason = vncHref
     ? null
     : box.vncEnabled === false
@@ -206,19 +207,6 @@ export function Access({ box }: { box: Box }) {
                 href={vncHref}
                 target="_blank"
                 rel="noreferrer"
-                onClick={() => {
-                  // Fire-and-forget prep: point the in-box browser at the web
-                  // app so the VNC desktop isn't a blank X screen. The link
-                  // opens synchronously (no popup-blocker risk); Chromium
-                  // appears in the view a moment later. Only needed on the
-                  // static-URL path — the /boxes/:id/vnc redirect fires the same
-                  // prep itself, and doing both would launch the browser twice.
-                  if (!vncUrl) return;
-                  void fetch(`/api/v1/boxes/${encodeURIComponent(box.id)}/screen`, {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                  }).catch(() => {});
-                }}
               >
                 <Icons.ext />
                 Open VNC

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { buildNoVncUrl, type BoxRecord, type Provider } from '@agentbox/core';
 import { execInBox } from './docker.js';
 import { detectEngine } from './sync/host-export.js';
-import { ensurePortlessForUrl, livePortlessUrl } from './portless.js';
+import { ensurePortlessForUrl, routedPortlessUrl } from './portless.js';
 
 export interface VncLaunchResult {
   up: boolean;
@@ -154,7 +154,9 @@ export async function resolveVncViewerUrl(
     // The VNC alias at the URL the live proxy serves now, never the recorded one.
     const mode =
       !opts.loopback && box.portlessVncAlias !== undefined ? await ensurePortlessForUrl() : null;
-    const aliasBase = livePortlessUrl(box.portlessVncAlias, mode);
+    const aliasBase = await routedPortlessUrl(box.portlessVncAlias, mode, {
+      ...(box.vncHostPort !== undefined ? { port: box.vncHostPort } : {}),
+    });
     const portless =
       aliasBase !== undefined ? buildNoVncUrl(aliasBase, box.vncPassword) : undefined;
     const resolved = opts.loopback
