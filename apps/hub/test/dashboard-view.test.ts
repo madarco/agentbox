@@ -86,7 +86,7 @@ describe('buildLanes', () => {
     expect(lanes.map((l) => l.key)).toEqual(['y', 'x']);
   });
 
-  it('keeps a failed create apart from a later box with the same name', () => {
+  it('leaves a failed create out, and keeps its rows off a later box with the same name', () => {
     const lanes = buildLanes(
       [
         ev('1', 'box.created', 6, { boxName: 'a', jobId: 'j1' }),
@@ -97,13 +97,8 @@ describe('buildLanes', () => {
       [box('a', 'running'), box('job:j1', 'error', { name: 'a', task: 'a' })],
       NOW,
     );
-    const ok = lanes.find((l) => l.key === 'a')!;
-    const bad = lanes.find((l) => l.key === 'job:j1')!;
-    expect(ok.failed).toBeUndefined();
-    expect(ok.segs).toEqual([[4, 0, 'running']]);
-    expect(bad.failed).toBeCloseTo(5.9);
-    expect(bad.box?.id).toBe('job:j1');
-    expect(bad.label).toBe('a (create failed)');
+    expect(lanes.map((l) => l.key)).toEqual(['a']);
+    expect(lanes[0]!.segs).toEqual([[4, 0, 'running']]);
   });
 
   it('gives a name-only row to the box of that name that followed it, not a later one', () => {

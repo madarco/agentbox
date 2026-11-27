@@ -416,17 +416,6 @@ export function Lanes({
                     />
                   </g>
                 ))}
-                {l.failed !== undefined ? (
-                  <g transform={`translate(${String(x(l.failed))},${String(cy)})`}>
-                    <circle r="5.5" fill="var(--red)" />
-                    <path
-                      d="M-2,-2 L2,2 M2,-2 L-2,2"
-                      stroke="#fff"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                  </g>
-                ) : null}
                 <title>{l.label}</title>
               </g>
             );
