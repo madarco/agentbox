@@ -68,7 +68,9 @@ CLI, not the raw commits.
   `agentbox install` now sets Portless up as its own step.
 - **The setup guide reads well in the default macOS Terminal.** The "Next steps"
   box after `agentbox install` uses normal-weight text instead of gray and fits
-  in 80 columns. The provider picker's hints no longer wrap.
+  in 80 columns, always names the provider you just set up, and mentions asking
+  your agent to launch a box with the `/agentbox` skill. The provider picker's
+  hints no longer wrap.
 - **The hub refuses cookie-authenticated writes from other sites**, so a page
   served from a box can no longer act on the hub as you.
 - **Hetzner and DigitalOcean boxes get the agent's environment.**
