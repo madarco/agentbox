@@ -38,6 +38,7 @@ import {
   type UsageContribution,
   type UsageStats,
 } from '@agentbox/usage-view';
+import type { PrDetail } from '../boxes/backend-types';
 import type { HistoryRepo, UsageSessionMeta } from './history';
 
 const HOUR = 3_600_000;
@@ -63,8 +64,14 @@ export interface UsageStatsDeps {
   contributions?: { list(): Promise<UsageContribution[]> } | null;
   /** This hub's own machine id: a contribution under it is never merged. */
   selfMachineId?: string;
+  /**
+   * PR titles and line counts by `owner/name#number`, from the workspace timelines:
+   * the ledger keeps only a PR's repo and number.
+   */
+  prDetails?: () => Promise<ReadonlyMap<string, PrDetail>>;
   now?: () => number;
 }
+
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** `YYYY-MM-DD` naming a real date (no month 13, no 31 February). */
@@ -266,7 +273,7 @@ export async function loadUsageRows(
   w: { readFrom: number; from: number; to: number; tz: string; account?: string; now: number },
 ): Promise<UsageRows> {
   const { readFrom, from, to, tz, account, now } = w;
-  const [spanRows, tokenRows, ledgerRows] = await Promise.all([
+  const [spanRows, tokenRows, ledgerRows, prDetails] = await Promise.all([
     deps.history
       ? deps.history.usageSpans({
           sinceMs: readFrom,
@@ -286,6 +293,7 @@ export async function loadUsageRows(
     // Up to now, not `to`: a published push after the window decides whether a
     // host-only landing inside it counts.
     deps.ledger ? readLedger(deps.ledger, readFrom, Math.max(to, now)) : [],
+    deps.prDetails ? deps.prDetails().catch(() => null) : null,
   ]);
 
   const metaKeys = [...new Set([...spanRows, ...tokenRows].map((r) => r.sessionKey))];
@@ -399,12 +407,18 @@ export async function loadUsageRows(
     prState.set(prKey, e.type);
     if (e.type !== 'pr.merged' || mergedSeen.has(prKey)) continue;
     mergedSeen.add(prKey);
+    // "Recently merged" lists a PR only with a title: the timeline's, else its branch.
+    const detail = e.pr ? prDetails?.get(prKey) : undefined;
+    const title = detail?.title ?? e.branch;
     events.push({
       type: 'pr.merged',
       at: atMs(e),
       boxId: e.boxId ?? null,
       project: projectName(e.projectKey),
       ...(e.pr ? { repo: e.pr.repo, number: e.pr.number } : {}),
+      ...(e.pr && title ? { title } : {}),
+      ...(detail?.additions !== undefined ? { additions: detail.additions } : {}),
+      ...(detail?.deletions !== undefined ? { deletions: detail.deletions } : {}),
     });
   }
 

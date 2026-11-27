@@ -1210,6 +1210,18 @@ export interface TimelineBackend {
     wsId: string,
     input: TimelineEventInput,
   ): Promise<TimelineRecordResult | null>;
+  /**
+   * Title and line counts of every PR any workspace timeline has seen, keyed
+   * `owner/name#number`. The activity ledger keeps only a PR's repo and number,
+   * so the usage page's "Recently merged" names a PR from here.
+   */
+  prDetails(): Promise<Map<string, PrDetail>>;
+}
+
+export interface PrDetail {
+  title: string;
+  additions?: number;
+  deletions?: number;
 }
 
 export type WorkspaceResult = { ok: true; workspace: WorkspaceView } | { ok: false; error: string };

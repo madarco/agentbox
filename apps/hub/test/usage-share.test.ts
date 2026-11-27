@@ -144,6 +144,38 @@ describe('postUsageShare', () => {
     expect(await store.lastName()).toBe('marco');
   });
 
+  it('posts the previewed share as it is, its name included, without rebuilding it', async () => {
+    const f = fakeFetch(() => created());
+    const preview = await previewUsageShare(deps(), undefined);
+    const shown = { ...preview.share, name: 'dana' };
+    let built = 0;
+    const d = deps({ fetch: f.fetch });
+    await postUsageShare(
+      {
+        ...d,
+        stats: () => {
+          built++;
+          return d.stats();
+        },
+      },
+      'ignored',
+      shown,
+    );
+    expect(built).toBe(0);
+    expect(f.calls[0]!.body).toBe(JSON.stringify(shown));
+    expect(await store.lastName()).toBe('dana');
+  });
+
+  it('refuses a previewed share the schema does not admit', async () => {
+    const f = fakeFetch(() => created());
+    const preview = await previewUsageShare(deps(), undefined);
+    const tampered = { ...preview.share, repo: 'acme/secret' };
+    await expect(
+      postUsageShare(deps({ fetch: f.fetch }), undefined, tampered),
+    ).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(f.calls).toHaveLength(0);
+  });
+
   it('lists shares newest first, across sites', async () => {
     const f = fakeFetch((_c, i) =>
       i === 0 ? created(ID1) : created(ID2, 's2', 'https://preview.vercel.app'),

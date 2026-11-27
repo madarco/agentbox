@@ -38,6 +38,7 @@ import { measurePushResult, type PushTarget } from './push-measure';
 import { assignLanes, jobIdOfKey } from './timeline-lanes';
 import type {
   HubBackend,
+  PrDetail,
   TimelineBackend,
   TimelineItem,
   TimelineLiveItem,
@@ -466,6 +467,26 @@ export function createTimelineBackend(
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
+    },
+
+    async prDetails(): Promise<Map<string, PrDetail>> {
+      const out = new Map<string, PrDetail>();
+      const workspaces = await listWorkspaces().catch(() => []);
+      const logs = await Promise.all(workspaces.map((ws) => readTimeline(ws.id).catch(() => [])));
+      // A log reads newest first: the newest title wins, and line counts come from
+      // the newest row that has them (the merge, once the sync measured it).
+      for (const events of logs) {
+        for (const ev of events) {
+          const pr = ev.pr;
+          if (!pr?.title) continue;
+          const key = `${pr.repo}#${String(pr.number)}`;
+          const d = out.get(key) ?? { title: pr.title };
+          if (d.additions === undefined && pr.additions !== undefined) d.additions = pr.additions;
+          if (d.deletions === undefined && pr.deletions !== undefined) d.deletions = pr.deletions;
+          out.set(key, d);
+        }
+      }
+      return out;
     },
 
     async getTimeline(wsId: string, q: TimelineQuery = {}): Promise<TimelineResponse | null> {

@@ -62,6 +62,8 @@ export interface UsageViewProps {
   actions?: ReactNode;
   /** Replaces the footer line. */
   footer?: ReactNode;
+  /** False when the page draws its own title above (the hub): the head keeps only the controls. */
+  title?: boolean;
   className?: string;
 }
 
@@ -180,13 +182,14 @@ export function UsageView({
   onRangeChange,
   actions,
   footer,
+  title = true,
   className,
 }: UsageViewProps): ReactElement {
   const v = useMemo(() => toView(data), [data]);
   return (
-    <div className={`usage${className ? ` ${className}` : ''}`}>
+    <div className={`usage${title ? '' : ' untitled'}${className ? ` ${className}` : ''}`}>
       <TipProvider>
-        <Header v={v} onRangeChange={onRangeChange} actions={actions} />
+        <Header v={v} onRangeChange={onRangeChange} actions={actions} title={title} />
         <Hero v={v} />
         <Kpis v={v} />
         <Parallel v={v} />
@@ -211,23 +214,28 @@ function Header({
   v,
   onRangeChange,
   actions,
+  title,
 }: {
   v: View;
   onRangeChange?: (id: RangeId) => void;
   actions?: ReactNode;
-}): ReactElement {
+  title: boolean;
+}): ReactElement | null {
+  if (!title && !onRangeChange && !actions) return null;
   return (
     <div className="head">
-      <div>
-        <h1>
-          Usage <em>and output</em>
-        </h1>
-        <p>
-          {v.share
-            ? `What ${v.name ? `${v.name}'s` : 'these'} agents did side by side, what they shipped, and the hours it took.`
-            : 'What your agents did side by side, what they shipped, and the hours and tokens it used.'}
-        </p>
-      </div>
+      {title && (
+        <div>
+          <h1>
+            Usage <em>and output</em>
+          </h1>
+          <p>
+            {v.share
+              ? `What ${v.name ? `${v.name}'s` : 'these'} agents did side by side, what they shipped, and the hours it took.`
+              : 'What your agents did side by side, what they shipped, and the hours and tokens it used.'}
+          </p>
+        </div>
+      )}
       {(onRangeChange || actions) && (
         <div className="controls">
           {onRangeChange && (
@@ -826,17 +834,21 @@ const WALL_LABEL: Record<WallMetric, string> = {
   tokens: 'tokens',
 };
 
+/** The activity grid shows a sprint, not the whole year the wall data covers. */
+const SPRINT_DAYS = 30;
+
 function Activity({ v }: { v: View }): ReactElement {
   const [metric, setMetric] = useState<WallMetric>('all');
-  const total = v.wall.reduce((a, d) => a + d[metric], 0);
+  const days = v.wall.slice(-SPRINT_DAYS);
+  const total = days.reduce((a, d) => a + d[metric], 0);
   const title =
     metric === 'peak'
       ? `Up to ${maxOf(
-          v.wall.map((d) => d.peak),
+          days.map((d) => d.peak),
           0,
-        )} boxes at once, ${v.wall.filter((d) => d.peak >= 3).length} days with 3 or more`
-      : `${metric === 'tokens' ? fmt(total) : nf(total)} ${WALL_LABEL[metric]} in the last year`;
-  const cells: WallCell[] = v.wall.map((d) => ({
+        )} boxes at once, ${days.filter((d) => d.peak >= 3).length} days with 3 or more`
+      : `${metric === 'tokens' ? fmt(total) : nf(total)} ${WALL_LABEL[metric]} in the last ${days.length} days`;
+  const cells: WallCell[] = days.map((d) => ({
     date: d.date,
     value: d[metric],
     detail:
@@ -860,7 +872,7 @@ function Activity({ v }: { v: View }): ReactElement {
     <>
       <SectionTitle
         title="Activity"
-        sub="One square per day for the last year. Darker means more work."
+        sub={`The last ${SPRINT_DAYS} days, one square per day. Darker means more work.`}
       />
       <div className="card wall-card">
         <div style={{ minWidth: 0 }}>
@@ -1073,14 +1085,20 @@ function Code({ v }: { v: View }): ReactElement {
             <div className="card-h">
               <div>
                 <h2>Recently merged</h2>
-                <div className="sub">The last pull requests your agents landed</div>
-              </div>
-              {v.feedTotal > 0 && (
-                <div className="tools">
-                  <span className="btn">All {nf(v.feedTotal)}</span>
+                <div className="sub">
+                  {v.feed.length > 0 && v.feedTotal > v.feed.length
+                    ? `The last ${v.feed.length} of ${nf(v.feedTotal)} pull requests your agents landed`
+                    : 'The last pull requests your agents landed'}
                 </div>
-              )}
+              </div>
             </div>
+            {v.feed.length === 0 && (
+              <div className="feed-empty">
+                {v.feedTotal > 0
+                  ? `${nf(v.feedTotal)} merged ${rangeNoun(v.range.id)}, none with a pull request this hub can name.`
+                  : `Nothing merged ${rangeNoun(v.range.id)}.`}
+              </div>
+            )}
             <div className="feed">
               {v.feed.map((f, fi) => {
                 const tot = f.additions + f.deletions || 1;

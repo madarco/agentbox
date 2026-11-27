@@ -1,17 +1,20 @@
 'use client';
 
-// The Usage page's Share (usage dashboard Phase 6): a preview of the exact
-// `UsageShare` the hub will post (rendered by the same `UsageView`, public
-// variant), an optional name to show, then the public URL; below, the shares this
-// hub made, each with Delete. PURE REST CLIENT: the hub posts to and deletes on
-// agent-box.sh, the browser only calls /api/v1/usage/share.
+// The Usage page's Share (usage dashboard Phase 6): the link the page will get, a
+// preview of the exact `UsageShare` the hub will post (as the page, rendered by the
+// same `UsageView`, public variant, or as its JSON), an optional name to show; below,
+// the shares this hub made, each with Delete. The object previewed is the object
+// posted: Share sends it back as `share` and the hub only checks it against the
+// schema. PURE REST CLIENT: the hub posts to and deletes on agent-box.sh, the browser
+// only calls /api/v1/usage/share.
 
 import { SHARE_NAME_RE, type RangeId, type UsageShare } from '@agentbox/usage-view';
 import { UsageView } from '@agentbox/usage-view/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Tabs } from '@/components/ui/tabs';
 import { Icons } from '@/components/icons';
 import { localDay, usageShareBody } from '@/lib/usage-page';
 
@@ -59,6 +62,14 @@ const host = (url: string): string => {
   }
 };
 
+const originOf = (url: string): string => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+};
+
 const day = (iso: string): string =>
   new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -83,6 +94,7 @@ export function ShareDialog({
   const [armed, setArmed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState<'page' | 'json'>('page');
   const today = useRef(localDay()).current;
 
   const refresh = useCallback(async (): Promise<Settings> => {
@@ -114,19 +126,27 @@ export function ShareDialog({
   }, [range, tz, subscription, today, refresh]);
 
   const valid = name === '' || SHARE_NAME_RE.test(name);
-  const shown: UsageShare | null = preview
-    ? name && valid
-      ? { ...preview.share, name }
-      : preview.share
-    : null;
+  // The one object the page preview, the JSON tab and the POST all use.
+  const shown: UsageShare | null = useMemo(
+    () => (preview ? (name && valid ? { ...preview.share, name } : preview.share) : null),
+    [preview, name, valid],
+  );
+  const json = useMemo(() => (shown ? JSON.stringify(shown, null, 2) : ''), [shown]);
+  const bytes = useMemo(
+    () => (shown ? new TextEncoder().encode(JSON.stringify(shown)).length : 0),
+    [shown],
+  );
 
   const submit = useCallback(async () => {
-    if (!valid || posting) return;
+    if (!valid || posting || !shown) return;
     setPosting(true);
     setError(null);
     try {
       setPosted(
-        await api<Posted>('POST', usageShareBody(range, today, tz, subscription, name, false)),
+        await api<Posted>('POST', {
+          ...usageShareBody(range, today, tz, subscription, '', false),
+          share: shown,
+        }),
       );
       await refresh().catch(() => undefined);
     } catch (e) {
@@ -134,7 +154,7 @@ export function ShareDialog({
     } finally {
       setPosting(false);
     }
-  }, [valid, posting, range, today, tz, subscription, name, refresh]);
+  }, [valid, posting, shown, range, today, tz, subscription, refresh]);
 
   const remove = async (id: string): Promise<void> => {
     if (deleting) return;
@@ -167,55 +187,88 @@ export function ShareDialog({
     }
   };
 
-  const site = host(preview?.endpoint ?? settings?.endpoint ?? 'https://agent-box.sh');
+  const endpoint = preview?.endpoint ?? settings?.endpoint ?? 'https://agent-box.sh/api/share';
+  const site = host(endpoint);
+  const origin = originOf(endpoint);
   const past = settings?.shares ?? [];
 
   return (
     <Dialog onClose={onClose} className="max-w-[min(1240px,calc(100vw-48px))]">
       <div className="border-b border-border/70 px-5 pb-4 pt-5 pr-14">
-        <div className="text-base font-semibold leading-tight tracking-tight">
-          {posted ? 'Shared' : `Share on ${site}`}
-        </div>
+        <div className="text-base font-semibold leading-tight tracking-tight">Share this page</div>
         <p className="mt-1 text-[13px] leading-snug text-muted-foreground">
           {posted
             ? 'Anyone with the link can see this page. It does not change when your usage does; delete it below to take it down.'
-            : 'Only the numbers below leave this hub, with the name you type if any: hours, counts, dates, and agent and provider names. No box, project, branch, pull request or session name, and no code or transcript. The page gets a random link.'}
+            : 'Show your work to others. The page is public, but it stores no personal information such as repository, box or session names: only the numbers below, dates, agent and provider names, your time zone, and the name you type, if any.'}
         </p>
       </div>
 
-      {posted ? (
-        <div className="px-5 py-5">
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-2 border-b border-border/70 px-5 py-3 sm:flex-row sm:items-center">
+        <span className="w-10 shrink-0 text-[13px] font-medium">Link</span>
+        {posted ? (
+          <>
             <a
               href={posted.url}
               target="_blank"
               rel="noreferrer"
-              className="min-w-0 flex-1 truncate rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm text-foreground hover:underline"
+              className="min-w-0 flex-1 truncate rounded-lg border border-border bg-background px-3 py-1.5 font-mono text-[13px] text-foreground hover:underline"
             >
               {posted.url}
             </a>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => void copy()}>
+              <Button type="button" variant="outline" size="sm" onClick={() => void copy()}>
                 {copied ? <Icons.check /> : <Icons.copy />}
                 {copied ? 'Copied' : 'Copy link'}
               </Button>
-              <Button href={posted.url} target="_blank" rel="noreferrer">
+              <Button href={posted.url} target="_blank" rel="noreferrer" size="sm">
                 <Icons.ext />
                 Open
               </Button>
             </div>
-          </div>
-        </div>
-      ) : (
+          </>
+        ) : (
+          <span
+            className="min-w-0 flex-1 truncate rounded-lg border border-dashed border-border px-3 py-1.5 font-mono text-[13px] text-muted-foreground"
+            title="The site picks the random id when the page is published"
+          >
+            {origin}/s/<span className="italic">random-id</span>
+            <span className="ml-2 font-sans text-xs">(made when you share)</span>
+          </span>
+        )}
+      </div>
+
+      {!posted && (
         <>
-          <div className="max-h-[min(52vh,700px)] overflow-y-auto border-b border-border/70 bg-background">
+          <div className="flex items-center justify-between gap-3 px-5 pb-2 pt-3">
+            <Tabs
+              label="Preview"
+              items={[
+                { id: 'page', label: 'Page' },
+                { id: 'json', label: 'JSON' },
+              ]}
+              value={tab}
+              onChange={setTab}
+            />
+            {shown && (
+              <span className="truncate text-xs text-muted-foreground">
+                {(bytes / 1024).toFixed(1)} KB sent to {site}
+              </span>
+            )}
+          </div>
+          <div className="max-h-[min(52vh,700px)] overflow-y-auto border-y border-border/70 bg-background">
             {shown ? (
-              <div className="pointer-events-none select-none" aria-label="Preview of the share">
-                <UsageView
-                  data={shown}
-                  footer={`Preview · ${(preview!.bytes / 1024).toFixed(1)} KB sent to ${site}`}
-                />
-              </div>
+              tab === 'page' ? (
+                <div className="pointer-events-none select-none" aria-label="Preview of the share">
+                  <UsageView data={shown} footer="Preview" />
+                </div>
+              ) : (
+                <pre
+                  aria-label="The JSON that will be sent"
+                  className="m-0 overflow-x-auto whitespace-pre p-4 font-mono text-xs leading-relaxed text-foreground"
+                >
+                  {json}
+                </pre>
+              )
             ) : (
               <div
                 className="grid h-48 place-items-center text-sm text-muted-foreground"
@@ -248,7 +301,7 @@ export function ShareDialog({
                 aria-describedby="share-name-hint"
                 className="h-9 min-w-0 flex-1 font-mono"
               />
-              <Button type="submit" disabled={!valid || !preview || posting}>
+              <Button type="submit" disabled={!valid || !shown || posting}>
                 {posting ? 'Sharing…' : 'Share'}
               </Button>
             </div>

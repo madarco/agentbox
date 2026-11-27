@@ -7,7 +7,13 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { SHARE_NAME_RE, toShare, type UsageShare, type UsageStats } from '@agentbox/usage-view';
+import {
+  SHARE_NAME_RE,
+  parseShareBody,
+  toShare,
+  type UsageShare,
+  type UsageStats,
+} from '@agentbox/usage-view';
 
 export const DEFAULT_SHARE_ENDPOINT = 'https://agent-box.sh/api/share';
 const POST_TIMEOUT_MS = 20_000;
@@ -286,14 +292,43 @@ function failedStatus(res: Response, site: string, verb: 'share' | 'delete'): ne
   }
 }
 
-/** Builds the share, posts it to `share.endpoint`, keeps the share's delete secret. */
+/**
+ * A share the caller already holds (the dialog's preview, name included), checked
+ * as the site checks it: the share schema admits only numbers, dates, enum ids and
+ * the display name, so nothing else can ride along.
+ */
+function previewedShare(raw: unknown): { share: UsageShare; text: string } {
+  let text: string;
+  try {
+    text = JSON.stringify(raw);
+  } catch {
+    throw new ShareError('invalid_request', 'share must be JSON');
+  }
+  try {
+    // The strict schema refuses an unknown key, so the text holds nothing the parse dropped.
+    return { share: parseShareBody(text), text };
+  } catch (e) {
+    throw new ShareError(
+      'invalid_request',
+      `share is not a valid usage share: ${e instanceof Error ? e.message.slice(0, 300) : String(e)}`,
+    );
+  }
+}
+
+/**
+ * Posts the share to `share.endpoint` and keeps its delete secret. With `previewed`
+ * (the share the dialog showed, name included) that exact share is sent, so the
+ * JSON the user inspected is the JSON posted; without it the hub builds one.
+ */
 export async function postUsageShare(
   deps: UsageShareDeps,
   nameRaw: unknown,
+  previewed?: unknown,
 ): Promise<UsageSharePosted> {
-  const name = checkName(nameRaw);
+  const given = previewed === undefined ? undefined : previewedShare(previewed);
+  const name = checkName(given ? given.share.name : nameRaw);
   const endpoint = parseShareEndpoint(await deps.endpoint());
-  const share = toShare(await deps.stats(), name);
+  const payload = given ? given.text : JSON.stringify(toShare(await deps.stats(), name));
   // A store that can't be read can't keep the delete secret: fail before publishing.
   await deps.store.list();
   const doFetch = deps.fetch ?? fetch;
@@ -304,7 +339,7 @@ export async function postUsageShare(
     res = await doFetch(endpoint.href, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(share),
+      body: payload,
       redirect: 'error',
       signal: AbortSignal.timeout(POST_TIMEOUT_MS),
     });

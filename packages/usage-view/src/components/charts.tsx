@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo } from 'react';
+import { useId, useMemo } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { maxOf, minOf, overlapProfile } from '../aggregate.js';
 import type { AgentId, ProviderId } from '../schema.js';
@@ -652,6 +652,10 @@ export function wallLevels(values: readonly number[]): (v: number) => number {
   return (v: number) => (v <= 0 ? 0 : 1 + cuts.filter((c) => v > c).length);
 }
 
+/**
+ * The last days as a calendar: one row per week (Monday first), one square per day,
+ * sized to fill the card so a sprint reads at a glance.
+ */
 export function Wall({
   cells,
   firstDate,
@@ -659,23 +663,19 @@ export function Wall({
   cells: readonly WallCell[];
   firstDate: string | null;
 }): ReactElement {
-  const [ref, avail] = useWidth<HTMLDivElement>(900);
+  const [ref, avail] = useWidth<HTMLDivElement>(640);
   const tip = useTip();
-  const gap = 3;
-  const L = 30;
+  const gap = 4;
+  const L = 44;
   const T = 18;
-  const lead = cells.length ? dow(cells[0]!.date) : 0;
+  const lead = cells.length ? (dow(cells[0]!.date) + 6) % 7 : 0;
   const weeks = Math.max(1, Math.ceil((cells.length + lead) / 7));
-  const cell = Math.max(9, Math.min(16, Math.floor((avail - L) / weeks) - gap));
-  const W = L + weeks * (cell + gap);
-  const H = T + 7 * (cell + gap);
+  const colW = Math.max(26, Math.min(88, Math.floor((avail - L) / 7)));
+  const cw = colW - gap;
+  const ch = Math.max(22, Math.min(40, cw));
+  const W = L + 7 * colW;
+  const H = T + weeks * (ch + gap);
   const level = useMemo(() => wallLevels(cells.map((c) => c.value)), [cells]);
-  // On a narrow screen the wall scrolls sideways: start at today, not a year ago.
-  useEffect(() => {
-    const scroller = ref.current?.parentElement;
-    if (scroller) scroller.scrollLeft = scroller.scrollWidth;
-  }, [ref, W]);
-  let lastMonth = -1;
   return (
     <div ref={ref} className="wall-measure">
       <svg
@@ -686,38 +686,35 @@ export function Wall({
         role="img"
         aria-label="Activity per day"
       >
-        {['Mon', 'Wed', 'Fri'].map((name, i) => (
-          <text key={name} x={0} y={T + (i * 2 + 1) * (cell + gap) + cell / 2 + 4}>
-            {name}
+        {[1, 2, 3, 4, 5, 6, 0].map((d, col) => (
+          <text key={d} x={L + col * colW} y={11}>
+            {DOW[d]}
           </text>
         ))}
         {cells.map((c, idx) => {
           const i = idx + lead;
-          const w = Math.floor(i / 7);
-          const dw = i % 7;
-          const x = L + w * (cell + gap);
-          const yy = T + dw * (cell + gap);
-          let month: string | null = null;
-          if ((dw === 0 || idx === 0) && monthIdx(c.date) !== lastMonth && dayNum(c.date) <= 7) {
-            lastMonth = monthIdx(c.date);
-            month = MONTHS[lastMonth]!;
-          }
+          const row = Math.floor(i / 7);
+          const col = i % 7;
+          const x = L + col * colW;
+          const yy = T + row * (ch + gap);
+          const lv = level(c.value);
           const isToday = idx === cells.length - 1;
+          const weekLabel = col === 0 || idx === 0;
           return (
             <g key={c.date}>
-              {month && (
-                <text x={x} y={11}>
-                  {month}
+              {weekLabel && (
+                <text x={0} y={yy + ch / 2 + 4}>
+                  {dayNum(c.date)} {MONTHS[monthIdx(c.date)]}
                 </text>
               )}
               <rect
                 x={x}
                 y={yy}
-                width={cell}
-                height={cell}
-                rx={3}
+                width={cw}
+                height={ch}
+                rx={4}
                 className="cell u-pop"
-                style={{ fill: WALL_RAMP[level(c.value)], animationDelay: `${w * 14 + dw * 6}ms` }}
+                style={{ fill: WALL_RAMP[lv], animationDelay: `${row * 40 + col * 12}ms` }}
                 onMouseMove={(ev) =>
                   tip.show(
                     <>
@@ -735,13 +732,18 @@ export function Wall({
                 }
                 onMouseLeave={tip.hide}
               />
+              {cw >= 30 && (
+                <text className={`wall-day l${lv}`} x={x + 6} y={yy + 13}>
+                  {dayNum(c.date)}
+                </text>
+              )}
               {isToday && (
                 <rect
                   x={x - 1.5}
                   y={yy - 1.5}
-                  width={cell + 3}
-                  height={cell + 3}
-                  rx={4}
+                  width={cw + 3}
+                  height={ch + 3}
+                  rx={5}
                   fill="none"
                   style={{ stroke: 'var(--ink)' }}
                   strokeWidth={1.5}
