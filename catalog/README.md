@@ -104,10 +104,10 @@ and titles.
   The scratch HOME's hub token names the scenario, and its PC skills are that
   scenario's files.
 - **Tray:** `pnpm shoot:tray tray/menu.simple.png --restart --scenario simple`
-  launches the app with `--fixtures-scenario simple`.
-  Its `simple` entries are marked "Not taken yet" until the tray's fixture
-  mode has the scenarios: `retake` skips them, and the gallery shows a
-  placeholder. Once the tray has them, drop the `check` and retake on the Mac.
+  launches the app with `--fixtures-scenario simple`. `--settings skills`
+  opens the Settings window on that page at launch and captures it.
+  A picture whose `check` starts "Not taken yet" is a placeholder: `retake`
+  skips it until the check is dropped.
 - **Gallery:** the scenario menu at the top filters the pictures; a screen's
   detail lists all of them, each with its badge.
 - **Retake one scenario:** `pnpm screens retake hub/ --scenario simple`.

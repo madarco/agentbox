@@ -32,6 +32,8 @@
  *   --alert           the last press opens an alert: capture it, then quit the
  *                     fixture app (the alert is modal; a relaunch resets the demo)
  *   --manager <ws>    capture the Manager window on that fixture workspace instead of the menu
+ *   --settings <page> capture the Settings window on that page (general, subscriptions, skills,
+ *                     providers) instead of the menu; the app opens it at launch (--open-settings)
  *   --idle <s>        seconds of no input to wait for first (default 3)
  *   --restart         quit and relaunch the fixture app first (resets its demo state)
  *   --scenario <name> the tray's fixture data set, passed to the app as
@@ -59,6 +61,7 @@ for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--press") opts.press.push(args[++i]);
   else if (a === "--manager") opts.manager = args[++i];
+  else if (a === "--settings") opts.settings = args[++i];
   else if (a === "--idle") opts.idle = Number(args[++i]);
   else if (a === "--scenario") opts.scenario = args[++i];
   else if (["--alert", "--restart"].includes(a)) opts[a.slice(2)] = true;
@@ -148,18 +151,20 @@ const out = join(root, "shots", file);
 mkdirSync(dirname(out), { recursive: true });
 
 const running = existsSync(STAMP) ? readFileSync(STAMP, "utf8") : "full";
-if (opts.restart || opts.manager || (pidOf() && running !== (opts.scenario ?? "full"))) await quit();
-let pid = pidOf() ?? (await launch(opts.manager ? ["--open-manager", opts.manager] : []));
+/* A window the app opens itself at launch, captured instead of the menu. */
+const windowArgs = opts.manager ? ["--open-manager", opts.manager] : opts.settings ? ["--open-settings", opts.settings] : null;
+if (opts.restart || windowArgs || (pidOf() && running !== (opts.scenario ?? "full"))) await quit();
+let pid = pidOf() ?? (await launch(windowArgs ?? []));
 
 try {
-  if (opts.manager) {
+  if (windowArgs) {
     let win;
     for (let i = 0; i < 40 && !win; i++) {
       await sleep(250);
       win = windows(pid).find((w) => w.layer === 0 && w.w > 400 && w.h > 300);
     }
-    if (!win) throw new Error("the Manager window did not open");
-    await sleep(1500); // the timeline and the terminal paint after the window appears
+    if (!win) throw new Error(`the ${opts.manager ? "Manager" : "Settings"} window did not open`);
+    await sleep(1500); // the timeline, the terminal and settings rows paint after the window appears
     capture(win.id, out);
   } else {
     await waitIdle();
