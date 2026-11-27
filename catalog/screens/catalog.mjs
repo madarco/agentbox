@@ -364,6 +364,14 @@ export const SCREENS = [
     ],
   }),
   tray({
+    id: "tray/settings-skills",
+    title: "Tray: Settings › Skills",
+    what: "This Mac's skills next to the Hub library: updates waiting for approval, a drift summary with Sync Global, and per skill its sync state (only on this Mac, on both, Mac or Hub newer, skipped) with Upload, Update, Skip and Sync again.",
+    from: "tray/skill-updates",
+    via: "Open Skills Settings… under the Environment row",
+    files: [{ shoot: "pnpm shoot:tray tray/settings-skills.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings" }],
+  }),
+  tray({
     id: "tray/manager",
     title: "Manager window",
     what: "Tasks grouped by box with progress, the latest activity (a PR ready to merge with Approve), and the manager session pane.",
