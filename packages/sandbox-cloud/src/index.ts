@@ -205,7 +205,7 @@ export {
   portlessDoctorRow,
   portlessDoctorCheck,
   portlessRestartHint,
-  portlessUnroutedRoutes,
+  portlessBrokenRoutes,
   routedPortlessUrl,
   type PortlessRouteState,
   portlessUnalias,

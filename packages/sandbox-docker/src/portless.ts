@@ -2,11 +2,12 @@ import { accessSync, constants as fsConstants, existsSync, realpathSync } from '
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { connect as netConnect } from 'node:net';
 import { homedir, userInfo } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { execa } from 'execa';
 import { loadEffectiveConfig } from '@agentbox/config';
-import type { CheckResult } from '@agentbox/sandbox-core';
+import { readState, type CheckResult } from '@agentbox/sandbox-core';
 
 /**
  * Portless (https://portless.sh) — a host reverse-proxy that maps
@@ -168,7 +169,7 @@ async function probePortless(): Promise<PortlessState> {
   let version: string | undefined;
   let cliOk = false;
   try {
-    const ver = await execa(await portlessCmd(), SUB_VERSION, { reject: false });
+    const ver = await portlessExec(SUB_VERSION);
     if (ver.exitCode === 0) {
       cliOk = true;
       version = (ver.stdout ?? '').trim() || undefined;
@@ -352,6 +353,37 @@ export async function rememberPortlessBin(): Promise<void> {
   }
 }
 
+/**
+ * The child env for a Portless spawn: the running Node's bin dir first on PATH.
+ * A remembered `portless` is usually npm's `…/portless/dist/cli.js`, whose
+ * `#!/usr/bin/env node` shebang needs `node` on PATH — and the remembered path
+ * is used exactly when this process's PATH (launchd, the tray) has no nvm node.
+ */
+function portlessChildEnv(): NodeJS.ProcessEnv {
+  const nodeDir = dirname(process.execPath);
+  const path = process.env['PATH'] ?? '';
+  return { ...process.env, PATH: path ? `${nodeDir}${delimiter}${path}` : nodeDir };
+}
+
+/** Run the Portless CLI with `args` (never rejects on a non-zero exit). Throws only if it cannot spawn. */
+export async function portlessExec(
+  args: readonly string[],
+): Promise<{ exitCode: number | undefined; stdout: string; stderr: string }> {
+  const r = await execa(await portlessCmd(), [...args], {
+    reject: false,
+    env: portlessChildEnv(),
+  });
+  return { exitCode: r.exitCode, stdout: String(r.stdout ?? ''), stderr: String(r.stderr ?? '') };
+}
+
+/**
+ * The same PATH fix for the elevated `/bin/sh` the macOS password dialog runs
+ * (`/usr/bin:/bin:/usr/sbin:/sbin`), as an env-assignment prefix.
+ */
+function nodePathEnvPrefix(): string {
+  return `PATH=${shellSingleQuote(dirname(process.execPath))}:"$PATH" `;
+}
+
 /** Tests only: forget the resolved command. */
 export function resetPortlessCmdForTests(): void {
   resolvedCmd = null;
@@ -439,7 +471,7 @@ async function detectLiveMode(cliOk: boolean): Promise<PortlessMode | null> {
  */
 export async function portlessAlias(name: string, port: number): Promise<boolean> {
   try {
-    const r = await execa(await portlessCmd(), [SUB_ALIAS, name, String(port)], { reject: false });
+    const r = await portlessExec([SUB_ALIAS, name, String(port)]);
     return r.exitCode === 0;
   } catch {
     return false;
@@ -449,9 +481,7 @@ export async function portlessAlias(name: string, port: number): Promise<boolean
 /** Remove a static route registered by `portlessAlias`. */
 export async function portlessUnalias(name: string): Promise<boolean> {
   try {
-    const r = await execa(await portlessCmd(), [SUB_ALIAS, SUB_ALIAS_REMOVE, name], {
-      reject: false,
-    });
+    const r = await portlessExec([SUB_ALIAS, SUB_ALIAS_REMOVE, name]);
     return r.exitCode === 0;
   } catch {
     return false;
@@ -481,7 +511,7 @@ function composePortlessUrl(name: string, mode: { port: number; tls: boolean }):
 export async function portlessGetUrl(name: string): Promise<string> {
   const expectedHost = `${name}.localhost`;
   try {
-    const r = await execa(await portlessCmd(), [SUB_GET, name], { reject: false });
+    const r = await portlessExec([SUB_GET, name]);
     const out = (r.stdout ?? '').trim();
     if (r.exitCode === 0 && /^https?:\/\//.test(out)) {
       const host = new URL(out).hostname;
@@ -496,8 +526,23 @@ export async function portlessGetUrl(name: string): Promise<string> {
 
 // --- routing ---------------------------------------------------------------
 
-/** Whether the live proxy routes a hostname: `unknown` = could not tell (timeout, error). */
-export type PortlessRouteState = 'routed' | 'not-routed' | 'unknown';
+/**
+ * What the live proxy answers for a hostname. `not-routed`: its own "no app
+ * registered" 404. `bad-gateway`: its own 502 — it has a route but the target
+ * port does not answer (the app is down, or the route names a stale port the
+ * proxy never reloaded). `unknown`: could not tell (timeout, error).
+ */
+export type PortlessRouteState = 'routed' | 'not-routed' | 'bad-gateway' | 'unknown';
+
+/** The 0.15 HTML 502 page's texts (it does not name the host, so these are exact). */
+const BAD_GATEWAY_TEXTS = [
+  'The target app is not responding. It may have crashed.',
+  'The target app may not be running.',
+];
+
+function notFoundMarker(hostname: string): string {
+  return `No app registered for <strong>${hostname}</strong>`;
+}
 
 /**
  * Whether a response is Portless's own "no app registered for <host>" answer, as
@@ -514,10 +559,31 @@ export function isPortlessNotFound(
   hostname: string,
 ): boolean {
   if (status !== 404 || headers['x-portless'] === undefined) return false;
-  if (body.includes(`No app registered for <strong>${hostname}</strong>`)) return true;
+  if (body.includes(notFoundMarker(hostname))) return true;
+  return jsonErrorFor(body, 'not_found', hostname);
+}
+
+/**
+ * Whether a response is Portless's own 502 for `hostname` (it could not reach
+ * the route's target), as opposed to a 502 the app sent. 0.18+:
+ * `{"error":"bad_gateway","upstream":"<host>",…}`; 0.15: an HTML page with one
+ * of `BAD_GATEWAY_TEXTS`. Pure.
+ */
+export function isPortlessBadGateway(
+  status: number,
+  headers: Record<string, string | string[] | undefined>,
+  body: string,
+  hostname: string,
+): boolean {
+  if (status !== 502 || headers['x-portless'] === undefined) return false;
+  if (BAD_GATEWAY_TEXTS.some((t) => body.includes(t))) return true;
+  return jsonErrorFor(body, 'bad_gateway', hostname);
+}
+
+function jsonErrorFor(body: string, error: string, hostname: string): boolean {
   try {
     const json = JSON.parse(body) as { error?: unknown; upstream?: unknown };
-    return json.error === 'not_found' && json.upstream === hostname;
+    return json.error === error && json.upstream === hostname;
   } catch {
     return false;
   }
@@ -546,31 +612,38 @@ async function portlessRouteStateOn(
       timeout: timeoutMs,
     };
     const onRes = (res: IncomingMessage): void => {
-      // Only a 404 needs its body read; anything else means a route answered.
-      if (res.statusCode !== 404) {
+      const status = res.statusCode ?? 0;
+      // Only Portless's own error pages need their body read; any other answer
+      // carrying its header came through a working route.
+      if (status !== 404 && status !== 502) {
         res.destroy();
         resolve(res.headers['x-portless'] !== undefined ? 'routed' : 'unknown');
         return;
       }
-      // Portless 0.15's page inlines ~150KB of font CSS before the text that
+      // Portless 0.15's pages inline ~150KB of font CSS before the text that
       // matters, so match while streaming instead of keeping a prefix: the JSON
-      // shape is small (kept whole up to 4KB), the HTML marker is searched in a
-      // window that spans chunk boundaries.
-      const marker = `No app registered for <strong>${hostname}</strong>`;
+      // shape is small (kept whole up to 4KB), the HTML markers are searched in
+      // a window that spans chunk boundaries.
+      const markers = status === 404 ? [notFoundMarker(hostname)] : BAD_GATEWAY_TEXTS;
+      const keep = Math.max(...markers.map((m) => m.length));
       let head = '';
       let tail = '';
-      let sawMarker = false;
+      let found: string | undefined;
       res.setEncoding('utf8');
       res.on('data', (chunk: string) => {
         if (head.length < 4096) head += chunk.slice(0, 4096 - head.length);
-        if (sawMarker) return;
+        if (found !== undefined) return;
         const window = tail + chunk;
-        if (window.includes(marker)) sawMarker = true;
-        tail = window.slice(-marker.length);
+        found = markers.find((m) => window.includes(m));
+        tail = window.slice(-keep);
       });
       res.on('end', () => {
-        const body = sawMarker ? marker : head;
-        resolve(isPortlessNotFound(404, res.headers, body, hostname) ? 'not-routed' : 'routed');
+        const body = found ?? head;
+        if (status === 404) {
+          resolve(isPortlessNotFound(404, res.headers, body, hostname) ? 'not-routed' : 'routed');
+        } else {
+          resolve(isPortlessBadGateway(502, res.headers, body, hostname) ? 'bad-gateway' : 'routed');
+        }
       });
       res.on('error', () => {
         resolve('unknown');
@@ -593,10 +666,32 @@ async function portlessRouteStateOn(
 let routeProbe: (hostname: string, mode: PortlessMode) => Promise<PortlessRouteState> = (h, m) =>
   portlessRouteStateOn(h, m);
 
+/** Whether something accepts a TCP connection on 127.0.0.1:<port>. Never throws. */
+async function loopbackPortAnswers(port: number, timeoutMs = 800): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = netConnect({ host: '127.0.0.1', port });
+    const done = (ok: boolean): void => {
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.setTimeout(timeoutMs, () => {
+      done(false);
+    });
+    sock.once('connect', () => {
+      done(true);
+    });
+    sock.once('error', () => {
+      done(false);
+    });
+  });
+}
+
+let directProbe: (port: number) => Promise<boolean> = (p) => loopbackPortAnswers(p);
+
 /**
  * "Routed" answers, reused for the probe TTL so a client resolving the same URL
  * repeatedly (the hub, the tray) asks the proxy once. Only positives are kept:
- * a not-routed answer must be re-checked after a re-alias.
+ * a broken answer must be re-checked after a re-alias.
  */
 const routedAt = new Map<string, number>();
 
@@ -620,6 +715,29 @@ export function setPortlessRouteProbeForTests(
 ): void {
   routeProbe = fn ?? ((h, m) => portlessRouteStateOn(h, m));
   routedAt.clear();
+}
+
+/** Tests only: replace the direct loopback-port check (null restores the real one). */
+export function setPortlessDirectProbeForTests(fn: ((port: number) => Promise<boolean>) | null): void {
+  directProbe = fn ?? ((p) => loopbackPortAnswers(p));
+}
+
+/**
+ * Why a route is broken, or null when the alias is fine to hand out. A 502 is
+ * broken only when the target port answers directly: then the proxy is sending
+ * the alias to a port it never reloaded (a stopped/started box, a fresh SSH
+ * forward). A 502 whose port is down too is just an app that is down — the
+ * alias is as good a URL as loopback for that.
+ */
+async function routeProblem(
+  state: PortlessRouteState,
+  port: number | undefined,
+): Promise<'not-routed' | 'stale-port' | null> {
+  if (state === 'not-routed') return 'not-routed';
+  if (state === 'bad-gateway' && port !== undefined && (await directProbe(port))) {
+    return 'stale-port';
+  }
+  return null;
 }
 
 /**
@@ -647,37 +765,50 @@ export function setPortlessReAliasForTests(
 
 /**
  * The URL to hand out for `alias` when a caller is about to OPEN it: the live
- * URL only when the proxy actually routes `<alias>.localhost`. A proxy that
- * answers is not enough — one that stopped reloading `routes.json` answers every
- * new alias with its 404 page. On a Portless 404 the alias is re-registered once
- * (onto `port`, or by the caller's own `reAlias`) and checked again; still not
- * routed means `undefined` (the caller falls back to loopback) and a warning
+ * URL only when the proxy actually routes `<alias>.localhost` to the right
+ * port. A proxy that answers is not enough — one that stopped reloading
+ * `routes.json` answers every new alias with its 404 page, and an alias whose
+ * port changed since (a restarted box, a fresh SSH forward) with its 502. On
+ * either, the alias is re-registered once onto `port` and checked again; still
+ * broken means `undefined` (the caller falls back to loopback) and a warning
  * naming the restart. An unknown answer (timeout) keeps the alias URL: the
  * proxy answered a moment ago, and this check must not make URLs flaky.
- * Never throws.
+ *
+ * `port` is the loopback port the alias should point at, or a function that
+ * resolves it (a cloud box's SSH forward, minted on demand). Never throws.
  */
 export async function routedPortlessUrl(
   alias: string | undefined,
   mode: PortlessMode | null | undefined,
   opts: {
-    /** The loopback port the alias points at; re-registered there on a 404. */
-    port?: number;
-    /** A re-registration the caller does itself (a cloud box's fresh forward). */
-    reAlias?: () => Promise<boolean>;
+    port?: number | (() => Promise<number | undefined>);
     onWarn?: (msg: string) => void;
   } = {},
 ): Promise<string | undefined> {
   if (alias === undefined || !mode) return undefined;
   const hostname = `${alias}.localhost`;
-  const port = opts.port;
-  const reAlias = opts.reAlias ?? (port !== undefined ? () => reAliasFn(alias, port) : undefined);
+  let resolvedPort: number | undefined;
+  let portResolved = false;
+  const port = async (): Promise<number | undefined> => {
+    if (!portResolved) {
+      portResolved = true;
+      const p = opts.port;
+      resolvedPort = typeof p === 'function' ? await p().catch(() => undefined) : p;
+    }
+    return resolvedPort;
+  };
+  let problem: 'not-routed' | 'stale-port' | null;
   try {
-    if ((await probeRoute(hostname, mode)) !== 'not-routed') {
+    const first = await probeRoute(hostname, mode);
+    problem = first === 'bad-gateway' ? await routeProblem(first, await port()) : await routeProblem(first, undefined);
+    if (problem === null) {
       warnedUnrouted.delete(alias);
       return composePortlessUrl(alias, mode);
     }
-    if (reAlias && (await reAlias().catch(() => false))) {
-      if ((await probeRoute(hostname, mode)) !== 'not-routed') {
+    const target = await port();
+    if (target !== undefined && (await reAliasFn(alias, target).catch(() => false))) {
+      problem = await routeProblem(await probeRoute(hostname, mode), target);
+      if (problem === null) {
         warnedUnrouted.delete(alias);
         return composePortlessUrl(alias, mode);
       }
@@ -692,8 +823,12 @@ export async function routedPortlessUrl(
       ((msg: string) => {
         process.stderr.write(`${msg}\n`);
       });
+    const what =
+      problem === 'stale-port'
+        ? `sends ${hostname} to a port it has not reloaded`
+        : `does not route ${hostname}`;
     warn(
-      `Portless proxy does not route ${hostname} (it answers, but is not reloading its routes) — using the loopback URL. Restart the Portless service: \`${portlessRestartHint()}\`.`,
+      `Portless proxy ${what} (it answers, but is not reloading its routes) — using the loopback URL. Restart the Portless service: \`${portlessRestartHint()}\`.`,
     );
   }
   return undefined;
@@ -701,27 +836,57 @@ export async function routedPortlessUrl(
 
 /**
  * Static aliases (`portless alias`, the kind AgentBox registers) in the live
- * proxy's `routes.json` that the proxy answers with its own 404: a proxy that
- * stopped reloading routes. Only `pid: 0` routes count — Portless never prunes
- * those, while a `portless run` app's route legitimately disappears with its
- * process. Checks at most `limit`; `[]` when it cannot tell. For
- * `agentbox doctor`. Never throws.
+ * proxy's `routes.json` that the proxy does not serve as registered: its own 404,
+ * or its own 502 while the registered port answers directly (it still has an
+ * older port in memory). Either means a proxy that stopped reloading routes.
+ *
+ * Only `pid: 0` routes count — Portless never prunes those, while a
+ * `portless run` app's route legitimately disappears with its process. The
+ * routes probed are the ones most likely added after a watcher died: this
+ * host's box aliases first (from the box records), then the newest — Portless
+ * appends, so the oldest routes are exactly the ones a stuck proxy still knows.
+ * Checks at most `limit`; `[]` when it cannot tell. For `agentbox doctor`.
+ * Never throws.
  */
-export async function portlessUnroutedRoutes(
+export async function portlessBrokenRoutes(
   mode: PortlessMode,
-  opts: { stateDir?: string; limit?: number } = {},
+  opts: { stateDir?: string; limit?: number; boxAliases?: string[] } = {},
 ): Promise<string[]> {
   try {
     const dir = await resolvePortlessHostStateDir(opts.stateDir);
     const raw = JSON.parse(await readFile(join(dir, 'routes.json'), 'utf8')) as unknown;
     if (!Array.isArray(raw)) return [];
-    const hosts = (raw as Array<{ hostname?: unknown; pid?: unknown }>)
-      .filter((r) => r.pid === 0)
-      .map((r) => r.hostname)
-      .filter((h): h is string => typeof h === 'string' && h.length > 0)
-      .slice(0, opts.limit ?? 8);
-    const states = await Promise.all(hosts.map((h) => routeProbe(h, mode).catch(() => 'unknown')));
-    return hosts.filter((_, i) => states[i] === 'not-routed');
+    const routes = (raw as Array<{ hostname?: unknown; port?: unknown; pid?: unknown }>)
+      .filter(
+        (r): r is { hostname: string; port: number; pid: 0 } =>
+          r.pid === 0 && typeof r.hostname === 'string' && typeof r.port === 'number',
+      )
+      .reverse();
+    const boxHosts = new Set(
+      (opts.boxAliases ?? (await recordedBoxAliases())).map((a) => `${a}.localhost`),
+    );
+    const ordered = [
+      ...routes.filter((r) => boxHosts.has(r.hostname)),
+      ...routes.filter((r) => !boxHosts.has(r.hostname)),
+    ].slice(0, opts.limit ?? 8);
+    const problems = await Promise.all(
+      ordered.map(async (r) =>
+        routeProblem(await routeProbe(r.hostname, mode).catch(() => 'unknown' as const), r.port),
+      ),
+    );
+    return ordered.filter((_, i) => problems[i] !== null).map((r) => r.hostname);
+  } catch {
+    return [];
+  }
+}
+
+/** Every Portless alias on this host's box records (web and VNC). Never throws. */
+async function recordedBoxAliases(): Promise<string[]> {
+  try {
+    const state = await readState();
+    return state.boxes.flatMap((b) =>
+      [b.portlessAlias, b.portlessVncAlias].filter((a): a is string => typeof a === 'string'),
+    );
   } catch {
     return [];
   }
@@ -757,7 +922,7 @@ export function portlessServiceHint(): string {
 export function portlessDoctorRow(
   state: PortlessState,
   service?: PortlessServiceState,
-  /** Registered routes the live proxy answers with its own 404 (`portlessUnroutedRoutes`). */
+  /** Registered routes the live proxy does not serve as registered (`portlessBrokenRoutes`). */
   unrouted: string[] = [],
 ): CheckResult {
   if (!state.installed) {
@@ -788,7 +953,7 @@ export function portlessDoctorRow(
     return {
       label: 'portless',
       status: 'warn',
-      detail: `${running} · proxy not reloading routes (404 for ${shown})`,
+      detail: `${running} · proxy not reloading routes (${shown})`,
       hint: `restart the Portless service: \`${portlessRestartHint()}\``,
     };
   }
@@ -832,7 +997,7 @@ export async function portlessDoctorCheck(stateDir?: string): Promise<CheckResul
     const service = state.installed ? await portlessServiceStatus() : undefined;
     const unrouted =
       state.proxyRunning && state.mode
-        ? await portlessUnroutedRoutes(state.mode, { ...(dir ? { stateDir: dir } : {}) })
+        ? await portlessBrokenRoutes(state.mode, { ...(dir ? { stateDir: dir } : {}) })
         : [];
     return portlessDoctorRow(state, service, unrouted);
   })();
@@ -895,9 +1060,7 @@ export async function installPortless(): Promise<boolean> {
  */
 export async function startPortlessProxy(port: number = PORTLESS_PROXY_PORT): Promise<boolean> {
   try {
-    const r = await execa(await portlessCmd(), ['proxy', 'start', '--no-tls', '-p', String(port)], {
-      reject: false,
-    });
+    const r = await portlessExec(['proxy', 'start', '--no-tls', '-p', String(port)]);
     return r.exitCode === 0;
   } catch {
     return false;
@@ -988,7 +1151,7 @@ export async function startPortlessProxyRoot(): Promise<RootProxyStartResult> {
     if (process.platform === 'darwin') {
       // Both commands run in one elevated shell so the user is asked once.
       const q = shellSingleQuote(bin);
-      const who = sudoIdentityEnvPrefix();
+      const who = `${sudoIdentityEnvPrefix()}${nodePathEnvPrefix()}`;
       const shellCmd = `${who}${q} proxy start && ${who}${q} trust`;
       const script =
         `do shell script "${escapeForAppleScript(shellCmd)}" ` +
@@ -1001,9 +1164,9 @@ export async function startPortlessProxyRoot(): Promise<RootProxyStartResult> {
       return 'failed';
     }
     // Non-macOS: let Portless's own sudo prompt reach the terminal.
-    const r = await execa(bin, ['proxy', 'start'], { reject: false, stdio: 'inherit' });
+    const r = await execa(bin, ['proxy', 'start'], { reject: false, stdio: 'inherit', env: portlessChildEnv() });
     if (r.exitCode !== 0) return 'failed';
-    await execa(bin, ['trust'], { reject: false, stdio: 'inherit' });
+    await execa(bin, ['trust'], { reject: false, stdio: 'inherit', env: portlessChildEnv() });
     return 'started';
   } catch {
     return 'failed';
@@ -1022,7 +1185,7 @@ export async function portlessServiceStatus(
   opts: { sinceMs?: number } = {},
 ): Promise<PortlessServiceState> {
   try {
-    const r = await execa(await portlessCmd(), SUB_SERVICE_STATUS, { reject: false });
+    const r = await portlessExec(SUB_SERVICE_STATUS);
     const stdout = r.stdout ?? '';
     const m = /^\s*Installed:\s*(yes|no)\s*$/im.exec(stdout);
     if (m) {
@@ -1091,7 +1254,7 @@ export async function installPortlessServiceDetailed(): Promise<{
         'for p in $(/usr/sbin/lsof -ti tcp:443 -sTCP:LISTEN); do ' +
         '/bin/ps -o command= -p $p | /usr/bin/grep -q portless && /bin/kill $p; done; ' +
         'sleep 1';
-      const who = sudoIdentityEnvPrefix();
+      const who = `${sudoIdentityEnvPrefix()}${nodePathEnvPrefix()}`;
       const shellCmd = `${stopListeners}; ${who}${q} ${SUB_SERVICE_INSTALL.join(' ')} && ${who}${q} trust`;
       const script =
         `do shell script "${escapeForAppleScript(shellCmd)}" ` +
@@ -1102,9 +1265,9 @@ export async function installPortlessServiceDetailed(): Promise<{
       if (/User canceled|-128/i.test(r.stderr ?? '')) return { result: 'cancelled' };
       return { result: 'failed', detail: lastLine(r.stderr ?? '') };
     }
-    const r = await execa(bin, SUB_SERVICE_INSTALL, { reject: false, stdio: 'inherit' });
+    const r = await execa(bin, SUB_SERVICE_INSTALL, { reject: false, stdio: 'inherit', env: portlessChildEnv() });
     if (r.exitCode !== 0) return { result: 'failed' };
-    await execa(bin, ['trust'], { reject: false, stdio: 'inherit' });
+    await execa(bin, ['trust'], { reject: false, stdio: 'inherit', env: portlessChildEnv() });
     return { result: 'started' };
   } catch (err) {
     return { result: 'failed', detail: err instanceof Error ? err.message : String(err) };
@@ -1127,14 +1290,14 @@ export async function uninstallPortlessService(): Promise<boolean> {
   const bin = await resolvePortlessBin();
   try {
     if (process.platform === 'darwin') {
-      const shellCmd = `${shellSingleQuote(bin)} ${SUB_SERVICE_UNINSTALL.join(' ')}`;
+      const shellCmd = `${nodePathEnvPrefix()}${shellSingleQuote(bin)} ${SUB_SERVICE_UNINSTALL.join(' ')}`;
       const script =
         `do shell script "${escapeForAppleScript(shellCmd)}" with administrator privileges ` +
         `with prompt "AgentBox wants to remove the Portless startup service."`;
       const r = await execa('osascript', ['-e', script], { reject: false });
       return r.exitCode === 0;
     }
-    const r = await execa(bin, SUB_SERVICE_UNINSTALL, { reject: false, stdio: 'inherit' });
+    const r = await execa(bin, SUB_SERVICE_UNINSTALL, { reject: false, stdio: 'inherit', env: portlessChildEnv() });
     return r.exitCode === 0;
   } catch {
     return false;
@@ -1149,7 +1312,7 @@ export async function uninstallPortlessService(): Promise<boolean> {
  */
 export async function portlessConfiguredMode(): Promise<{ port: number; tls: boolean } | null> {
   try {
-    const r = await execa(await portlessCmd(), [SUB_GET, PORTLESS_PROBE_NAME], { reject: false });
+    const r = await portlessExec([SUB_GET, PORTLESS_PROBE_NAME]);
     const out = (r.stdout ?? '').trim();
     if (r.exitCode !== 0 || !/^https?:\/\//.test(out)) return null;
     const u = new URL(out);

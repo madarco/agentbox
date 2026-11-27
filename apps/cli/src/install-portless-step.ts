@@ -4,6 +4,7 @@
  * from the tray or the hub web UI never reaches).
  */
 
+import { execa } from 'execa';
 import { confirm, isCancel, log, note } from '@agentbox/cli-kit';
 import { setConfigValue } from '@agentbox/config';
 import {
@@ -82,6 +83,55 @@ export function decidePortlessStep(i: PortlessStepInput): PortlessStepDecision {
   return wanted ? 'ask' : 'ask-optional';
 }
 
+/** Whether a provider's box URL is a host loopback port Portless can alias without Docker Desktop. */
+export function isAliasCloud(provider: string): boolean {
+  return ALIAS_CLOUD_PROVIDERS.has(provider);
+}
+
+/**
+ * Whether the docker CLI's current context is Docker Desktop's. Read from the
+ * context, not a live `docker info`: Docker Desktop installed but not running
+ * still means this user's docker boxes will want Portless. Never throws.
+ */
+export async function dockerContextIsDesktop(): Promise<boolean> {
+  try {
+    const show = await execa('docker', ['context', 'show'], { reject: false, timeout: 5000 });
+    const name = String(show.stdout ?? '').trim();
+    if (show.exitCode !== 0 || name === '') return false;
+    if (name === 'desktop-linux') return true;
+    const ep = await execa(
+      'docker',
+      ['context', 'inspect', name, '--format', '{{.Endpoints.docker.Host}}'],
+      { reject: false, timeout: 5000 },
+    );
+    // Docker Desktop's macOS socket; `default` points here once Desktop has run.
+    return ep.exitCode === 0 && String(ep.stdout ?? '').includes('/.docker/run/docker.sock');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What the step left behind: `unset` means `portless.enabled` is still
+ * undecided (skipped, cancelled, or a "no" to the optional prompt, which is
+ * never saved), so the wizard asks once more if the user then picks an alias
+ * cloud.
+ */
+export type PortlessStepOutcome = 'unset' | 'decided';
+
+/**
+ * Whether to ask about Portless again after the provider picker: the first ask
+ * left it undecided and the user then picked an alias cloud. A provider named
+ * with `--provider` was already part of the first decision. Pure.
+ */
+export function shouldReaskAfterPick(
+  outcome: PortlessStepOutcome,
+  namedProvider: string | undefined,
+  picked: string,
+): boolean {
+  return !namedProvider && outcome === 'unset' && isAliasCloud(picked);
+}
+
 async function persistEnabled(value: boolean): Promise<void> {
   try {
     await setConfigValue('global', 'portless.enabled', value, process.cwd(), { raw: false });
@@ -106,9 +156,15 @@ export async function runPortlessInstallStep(args: {
   dockerOffered: boolean;
   enabled: boolean | undefined;
   yes: boolean;
-}): Promise<void> {
+}): Promise<PortlessStepOutcome> {
+  const unsetUnlessDecided = args.enabled === undefined ? 'unset' : 'decided';
   try {
-    const engine = process.platform === 'darwin' ? await detectEngine() : 'other';
+    const engine: DockerEngine =
+      process.platform !== 'darwin'
+        ? 'other'
+        : (await dockerContextIsDesktop())
+          ? 'docker-desktop'
+          : await detectEngine();
     const state = await detectPortless();
     let fullySetUp = false;
     if (args.enabled === true && state.installed) {
@@ -126,7 +182,7 @@ export async function runPortlessInstallStep(args: {
       installed: state.installed,
       fullySetUp,
     });
-    if (decision === 'skip') return;
+    if (decision === 'skip') return unsetUnlessDecided;
 
     if (decision === 'ask' || decision === 'ask-optional') {
       const optional = decision === 'ask-optional';
@@ -144,14 +200,19 @@ export async function runPortlessInstallStep(args: {
       );
       const answer = await confirm({ message: 'Set up Portless?', initialValue: !optional });
       // A cancel is not a "no": leave it undecided so it is asked again.
-      if (isCancel(answer)) return;
-      await persistEnabled(answer === true);
+      if (isCancel(answer)) return 'unset';
       if (answer !== true) {
         log.info(`Skipped — box URLs use loopback ports. Later: \`${portlessServiceHint()}\`.`);
-        return;
+        // The optional prompt's "no" is not saved: this host may not have been
+        // the one it was for (Docker Desktop stopped, a cloud picked next), and
+        // a saved `false` is never asked again.
+        if (optional) return 'unset';
+        await persistEnabled(false);
+        return 'decided';
       }
+      await persistEnabled(true);
       await setupPortlessHost({ allowRootPrompt: true });
-      return;
+      return 'decided';
     }
 
     if (args.enabled === true) {
@@ -159,7 +220,7 @@ export async function runPortlessInstallStep(args: {
       // (the :443 proxy, the boot service); `-y` never does. Never a mode change:
       // a dismissed prompt must not quietly move live https URLs to :1355.
       await setupPortlessHost({ allowRootPrompt: !args.yes, allowModeChange: false });
-      if (!args.yes) return;
+      if (!args.yes) return 'decided';
     } else {
       await persistEnabled(true);
       await setupPortlessHost({ allowRootPrompt: false });
@@ -171,9 +232,11 @@ export async function runPortlessInstallStep(args: {
         `To keep box URLs working after a reboot, run \`${portlessServiceHint()}\` (asks for your password).`,
       );
     }
+    return 'decided';
   } catch (err) {
     log.warn(
       `Portless setup skipped: ${err instanceof Error ? err.message : String(err)} — box URLs use loopback ports.`,
     );
+    return unsetUnlessDecided;
   }
 }

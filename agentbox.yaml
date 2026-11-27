@@ -180,6 +180,3 @@ tasks:
       ~/.local/bin/agentbox --version
     needs: [build]
 
-  portless:
-    command: portless proxy start --no-tls -p 1355
-    needs: [install]

@@ -321,7 +321,7 @@ export {
   portlessDoctorRow,
   portlessDoctorCheck,
   portlessRestartHint,
-  portlessUnroutedRoutes,
+  portlessBrokenRoutes,
   routedPortlessUrl,
   type PortlessRouteState,
   PORTLESS_PROXY_PORT,

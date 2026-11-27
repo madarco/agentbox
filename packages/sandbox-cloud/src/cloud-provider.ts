@@ -1982,11 +1982,7 @@ export function createCloudProvider(
       if (!opts?.loopback && alias !== undefined) {
         // Re-alias onto the current forward: an SSH `-L` port is fresh per start.
         const url = await routedPortlessUrl(alias, await ensurePortlessForUrl(), {
-          reAlias: async () => {
-            const preview = await backend.previewUrl(h, port);
-            const localPort = parseLoopbackPort(preview.url);
-            return localPort !== undefined && (await portlessAlias(alias, localPort));
-          },
+          port: async () => parseLoopbackPort((await backend.previewUrl(h, port)).url),
         });
         if (url !== undefined) return url;
       }

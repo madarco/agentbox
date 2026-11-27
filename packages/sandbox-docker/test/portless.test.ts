@@ -154,9 +154,11 @@ describe('portlessAlias / portlessUnalias', () => {
   it('portlessAlias returns true on exit 0', async () => {
     portlessResult = ok();
     expect(await portlessAlias('mybox', 54321)).toBe(true);
-    expect(execaMock).toHaveBeenCalledWith('portless', ['alias', 'mybox', '54321'], {
-      reject: false,
-    });
+    expect(execaMock).toHaveBeenCalledWith(
+      'portless',
+      ['alias', 'mybox', '54321'],
+      expect.objectContaining({ reject: false }),
+    );
   });
 
   it('portlessAlias returns false on non-zero exit', async () => {
@@ -172,9 +174,11 @@ describe('portlessAlias / portlessUnalias', () => {
   it('portlessUnalias returns true on exit 0', async () => {
     portlessResult = ok();
     expect(await portlessUnalias('mybox')).toBe(true);
-    expect(execaMock).toHaveBeenCalledWith('portless', ['alias', '--remove', 'mybox'], {
-      reject: false,
-    });
+    expect(execaMock).toHaveBeenCalledWith(
+      'portless',
+      ['alias', '--remove', 'mybox'],
+      expect.objectContaining({ reject: false }),
+    );
   });
 
   it('portlessUnalias never throws when execa rejects', async () => {
@@ -281,7 +285,7 @@ describe('installPortless / startPortlessProxy', () => {
     expect(execaMock).toHaveBeenCalledWith(
       'portless',
       ['proxy', 'start', '--no-tls', '-p', '1355'],
-      { reject: false },
+      expect.objectContaining({ reject: false }),
     );
   });
 
@@ -324,9 +328,12 @@ describe('installPortlessServiceDetailed', () => {
     await installPortlessServiceDetailed();
     const call = execaMock.mock.calls.find((c) => c[0] === 'osascript');
     const script = String((call?.[1] as string[] | undefined)?.[1] ?? '');
+    // The identity, then the running Node's dir on PATH (a remembered cli.js
+    // needs `node`, and the elevated shell's PATH has none).
     const who = sudoIdentityEnvPrefix();
-    expect(script).toContain(`${who}'portless' service install`);
-    expect(script).toContain(`${who}'portless' trust`);
+    expect(script).toContain(`${who}PATH=`);
+    expect(script).toMatch(/PATH='[^']+':\\?"\$PATH\\?" 'portless' service install/);
+    expect(script).toContain(`'portless' trust`);
   });
 });
 
@@ -471,7 +478,11 @@ describe('portlessServiceStatus', () => {
       ].join('\n'),
     );
     expect(await portlessServiceStatus()).toEqual({ installed: true });
-    expect(execaMock).toHaveBeenCalledWith('portless', ['service', 'status'], { reject: false });
+    expect(execaMock).toHaveBeenCalledWith(
+      'portless',
+      ['service', 'status'],
+      expect.objectContaining({ reject: false }),
+    );
   });
 
   it('parses `Installed: no`', async () => {
@@ -582,7 +593,7 @@ describe('ensurePortlessProxy', () => {
     expect(execaMock).toHaveBeenCalledWith(
       'portless',
       ['proxy', 'start', '--no-tls', '-p', String(PORTLESS_PROXY_PORT)],
-      { reject: false },
+      expect.objectContaining({ reject: false }),
     );
   });
 
@@ -594,7 +605,7 @@ describe('ensurePortlessProxy', () => {
     expect(execaMock).toHaveBeenCalledWith(
       'portless',
       ['proxy', 'start', '--no-tls', '-p', '8099'],
-      { reject: false },
+      expect.objectContaining({ reject: false }),
     );
   });
 
@@ -635,7 +646,7 @@ describe('ensurePortlessProxy', () => {
     expect(execaMock).toHaveBeenCalledWith(
       'portless',
       ['proxy', 'start', '--no-tls', '-p', String(PORTLESS_PROXY_PORT)],
-      { reject: false },
+      expect.objectContaining({ reject: false }),
     );
   });
 

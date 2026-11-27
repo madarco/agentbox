@@ -31,6 +31,7 @@ vi.mock('@agentbox/cli-kit', () => ({
 import {
   decidePortlessStep,
   runPortlessInstallStep,
+  shouldReaskAfterPick,
   type PortlessStepInput,
 } from '../src/install-portless-step.js';
 
@@ -137,10 +138,33 @@ describe('runPortlessInstallStep', () => {
     expect(setupOpts().every((o) => o['allowRootPrompt'] === false)).toBe(true);
   });
 
-  it('offers default-no on a host without Docker Desktop, and -y leaves it alone', async () => {
+  it('never saves a "no" to the optional prompt, and -y leaves it alone', async () => {
     h.confirm.mockResolvedValue(false);
-    await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: false });
+    const outcome = await runPortlessInstallStep({
+      dockerOffered: true,
+      enabled: undefined,
+      yes: false,
+    });
     expect(h.confirm).toHaveBeenCalledWith(expect.objectContaining({ initialValue: false }));
+    // A saved false is never asked again; this host may get an alias cloud next.
+    expect(h.setConfig).not.toHaveBeenCalled();
+    expect(outcome).toBe('unset');
+    expect(
+      await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: true }),
+    ).toBe('unset');
+    expect(h.setConfig).not.toHaveBeenCalled();
+    expect(h.setup).not.toHaveBeenCalled();
+  });
+
+  it('saves a "no" to the default-yes prompt (an alias cloud named)', async () => {
+    h.confirm.mockResolvedValue(false);
+    const outcome = await runPortlessInstallStep({
+      provider: 'hetzner',
+      dockerOffered: true,
+      enabled: undefined,
+      yes: false,
+    });
+    expect(h.confirm).toHaveBeenCalledWith(expect.objectContaining({ initialValue: true }));
     expect(h.setConfig).toHaveBeenCalledWith(
       'global',
       'portless.enabled',
@@ -148,10 +172,17 @@ describe('runPortlessInstallStep', () => {
       expect.anything(),
       { raw: false },
     );
-    h.setConfig.mockClear();
-    await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: true });
-    expect(h.setConfig).not.toHaveBeenCalled();
-    expect(h.setup).not.toHaveBeenCalled();
+    expect(outcome).toBe('decided');
+  });
+
+  it('asks again after the picker only when an alias cloud was picked and it is still unset', () => {
+    expect(shouldReaskAfterPick('unset', undefined, 'hetzner')).toBe(true);
+    expect(shouldReaskAfterPick('unset', undefined, 'remote-docker')).toBe(true);
+    expect(shouldReaskAfterPick('unset', undefined, 'docker')).toBe(false);
+    expect(shouldReaskAfterPick('unset', undefined, 'e2b')).toBe(false);
+    expect(shouldReaskAfterPick('decided', undefined, 'hetzner')).toBe(false);
+    // A named --provider was already part of the first decision.
+    expect(shouldReaskAfterPick('unset', 'hetzner', 'hetzner')).toBe(false);
   });
 
   it('does not save a cancelled prompt as a "no"', async () => {

@@ -400,7 +400,7 @@ async function pathExists(p: string): Promise<boolean> {
  * + the vscode NSS db; we then drop a profile.d export of NODE_EXTRA_CA_CERTS
  * for Node-based agents. Best-effort: never throws.
  */
-async function trustInBoxPortlessCa(
+export async function trustInBoxPortlessCa(
   container: string,
   stateDir: string | undefined,
   log: (line: string) => void,
