@@ -34,8 +34,14 @@ function suggestTypes(catalog: HetznerServerType[], limit = 6): string[] {
     .slice(0, limit);
 }
 
-/** Locations (from `prices[].location`) where a given type is offered. */
-function offeredLocations(t: HetznerServerType): string[] {
+/**
+ * Locations where a type is offered: its non-deprecated `locations[]` entries
+ * when the API sends them, else `prices[].location`.
+ */
+export function offeredLocations(t: HetznerServerType): string[] {
+  if (t.locations && t.locations.length > 0) {
+    return t.locations.filter((l) => !l.deprecation).map((l) => l.name);
+  }
   const seen = new Set<string>();
   for (const p of t.prices) {
     if (p.location) seen.add(p.location);

@@ -125,12 +125,12 @@ Hetzner's EU locations regularly run out of the small shared types (`cx23`, `cx3
 hetzner: no cx33 capacity in fsn1, trying nbg1
 ```
 
-The box record keeps the location it landed in. Locations where the type isn't offered, or where Hetzner already reports it unavailable, are skipped. AgentBox never moves a box to another zone (US or Singapore) on its own: latency and price differ there, and the `cx` types aren't offered outside the EU anyway.
+The box record keeps the location it landed in. Locations where the type isn't offered are skipped. Every other location in the zone gets one real attempt, ordered by Hetzner's availability hint, because that hint is often wrong: a type reported unavailable can still be created. AgentBox never moves a box to another zone (US or Singapore) on its own: latency and price differ there, and the `cx` types aren't offered outside the EU anyway.
 
 - A location from `box.hetznerLocation` (or the `nbg1` default) fails over.
 - A `--location` you type for this create **pins** the box: if that location has no capacity, the create fails instead of moving.
 
-If every location in the zone is full, the error lists the ones tried and suggests a different `--size` (or `box.sizeHetzner`). It also names locations in other zones where the type is offered.
+If every location in the zone is full, the error lists the ones tried and suggests a different `--size` (or `box.sizeHetzner`), naming a type of the same size that Hetzner reports available there (for example `cpx32` when `cx33` is sold out). It never switches types for you. It also names locations in other zones where the type is offered.
 
 After the box comes up, AgentBox reports the **real** provisioned resources read back from Hetzner — e.g. `provisioned 4 vCPU / 16 GB RAM / 160 GB disk` — rather than a static guess, and stores them on the box record.
 

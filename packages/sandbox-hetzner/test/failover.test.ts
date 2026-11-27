@@ -3,14 +3,13 @@ import { UserFacingError } from '@agentbox/core';
 import {
   HetznerApiError,
   type CreateServerRequest,
-  type HetznerDatacenter,
   type HetznerLocation,
   type HetznerServer,
   type HetznerServerType,
 } from '../src/client.js';
 import {
   createWithLocationFailover,
-  fetchLocationPlanInputs,
+  fetchLocations,
   isCapacityError,
   planLocations,
 } from '../src/failover.js';
@@ -47,13 +46,26 @@ const CATALOG: HetznerServerType[] = [
   type({ id: 44, name: 'ccx23', prices: [{ location: 'fsn1' }, { location: 'hel1' }] }),
 ];
 
-function dc(location: string, available: number[]): HetznerDatacenter {
-  return {
-    id: available.length,
-    name: `${location}-dc1`,
-    location: { name: location },
-    server_types: { supported: [22, 33, 44], available },
-  };
+type Avail = Record<string, { available?: boolean; recommended?: boolean; deprecated?: boolean }>;
+
+/** A catalog whose `name` type carries `server_types[].locations` hints. */
+function withLocations(name: string, avail: Avail, extra: HetznerServerType[] = []) {
+  return [
+    ...CATALOG.map((t) =>
+      t.name !== name
+        ? t
+        : {
+            ...t,
+            locations: Object.entries(avail).map(([loc, a]) => ({
+              name: loc,
+              available: a.available ?? false,
+              recommended: a.recommended ?? false,
+              deprecation: a.deprecated ? { unavailable_after: '2026-12-01T00:00:00Z' } : null,
+            })),
+          },
+    ),
+    ...extra,
+  ];
 }
 
 const capacity = (loc: string) =>
@@ -96,18 +108,18 @@ function run(
     location: string;
     pinned?: boolean;
     serverType?: string;
-    datacenters?: HetznerDatacenter[];
+    catalog?: HetznerServerType[];
   },
 ) {
   const serverType = opts.serverType ?? 'cx33';
   const pinned = opts.pinned === true;
+  const catalog = opts.catalog ?? CATALOG;
   const plan = planLocations({
     serverType,
     location: opts.location,
     pinned,
-    catalog: CATALOG,
+    catalog,
     locations: LOCATIONS,
-    ...(opts.datacenters ? { datacenters: opts.datacenters } : {}),
   });
   const logs: string[] = [];
   const loads = { count: 0 };
@@ -115,7 +127,7 @@ function run(
     serverType,
     location: opts.location,
     pinned,
-    catalog: CATALOG,
+    catalog,
     loadPlan: () => {
       loads.count++;
       return Promise.resolve({ plan, locations: LOCATIONS });
@@ -169,18 +181,43 @@ describe('planLocations', () => {
     expect(plan.skipped).toEqual([{ location: 'nbg1', reason: 'ccx23 is not offered there' }]);
   });
 
-  it('skips a later location whose datacenters report the type unavailable, never the first', () => {
-    const plan = planLocations({
+  it('available: false never rules a location out; available ones go first', () => {
+    // Live 2026-11-27: every EU location reported cx33 unavailable, yet hel1 created.
+    const allFalse = planLocations({
       serverType: 'cx33',
       location: 'fsn1',
       pinned: false,
-      catalog: CATALOG,
+      catalog: withLocations('cx33', { fsn1: {}, nbg1: {}, hel1: {} }),
       locations: LOCATIONS,
-      // fsn1 also reports cx33 unavailable, but it is the configured one: tried anyway.
-      datacenters: [dc('fsn1', [33]), dc('nbg1', [33]), dc('hel1', [22, 33])],
     });
-    expect(plan.candidates).toEqual(['fsn1', 'hel1']);
-    expect(plan.skipped.map((s) => s.location)).toEqual(['nbg1']);
+    expect(allFalse.candidates).toEqual(['fsn1', 'nbg1', 'hel1']);
+    expect(allFalse.skipped).toEqual([]);
+
+    const ordered = planLocations({
+      serverType: 'cx33',
+      location: 'fsn1',
+      pinned: false,
+      catalog: withLocations('cx33', {
+        fsn1: {},
+        nbg1: { available: true },
+        hel1: { available: true, recommended: true },
+      }),
+      locations: LOCATIONS,
+    });
+    // The configured location stays first even when it is the least available.
+    expect(ordered.candidates).toEqual(['fsn1', 'hel1', 'nbg1']);
+  });
+
+  it('skips a location absent from server_types[].locations or deprecated there', () => {
+    const plan = planLocations({
+      serverType: 'cx33',
+      location: 'nbg1',
+      pinned: false,
+      catalog: withLocations('cx33', { nbg1: {}, fsn1: { deprecated: true } }),
+      locations: LOCATIONS,
+    });
+    expect(plan.candidates).toEqual(['nbg1']);
+    expect(plan.skipped.map((s) => s.location)).toEqual(['fsn1', 'hel1']);
   });
 
   it('without the location list (lookup failed) there is no failover', () => {
@@ -239,7 +276,7 @@ describe('createWithLocationFailover', () => {
     expect(api.calls).toEqual(['fsn1']);
     expect(api.servers).toHaveLength(0);
     const msg = (err as Error).message;
-    expect(msg).toContain('pins the box there');
+    expect(msg).toContain('The location was pinned (`--location fsn1`)');
     expect(msg).toContain('--size');
     expect(msg).not.toMatch(/pin a different one \([^)]*fsn1/);
   });
@@ -268,21 +305,10 @@ describe('createWithLocationFailover', () => {
   });
 });
 
-describe('fetchLocationPlanInputs', () => {
-  it('swallows lookup failures', async () => {
-    let called = 0;
-    const c = {
-      listLocations: () => {
-        called++;
-        return Promise.reject(new Error('boom'));
-      },
-      listDatacenters: () => {
-        called++;
-        return Promise.resolve([] as HetznerDatacenter[]);
-      },
-    };
-    expect(await fetchLocationPlanInputs(c)).toEqual({ locations: [], datacenters: [] });
-    expect(called).toBe(2);
+describe('fetchLocations', () => {
+  it('swallows a lookup failure: no failover, never a failed create', async () => {
+    const c = { listLocations: () => Promise.reject(new Error('boom')) };
+    expect(await fetchLocations(c)).toEqual([]);
   });
 });
 
@@ -296,10 +322,7 @@ it('isCapacityError matches both capacity codes only', () => {
 describe('failover only costs anything after a refusal', () => {
   it('a first-try success loads no plan and logs no skip', async () => {
     const api = fakeApi([]);
-    const { promise, logs, loads } = run(api, {
-      location: 'fsn1',
-      datacenters: [dc('fsn1', [22]), dc('nbg1', [33]), dc('hel1', [33])],
-    });
+    const { promise, logs, loads } = run(api, { location: 'fsn1' });
     expect((await promise).location).toBe('fsn1');
     expect(loads.count).toBe(0);
     expect(logs).toEqual([]);
@@ -317,13 +340,60 @@ describe('failover only costs anything after a refusal', () => {
     const { promise, logs } = run(api, {
       location: 'fsn1',
       serverType: 'cpx31',
-      datacenters: [dc('fsn1', [33]), dc('nbg1', [22]), dc('hel1', [33])],
+      catalog: withLocations('cpx31', {
+        fsn1: {},
+        nbg1: { deprecated: true },
+        hel1: {},
+        ash: { available: true },
+        hil: {},
+      }),
     });
     const msg = ((await promise.catch((e: unknown) => e)) as Error).message;
-    expect(logs).toContain('hetzner: skipping nbg1: Hetzner reports no cpx31 capacity there');
+    expect(logs).toContain('hetzner: skipping nbg1: cpx31 is not offered there');
     expect(msg).toContain('fsn1, hel1');
     expect(msg).toContain('(ash, hil)');
     expect(msg).not.toMatch(/\(.*nbg1.*\)/);
+  });
+
+  it('the live case: every location reported unavailable, two refuse, the third creates', async () => {
+    const api = fakeApi(['fsn1', 'nbg1']);
+    const { promise } = run(api, {
+      location: 'fsn1',
+      catalog: withLocations('cx33', { fsn1: {}, nbg1: {}, hel1: {} }),
+    });
+    const out = await promise;
+    expect(out.location).toBe('hel1');
+    expect(api.calls).toEqual(['fsn1', 'nbg1', 'hel1']);
+  });
+
+  it('names an available same-size type when every location refuses, without switching', async () => {
+    const cpx32 = {
+      id: 55,
+      name: 'cpx32',
+      cores: 4,
+      memory: 8,
+      disk: 160,
+      architecture: 'x86' as const,
+      prices: [{ location: 'hel1' }],
+      locations: [{ name: 'hel1', available: true, recommended: true, deprecation: null }],
+    };
+    const api = fakeApi(['fsn1', 'nbg1', 'hel1']);
+    const { promise } = run(api, {
+      location: 'fsn1',
+      catalog: withLocations('cx33', { fsn1: {}, nbg1: {}, hel1: {} }, [cpx32]),
+    });
+    const msg = ((await promise.catch((e: unknown) => e)) as Error).message;
+    expect(msg).toContain('cpx32 (same vCPU/RAM) is reported available in hel1');
+    expect(msg).toContain('`--size cpx32`');
+    expect(api.calls.every((c) => c !== '')).toBe(true);
+    expect(api.servers).toHaveLength(0);
+  });
+
+  it('no same-size hint when no equivalent is available', async () => {
+    const api = fakeApi(['fsn1', 'nbg1', 'hel1']);
+    const msg = ((await run(api, { location: 'fsn1' }).promise.catch((e: unknown) => e)) as Error)
+      .message;
+    expect(msg).not.toContain('same vCPU/RAM');
   });
 
   it('without the location list the error makes no zone claim', async () => {

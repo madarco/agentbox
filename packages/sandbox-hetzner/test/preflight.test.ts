@@ -146,6 +146,27 @@ describe('validateServerChoice', () => {
   });
 });
 
+describe('offered locations come from server_types[].locations', () => {
+  it('rejects a location deprecated for the type, even with a price there', () => {
+    const cat = [
+      serverType({
+        name: 'cx33',
+        locations: [
+          { name: 'nbg1', available: false, recommended: false, deprecation: null },
+          { name: 'fsn1', deprecation: { unavailable_after: '2026-12-01T00:00:00Z' } },
+        ],
+      }),
+    ];
+    // available: false is a hint only, never a reason to refuse.
+    expect(() =>
+      validateServerChoice({ serverType: 'cx33', location: 'nbg1' }, cat, null),
+    ).not.toThrow();
+    expect(() => validateServerChoice({ serverType: 'cx33', location: 'fsn1' }, cat, null)).toThrow(
+      /not offered in location "fsn1"/,
+    );
+  });
+});
+
 describe('mapHetznerProvisionError', () => {
   it('maps resource_limit_exceeded to account-limit guidance', () => {
     const err = new HetznerApiError(403, 'resource_limit_exceeded', 'limit reached');

@@ -92,6 +92,19 @@ export interface HetznerServerType {
   deprecated?: boolean;
   deprecation?: { announced?: string; unavailable_after?: string } | null;
   prices: Array<{ location: string }>;
+  /**
+   * Where the type is offered, with Hetzner's capacity hint. Replaces the
+   * removed `GET /datacenters` availability (2026-06). `available` is a hint
+   * only: creates have succeeded in locations reported `available: false`, so
+   * it orders failover candidates and never rules one out.
+   */
+  locations?: Array<{
+    id?: number;
+    name: string;
+    available?: boolean;
+    recommended?: boolean;
+    deprecation?: { announced?: string; unavailable_after?: string } | null;
+  }>;
 }
 
 export interface HetznerLocation {
@@ -101,14 +114,6 @@ export interface HetznerLocation {
   country: string;
   /** `eu-central` | `us-east` | `us-west` | `ap-southeast`. */
   network_zone?: string;
-}
-
-export interface HetznerDatacenter {
-  id: number;
-  name: string;
-  location: { name: string };
-  /** Server-type ids: `supported` = offered here, `available` = creatable right now. */
-  server_types: { supported: number[]; available: number[] };
 }
 
 export interface HetznerFirewall {
@@ -231,12 +236,6 @@ export interface HetznerClient {
    * token but returns a small, stable response).
    */
   listLocations(): Promise<HetznerLocation[]>;
-  /**
-   * GET /datacenters — per-datacenter server-type availability. The create
-   * failover reads `server_types.available` to skip a location Hetzner already
-   * reports as out of a type, instead of spending a create on it.
-   */
-  listDatacenters(): Promise<HetznerDatacenter[]>;
 }
 
 interface MakeClientOptions {
@@ -452,13 +451,6 @@ export function makeHetznerClient(opts: MakeClientOptions = {}): HetznerClient {
     async listLocations() {
       const r = await reqExpect<{ locations: HetznerLocation[] }>('GET', '/locations');
       return r.locations;
-    },
-    async listDatacenters() {
-      const r = await reqExpect<{ datacenters: HetznerDatacenter[] }>(
-        'GET',
-        '/datacenters?per_page=50',
-      );
-      return r.datacenters;
     },
   };
 }

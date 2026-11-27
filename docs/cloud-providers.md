@@ -878,23 +878,30 @@ The `CloudBackend` interface is the same, but the implementation
   (`resource_unavailable` / `placement_error`, typically `412 error during
   placement` on cx23/cx33 in nbg1/fsn1) is retried in the next location of the
   same network zone (`GET /locations` `network_zone`), starting from the
-  configured one. Candidates where the type isn't offered (`prices[].location`)
-  or where every datacenter reports it not `available` (`GET /datacenters`) are
-  skipped; the first location is always tried. The zone is never left (latency,
-  price, and cx types are EU-only). The plan (`GET /locations` + `/datacenters`)
-  is loaded only after the first refusal, so a normal create pays nothing. Pin:
+  configured one. A candidate is skipped only when the type isn't offered there
+  (absent from `server_types[].locations`, or deprecated there; `prices[]` as a
+  fallback). Hetzner's `available` / `recommended` hints only ORDER the rest
+  (available+recommended, then available, then the others), never rule one out:
+  on 2026-11-27 every EU location reported cx33 `available: false` while hel1
+  created it twice, so one real create per offered location is the ground
+  truth. `GET /datacenters` is gone (removed by Hetzner 2026-06; it answers
+  `deprecated_api_endpoint`) and is not used. The zone is never left (latency,
+  price, and cx types are EU-only). The plan needs only `GET /locations`, loaded
+  after the first refusal, so a normal create pays nothing; the availability
+  hints come from the `/server_types` catalog the preflight already fetched. Pin:
   `cloudSizingProviderOptions` sets `providerOptions.locationPinned` only when
   `--location` was typed; the queue job carries it as its own
   `QueueJobCreateOpts.locationPinned` (hub wire: `opts.locationPinned`), never
   derived from `location`, so a clone's or a remote submitter's resolved
   location still fails over. The scaffold passes it as
-  `CloudProvisionRequest.locationPinned`, and a pinned create never moves. Nothing is location-bound besides the server: the firewall is
-  project-wide, the key rides cloud-init, snapshots (base and checkpoint) boot in
+  `CloudProvisionRequest.locationPinned`, and a pinned create never moves.
+  Nothing is location-bound besides the server: the firewall is project-wide, the key rides cloud-init, snapshots (base and checkpoint) boot in
   any location, and a refused create makes no server. The landed location goes
   back as `CloudHandle.location` and the record's `cloud.location` stores it.
   When all candidates fail, `capacityExhaustedError` lists the locations tried
-  and suggests `--size` / `box.sizeHetzner` plus other-zone locations offering
-  the type. DigitalOcean has no failover: its snapshots are region-bound.
+  and suggests `--size` / `box.sizeHetzner` (naming a same-vCPU/RAM type, e.g.
+  the cpx sibling, that is reported available where it tried; never switched to
+  automatically) plus other-zone locations offering the type. DigitalOcean has no failover: its snapshots are region-bound.
 - **Provision error mapping** (`mapHetznerProvisionError`) — the create call is
   wrapped so late Hetzner errors become actionable: `resource_limit_exceeded` →
   account-limits explanation + the Hetzner Console Limits page (dedicated `ccx*`

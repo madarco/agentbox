@@ -22,12 +22,20 @@ import { UserFacingError } from '@agentbox/core';
 import {
   HetznerApiError,
   type HetznerClient,
-  type HetznerDatacenter,
   type HetznerLocation,
   type HetznerServerType,
 } from './client.js';
+import { offeredLocations } from './preflight.js';
 
-/** Hetzner's "no capacity for this type here right now" answers. */
+/**
+ * Hetzner's "no capacity for this type here right now" answers.
+ *
+ * `resource_unavailable` is also what Hetzner returns for a few non-capacity
+ * shortages (an exhausted IPv4 pool, for one). Retrying those in another
+ * location is harmless and bounded: at most one attempt per location in one
+ * zone (three in eu-central), and the final error still carries the original
+ * message.
+ */
 export function isCapacityError(err: unknown): boolean {
   return (
     err instanceof HetznerApiError &&
@@ -41,11 +49,10 @@ export interface LocationPlanInput {
   location: string;
   /** True when the user passed `--location` for this create: never move. */
   pinned: boolean;
+  /** GET /server_types: `locations[]` says where each type is offered. */
   catalog: HetznerServerType[];
   /** GET /locations. Empty when it could not be fetched: no failover then. */
   locations: HetznerLocation[];
-  /** GET /datacenters. Optional: without it no location is skipped for capacity. */
-  datacenters?: HetznerDatacenter[];
 }
 
 export interface LocationPlan {
@@ -57,32 +64,42 @@ export interface LocationPlan {
   zone?: string;
 }
 
+/** 0 = available + recommended, 1 = available, 2 = no hint or `available: false`. */
+function availabilityRank(type: HetznerServerType | undefined, location: string): number {
+  const entry = type?.locations?.find((l) => l.name === location);
+  if (entry?.available === true) return entry.recommended === true ? 0 : 1;
+  return 2;
+}
+
 /**
  * The ordered locations a create tries.
  *
  * The first location is always the configured one. After it come the other
- * locations in the SAME network zone, in the API's order; the zone is never
- * left. Crossing from eu-central to us-east/us-west/ap-southeast changes
- * latency to the user and the price, and the cx types are not offered outside
- * eu-central at all, so a silent move there would mostly fail anyway and,
- * where it worked, land a box somewhere the user did not choose.
+ * locations in the SAME network zone; the zone is never left. Crossing from
+ * eu-central to us-east/us-west/ap-southeast changes latency to the user and
+ * the price, and the cx types are not offered outside eu-central at all, so a
+ * silent move there would mostly fail anyway and, where it worked, land a box
+ * somewhere the user did not choose.
  *
- * A later candidate is skipped when the type is not offered there (not in its
- * `prices`), or when every datacenter in it reports the type as not currently
- * available. The first location is never skipped for availability: the
- * datacenter list can lag, and a pinned location must be tried as asked.
+ * A later location is left out only when the type is not offered there (absent
+ * from `server_types[].locations`, or deprecated there). Hetzner's `available`
+ * / `recommended` hints only ORDER the rest: available and recommended first,
+ * then available, then everything else in API order. They never rule a location
+ * out, because creates succeed in locations reported `available: false` (cx33
+ * in hel1, measured 2026-11-27, while every EU location reported it false); one
+ * real create per offered location is the only ground truth.
  */
 export function planLocations(input: LocationPlanInput): LocationPlan {
-  const { serverType, location, pinned, catalog, locations, datacenters } = input;
+  const { serverType, location, pinned, catalog, locations } = input;
   if (pinned) return { candidates: [location], skipped: [] };
 
   const zone = locations.find((l) => l.name === location)?.network_zone;
   if (!zone) return { candidates: [location], skipped: [] };
 
   const type = catalog.find((t) => t.name === serverType);
-  const offered = new Set((type?.prices ?? []).map((p) => p.location));
+  const offered = new Set(type ? offeredLocations(type) : []);
 
-  const candidates = [location];
+  const rest: string[] = [];
   const skipped: LocationPlan['skipped'] = [];
   for (const l of locations) {
     if (l.name === location || l.network_zone !== zone) continue;
@@ -90,19 +107,36 @@ export function planLocations(input: LocationPlanInput): LocationPlan {
       skipped.push({ location: l.name, reason: `${serverType} is not offered there` });
       continue;
     }
-    if (type && datacenters && datacenters.length > 0) {
-      const here = datacenters.filter((d) => d.location.name === l.name);
-      if (here.length > 0 && !here.some((d) => d.server_types.available.includes(type.id))) {
-        skipped.push({
-          location: l.name,
-          reason: `Hetzner reports no ${serverType} capacity there`,
-        });
-        continue;
-      }
-    }
-    candidates.push(l.name);
+    rest.push(l.name);
   }
-  return { candidates, skipped, zone };
+  // Array.prototype.sort is stable, so equal ranks keep the API's order.
+  rest.sort((a, b) => availabilityRank(type, a) - availabilityRank(type, b));
+  return { candidates: [location, ...rest], skipped, zone };
+}
+
+/**
+ * Types of the same size class (vCPU + RAM) Hetzner reports available in one
+ * of `where`: the final error names them so the user can switch, never the
+ * create itself. Typically the cpx sibling of a sold-out cx type.
+ */
+function equivalentAvailableTypes(
+  serverType: string,
+  catalog: HetznerServerType[],
+  where: readonly string[],
+): Array<{ name: string; location: string }> {
+  const type = catalog.find((t) => t.name === serverType);
+  if (!type) return [];
+  const out: Array<{ name: string; location: string }> = [];
+  for (const t of catalog) {
+    if (t.name === serverType || t.architecture !== 'x86') continue;
+    if (t.deprecated === true || (t.deprecation !== undefined && t.deprecation !== null)) continue;
+    if (t.cores !== type.cores || t.memory !== type.memory) continue;
+    const at = (t.locations ?? []).find(
+      (l) => l.available === true && !l.deprecation && where.includes(l.name),
+    );
+    if (at) out.push({ name: t.name, location: at.name });
+  }
+  return out;
 }
 
 /**
@@ -120,10 +154,10 @@ function otherOfferedLocations(args: {
   const type = catalog.find((t) => t.name === serverType);
   const zoneOf = new Map(locations.map((l) => [l.name, l.network_zone]));
   const seen = new Set<string>();
-  for (const p of type?.prices ?? []) {
-    if (!p.location || tried.includes(p.location)) continue;
-    if (zone && zoneOf.get(p.location) === zone) continue;
-    seen.add(p.location);
+  for (const loc of type ? offeredLocations(type) : []) {
+    if (tried.includes(loc)) continue;
+    if (zone && zoneOf.get(loc) === zone) continue;
+    seen.add(loc);
   }
   return [...seen];
 }
@@ -145,8 +179,12 @@ export function capacityExhaustedError(args: {
   const { serverType, tried, pinned, catalog, lastError, zone } = args;
   const locations = args.locations ?? [];
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  const alt = equivalentAvailableTypes(serverType, catalog, tried)[0];
   const sizeHint =
-    'Pick a different server type with `--size <type>` or ' +
+    (alt
+      ? `${alt.name} (same vCPU/RAM) is reported available in ${alt.location}; try \`--size ${alt.name}\`. Otherwise pick`
+      : 'Pick') +
+    ' a different server type with `--size <type>` or ' +
     '`agentbox config set box.sizeHetzner <type>`.';
 
   if (pinned) {
@@ -154,8 +192,8 @@ export function capacityExhaustedError(args: {
     const others = otherOfferedLocations({ serverType, catalog, tried, locations });
     return new UserFacingError(
       `Hetzner has no capacity for "${serverType}" in "${loc}" right now (${detail}).\n` +
-        `\`--location ${loc}\` pins the box there, so no other location was tried. ` +
-        'Leave `--location` out to let the create fail over to another location' +
+        `The location was pinned (\`--location ${loc}\`), so no other location was tried. ` +
+        'Leave the location unpinned to let the create fail over to another one' +
         (others.length > 0 ? `, or pin a different one (${others.join(', ')}).` : '.') +
         `\n${sizeHint}`,
     );
@@ -241,15 +279,11 @@ export async function createWithLocationFailover<T>(
 }
 
 /**
- * Fetch what the plan needs. Best-effort: a failed lookup only means no
- * failover (or no availability skip), never a failed create.
+ * Fetch the location list the plan needs. Best-effort: a failed lookup only
+ * means no failover, never a failed create.
  */
-export async function fetchLocationPlanInputs(
-  c: Pick<HetznerClient, 'listLocations' | 'listDatacenters'>,
-): Promise<{ locations: HetznerLocation[]; datacenters: HetznerDatacenter[] }> {
-  const [locations, datacenters] = await Promise.all([
-    c.listLocations().catch(() => [] as HetznerLocation[]),
-    c.listDatacenters().catch(() => [] as HetznerDatacenter[]),
-  ]);
-  return { locations, datacenters };
+export async function fetchLocations(
+  c: Pick<HetznerClient, 'listLocations'>,
+): Promise<HetznerLocation[]> {
+  return c.listLocations().catch(() => []);
 }

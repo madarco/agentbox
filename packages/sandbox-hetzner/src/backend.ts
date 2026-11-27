@@ -64,7 +64,7 @@ import {
 import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
 import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
-import { createWithLocationFailover, fetchLocationPlanInputs, planLocations } from './failover.js';
+import { createWithLocationFailover, fetchLocations, planLocations } from './failover.js';
 import { preparedEntryFor, readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
@@ -585,9 +585,9 @@ export const hetznerBackend: CloudBackend = {
         location,
         pinned,
         loadPlan: async () => {
-          const inputs = await fetchLocationPlanInputs(c);
-          const plan = planLocations({ serverType, location, pinned, catalog, ...inputs });
-          return { plan, locations: inputs.locations };
+          const locations = await fetchLocations(c);
+          const plan = planLocations({ serverType, location, pinned, catalog, locations });
+          return { plan, locations };
         },
         catalog,
         onLog,

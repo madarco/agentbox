@@ -68,6 +68,11 @@ const PROVIDER_OPTION_KEYS = new Set([
   'sandboxClass',
   'project',
   'portless',
+  // A typed `--location`: hetzner never fails over a pinned box. The
+  // control-plane worker reads it from here (it is not a portable opts key).
+  'locationPinned',
+  // `box.swap` (hetzner / digitalocean), emitted when not `auto`.
+  'swap',
 ]);
 const HUB_OWNED_PROVIDER_OPTION_KEYS = new Set(['extraInboundCidrs', 'remoteHost']);
 
