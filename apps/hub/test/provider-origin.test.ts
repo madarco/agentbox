@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeRemoteProviders } from '../lib/boxes/provider-origin';
+import { mergeRemoteProviders, withoutLocalDocker } from '../lib/boxes/provider-origin';
 import type { ProviderOption } from '../lib/boxes/types';
 
 function local(): ProviderOption[] {
@@ -84,5 +84,25 @@ describe('mergeRemoteProviders', () => {
     const rows = mergeRemoteProviders({ local: local(), remote: [] });
     expect(byId(rows, 'hetzner')).toMatchObject({ origin: 'hub', configured: false });
     expect(byId(rows, 'hetzner').reason).toContain('control box');
+  });
+});
+
+describe('withoutLocalDocker', () => {
+  it('drops plain docker and lists remote-docker first, keeping the rest in order', () => {
+    const rows = withoutLocalDocker([
+      { id: 'docker', label: 'Docker (local)', configured: true },
+      { id: 'daytona', label: 'Daytona', configured: true },
+      { id: 'hetzner', label: 'Hetzner', configured: true },
+      { id: 'remote-docker', label: 'Remote Docker', configured: true },
+    ]);
+    expect(rows.map((p) => p.id)).toEqual(['remote-docker', 'daytona', 'hetzner']);
+  });
+
+  it('leaves a list without remote-docker in order', () => {
+    const rows = withoutLocalDocker([
+      { id: 'docker', label: 'Docker (local)', configured: true },
+      { id: 'e2b', label: 'E2B', configured: true },
+    ]);
+    expect(rows.map((p) => p.id)).toEqual(['e2b']);
   });
 });

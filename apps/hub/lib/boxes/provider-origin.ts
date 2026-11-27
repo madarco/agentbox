@@ -65,3 +65,19 @@ export function mergeRemoteProviders(input: MergeRemoteProvidersInput): Provider
     return { ...hub, label: p.label, origin: 'hub' as const, hubUrl };
   });
 }
+
+/**
+ * Drop plain `docker` and list `remote-docker` first, for a hub that has no
+ * local docker of its own to offer.
+ *
+ * Two hubs are in that spot: a deployed control box, whose hub runs in a
+ * container with no docker engine (its own engine is the `remote-docker` host
+ * `hub`, reached over SSH), and a PC pointed at a control box, where a box built
+ * on the laptop would die with the laptop. Either way the remaining docker-shaped
+ * choice is remote-docker, so it leads the list.
+ */
+export function withoutLocalDocker(providers: ProviderOption[]): ProviderOption[] {
+  const rest = providers.filter((p) => p.id !== 'docker');
+  const remote = rest.filter((p) => p.id === 'remote-docker');
+  return [...remote, ...rest.filter((p) => p.id !== 'remote-docker')];
+}
