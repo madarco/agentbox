@@ -172,6 +172,14 @@ describe('provider table is the single source of truth', () => {
       expect(hintFor('vercel')).toMatch(/browser sign-?in/i);
     });
 
+    // clack renders the focused option as `│  ● <label> (<hint>)`; past 80
+    // columns it wraps in the default macOS Terminal (80x24).
+    it('the focused picker line fits in 80 columns', () => {
+      for (const p of PROVIDERS) {
+        expect(`│  ● ${p.label} (${p.loginHint})`.length, p.name).toBeLessThanOrEqual(80);
+      }
+    });
+
     it('the other paste-a-token providers stay paste-a-token', () => {
       for (const name of ['hetzner', 'e2b', 'digitalocean']) {
         expect(hintFor(name)).toMatch(/paste/i);

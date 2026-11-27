@@ -10,6 +10,7 @@
  * global roots anyway.
  */
 
+import { envWithRunningNode } from './launcher.js';
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
@@ -33,6 +34,7 @@ function rootOf(cmd: string): string | null {
   try {
     const out = execFileSync(cmd, ['root', '-g'], {
       encoding: 'utf8',
+      env: envWithRunningNode(),
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const trimmed = out.trim();

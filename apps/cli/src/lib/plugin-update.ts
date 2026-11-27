@@ -9,6 +9,7 @@
  * under the new one — the exact failure this feature exists to prevent.
  */
 
+import { envWithRunningNode } from './launcher.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { loadEffectiveConfig } from '@agentbox/config';
@@ -107,7 +108,7 @@ export async function collectPluginCandidates(opts: {
 
 function run(cmd: string, args: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: 'inherit' });
+    const child = spawn(cmd, args, { stdio: 'inherit', env: envWithRunningNode() });
     child.on('error', reject);
     child.on('close', (code) => resolve(code ?? 1));
   });

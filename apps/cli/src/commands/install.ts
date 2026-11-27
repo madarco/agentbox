@@ -18,7 +18,18 @@
  * when `~/.agentbox/setup-complete.json` is absent.
  */
 
-import { confirm, intro, log, note, outro, select, spinner } from '@agentbox/cli-kit';
+import { confirm, intro, log, outro, select, spinner } from '@agentbox/cli-kit';
+import { renderNextSteps } from '../install-guide.js';
+import {
+  addRcLine,
+  ensureLauncher,
+  launcherDir,
+  launcherDirOnPath,
+  launcherPath,
+  launcherTarget,
+  rcHasLine,
+  shellRcFor,
+} from '../lib/launcher.js';
 import { Command } from 'commander';
 import { execa } from 'execa';
 import {
@@ -456,6 +467,55 @@ function ensureTty(): boolean {
   return false;
 }
 
+const tilde = (p: string): string =>
+  p.startsWith(homedir() + '/') ? `~${p.slice(homedir().length)}` : p;
+
+/**
+ * Write `~/.agentbox/bin/agentbox` and offer to put its dir on PATH. Only for
+ * npm global installs (the ones tied to one Node's prefix); a no-op from a
+ * source checkout, npx or pnpm.
+ */
+async function setupLauncher(yes: boolean): Promise<void> {
+  const target = launcherTarget();
+  if (!target) return;
+  try {
+    ensureLauncher(target);
+  } catch (err) {
+    log.warn(`launcher: could not write ${tilde(launcherPath())}: ${errMessage(err)}`);
+    return;
+  }
+  const rc = shellRcFor();
+  if (rc && rcHasLine(rc)) return;
+  if (!rc) {
+    if (launcherDirOnPath()) return;
+    log.info(
+      `To keep agentbox working when your Node version changes, add\n` +
+        `${tilde(launcherDir())} to PATH, ahead of nvm/fnm/volta.`,
+    );
+    return;
+  }
+  const ok =
+    yes ||
+    (await confirm({
+      message: `Keep agentbox on PATH for every Node version? (adds 1 line to ${tilde(rc.file)})`,
+      initialValue: true,
+    }));
+  if (!ok) {
+    log.info(`To do it yourself, add this line to ${tilde(rc.file)}:\n  ${rc.line}`);
+    return;
+  }
+  try {
+    addRcLine(rc);
+    log.success(`Added ${tilde(launcherDir())} to PATH in ${tilde(rc.file)} (new terminals)`);
+  } catch (err) {
+    log.warn(`could not edit ${tilde(rc.file)}: ${errMessage(err)}\nAdd: ${rc.line}`);
+  }
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 interface RunInstallWizardOptions {
   /** Pre-pick the provider (skips the picker). */
   provider?: string;
@@ -519,20 +579,6 @@ async function maybeSetDefaultProvider(name: ProviderName, autoYes: boolean): Pr
     );
     return false;
   }
-}
-
-function tutorialBody(provider: ProviderName, isDefault: boolean): string {
-  // The `agentbox <provider> …` prefix is only needed when the provider isn't
-  // the default one new boxes are created on.
-  const startCmd = isDefault ? 'agentbox claude    ' : `agentbox ${provider} claude`;
-  return (
-    `Get started:\n` +
-    `  ${startCmd}                       # for claude, codex, opencode\n` +
-    `   -> Setup wizard? -> Yes          # install dependencies and setup agentbox.yaml\n` +
-    `   -> Ctrl+a d                      # to detach from the box and leave claude running\n` +
-    `  agentbox attach                   # resume it later\n` +
-    `  agentbox install                  # to set up another provider`
-  );
 }
 
 // The interactive picker offers built-in providers only; external plugin
@@ -702,6 +748,10 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
     log.warn(err instanceof Error ? err.message : String(err));
   }
 
+  // 5a) Stable launcher + the PATH line, so `agentbox` survives nvm/fnm/volta
+  // switching Node per project.
+  if (!opts.dryRun) await setupLauncher(opts.yes === true);
+
   // 5b) Codex plugin (marketplace add + install + enable by default). Best-effort
   // and gated on the host having Codex — a clean no-op otherwise.
   try {
@@ -787,7 +837,14 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   }
 
   // 7) Tutorial outro.
-  note(tutorialBody(providerName, isDefaultProvider), 'Next steps');
+  process.stdout.write(
+    renderNextSteps({
+      provider: providerName,
+      isDefault: isDefaultProvider,
+      columns: process.stdout.columns,
+      color: !process.env.NO_COLOR,
+    }),
+  );
 
   outro(
     opts.fromAutoTrigger

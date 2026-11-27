@@ -47,6 +47,12 @@ CLI, not the raw commits.
 
 ### Changed
 
+- **Node 22.12 or newer is required.** On an older Node, `agentbox` stops with
+  one line saying which version it found and how to upgrade, instead of
+  crashing inside a dependency.
+- **`agentbox` keeps working when a project switches Node** (nvm, fnm, volta,
+  asdf). A launcher at `~/.agentbox/bin/agentbox` runs the install with the Node
+  it was installed with, and `agentbox install` offers to put it on `PATH`.
 - **A box's workspace download always asks before it overwrites your
   project**, and never touches `.git`.
 - **Approving a new device needs a signed-in hub session** (or the API key
@@ -57,6 +63,9 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **The setup guide reads well in the default macOS Terminal.** The "Next steps"
+  box after `agentbox install` uses normal-weight text instead of gray and fits
+  in 80 columns. The provider picker's hints no longer wrap.
 - **The hub refuses cookie-authenticated writes from other sites**, so a page
   served from a box can no longer act on the hub as you.
 - **Hetzner and DigitalOcean boxes get the agent's environment.**

@@ -6,10 +6,10 @@
   "author": "Marco D'Alia",
   "type": "module",
   "engines": {
-    "node": ">=20.10"
+    "node": ">=22.12"
   },
   "bin": {
-    "agentbox": "./dist/index.js"
+    "agentbox": "./bin/agentbox.js"
   },
   "keywords": [
     "claude",
@@ -35,6 +35,7 @@
     "access": "public"
   },
   "files": [
+    "bin/*.js",
     "dist",
     "share",
     "runtime",
