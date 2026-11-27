@@ -54,8 +54,6 @@ const tray = ({ files, ...entry }) => ({
   social: { kind: "cutout", ...entry.social },
   files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2], scenario: scenarioOf(f.shoot) })),
 });
-/* A tray picture of a scenario the tray repo has to add first. */
-const TRAY_PENDING = "Not taken yet: tray scenarios land in agentbox-tray; take on the Mac.";
 
 /* A CLI screen: the real CLI in a PTY, drawn into a terminal window. */
 const cli = ({ files, ...entry }) => ({
@@ -307,8 +305,8 @@ export const SCREENS = [
     what: "Approval cards with Approve/Deny, then boxes grouped under their manager session and project, with tickets, PRs and limit states.",
     files: [
       { shoot: "pnpm shoot:tray tray/menu.png --restart" },
-      { shoot: "pnpm shoot:tray tray/menu.simple.png --restart --scenario simple", check: TRAY_PENDING },
-      { state: "an approval waiting", shoot: "pnpm shoot:tray tray/menu.simple-approval.png --restart --scenario simple-approval", check: TRAY_PENDING },
+      { shoot: "pnpm shoot:tray tray/menu.simple.png --restart --scenario simple" },
+      { state: "an approval waiting", shoot: "pnpm shoot:tray tray/menu.simple-approval.png --restart --scenario simple-approval" },
     ],
     social: { title: "Every box, one click from the menu bar" },
   }),
@@ -320,7 +318,7 @@ export const SCREENS = [
     via: "The Environment row at the bottom",
     files: [
       { shoot: "pnpm shoot:tray tray/skill-updates.png --press agentbox.environment" },
-      { state: "1 not in sync", shoot: "pnpm shoot:tray tray/skill-updates.simple-skill-behind.png --restart --press agentbox.environment --scenario simple-skill-behind", check: TRAY_PENDING },
+      { state: "1 not in sync", shoot: "pnpm shoot:tray tray/skill-updates.simple-skill-behind.png --restart --scenario simple-skill-behind" },
     ],
   }),
   tray({
@@ -348,7 +346,7 @@ export const SCREENS = [
     via: "Manage… on the Subscriptions band",
     files: [
       { shoot: "pnpm shoot:tray tray/subscriptions.png --restart --press agentbox.subscriptions.manage" },
-      { shoot: "pnpm shoot:tray tray/subscriptions.simple.png --restart --press agentbox.subscriptions.manage --scenario simple", check: TRAY_PENDING },
+      { shoot: "pnpm shoot:tray tray/subscriptions.simple.png --restart --press agentbox.subscriptions.manage --scenario simple" },
     ],
   }),
   tray({
@@ -359,8 +357,8 @@ export const SCREENS = [
     via: "Open Skills Settings… under the Environment row",
     files: [
       { shoot: "pnpm shoot:tray tray/settings-skills.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings" },
-      { state: "Mac is newer", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-behind.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings --scenario simple-skill-behind", check: TRAY_PENDING },
-      { state: "new on the Hub", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-new.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings --scenario simple-skill-new", check: TRAY_PENDING },
+      { state: "Mac is newer", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-behind.png --settings skills --scenario simple-skill-behind" },
+      { state: "new on the Hub", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-new.png --settings skills --scenario simple-skill-new" },
     ],
   }),
   tray({
@@ -371,7 +369,7 @@ export const SCREENS = [
     via: "Open Manager (⌘M)",
     files: [
       { shoot: "pnpm shoot:tray tray/manager.png --manager fx-commerce" },
-      { shoot: "pnpm shoot:tray tray/manager.simple.png --manager fx-commerce --scenario simple", check: TRAY_PENDING },
+      { shoot: "pnpm shoot:tray tray/manager.simple.png --manager fx-commerce --scenario simple" },
     ],
     social: { kind: "cutout", title: "Plan the work, watch every box, approve the merge" },
   }),
