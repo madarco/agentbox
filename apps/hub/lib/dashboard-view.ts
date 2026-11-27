@@ -47,8 +47,6 @@ export interface Lane {
   pushes: number[];
   /** Hours ago of each merged PR. */
   merges: number[];
-  /** Hours ago of a failed create, if any. */
-  failed?: number;
   /** Epoch ms of the lane's newest row, for ordering. */
   last: number;
 }
@@ -97,8 +95,8 @@ export function buildLanes(
 
   // A create row knows the box only by its job (and name); the later rows of a
   // create that succeeded carry the box id too. A failed create keeps its own
-  // `job:<id>` key, which is also the synthetic box row the store shows for it,
-  // so a retry under the same name does not inherit the failure.
+  // `job:<id>` key, so its rows never land on a retry that reused the name; the
+  // lane itself is left out (a create that never ran isn't part of the day).
   const jobToId = new Map<string, string>();
   for (const e of events) if (e.boxId && e.jobId) jobToId.set(e.jobId, e.boxId);
   // A row with only a name belongs to the first box of that name seen at or
@@ -133,17 +131,14 @@ export function buildLanes(
 
   const lanes: Lane[] = [];
   for (const [key, rows] of groups) {
+    if (key.startsWith('job:') && rows.some((r) => r.type === 'box.failed')) continue;
     const box = byId.get(key) ?? (key.startsWith('name:') ? byName.get(key.slice(5)) : undefined);
     const lastRow = rows[rows.length - 1];
     const name = box?.task ?? lastRow?.boxName ?? key;
     const lane: Lane = {
       key,
       box,
-      // A failed create's lane sits next to the retry that took its name.
-      label:
-        key.startsWith('job:') && rows.some((r) => r.type === 'box.failed')
-          ? `${name} (create failed)`
-          : name,
+      label: name,
       agent: box?.agent ?? rows.find((r) => r.agent)?.agent,
       segs: [],
       pushes: [],
@@ -174,7 +169,6 @@ export function buildLanes(
       if (t < start) continue;
       if (r.type === 'git.push') lane.pushes.push(ago(t));
       else if (r.type === 'pr.merged') lane.merges.push(ago(t));
-      else if (r.type === 'box.failed') lane.failed = ago(t);
     }
     if (state) {
       // An open stretch runs to now only while the store agrees; a row the
@@ -184,7 +178,7 @@ export function buildLanes(
       const end = live ? now : Math.max(since, box?.lastActivity ?? since);
       close(Math.min(end, now));
     }
-    if (lane.segs.length || lane.pushes.length || lane.merges.length || lane.failed !== undefined) {
+    if (lane.segs.length || lane.pushes.length || lane.merges.length) {
       lanes.push(lane);
     }
   }
