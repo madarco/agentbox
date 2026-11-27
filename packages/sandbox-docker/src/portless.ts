@@ -116,6 +116,8 @@ export function serviceLogShowsConflict(
 
 let cached: PortlessState | null = null;
 let cachedAt = 0;
+let inflight: Promise<PortlessState> | null = null;
+let cacheGen = 0;
 
 /**
  * How long a probe answer is reused. Short, because the long-lived hub hands out
@@ -132,22 +134,35 @@ const PORTLESS_PROBE_TTL_MS = 5_000;
  */
 export async function detectPortless(): Promise<PortlessState> {
   if (cached !== null && Date.now() - cachedAt < PORTLESS_PROBE_TTL_MS) return cached;
-  cachedAt = Date.now();
+  // One probe at a time: a listing asks per box in parallel, and N concurrent
+  // misses would each spawn their own `portless` processes.
+  if (inflight !== null) return inflight;
+  const gen = cacheGen;
+  const probe = probePortless().then((state) => {
+    // A reset during the probe means the caller wants an answer from after it.
+    if (gen === cacheGen) {
+      cached = state;
+      cachedAt = Date.now();
+    }
+    if (inflight === probe) inflight = null;
+    return state;
+  });
+  inflight = probe;
+  return probe;
+}
+
+async function probePortless(): Promise<PortlessState> {
   try {
     const ver = await execa(PORTLESS_BIN, SUB_VERSION, { reject: false });
-    if (ver.exitCode !== 0) {
-      cached = { installed: false, proxyRunning: false };
-      return cached;
-    }
-    cached = {
+    if (ver.exitCode !== 0) return { installed: false, proxyRunning: false };
+    return {
       installed: true,
       version: (ver.stdout ?? '').trim() || undefined,
       proxyRunning: await isProxyRunning(),
     };
   } catch {
-    cached = { installed: false, proxyRunning: false };
+    return { installed: false, proxyRunning: false };
   }
-  return cached;
 }
 
 /**
@@ -157,6 +172,8 @@ export async function detectPortless(): Promise<PortlessState> {
 export function resetPortlessCache(): void {
   cached = null;
   cachedAt = 0;
+  inflight = null;
+  cacheGen += 1;
 }
 
 /**
@@ -205,17 +222,26 @@ const warnedFallback = new Set<string>();
  * Make sure the proxy serving a box's alias is up, for a caller that is about to
  * OPEN the URL (hub `/web`, `agentbox url`). Starts it when that needs no
  * password (`ensurePortlessProxy` rules: same mode as before, never a mode
- * switch); otherwise reports it down and says why, once per process. Never throws.
+ * switch); otherwise reports it down and says why (stderr by default), once per
+ * outage. Never throws.
  */
-export async function ensurePortlessForUrl(onWarn?: (msg: string) => void): Promise<boolean> {
+export async function ensurePortlessForUrl(
+  onWarn: (msg: string) => void = (msg) => {
+    process.stderr.write(`${msg}\n`);
+  },
+): Promise<boolean> {
   try {
     // Fresh probe: this answer is about to be opened, and a listing's cached
     // "live" from a few seconds ago may predate the proxy dying.
     resetPortlessCache();
     const state = await ensurePortlessProxy({ allowRootPrompt: false });
-    if (state.proxyRunning) return true;
+    if (state.proxyRunning) {
+      // Re-arm: the next outage in a long-lived hub deserves its own warning.
+      warnedFallback.clear();
+      return true;
+    }
     const reason = state.installed ? 'down' : 'missing';
-    if (onWarn && !warnedFallback.has(reason)) {
+    if (!warnedFallback.has(reason)) {
       warnedFallback.add(reason);
       onWarn(
         state.installed

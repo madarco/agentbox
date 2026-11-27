@@ -186,10 +186,6 @@ const FALLBACK_IMAGE = 'agentbox/box:dev';
  */
 const DERIVED_NAME_MAX = 30;
 
-function warnPortless(msg: string): void {
-  process.stderr.write(`${msg}\n`);
-}
-
 /** Default Portless no-TLS proxy port — matches the host wizard's choice. */
 const DEFAULT_PORTLESS_PROXY_PORT = 1355;
 
@@ -1978,7 +1974,7 @@ export function createCloudProvider(
       const alias = kind === 'web' ? box.portlessAlias : box.portlessVncAlias;
       // Asked of the live proxy rather than read off the record, whose URL names
       // the proxy mode at the time it was written.
-      if (!opts?.loopback && alias !== undefined && (await ensurePortlessForUrl(warnPortless))) {
+      if (!opts?.loopback && alias !== undefined && (await ensurePortlessForUrl())) {
         return portlessGetUrl(alias);
       }
       // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).

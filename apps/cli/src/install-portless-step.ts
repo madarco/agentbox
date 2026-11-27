@@ -4,7 +4,7 @@
  * from the tray or the hub web UI never reaches).
  */
 
-import { confirm, log, note } from '@agentbox/cli-kit';
+import { confirm, isCancel, log, note } from '@agentbox/cli-kit';
 import { setConfigValue } from '@agentbox/config';
 import {
   detectEngine,
@@ -67,8 +67,10 @@ async function persistEnabled(value: boolean): Promise<void> {
 /**
  * Run the step. Interactive: explain, ask, then install the CLI, start the
  * proxy and offer the boot-time service (`setupPortlessHost`, one password
- * prompt each). `-y`: the same with no password prompt — the CLI is installed
- * and a proxy started only where that needs no root; the rest is a hint.
+ * prompt each). `-y`: no password prompt — the CLI is installed and
+ * `portless.enabled` saved, but a proxy only starts where that needs no root
+ * (a fresh host defaults to the :443 mode, so it does not); box URLs stay on
+ * loopback until `agentbox install portless` runs.
  * Never throws: a Portless failure leaves box URLs on loopback ports.
  */
 export async function runPortlessInstallStep(args: {
@@ -105,6 +107,8 @@ export async function runPortlessInstallStep(args: {
         'Box URLs',
       );
       const answer = await confirm({ message: 'Set up Portless?', initialValue: true });
+      // A cancel is not a "no": leave it undecided so it is asked again.
+      if (isCancel(answer)) return;
       await persistEnabled(answer === true);
       if (answer !== true) {
         log.info(`Skipped — box URLs use loopback ports. Later: \`${portlessServiceHint()}\`.`);
@@ -115,6 +119,12 @@ export async function runPortlessInstallStep(args: {
     }
 
     if (args.enabled !== true) await persistEnabled(true);
+    // Repairing an opted-in host from a terminal may ask for the password (the
+    // :443 proxy, the boot service); `-y` never does.
+    if (!args.yes) {
+      await setupPortlessHost({ allowRootPrompt: true });
+      return;
+    }
     await setupPortlessHost({ allowRootPrompt: false });
     // setupPortlessHost already pointed at the fix when no proxy came up.
     const live = (await detectPortless()).proxyRunning;

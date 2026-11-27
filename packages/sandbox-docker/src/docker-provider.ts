@@ -30,10 +30,6 @@ import { execInBox, inspectContainerStatus } from './docker.js';
 import { boxResourceStats } from './stats.js';
 import { detectEngine } from './sync/host-export.js';
 import { ensurePortlessForUrl, portlessGetUrl } from './portless.js';
-
-function warnPortless(msg: string): void {
-  process.stderr.write(`${msg}\n`);
-}
 import { DEFAULT_BOX_IMAGE, imageExists, pullOrBuild } from './image.js';
 import {
   computeDockerContextFingerprint,
@@ -250,7 +246,7 @@ export const dockerProvider: Provider = {
     // a dead `<box>.localhost` is worse than the loopback port.
     // Asked of the live proxy, not the record: a URL recorded while the proxy
     // was down names whatever scheme/port Portless defaulted to then.
-    if (box.portlessAlias && !opts?.loopback && (await ensurePortlessForUrl(warnPortless))) {
+    if (box.portlessAlias && !opts?.loopback && (await ensurePortlessForUrl())) {
       return portlessGetUrl(box.portlessAlias);
     }
     if (box.webHostPort === undefined) {

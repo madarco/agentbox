@@ -366,6 +366,18 @@ describe('resolvePortlessHostStateDir', () => {
   });
 });
 
+describe('detectPortless probe sharing', () => {
+  it('runs one probe for concurrent callers', async () => {
+    execaMock.mockImplementation(async () => ok('0.13.0'));
+    resetPortlessCache();
+    await Promise.all([detectPortless(), detectPortless(), detectPortless()]);
+    const versionCalls = execaMock.mock.calls.filter(
+      (c) => Array.isArray(c[1]) && c[1][0] === '--version',
+    );
+    expect(versionCalls).toHaveLength(1);
+  });
+});
+
 describe('chooseBoxUrl', () => {
   it('hands out the alias only while a proxy serves it', () => {
     const args = { portlessUrl: 'https://b.localhost', fallbackUrl: 'http://127.0.0.1:5000' };
