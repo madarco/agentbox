@@ -14,6 +14,8 @@ import {
   branchUrlOf,
   buildTimelineSummary,
   createTimelineBackend,
+  indexPrDetails,
+  mergePrDetails,
   liveReadyItems,
   parseShortstat,
   repoUrlOfPrUrl,
@@ -1682,5 +1684,34 @@ describe('branch graph', () => {
     expect(page!.items[0]!.lane).toEqual({ id: 'box:box1', kind: 'box', open: true });
     const raw = await readFile(timelineFile((await resolveWorkspaceDir(wsId))!), 'utf8');
     expect(raw).not.toContain('lane');
+  });
+});
+
+describe('PR details for the usage page', () => {
+  const pr = (o: Record<string, unknown>) =>
+    ({
+      id: String(Math.random()),
+      at: '2026-11-20T00:00:00Z',
+      type: 'pr.merged',
+      actor: 'github',
+      pr: { repo: 'Acme/API', number: 7, title: '', url: 'u', base: 'main', head: 'h', ...o },
+    }) as unknown as TimelineEvent;
+
+  it('takes the newest title, and counts from the newest row that has them', () => {
+    // Newest first, as readTimeline returns a log.
+    const log = indexPrDetails([
+      pr({ title: 'Renamed', additions: undefined }),
+      pr({ title: '', additions: 40, deletions: 2 }),
+      pr({ title: 'Original', additions: 1, deletions: 1 }),
+    ]);
+    expect(log.get('acme/api#7')).toEqual({ title: 'Renamed', additions: 40, deletions: 2 });
+  });
+
+  it('merges workspaces: a PR named in any, counts filled from another, untitled ones dropped', () => {
+    const a = indexPrDetails([pr({ title: 'From A' })]);
+    const b = indexPrDetails([pr({ additions: 9, deletions: 3 }), pr({ number: 8, title: '' })]);
+    const all = mergePrDetails([a, b]);
+    expect(all.get('acme/api#7')).toEqual({ title: 'From A', additions: 9, deletions: 3 });
+    expect(all.has('acme/api#8')).toBe(false);
   });
 });

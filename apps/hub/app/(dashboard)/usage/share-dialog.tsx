@@ -8,7 +8,7 @@
 // schema. PURE REST CLIENT: the hub posts to and deletes on agent-box.sh, the browser
 // only calls /api/v1/usage/share.
 
-import { SHARE_NAME_RE, UsageShare, type RangeId } from '@agentbox/usage-view';
+import { SHARE_NAME_RE, type RangeId, type UsageShare } from '@agentbox/usage-view';
 import { UsageView } from '@agentbox/usage-view/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -16,7 +16,7 @@ import { Dialog, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Tabs } from '@/components/ui/tabs';
 import { Icons } from '@/components/icons';
-import { localDay, usageShareBody } from '@/lib/usage-page';
+import { localDay, usageShareBody, withShareName } from '@/lib/usage-page';
 
 interface Preview {
   share: UsageShare;
@@ -127,15 +127,9 @@ export function ShareDialog({
 
   const valid = name === '' || SHARE_NAME_RE.test(name);
   // The one object the page preview, the JSON tab and the POST all use.
-  // Through the schema, as the hub will parse it: same key order, so the JSON shown
-  // is the JSON the hub re-serializes and posts.
+  // The preview's share with the typed name, as the hub will post it (see `withShareName`).
   const shown: UsageShare | null = useMemo(
-    () =>
-      preview
-        ? name && valid
-          ? UsageShare.parse({ ...preview.share, name })
-          : preview.share
-        : null,
+    () => (preview ? withShareName(preview.share, name && valid ? name : undefined) : null),
     [preview, name, valid],
   );
   const json = useMemo(

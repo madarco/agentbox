@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { UsageShare, parseShareBody, usageFixture } from '@agentbox/usage-view';
+import { UsageShare, canonicalTimeZone, parseShareBody, usageFixture } from '@agentbox/usage-view';
 import {
   ShareError,
   deleteUsageShare,
@@ -164,6 +164,22 @@ describe('postUsageShare', () => {
     expect(built).toBe(0);
     expect(f.calls[0]!.body).toBe(JSON.stringify(shown));
     expect(await store.lastName()).toBe('dana');
+  });
+
+  it('publishes a share whose zone Node spells the legacy way (Asia/Kolkata, Europe/Kyiv)', async () => {
+    for (const raw of ['Asia/Kolkata', 'Europe/Kyiv']) {
+      const tz = canonicalTimeZone(raw)!;
+      const f = fakeFetch(() => created());
+      const fixture = usageFixture();
+      const d = deps({ fetch: f.fetch });
+      const preview = await previewUsageShare(
+        { ...d, stats: () => Promise.resolve({ ...fixture, range: { ...fixture.range, tz } }) },
+        undefined,
+      );
+      await postUsageShare(d, undefined, { ...preview.share, name: 'dana' });
+      // What agent-box.sh runs on the body, in a runtime with the same Intl.
+      expect(parseShareBody(f.calls[0]!.body).range.tz, raw).toBe(tz);
+    }
   });
 
   it('refuses a previewed share the schema does not admit', async () => {

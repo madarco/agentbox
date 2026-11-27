@@ -1,7 +1,7 @@
 // Pure helpers of the hub Usage page: the stats query a range asks for, and the
 // CSV a window exports. No React, so they are unit-tested on their own.
 
-import type { RangeId, UsageStats } from '@agentbox/usage-view';
+import { UsageShare, type RangeId, type UsageStats } from '@agentbox/usage-view';
 
 export const USAGE_RANGES: readonly RangeId[] = ['7d', '30d', 'month', '90d', 'year'];
 /** The last 30 days: the window the tray's header pill opens this page for. */
@@ -124,4 +124,19 @@ export function usageShareBody(
   if (name) body.name = name;
   if (preview) body.preview = true;
   return body;
+}
+
+/**
+ * `share` with the display name set (or removed), its keys in the schema's order: the
+ * order the hub's parse gives back, so the dialog's JSON tab shows the exact JSON the
+ * hub re-serializes and posts. Not parsed: the schema's zone check reads the runtime's
+ * Intl list, which differs between browsers; the hub's `parseShareBody` is the gate.
+ */
+export function withShareName(share: UsageShare, name: string | undefined): UsageShare {
+  const all: Record<string, unknown> = { ...share, name };
+  return Object.fromEntries(
+    Object.keys(UsageShare.shape)
+      .filter((k) => all[k] !== undefined)
+      .map((k) => [k, all[k]]),
+  ) as UsageShare;
 }

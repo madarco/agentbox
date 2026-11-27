@@ -406,12 +406,13 @@ export async function loadUsageRows(
   const prState = new Map<string, string>();
   for (const e of rows) {
     if (!e.type.startsWith('pr.')) continue;
-    const prKey = e.pr ? `${e.pr.repo}#${String(e.pr.number)}` : e.id;
+    // Lowercased: GitHub and a git remote may spell `owner/name` in different case.
+    const prKey = e.pr ? `${e.pr.repo}#${String(e.pr.number)}`.toLowerCase() : e.id;
     prState.set(prKey, e.type);
     if (e.type !== 'pr.merged' || mergedSeen.has(prKey)) continue;
     mergedSeen.add(prKey);
     // "Recently merged" lists a PR only with a title: the timeline's, else its branch.
-    const detail = e.pr ? prDetails?.get(prKey.toLowerCase()) : undefined;
+    const detail = e.pr ? prDetails?.get(prKey) : undefined;
     const title = detail?.title ?? e.branch;
     events.push({
       type: 'pr.merged',

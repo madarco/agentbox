@@ -1,4 +1,4 @@
-import { usageFixture } from '@agentbox/usage-view';
+import { UsageShare, toShare, usageFixture } from '@agentbox/usage-view';
 import { describe, expect, it } from 'vitest';
 import {
   parseUsageRange,
@@ -6,6 +6,7 @@ import {
   usageIsEmpty,
   usageShareBody,
   usageStatsQuery,
+  withShareName,
 } from '../lib/usage-page';
 
 describe('usageStatsQuery', () => {
@@ -90,5 +91,16 @@ describe('usageShareBody', () => {
       range: '7d',
       since: '7d',
     });
+  });
+});
+
+describe('withShareName', () => {
+  it('gives the JSON the hub parse gives, so the JSON tab is what is posted', () => {
+    const share = toShare(usageFixture());
+    const named = withShareName(share, 'dana');
+    expect(JSON.stringify(named)).toBe(
+      JSON.stringify(UsageShare.parse({ ...share, name: 'dana' })),
+    );
+    expect(JSON.stringify(withShareName(named, undefined))).toBe(JSON.stringify(share));
   });
 });

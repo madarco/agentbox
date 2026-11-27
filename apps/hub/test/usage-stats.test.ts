@@ -327,6 +327,19 @@ describe('computeUsageStats', () => {
       [8, 'feat/b', 0],
       [7, 'Add the thing', 40],
     ]);
+    // The same PR spelled in another case is one merge, not two.
+    const twice = await computeUsageStats(
+      {
+        history: null,
+        ledger: fakeLedger([
+          ev('pr.merged', at(10), { boxId: 'a', pr: { repo: 'Acme/API', number: 7 } }),
+          ev('pr.merged', at(10.5), { boxId: 'a', pr: { repo: 'acme/api', number: 7 } }),
+        ]),
+        now: () => NOW,
+      },
+      window,
+    );
+    expect(twice.hero.prsMerged).toBe(1);
     // Without timelines the branch still names each one: the list matches the count.
     const bare = await computeUsageStats({ history: null, ledger, now: () => NOW }, window);
     expect(bare.feed).toHaveLength(2);
