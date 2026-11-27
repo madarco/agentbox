@@ -859,10 +859,12 @@ The `CloudBackend` interface is the same, but the implementation
   fallback) in config. Precedence: `--size` > `box.sizeHetzner` >
   `box.size` > built-in `cx23`. Value is passed through as Hetzner's
   `server_type` (e.g. `cx33`, `cx43`).
-- **Per-box location** — set via `--location <name>` on `agentbox create`, or
+- **Per-box location** — set via `--location <name>` on `agentbox create` and
+  every agent command (`claude`/`codex`/`opencode`/`pi`/`openclaw`, all from the
+  shared `LOCATION_OPTION` in `apps/cli/src/lib/cloud-sizing.ts`), or
   `box.hetznerLocation` in config (default `nbg1`). Precedence: `--location` >
-  `box.hetznerLocation`. `--location` on a non-hetzner provider is warned and
-  ignored. `agentbox prepare --provider hetzner --location <name>` sets the
+  `box.hetznerLocation`. `--location` on a provider without locations is warned
+  and ignored (`locationIgnoredWarning`). `agentbox prepare --provider hetzner --location <name>` sets the
   bake VPS location the same way.
 - **Preflight validation** (`src/preflight.ts`, pure) — before any billable
   resource is created, `validateServerChoice` checks the choice against the
@@ -872,12 +874,29 @@ The `CloudBackend` interface is the same, but the implementation
   `disk_size` → the location offers the type (`prices[].location`). Each failure
   throws a `UserFacingError` with the fix. This runs *before* firewall/SSH-key
   creation, so a bad `--size`/`--location` never bills a half-created box.
+- **Location failover** (`src/failover.ts`) — a create refused for capacity
+  (`resource_unavailable` / `placement_error`, typically `412 error during
+  placement` on cx23/cx33 in nbg1/fsn1) is retried in the next location of the
+  same network zone (`GET /locations` `network_zone`), starting from the
+  configured one. Candidates where the type isn't offered (`prices[].location`)
+  or where every datacenter reports it not `available` (`GET /datacenters`) are
+  skipped; the first location is always tried. The zone is never left (latency,
+  price, and cx types are EU-only). Pin: `cloudSizingProviderOptions` sets
+  `providerOptions.locationPinned` only when `--location` was typed, the scaffold
+  passes it as `CloudProvisionRequest.locationPinned`, and a pinned create never
+  moves. Nothing is location-bound besides the server: the firewall is
+  project-wide, the key rides cloud-init, snapshots (base and checkpoint) boot in
+  any location, and a refused create makes no server. The landed location goes
+  back as `CloudHandle.location` and the record's `cloud.location` stores it.
+  When all candidates fail, `capacityExhaustedError` lists the locations tried
+  and suggests `--size` / `box.sizeHetzner` plus other-zone locations offering
+  the type. DigitalOcean has no failover: its snapshots are region-bound.
 - **Provision error mapping** (`mapHetznerProvisionError`) — the create call is
   wrapped so late Hetzner errors become actionable: `resource_limit_exceeded` →
   account-limits explanation + the Hetzner Console Limits page (dedicated `ccx*`
-  types trip this on new accounts); `resource_unavailable` / `placement_error` →
-  "no capacity for `<type>` in `<location>`, try another `--location`". Original
-  messages are preserved; unrecognized codes pass through untouched.
+  types trip this on new accounts). Capacity errors pass through to the
+  failover. Original messages are preserved; unrecognized codes pass through
+  untouched.
 - **Real reported resources** — `provision` reads the actual
   `server.server_type` back from the create response and returns
   `CloudHandle.resources {cpu, memory, disk}`. The cloud scaffold stores this on

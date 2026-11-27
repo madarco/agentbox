@@ -64,6 +64,7 @@ import {
 import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
 import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
+import { createWithLocationFailover, fetchLocationPlanInputs, planLocations } from './failover.js';
 import { preparedEntryFor, readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
 import { mintSshKey } from './ssh-key.js';
@@ -494,6 +495,17 @@ export const hetznerBackend: CloudBackend = {
     const image = typeof imageRef === 'number' ? await c.getImage(imageRef) : null;
     const catalog = await c.listServerTypes();
     validateServerChoice(choice, catalog, image);
+    // Where to go when `location` has no capacity for the type. A `--location`
+    // typed for this create pins it; a configured or default one fails over
+    // within its network zone (see failover.ts).
+    const pinned = req.locationPinned === true;
+    const plan = planLocations({
+      serverType,
+      location,
+      pinned,
+      catalog,
+      ...(await fetchLocationPlanInputs(c, pinned)),
+    });
 
     // 2. Resolve the inbound-access policy (`--inbound` / `box.inbound`) into
     // the firewall's source CIDRs. `locked`/`whitelist` need the host egress IP
@@ -572,35 +584,45 @@ export const hetznerBackend: CloudBackend = {
         swap,
       });
 
-      // 6. Create the server. Map late Hetzner provision errors (account limit,
-      // out-of-capacity) to actionable guidance while preserving the original.
-      progress(
-        `creating VPS '${req.name}' from image ${String(imageRef)} (${serverType} / ${location})`,
-      );
-      let created;
-      try {
-        created = await withHetznerRetry(
-          { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
-          () =>
-            c.createServer({
-              name: resourceName,
-              server_type: serverType,
-              image: imageRef,
-              location,
-              user_data: cloudInit,
-              firewalls: [{ firewall: firewall.id }],
-              labels: {
-                'agentbox.managed': 'true',
-                'agentbox.role': 'box',
-                'agentbox.box': boxLabel,
-                'agentbox.firewall': String(firewall.id),
-              },
-              start_after_create: true,
-            }),
-        );
-      } catch (createErr) {
-        throw mapHetznerProvisionError(createErr, choice);
-      }
+      // 6. Create the server, failing over to the next location on a capacity
+      // refusal. A refused create makes no server, and the firewall, key and
+      // image are not location-bound, so each attempt only changes `location`.
+      // Other late errors (account limit) map to actionable guidance.
+      for (const sk of plan.skipped) progress(`skipping ${sk.location}: ${sk.reason}`);
+      const { result: created, location: landed } = await createWithLocationFailover({
+        serverType,
+        plan,
+        pinned,
+        catalog,
+        onLog,
+        mapError: (err) => mapHetznerProvisionError(err),
+        attempt: (loc) => {
+          progress(
+            `creating VPS '${req.name}' from image ${String(imageRef)} (${serverType} / ${loc})`,
+          );
+          return withHetznerRetry(
+            { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
+            () =>
+              c.createServer({
+                name: resourceName,
+                server_type: serverType,
+                image: imageRef,
+                location: loc,
+                user_data: cloudInit,
+                firewalls: [{ firewall: firewall.id }],
+                labels: {
+                  'agentbox.managed': 'true',
+                  'agentbox.role': 'box',
+                  'agentbox.box': boxLabel,
+                  'agentbox.firewall': String(firewall.id),
+                },
+                start_after_create: true,
+              }),
+          );
+        },
+      });
+      if (landed !== location)
+        progress(`landed in ${landed} (no ${serverType} capacity in ${location})`);
       serverId = created.server.id;
       const provisioned = created.server.server_type;
       const vpsIp = created.server.public_net.ipv4?.ip;
@@ -651,6 +673,7 @@ export const hetznerBackend: CloudBackend = {
         sandboxId,
         inbound: inboundPolicy,
         publicHost: vpsIp,
+        location: landed,
         resources: {
           cpu: provisioned.cores,
           memory: provisioned.memory,

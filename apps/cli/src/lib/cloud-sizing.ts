@@ -1,6 +1,38 @@
 import { resolveBoxSize, resolveDaytonaClass, type EffectiveConfig } from '@agentbox/config';
 import { resolveProviderDescriptor } from '@agentbox/sandbox-core';
 
+/**
+ * `--size` / `--location`, declared once and added by `agentbox create` and the
+ * agent commands (`claude`, `codex`, `opencode`, `pi`, `openclaw`), so the two
+ * surfaces cannot drift.
+ */
+export const SIZE_OPTION = {
+  flags: '--size <spec>',
+  description:
+    'VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.',
+} as const;
+
+export const LOCATION_OPTION = {
+  flags: '--location <name>',
+  description:
+    'Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.',
+} as const;
+
+/** True when `--location` means something for this provider. */
+export function providerTakesLocation(providerName: string): boolean {
+  if (providerName === 'hetzner' || providerName === 'digitalocean') return true;
+  return (resolveProviderDescriptor(providerName)?.regions?.length ?? 0) > 0;
+}
+
+/** The warning for a `--location` this provider ignores, or null. */
+export function locationIgnoredWarning(
+  providerName: string,
+  location: string | undefined,
+): string | null {
+  if (!location?.trim() || providerTakesLocation(providerName)) return null;
+  return `--location applies to providers with datacenters/regions (hetzner, digitalocean); ignored for provider ${providerName}`;
+}
+
 /** Per-create overrides from the CLI; each wins over the resolved config value. */
 export interface CloudSizingFlags {
   /** `--size <spec>` */
@@ -30,6 +62,9 @@ export interface CloudSizingFlags {
  *   `box.hetznerLocation`.
  * - **digitalocean**: `location` — region, `--location` flag first, else
  *   `box.digitaloceanRegion`.
+ * - **any provider with a location**: `locationPinned: true` when the location
+ *   came from the `--location` flag rather than config. Hetzner fails over to
+ *   another location on a capacity refusal unless pinned.
  * - **digitalocean**: `project` — the DO Project the box is placed in (name or
  *   UUID), from `box.digitaloceanProject`. Config-only, no flag. Absent = the
  *   account's default project.
@@ -102,6 +137,12 @@ export function cloudSizingProviderOptions(
   if (descriptor?.capabilities.inbound) {
     const inbound = (flags.inbound?.trim() || cfg.box.inbound || '').trim();
     if (inbound.length > 0 && !/^lock(ed)?$/i.test(inbound)) out.inbound = inbound;
+  }
+  // A `--location` typed for this create is a pin: a backend that fails over on
+  // a capacity refusal (hetzner) must not move the box. One from config or the
+  // provider default carries no pin, so the backend may place it elsewhere.
+  if (typeof out.location === 'string' && (flags.location?.trim() ?? '') !== '') {
+    out.locationPinned = true;
   }
   if (providerName === 'vercel') {
     out.timeoutMs = cfg.box.vercelTimeoutMs;

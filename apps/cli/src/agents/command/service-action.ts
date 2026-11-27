@@ -60,7 +60,7 @@ import {
   type RestoreRequest,
 } from '../../commands/_restore.js';
 import { resolveLimits } from '../../limits.js';
-import { cloudSizingProviderOptions } from '../../lib/cloud-sizing.js';
+import { cloudSizingProviderOptions, locationIgnoredWarning } from '../../lib/cloud-sizing.js';
 import { buildHubCreateOpts } from '../../lib/hub-create-opts.js';
 import { resolveProviderChoice } from '../../provider/spec.js';
 import {
@@ -82,6 +82,9 @@ export interface ServiceAgentOptions {
   provider?: string;
   image?: string;
   snapshot?: string;
+  /** `--size <spec>` / `--location <name>`: same flags as `agentbox create`. */
+  size?: string;
+  location?: string;
   yes?: boolean;
   verbose?: boolean;
   carryYes?: boolean;
@@ -447,6 +450,8 @@ export async function runServiceAgent(
       if (dockerRefusal) throw new Error(dockerRefusal);
       const localDockerWarning = await localDockerUnsupportedWarning(cfg, providerName);
       if (localDockerWarning) log.warn(localDockerWarning);
+      const locationWarning = locationIgnoredWarning(providerName, opts.location);
+      if (locationWarning) log.warn(locationWarning);
 
       // The carry gate is the supported way a real secret reaches the box: a
       // `carry:` entry lands it 0600 and the agent's config overlay references
@@ -514,7 +519,10 @@ export async function runServiceAgent(
             providerName,
             ...(remoteHost ? { remoteHost } : {}),
             cfg,
-            flags: {},
+            flags: {
+              ...(opts.size?.trim() ? { size: opts.size.trim() } : {}),
+              ...(opts.location?.trim() ? { location: opts.location.trim() } : {}),
+            },
             resolved: {
               ...(persistent !== undefined ? { persistent } : {}),
               ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
@@ -561,6 +569,8 @@ export async function runServiceAgent(
           provider.name === 'docker'
             ? {}
             : cloudSizingProviderOptions(provider.name, cfg, {
+                ...(opts.size?.trim() ? { size: opts.size.trim() } : {}),
+                ...(opts.location?.trim() ? { location: opts.location.trim() } : {}),
                 ...(remoteHost ? { remoteHost } : {}),
               });
         const s = makeProgressReporter(opts.verbose === true);

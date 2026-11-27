@@ -78,6 +78,7 @@ import {
   type RestoreRequest,
 } from './_restore.js';
 import { registerCurrentSession } from '../lib/host-session.js';
+import { LOCATION_OPTION, SIZE_OPTION, locationIgnoredWarning } from '../lib/cloud-sizing.js';
 
 interface CreateOptions {
   workspace: string;
@@ -119,7 +120,7 @@ interface CreateOptions {
   bundleDepth?: number;
   /** --size <spec>: VM size for cloud providers. Hetzner: server type (cx33); Daytona: cpu-mem-disk GB (4-8-20); Vercel: vCPUs (4). */
   size?: string;
-  /** --location <name>: Hetzner datacenter (nbg1, fsn1, hel1, ash). Hetzner-only. */
+  /** --location <name>: datacenter/region (hetzner, digitalocean, plugin providers with regions). */
   location?: string;
   /** --inbound <spec>: VPS firewall access policy (locked | open | CIDR list). Hetzner/DigitalOcean-only. */
   inbound?: string;
@@ -481,14 +482,8 @@ export const createCommand = new Command('create')
     '--disk <size>',
     'best-effort container writable-layer size (e.g. 10g); no-op on overlay2/macOS',
   )
-  .option(
-    '--size <spec>',
-    'VM size for cloud providers. Hetzner: server type (e.g. cx33). DigitalOcean: Droplet size slug (e.g. s-4vcpu-8gb). Daytona: cpu-mem-disk GB (e.g. 4-8-20). Vercel: vCPUs (1, 2, 4, 8). E2B: baked at prepare time. Overrides box.size / box.size<Provider>.',
-  )
-  .option(
-    '--location <name>',
-    'Datacenter/region for the new box. Hetzner: nbg1, fsn1, hel1, ash (overrides box.hetznerLocation). DigitalOcean: nyc3, sfo3, ams3, fra1 (overrides box.digitaloceanRegion). Hetzner/DigitalOcean-only.',
-  )
+  .option(SIZE_OPTION.flags, SIZE_OPTION.description)
+  .option(LOCATION_OPTION.flags, LOCATION_OPTION.description)
   .option(
     '--inbound <spec>',
     'Inbound-access policy for the VPS firewall. `locked` (default, host egress IP only), `open` (0.0.0.0/0, key-only — reach the box from a phone with the laptop off), or a CIDR list (e.g. 203.0.113.5/32). Overrides box.inbound. Hetzner/DigitalOcean-only.',
@@ -803,11 +798,8 @@ export const createCommand = new Command('create')
       undefined,
       (m: string) => log.warn(m),
     );
-    if (opts.location && providerName !== 'hetzner' && providerName !== 'digitalocean') {
-      log.warn(
-        `--location applies to hetzner/digitalocean only; ignored for provider ${providerName}`,
-      );
-    }
+    const locationWarning = locationIgnoredWarning(providerName, opts.location);
+    if (locationWarning) log.warn(locationWarning);
     if (opts.inbound && providerName !== 'hetzner' && providerName !== 'digitalocean') {
       log.warn(
         `--inbound applies to hetzner/digitalocean only; ignored for provider ${providerName}`,

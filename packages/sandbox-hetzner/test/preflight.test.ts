@@ -99,7 +99,11 @@ describe('validateServerChoice', () => {
   it('rejects a type whose disk is smaller than the base image', () => {
     // cx23 has a 40 GB disk; a 160 GB base image doesn't fit.
     try {
-      validateServerChoice({ serverType: 'cx23', location: 'nbg1' }, CATALOG, image({ disk_size: 160 }));
+      validateServerChoice(
+        { serverType: 'cx23', location: 'nbg1' },
+        CATALOG,
+        image({ disk_size: 160 }),
+      );
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(UserFacingError);
@@ -116,7 +120,11 @@ describe('validateServerChoice', () => {
   it('rejects a location where the type is not offered and lists where it is', () => {
     // ccx23 is only offered in fsn1.
     try {
-      validateServerChoice({ serverType: 'ccx23', location: 'nbg1' }, CATALOG, image({ disk_size: 40 }));
+      validateServerChoice(
+        { serverType: 'ccx23', location: 'nbg1' },
+        CATALOG,
+        image({ disk_size: 40 }),
+      );
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(UserFacingError);
@@ -129,17 +137,19 @@ describe('validateServerChoice', () => {
 
   it('accepts a type in its offered non-default location', () => {
     expect(() =>
-      validateServerChoice({ serverType: 'ccx23', location: 'fsn1' }, CATALOG, image({ disk_size: 40 })),
+      validateServerChoice(
+        { serverType: 'ccx23', location: 'fsn1' },
+        CATALOG,
+        image({ disk_size: 40 }),
+      ),
     ).not.toThrow();
   });
 });
 
 describe('mapHetznerProvisionError', () => {
-  const choice = { serverType: 'ccx23', location: 'fsn1' };
-
   it('maps resource_limit_exceeded to account-limit guidance', () => {
     const err = new HetznerApiError(403, 'resource_limit_exceeded', 'limit reached');
-    const mapped = mapHetznerProvisionError(err, choice);
+    const mapped = mapHetznerProvisionError(err);
     expect(mapped).toBeInstanceOf(UserFacingError);
     const msg = (mapped as Error).message;
     expect(msg).toMatch(/resource limit/i);
@@ -148,31 +158,20 @@ describe('mapHetznerProvisionError', () => {
     expect(msg).toContain('limit reached');
   });
 
-  it('maps resource_unavailable to a try-another-location hint', () => {
-    const err = new HetznerApiError(409, 'resource_unavailable', 'no capacity');
-    const mapped = mapHetznerProvisionError(err, choice);
-    expect(mapped).toBeInstanceOf(UserFacingError);
-    const msg = (mapped as Error).message;
-    expect(msg).toContain('ccx23');
-    expect(msg).toContain('fsn1');
-    expect(msg).toMatch(/--location/);
-    expect(msg).toContain('no capacity');
-  });
-
-  it('maps placement_error the same way as resource_unavailable', () => {
-    const err = new HetznerApiError(409, 'placement_error', 'placement failed');
-    const mapped = mapHetznerProvisionError(err, choice);
-    expect(mapped).toBeInstanceOf(UserFacingError);
-    expect((mapped as Error).message).toMatch(/no capacity/);
+  it('passes capacity errors through: the failover owns them', () => {
+    for (const code of ['resource_unavailable', 'placement_error']) {
+      const err = new HetznerApiError(412, code, 'error during placement');
+      expect(mapHetznerProvisionError(err)).toBe(err);
+    }
   });
 
   it('passes through an unrecognized Hetzner error code unchanged', () => {
     const err = new HetznerApiError(400, 'invalid_input', 'bad field');
-    expect(mapHetznerProvisionError(err, choice)).toBe(err);
+    expect(mapHetznerProvisionError(err)).toBe(err);
   });
 
   it('passes through a non-Hetzner error unchanged', () => {
     const err = new Error('socket hang up');
-    expect(mapHetznerProvisionError(err, choice)).toBe(err);
+    expect(mapHetznerProvisionError(err)).toBe(err);
   });
 });

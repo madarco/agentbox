@@ -14,6 +14,7 @@ import { agentAccountKinds } from '@agentbox/core';
 import { ATTACH_IN_HELP, INLINE_HELP, NO_ATTACH_HELP } from '../../commands/_attach-in.js';
 import type { AgentCliSpec } from '@agentbox/cli-kit';
 import { modelAuthHelp } from '../../lib/model-auth-gate.js';
+import { LOCATION_OPTION, SIZE_OPTION } from '../../lib/cloud-sizing.js';
 
 /** Flags shared by the create action and both subcommands. */
 export interface AgentCreateOptions {
@@ -71,6 +72,10 @@ export interface AgentCreateOptions {
   disk?: string;
   /** Sandbox backend: `docker` (default) or a cloud provider. */
   provider?: string;
+  /** `--size <spec>`: cloud VM size (same flag as `agentbox create`). */
+  size?: string;
+  /** `--location <name>`: datacenter/region; a typed one pins the box there. */
+  location?: string;
   fromBranch?: string;
   useBranch?: string;
   viaHub?: boolean;
@@ -210,6 +215,8 @@ export function addCreateOptions(cmd: Command, a: AgentCliSpec): Command {
     .option('--pids-limit <n>', 'max process count (PIDs cgroup); unset = unlimited')
     .option('--disk <size>', 'best-effort writable-layer size (e.g. 10g); no-op on overlay2/macOS')
     .option('--provider <name>', "sandbox backend: 'docker' (default) or 'daytona' for a cloud box")
+    .option(SIZE_OPTION.flags, SIZE_OPTION.description)
+    .option(LOCATION_OPTION.flags, LOCATION_OPTION.description)
     .option(
       '--from-branch <ref>',
       "base the box's per-box branch on this ref (branch / tag / SHA) instead of HEAD. Branch/tag names are fetched from origin first.",
