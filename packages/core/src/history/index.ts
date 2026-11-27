@@ -27,6 +27,7 @@ export type {
   RawChunk,
 } from './types.js';
 export { ACTIVITY_MAX, activityLine, commandSummary, toolActivity } from './activity.js';
+export { isInjectedPrompt } from './prompt.js';
 export { agentHistoryModule, agentHistoryModules, registerAgentHistoryModule } from './registry.js';
 export {
   createRedactor,

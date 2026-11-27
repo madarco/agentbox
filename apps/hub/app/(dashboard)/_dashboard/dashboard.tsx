@@ -306,7 +306,7 @@ export function Dashboard() {
                 <span className="text-[var(--green-ink)]">
                   {(today.agentHours / today.wallHours).toFixed(1)}×
                 </span>{' '}
-                the hours on the clock, side by side
+                the hours with an agent busy
               </>
             ) : stats.error ? (
               'usage stats unavailable'

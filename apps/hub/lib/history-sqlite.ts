@@ -4,7 +4,13 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { repoKey } from '@agentbox/config';
-import { DEFAULT_IDLE_GAP_MS } from '@agentbox/usage-view';
+import { isInjectedPrompt } from '@agentbox/core';
+import {
+  DEFAULT_IDLE_GAP_MS,
+  DEFAULT_TAIL_MS,
+  activeIntervals,
+  turnKindOf,
+} from '@agentbox/usage-view';
 import type {
   HistoryAccountLimits,
   HistorySearchHit,
@@ -387,8 +393,8 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
     );
   }
   db.exec('CREATE INDEX IF NOT EXISTS history_usage_ts ON history_usage(ts_ms)');
-  // Usage dashboard Phase 2: each session's active intervals are kept in
-  // history_spans, recomputed from `ts_ms` only for sessions marked dirty.
+  // Usage dashboard Phase 2: each session's busy intervals are kept in
+  // history_spans, recomputed from its rows only for sessions marked dirty.
   if (!columns(db, 'history_turns').has('ts_ms')) {
     db.exec('ALTER TABLE history_turns ADD COLUMN ts_ms INTEGER');
     db.exec(
@@ -404,10 +410,50 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
     // A session purged before this column has no turns left to cut intervals from.
     db.exec('UPDATE history_sessions SET spans_dirty = 0 WHERE purged_at IS NOT NULL');
   }
+  migrateSpansRule(db);
   // Live status (docs/agent-live-status-plan.md, Phase 3): a cost where the
   // agent records one. Old rows stay NULL until the re-parse job redoes them.
   if (!columns(db, 'history_usage').has('cost_usd')) {
     db.exec('ALTER TABLE history_usage ADD COLUMN cost_usd REAL');
+  }
+}
+
+/**
+ * Bumped when the rule that cuts `history_spans` changes: every session that
+ * still has its turns is recomputed once, in the background refresh.
+ * 2: busy spans inside turns, automated wakeups that did nothing dropped.
+ */
+const SPANS_RULE = 2;
+
+function migrateSpansRule(db: Db): void {
+  db.exec('CREATE TABLE IF NOT EXISTS history_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  if (!columns(db, 'history_turns').has('auto')) {
+    db.exec('ALTER TABLE history_turns ADD COLUMN auto INTEGER');
+  }
+  const r = db.prepare("SELECT value FROM history_meta WHERE key = 'spans_rule'").get() as
+    | Row
+    | undefined;
+  if (Number(r?.value ?? 1) >= SPANS_RULE) return;
+  db.exec('BEGIN');
+  try {
+    // The stored text is the only origin rows parsed before the column have.
+    const set = db.prepare('UPDATE history_turns SET auto = ? WHERE id = ?');
+    for (const t of db
+      .prepare(
+        "SELECT id, text FROM history_turns WHERE kind = 'turn' AND role = 'user' AND auto IS NULL",
+      )
+      .all() as Row[]) {
+      set.run(isInjectedPrompt(String(t.text ?? '')) ? 1 : 0, n(t.id));
+    }
+    // A purged session's turns are gone: it keeps the spans it has.
+    db.exec('UPDATE history_sessions SET spans_dirty = 1 WHERE purged_at IS NULL');
+    db.prepare("INSERT OR REPLACE INTO history_meta (key, value) VALUES ('spans_rule', ?)").run(
+      String(SPANS_RULE),
+    );
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
   }
 }
 
@@ -466,26 +512,6 @@ function totalsOf(r: Row): UsageTotals {
 }
 
 /** `GET /api/v1/usage`: totals plus groups, over the usage rows joined to their session. */
-/**
- * Turns into active intervals in SQL: a turn more than `?gap` ms after the one before
- * it starts a new interval, and a running sum of those breaks numbers the intervals.
- * Only `session_key` and `ts_ms` are read, from one covering index. Plain window
- * functions, so a postgres store can run the same statement.
- */
-function spansSql(scope: string): string {
-  return `WITH t AS (
-      SELECT session_key, ts_ms,
-        CASE WHEN ts_ms - LAG(ts_ms) OVER (PARTITION BY session_key ORDER BY ts_ms) <= ?
-          THEN 0 ELSE 1 END AS brk
-      FROM history_turns WHERE ts_ms IS NOT NULL ${scope}
-    ), g AS (
-      SELECT session_key, ts_ms,
-        SUM(brk) OVER (PARTITION BY session_key ORDER BY ts_ms ROWS UNBOUNDED PRECEDING) AS grp
-      FROM t
-    )
-    SELECT session_key, MIN(ts_ms) AS s, MAX(ts_ms) AS e FROM g GROUP BY session_key, grp`;
-}
-
 const ACCOUNT_SCOPE = 'AND session_key IN (SELECT key FROM history_sessions WHERE account = ?)';
 
 function usageReport(db: Db, q: UsageQuery): UsageReport {
@@ -710,10 +736,23 @@ export async function openSqliteHistoryRepo(
         key,
         n(first.m),
       );
-      db.prepare(
-        `INSERT OR REPLACE INTO history_spans (session_key, start_ms, last_ms)
-         SELECT session_key, s, e FROM (${spansSql('AND session_key = ?')})`,
-      ).run(DEFAULT_IDLE_GAP_MS, key);
+      const rows = db
+        .prepare(
+          `SELECT ts_ms, kind, role, auto FROM history_turns
+           WHERE session_key = ? AND ts_ms IS NOT NULL ORDER BY ts_ms, id`,
+        )
+        .all(key) as Row[];
+      const spans = activeIntervals(
+        rows.map((r) => ({
+          at: n(r.ts_ms),
+          kind: turnKindOf(String(r.kind), s(r.role), n(r.auto) === 1),
+        })),
+      );
+      const ins = db.prepare(
+        'INSERT OR REPLACE INTO history_spans (session_key, start_ms, last_ms) VALUES (?, ?, ?)',
+      );
+      // Stored as the last row's time; readers add the tail back.
+      for (const sp of spans) ins.run(key, sp.start, sp.end - DEFAULT_TAIL_MS);
     }
     db.prepare('UPDATE history_sessions SET spans_dirty = 0 WHERE key = ?').run(key);
   };
@@ -878,8 +917,8 @@ export async function openSqliteHistoryRepo(
       tx(() => {
         db.prepare('UPDATE history_sessions SET spans_dirty = 1 WHERE key = ?').run(sessionKey);
         const turn = db.prepare(
-          `INSERT OR IGNORE INTO history_turns (session_key, file_id, at, seq, kind, role, name, text, ts, ts_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO history_turns (session_key, file_id, at, seq, kind, role, name, text, ts, ts_ms, auto)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         const ftsIns = fts
           ? db.prepare('INSERT INTO history_turns_fts (rowid, text) VALUES (?, ?)')
@@ -935,6 +974,11 @@ export async function openSqliteHistoryRepo(
             r.kind === 'turn' ? r.text : null,
             r.ts ?? null,
             epochMs(r.ts),
+            r.kind === 'turn' && r.role === 'user'
+              ? (r.auto ?? isInjectedPrompt(r.text))
+                ? 1
+                : 0
+              : null,
           ) as { changes?: number | bigint; lastInsertRowid: number | bigint };
           if (ftsIns && r.kind === 'turn' && Number(res.changes ?? 0) > 0) {
             ftsIns.run(Number(res.lastInsertRowid), r.text);

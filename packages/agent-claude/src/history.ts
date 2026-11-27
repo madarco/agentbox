@@ -9,6 +9,7 @@
  */
 import {
   activityLine,
+  isInjectedPrompt,
   toolActivity,
   type AgentHistoryModule,
   type HistoryRecord,
@@ -54,6 +55,19 @@ function textBlocks(content: unknown): string {
     .join('\n');
 }
 
+/**
+ * Whether claude, not a person, wrote this prompt: the line's `origin.kind`
+ * (`human`, `task-notification`, …), else its `promptSource` (`typed`, `sdk`,
+ * `system`), else the text, for transcripts older than both.
+ */
+function promptIsAutomated(line: Json, text: string): boolean {
+  const kind = str(asObj(line.origin)?.kind);
+  if (kind) return kind !== 'human';
+  const source = str(line.promptSource);
+  if (source) return source === 'system';
+  return isInjectedPrompt(text);
+}
+
 /** The session a file's own lines belong to: its stem, or a subagent's parent dir. */
 function fileSessionId(path: string): string {
   return SUBAGENT_PATH.exec(path)?.[1] ?? stemOf(path);
@@ -97,7 +111,10 @@ export function claudeLineRecords(
   if (type === 'user') {
     if (line.isMeta === true) return out;
     const text = textBlocks(message.content).trim();
-    if (text) out.push({ kind: 'turn', role: 'user', text: clip(text), ...(ts ? { ts } : {}), at });
+    if (text) {
+      const auto = promptIsAutomated(line, text);
+      out.push({ kind: 'turn', role: 'user', text: clip(text), ...(ts ? { ts } : {}), at, auto });
+    }
     return out;
   }
   if (type === 'assistant') {
@@ -163,7 +180,8 @@ export const claudeHistoryModule: AgentHistoryModule = {
   // 2: usage on lines copied from another session is no longer counted.
   // 3: `ai-title`, the working-on line and context fill (live status).
   // 4: `auth` records (a refused credential, never on a copied line).
-  parserVersion: 4,
+  // 5: `auto` on user rows (an injected prompt, from the line's origin).
+  parserVersion: 5,
 
   identify(head, path) {
     const sub = SUBAGENT_PATH.exec(path);

@@ -195,6 +195,11 @@ export type HistoryRecord =
       ts?: string;
       /** Byte offset of the source line in the file. */
       at: number;
+      /**
+       * A user row the harness injected (a task notification, a wakeup), not
+       * typed by a person. Unset: decided from the text (`isInjectedPrompt`).
+       */
+      auto?: boolean;
     }
   | { kind: 'tool'; name: string; ts?: string; at: number }
   | {

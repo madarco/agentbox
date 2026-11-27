@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeHistoryModule as m } from '../src/history.js';
+import { claudeHistoryModule as m, claudeLineRecords } from '../src/history.js';
 
 const S = 'aaaaaaaa-1111-2222-3333-444444444444';
 const P = 'bbbbbbbb-1111-2222-3333-444444444444';
@@ -139,6 +139,38 @@ describe('claude parse', () => {
     const b = m.parse({ path: 'x', offset: cut, bytes: bytes.subarray(cut) }, a.state);
     expect(b.records[0]).toMatchObject({ kind: 'turn', at: 0 });
     expect(b.state.partial).toBeUndefined();
+  });
+});
+
+describe('claude automated prompts (usage busy spans)', () => {
+  const userLine = (extra: Record<string, unknown>, content: string): Record<string, unknown> => ({
+    type: 'user',
+    timestamp: '2026-11-27T07:50:00Z',
+    message: { role: 'user', content },
+    ...extra,
+  });
+  const autoOf = (line: Record<string, unknown>): unknown =>
+    (claudeLineRecords(line, 0)[0] as { auto?: boolean }).auto;
+
+  it('reads origin.kind first', () => {
+    expect(autoOf(userLine({ origin: { kind: 'human' } }, '<task-notification>x'))).toBe(false);
+    expect(autoOf(userLine({ origin: { kind: 'task-notification' } }, 'done'))).toBe(true);
+  });
+
+  it('then promptSource', () => {
+    expect(autoOf(userLine({ promptSource: 'system' }, 'done'))).toBe(true);
+    expect(autoOf(userLine({ promptSource: 'typed' }, 'done'))).toBe(false);
+  });
+
+  it('then the text, for older transcripts', () => {
+    expect(autoOf(userLine({}, '<task-notification>\n<task-id>b</task-id>'))).toBe(true);
+    expect(
+      autoOf(
+        userLine({}, '<system-reminder>a</system-reminder>\n<system-reminder>b</system-reminder>'),
+      ),
+    ).toBe(true);
+    expect(autoOf(userLine({}, 'fix it\n<system-reminder>a</system-reminder>'))).toBe(false);
+    expect(autoOf(userLine({}, 'fix the <task-notification> parser'))).toBe(false);
   });
 });
 

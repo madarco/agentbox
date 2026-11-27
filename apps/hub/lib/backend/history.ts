@@ -284,7 +284,7 @@ export interface UsageWindow {
   account?: string;
 }
 
-/** One active interval of a session: its first and last turn, no tail added. */
+/** One busy interval of a session: its first and last row, no tail added. */
 export interface UsageSpanRow {
   sessionKey: string;
   start: number;
@@ -360,7 +360,7 @@ export interface HistoryRepo {
   replaceUsage(key: string, rows: StoredUsageRow[]): Promise<void>;
   usage(q: UsageQuery): Promise<UsageReport>;
   /**
-   * The stored active intervals (turns no more than `idleGapMs` apart) overlapping
+   * The stored busy intervals (`activeIntervals`, cut at `idleGapMs` inside a turn) overlapping
    * the window. Reads only: sessions whose turns changed since are brought up to
    * date by `refreshSpans`, off the request path.
    */
