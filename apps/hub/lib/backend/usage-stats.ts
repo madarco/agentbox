@@ -72,7 +72,6 @@ export interface UsageStatsDeps {
   now?: () => number;
 }
 
-
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** `YYYY-MM-DD` naming a real date (no month 13, no 31 February). */
 const isDay = (d: string): boolean =>

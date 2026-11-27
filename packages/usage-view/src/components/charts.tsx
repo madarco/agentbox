@@ -670,7 +670,7 @@ export function Wall({
   const T = 18;
   const lead = cells.length ? (dow(cells[0]!.date) + 6) % 7 : 0;
   const weeks = Math.max(1, Math.ceil((cells.length + lead) / 7));
-  const colW = Math.max(26, Math.min(88, Math.floor((avail - L) / 7)));
+  const colW = Math.max(26, Math.min(120, Math.floor((avail - L) / 7)));
   const cw = colW - gap;
   const ch = Math.max(22, Math.min(40, cw));
   const W = L + 7 * colW;
