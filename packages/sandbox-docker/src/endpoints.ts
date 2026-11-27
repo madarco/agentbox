@@ -3,6 +3,7 @@ import { loadConfig } from '@agentbox/ctl';
 import type { BoxStatus } from '@agentbox/ctl';
 import type { BoxEndpoint, BoxEndpoints, BoxRecord } from '@agentbox/core';
 import type { DockerEngine } from './sync/host-export.js';
+import { chooseBoxUrl, portlessProxyLive, recordedPortlessUrl } from './portless.js';
 import { buildVncUrls, VNC_CONTAINER_PORT } from './vnc.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 
@@ -30,8 +31,15 @@ export async function getBoxEndpoints(
   record: BoxRecord,
   engine: DockerEngine,
   persisted?: BoxStatus | null,
+  /** Override the proxy probe (tests). Probed only when the box has an alias. */
+  portlessLive?: boolean,
 ): Promise<BoxEndpoints> {
   const domainIsOrb = engine === 'orbstack';
+  // A recorded alias is advertised only while a proxy serves it. Probe, never
+  // start: this runs for every box in a listing.
+  const hasAlias = record.portlessAlias !== undefined || record.portlessVncAlias !== undefined;
+  const proxyLive =
+    !domainIsOrb && hasAlias ? (portlessLive ?? (await portlessProxyLive())) : false;
   const domain = domainIsOrb ? `${record.container}.orb.local` : '127.0.0.1';
 
   const endpoints: BoxEndpoint[] = [];
@@ -43,7 +51,11 @@ export async function getBoxEndpoints(
     const url =
       engine === 'orbstack'
         ? (vncUrls.orbUrl ?? vncUrls.loopbackUrl)
-        : (vncUrls.portlessUrl ?? vncUrls.loopbackUrl);
+        : chooseBoxUrl({
+            portlessUrl: vncUrls.portlessUrl,
+            fallbackUrl: vncUrls.loopbackUrl,
+            proxyLive,
+          });
     endpoints.push({
       kind: 'vnc',
       name: 'vnc',
@@ -106,14 +118,15 @@ export async function getBoxEndpoints(
   if (record.webContainerPort !== undefined) {
     const hasTarget = webServiceName !== null && record.webHostPort !== undefined;
     // A registered Portless alias gives the box a stable <name>.localhost URL
-    // on non-OrbStack engines. `portlessUrl` is the real URL resolved from the
-    // proxy at create/start (scheme + port vary); fall back to the https form
-    // for records written before that field existed. No `portless` shell-out
-    // here — this runs in a tight loop for `agentbox list`.
-    const usePortless = record.portlessAlias !== undefined && engine !== 'orbstack';
-    const webUrl = usePortless
-      ? (record.portlessUrl ?? `https://${record.portlessAlias}.localhost`)
-      : `http://127.0.0.1:${String(record.webHostPort)}`;
+    // on non-OrbStack engines, while a proxy serves it. `portlessUrl` is the
+    // real URL resolved from the proxy at create/start (scheme + port vary).
+    const webUrl = chooseBoxUrl({
+      portlessUrl: domainIsOrb
+        ? undefined
+        : recordedPortlessUrl(record.portlessAlias, record.portlessUrl),
+      fallbackUrl: `http://127.0.0.1:${String(record.webHostPort)}`,
+      proxyLive,
+    });
     endpoints.push({
       kind: 'web',
       name: webServiceName ?? 'web',

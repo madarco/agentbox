@@ -16,6 +16,7 @@
  */
 
 import { confirm, intro, log, note, outro, spinner } from '@agentbox/cli-kit';
+import { setConfigValue } from '@agentbox/config';
 import { Command } from 'commander';
 import {
   detectPortless,
@@ -136,6 +137,16 @@ export const installPortlessCommand = new Command('portless')
         return;
       }
       state = await detectPortless();
+    }
+
+    // Running this command is the opt-in: without it a box created from the
+    // tray or the hub (no prompt there) would not register its alias.
+    try {
+      await setConfigValue('global', 'portless.enabled', true, process.cwd(), { raw: false });
+    } catch (err) {
+      log.warn(
+        `Could not save portless.enabled: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     const service = await portlessServiceStatus();

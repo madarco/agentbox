@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { buildNoVncUrl, type BoxRecord, type Provider } from '@agentbox/core';
 import { execInBox } from './docker.js';
 import { detectEngine } from './sync/host-export.js';
+import { ensurePortlessForUrl } from './portless.js';
 
 export interface VncLaunchResult {
   up: boolean;
@@ -150,9 +151,13 @@ export async function resolveVncViewerUrl(
 
   if ((box.provider ?? 'docker') === 'docker') {
     const urls = buildVncUrls(box, await detectEngine());
+    const portless =
+      !opts.loopback && urls.portlessUrl && (await ensurePortlessForUrl())
+        ? urls.portlessUrl
+        : undefined;
     const resolved = opts.loopback
       ? urls.loopbackUrl
-      : (urls.portlessUrl ?? urls.orbUrl ?? urls.loopbackUrl);
+      : (portless ?? urls.orbUrl ?? urls.loopbackUrl);
     if (!resolved) {
       throw new Error(`VNC URL unavailable for box ${box.name} — the daemon may not be up`);
     }

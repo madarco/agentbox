@@ -57,6 +57,9 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Box URLs never point at a dead `<box>.localhost`.** The Portless alias is
+  handed out only while a proxy serves it, otherwise the loopback URL, and
+  `agentbox install` now sets Portless up as its own step.
 - **The hub refuses cookie-authenticated writes from other sites**, so a page
   served from a box can no longer act on the hub as you.
 - **Hetzner and DigitalOcean boxes get the agent's environment.**

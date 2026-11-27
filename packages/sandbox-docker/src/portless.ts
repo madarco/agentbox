@@ -115,14 +115,24 @@ export function serviceLogShowsConflict(
 }
 
 let cached: PortlessState | null = null;
+let cachedAt = 0;
 
 /**
- * Probe the host for Portless. Cached per-process like `detectEngine` — the
- * install state cannot change mid-command and the proxy state is only used
- * for a soft hint.
+ * How long a probe answer is reused. Short, because the long-lived hub hands out
+ * box URLs from this answer: a proxy that died (reboot, crash) or was started
+ * after the hub came up must show up within seconds, not at the next restart.
+ * Long enough that a `list` over many boxes probes once.
+ */
+const PORTLESS_PROBE_TTL_MS = 5_000;
+
+/**
+ * Probe the host for Portless. Cached for a few seconds, so a command (or a hub
+ * request) that asks per box probes once, while a long-lived process still sees
+ * the proxy come and go.
  */
 export async function detectPortless(): Promise<PortlessState> {
-  if (cached !== null) return cached;
+  if (cached !== null && Date.now() - cachedAt < PORTLESS_PROBE_TTL_MS) return cached;
+  cachedAt = Date.now();
   try {
     const ver = await execa(PORTLESS_BIN, SUB_VERSION, { reject: false });
     if (ver.exitCode !== 0) {
@@ -146,6 +156,77 @@ export async function detectPortless(): Promise<PortlessState> {
  */
 export function resetPortlessCache(): void {
   cached = null;
+  cachedAt = 0;
+}
+
+/**
+ * The URL to hand a client for a box: the recorded Portless alias URL only while
+ * a proxy is actually serving it, the loopback/preview URL otherwise.
+ *
+ * The record keeps the alias forever (the route registry survives a reboot), so
+ * trusting it alone is what handed a fresh Mac a `<box>.localhost` that nothing
+ * served. Pure: the caller supplies the live answer. Exported for tests.
+ */
+export function chooseBoxUrl<F extends string | undefined>(args: {
+  /** The recorded Portless URL (or composed alias URL), when the box has an alias. */
+  portlessUrl: string | undefined;
+  /** The URL that works without Portless (loopback port, preview URL). */
+  fallbackUrl: F;
+  proxyLive: boolean;
+}): string | F {
+  if (args.portlessUrl !== undefined && args.proxyLive) return args.portlessUrl;
+  return args.fallbackUrl;
+}
+
+/** Recorded Portless URL for a box, composing the alias for pre-`portlessUrl` records. */
+export function recordedPortlessUrl(
+  alias: string | undefined,
+  url: string | undefined,
+): string | undefined {
+  if (alias === undefined) return undefined;
+  return url ?? `https://${alias}.localhost`;
+}
+
+/**
+ * Whether a Portless proxy is serving right now. Probe only — never starts one,
+ * so it is safe in a listing loop. Never throws.
+ */
+export async function portlessProxyLive(): Promise<boolean> {
+  try {
+    return (await detectPortless()).proxyRunning;
+  } catch {
+    return false;
+  }
+}
+
+const warnedFallback = new Set<string>();
+
+/**
+ * Make sure the proxy serving a box's alias is up, for a caller that is about to
+ * OPEN the URL (hub `/web`, `agentbox url`). Starts it when that needs no
+ * password (`ensurePortlessProxy` rules: same mode as before, never a mode
+ * switch); otherwise reports it down and says why, once per process. Never throws.
+ */
+export async function ensurePortlessForUrl(onWarn?: (msg: string) => void): Promise<boolean> {
+  try {
+    // Fresh probe: this answer is about to be opened, and a listing's cached
+    // "live" from a few seconds ago may predate the proxy dying.
+    resetPortlessCache();
+    const state = await ensurePortlessProxy({ allowRootPrompt: false });
+    if (state.proxyRunning) return true;
+    const reason = state.installed ? 'down' : 'missing';
+    if (onWarn && !warnedFallback.has(reason)) {
+      warnedFallback.add(reason);
+      onWarn(
+        state.installed
+          ? `Portless proxy is not running and could not be started without a password prompt — using the loopback URL. Fix it for good with \`${portlessServiceHint()}\`.`
+          : `Portless is not installed — using the loopback URL. Set it up with \`${portlessServiceHint()}\`.`,
+      );
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -244,7 +325,9 @@ export function portlessDoctorRow(
       label: 'portless',
       status: 'warn',
       detail: 'not installed — box web URLs fall back to raw loopback ports',
-      hint: `recommended: \`${portlessInstallHint()}\` for https://<box>.localhost URLs`,
+      // `agentbox install portless` installs the CLI, the boot-time service and
+      // turns `portless.enabled` on: the whole setup, where `npm i -g` is a third.
+      hint: `set it up: \`${portlessServiceHint()}\` for https://<box>.localhost URLs`,
     };
   }
   if (!state.proxyRunning) {

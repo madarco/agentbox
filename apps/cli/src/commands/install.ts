@@ -8,6 +8,8 @@
  *      then browser login" handling).
  *   4. Confirm-then-run base image / snapshot prepare (default-yes for docker).
  *   4b. Confirm-then-pin it as `box.provider` (the backend new boxes go to).
+ *   4c. Portless (`https://<box>.localhost`) for docker on Docker Desktop and
+ *       the loopback-URL clouds; persists `portless.enabled`.
  *   5. Install the host `/agentbox` skill files into Claude / Codex / OpenCode.
  *   6. Write the first-run marker.
  *   7. Tutorial outro.
@@ -62,6 +64,7 @@ import { AGENTBOX_VERSION } from '../version.js';
 import { installCmuxCommand } from './install-cmux.js';
 import { installHerdrCommand } from './install-herdr.js';
 import { installPortlessCommand } from './install-portless.js';
+import { runPortlessInstallStep } from '../install-portless-step.js';
 import { installCodexCommand } from './install-codex.js';
 import { installCodexPlugin } from '@agentbox/agent-codex/cli';
 import { resolveDevRepoRoot } from '../lib/source-checkout.js';
@@ -676,6 +679,14 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
 
   // 4b) Pin it as the default backend for new boxes (`box.provider`).
   const isDefaultProvider = await maybeSetDefaultProvider(providerName, opts.yes ?? false);
+
+  // 4c) Portless: `https://<box>.localhost` for providers whose box URL is a
+  // host loopback port. A separate step — see install-portless-step.ts.
+  await runPortlessInstallStep({
+    provider: providerName,
+    enabled: cfg?.effective.portless.enabled,
+    yes: opts.yes ?? false,
+  });
 
   // 5) Host /agentbox skill (idempotent).
   const sp = spinner();

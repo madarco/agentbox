@@ -43,7 +43,7 @@ agentbox wait my-box
 
 ## Same URL inside & out
 
-The box and the host see the **same** URL for the web app, so OAuth redirects, CORS allowlists, and Next.js `allowedDevOrigins` line up. How that URL is produced depends on your Docker runtime: **OrbStack** gives every container auto-DNS (`http://agentbox-<name>.orb.local`), while **Docker Desktop** has no per-container DNS, so AgentBox offers **Portless** on first run — a proxy that yields `https://<box-name>.localhost`. The clean HTTPS URL runs the proxy on port `443`, which needs root, so Portless asks for your host password once (a native dialog on macOS); dismiss it and AgentBox falls back to a no-root proxy at `http://<box-name>.localhost:1355`.
+The box and the host see the **same** URL for the web app, so OAuth redirects, CORS allowlists, and Next.js `allowedDevOrigins` line up. How that URL is produced depends on your Docker runtime: **OrbStack** gives every container auto-DNS (`http://agentbox-<name>.orb.local`), while **Docker Desktop** has no per-container DNS, so `agentbox install` offers **Portless** — a proxy that yields `https://<box-name>.localhost` — as its own step (on macOS with Docker Desktop, and for Hetzner, DigitalOcean and remote Docker, whose box URL is a host loopback port). A yes installs the CLI, starts the proxy, offers the startup service and saves `portless.enabled`; `agentbox install -y` does the same without any password prompt. The clean HTTPS URL runs the proxy on port `443`, which needs root, so Portless asks for your host password once (a native dialog on macOS); dismiss it and AgentBox falls back to a no-root proxy at `http://<box-name>.localhost:1355`.
 
 The in-box browser (`agentbox screen`) loads the **same** `<box-name>.localhost` URL the host uses, so the app is one origin from both sides.
 
@@ -58,7 +58,11 @@ agentbox install portless              # asks for your password once
 agentbox install portless --uninstall  # remove the startup service again
 ```
 
-That installs Portless's own startup service, so the HTTPS proxy is up from the moment you log in — before you run any AgentBox command, and with no password prompt after the first. `agentbox doctor` tells you which state you're in: proxy down, or running with no startup service behind it (fine until the next reboot).
+That installs the Portless CLI if it is missing, turns `portless.enabled` on, and installs Portless's own startup service, so the HTTPS proxy is up from the moment you log in — before you run any AgentBox command, and with no password prompt after the first. `agentbox doctor` tells you which state you're in: proxy down, or running with no startup service behind it (fine until the next reboot).
+
+### Without Portless, URLs fall back to loopback
+
+A box only gets its `<box-name>.localhost` URL while a Portless proxy is actually serving it. When Portless is not installed, or the proxy is down and can't be started without your password, every URL AgentBox hands out — `agentbox url`, the hub's Open Web, the menu-bar app — is the box's loopback address instead (`http://127.0.0.1:<port>` for Docker, the SSH-forwarded port for Hetzner and DigitalOcean), and AgentBox says why once. Start the proxy (or run `agentbox install portless`) and the alias comes back without recreating the box.
 
 ```bash
 agentbox url my-box

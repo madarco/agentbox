@@ -9,6 +9,7 @@ import {
 } from '@agentbox/sandbox-core';
 import {
   detectEngine,
+  ensurePortlessForUrl,
   getBoxHostPaths,
   inspectBox,
   portlessGetUrl,
@@ -82,10 +83,16 @@ async function resolveViaProvider(box: BoxRecord, opts: UrlOptions): Promise<str
       // declared (EXPOSE 80) so no port suffix is needed.
       return `http://${record.container}.orb.local`;
     }
-    if (record.portlessAlias && !opts.loopback) {
-      // A Portless route was registered — use the URL resolved at
-      // create/start; fall back to a live `portless get` for older records.
-      return record.portlessUrl ?? (await portlessGetUrl(record.portlessAlias));
+    if (
+      record.portlessAlias &&
+      !opts.loopback &&
+      (await ensurePortlessForUrl((m) => {
+        log.warn(m);
+      }))
+    ) {
+      // A Portless route was registered and a proxy serves it — ask the proxy,
+      // since a recorded URL names the mode it had when the box was created.
+      return portlessGetUrl(record.portlessAlias);
     }
     if (record.webHostPort === undefined) {
       throw new Error(

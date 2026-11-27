@@ -298,6 +298,10 @@ export {
   type RefreshResult,
 } from './sync/host-export.js';
 export {
+  chooseBoxUrl,
+  ensurePortlessForUrl,
+  portlessProxyLive,
+  recordedPortlessUrl,
   detectPortless,
   ensurePortlessProxy,
   installPortless,

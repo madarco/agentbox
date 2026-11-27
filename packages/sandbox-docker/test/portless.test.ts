@@ -34,8 +34,11 @@ vi.mock('node:net', () => ({
 import { existsSync } from 'node:fs';
 
 import {
+  chooseBoxUrl,
   detectPortless,
+  ensurePortlessForUrl,
   ensurePortlessProxy,
+  recordedPortlessUrl,
   installPortless,
   installPortlessServiceDetailed,
   sudoIdentityEnvPrefix,
@@ -363,12 +366,33 @@ describe('resolvePortlessHostStateDir', () => {
   });
 });
 
+describe('chooseBoxUrl', () => {
+  it('hands out the alias only while a proxy serves it', () => {
+    const args = { portlessUrl: 'https://b.localhost', fallbackUrl: 'http://127.0.0.1:5000' };
+    expect(chooseBoxUrl({ ...args, proxyLive: true })).toBe('https://b.localhost');
+    expect(chooseBoxUrl({ ...args, proxyLive: false })).toBe('http://127.0.0.1:5000');
+  });
+
+  it('uses the fallback when the box has no alias, live proxy or not', () => {
+    expect(
+      chooseBoxUrl({ portlessUrl: undefined, fallbackUrl: 'http://127.0.0.1:1', proxyLive: true }),
+    ).toBe('http://127.0.0.1:1');
+  });
+
+  it('composes the alias URL for records written before portlessUrl', () => {
+    expect(recordedPortlessUrl('b', undefined)).toBe('https://b.localhost');
+    expect(recordedPortlessUrl('b', 'http://b.localhost:1355')).toBe('http://b.localhost:1355');
+    expect(recordedPortlessUrl(undefined, 'http://b.localhost:1355')).toBeUndefined();
+  });
+});
+
 describe('portlessDoctorRow', () => {
   it('warns with the install hint when Portless is not installed', () => {
     const row = portlessDoctorRow({ installed: false, proxyRunning: false });
     expect(row.status).toBe('warn');
     expect(row.detail).toContain('not installed');
-    expect(row.hint).toContain(portlessInstallHint());
+    // The whole setup (CLI + boot service + portless.enabled), not just the npm install.
+    expect(row.hint).toContain('agentbox install portless');
   });
 
   it('warns with the start hint when installed but the proxy is down', () => {
@@ -562,6 +586,35 @@ describe('ensurePortlessProxy', () => {
       false,
     );
     expect(execaMock.mock.calls.some((c) => c[0] === 'osascript')).toBe(false);
+  });
+
+  it('ensurePortlessForUrl: no proxy without a password means loopback, said once', async () => {
+    configuredMode('https://x.localhost');
+    const warn = vi.fn();
+    expect(await ensurePortlessForUrl(warn)).toBe(false);
+    resetPortlessCache();
+    expect(await ensurePortlessForUrl(warn)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('agentbox install portless');
+    expect(execaMock.mock.calls.some((c) => c[0] === 'osascript')).toBe(false);
+  });
+
+  it('ensurePortlessForUrl: restarts a no-root proxy and reports the alias usable', async () => {
+    configuredMode('http://x.localhost:1355');
+    execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
+      if (Array.isArray(args) && args[0] === 'get') return ok('http://x.localhost:1355');
+      if (Array.isArray(args) && args[0] === 'proxy') {
+        portAccepts.value = true; // the started proxy now answers on its port
+        return ok('');
+      }
+      return portlessResult as ExecaResult;
+    });
+    expect(await ensurePortlessForUrl()).toBe(true);
+    expect(execaMock).toHaveBeenCalledWith(
+      'portless',
+      ['proxy', 'start', '--no-tls', '-p', String(PORTLESS_PROXY_PORT)],
+      { reject: false },
+    );
   });
 
   it('starts nothing unasked on a host that has never run a proxy', async () => {

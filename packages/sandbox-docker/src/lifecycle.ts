@@ -57,7 +57,15 @@ import { setUpBoxSshd } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 import { AGENT_SYNC_SPECS, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { agentSyncModule, type AgentSessionInfo } from './sync/agents/module.js';
-import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
+import {
+  chooseBoxUrl,
+  detectPortless,
+  portlessAlias,
+  portlessGetUrl,
+  portlessProxyLive,
+  portlessUnalias,
+  recordedPortlessUrl,
+} from './portless.js';
 import { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 import {
   ensureRelay,
@@ -231,16 +239,19 @@ export async function listBoxes(): Promise<ListedBox[]> {
         // gets it by default; Daytona naturally skips because its URL isn't
         // loopback). Falls back to the ephemeral `127.0.0.1:<random>`
         // preview URL when Portless isn't in play.
-        const portlessWebUrl =
-          b.portlessAlias !== undefined
-            ? (b.portlessUrl ?? `https://${b.portlessAlias}.localhost`)
-            : undefined;
+        // Either alias only while a proxy serves it (probe, never start).
+        const proxyLive =
+          (b.portlessAlias !== undefined || b.portlessVncAlias !== undefined) &&
+          (await portlessProxyLive());
         const cachedWebUrl = webPort > 0 ? b.cloud?.previewUrls?.[webPort] : undefined;
-        const webUrl = portlessWebUrl ?? cachedWebUrl;
-        const portlessVncBase =
-          b.portlessVncAlias !== undefined
-            ? (b.portlessVncUrl ?? `https://${b.portlessVncAlias}.localhost`)
-            : undefined;
+        const webUrl = chooseBoxUrl({
+          portlessUrl: recordedPortlessUrl(b.portlessAlias, b.portlessUrl),
+          fallbackUrl: cachedWebUrl,
+          proxyLive,
+        });
+        const portlessVncBase = proxyLive
+          ? recordedPortlessUrl(b.portlessVncAlias, b.portlessVncUrl)
+          : undefined;
         // Only Portless yields a URL stable enough to persist in a listing. A
         // cloud provider's own preview URL is either header-authed or a signed
         // URL that expires within the hour, so daytona/vercel/e2b report the
