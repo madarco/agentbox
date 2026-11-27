@@ -842,7 +842,7 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
       provider: providerName,
       isDefault: isDefaultProvider,
       columns: process.stdout.columns,
-      color: !process.env.NO_COLOR,
+      color: process.stdout.isTTY === true && !process.env.NO_COLOR,
     }),
   );
 

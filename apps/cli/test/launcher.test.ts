@@ -42,7 +42,12 @@ describe('launcherTarget', () => {
       execPath: process.execPath,
       distDir: dist,
     });
-    expect(t).toEqual({ node: process.execPath, script });
+    expect(t).toMatchObject({ node: process.execPath, script });
+  });
+
+  it('is null under Volta, which pins global packages itself', () => {
+    const { dist } = fakeNpmInstall(join(tmp, '.volta', 'tools', 'image', 'packages', 'x'));
+    expect(launcherTarget({ argv1: join(dist, 'index.js'), distDir: dist })).toBeNull();
   });
 
   it('is null for a source checkout, npx and pnpm', () => {
@@ -65,6 +70,25 @@ describe('ensureLauncher', () => {
     expect(body).toContain(`node='/n/a/bin/node'`);
     expect(ensureLauncher({ ...t, node: '/n/b/bin/node' }, tmp)).toBe(true);
     expect(readFileSync(launcherPath(tmp), 'utf8')).toContain(`node='/n/b/bin/node'`);
+  });
+
+  it('does not re-point at an older build while the newer install exists', () => {
+    const a = fakeNpmInstall(join(tmp, 'a'));
+    const b = fakeNpmInstall(join(tmp, 'b'));
+    const home = join(tmp, 'home');
+    ensureLauncher({ node: process.execPath, script: a.script, version: '0.40.0' }, home);
+    expect(
+      ensureLauncher({ node: process.execPath, script: b.script, version: '0.33.0' }, home),
+    ).toBe(false);
+    expect(readFileSync(launcherPath(home), 'utf8')).toContain(a.script);
+    // Newer, or the recorded install gone: re-point.
+    expect(
+      ensureLauncher({ node: process.execPath, script: b.script, version: '0.41.0' }, home),
+    ).toBe(true);
+    rmSync(join(tmp, 'b'), { recursive: true, force: true });
+    expect(
+      ensureLauncher({ node: process.execPath, script: a.script, version: '0.33.0' }, home),
+    ).toBe(true);
   });
 
   it('is a no-op without a target', () => {
@@ -108,6 +132,13 @@ describe('the launcher script', () => {
     expect(r.stderr).toMatch(/using .*otherbin\/agentbox/);
   });
 
+  it('skips itself even when PATH spells its dir differently', () => {
+    ensureLauncher({ node: process.execPath, script: join(tmp, 'gone.js') }, tmp);
+    const dir = dirname(launcherPath(tmp));
+    const r = run(launcherPath(tmp), `${dir}/:${dir}/../bin:/usr/bin:/bin`);
+    expect(r.status).toBe(127);
+  });
+
   it('says how to reinstall when nothing is left', () => {
     ensureLauncher({ node: process.execPath, script: join(tmp, 'gone.js') }, tmp);
     const r = run(launcherPath(tmp), `${dirname(launcherPath(tmp))}:/usr/bin:/bin`);
@@ -130,8 +161,8 @@ describe('the launcher script', () => {
 
 describe('shell rc', () => {
   it('picks the file per shell', () => {
-    delete process.env['ZDOTDIR'];
-    expect(shellRcFor('/bin/zsh', '/h')?.file).toBe('/h/.zshenv');
+    expect(shellRcFor('/bin/zsh', '/h', 'linux', {})?.file).toBe('/h/.zshenv');
+    expect(shellRcFor('/bin/zsh', '/h', 'linux', { ZDOTDIR: '/z' })?.file).toBe('/z/.zshenv');
     expect(shellRcFor('/bin/bash', '/h', 'darwin')?.file).toBe('/h/.bash_profile');
     expect(shellRcFor('/usr/bin/bash', '/h', 'linux')?.file).toBe('/h/.bashrc');
     expect(shellRcFor('/usr/bin/fish', '/h')?.file).toBe('/h/.config/fish/config.fish');
@@ -140,12 +171,17 @@ describe('shell rc', () => {
   });
 
   it('adds the line once, on its own line', () => {
-    const rc = shellRcFor('/bin/zsh', tmp)!;
+    const rc = shellRcFor('/bin/zsh', tmp, 'linux', {})!;
     writeFileSync(rc.file, 'export FOO=1');
     expect(addRcLine(rc)).toBe(true);
     expect(addRcLine(rc)).toBe(false);
     expect(readFileSync(rc.file, 'utf8')).toBe(`export FOO=1\n${rc.line}\n`);
     expect(rcHasLine(rc)).toBe(true);
+  });
+
+  it('on macOS bash, writes to the login file that already exists', () => {
+    writeFileSync(join(tmp, '.profile'), 'export X=1\n');
+    expect(shellRcFor('/bin/bash', tmp, 'darwin')?.file).toBe(join(tmp, '.profile'));
   });
 
   it('creates a missing fish config', () => {
@@ -155,7 +191,7 @@ describe('shell rc', () => {
   });
 
   it('puts the launcher dir ahead of version-manager paths', () => {
-    const rc = shellRcFor('/bin/zsh', tmp)!;
+    const rc = shellRcFor('/bin/zsh', tmp, 'linux', {})!;
     addRcLine(rc);
     const out = execFileSync(
       '/bin/sh',

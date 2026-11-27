@@ -19,6 +19,8 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectExecutionMethod } from '../exec-method.js';
+import { AGENTBOX_VERSION } from '../version.js';
+import { isNewer } from './semver-lite.js';
 
 const MARKER = '# agentbox launcher';
 
@@ -41,10 +43,10 @@ function shq(s: string): string {
  * is gone (it lived under that Node's prefix) → another `agentbox` on PATH; else
  * a reinstall hint. The next run from a global install re-points the launcher.
  */
-export function renderLauncher(node: string, script: string): string {
+export function renderLauncher(node: string, script: string, version?: string): string {
   return `#!/bin/sh
 ${MARKER} (written by agentbox; rewritten on install and self-update)
-node=${shq(node)}
+${version ? `# version: ${version}\n` : ''}node=${shq(node)}
 script=${shq(script)}
 if [ -f "$script" ]; then
   if [ -x "$node" ]; then
@@ -53,10 +55,11 @@ if [ -f "$script" ]; then
   echo "agentbox: $node no longer exists; using node from PATH. Run 'agentbox install' to re-point ~/.agentbox/bin/agentbox." >&2
   exec node "$script" "$@"
 fi
-self_dir=$(cd "$(dirname "$0")" && pwd)
+self_dir=$(cd "$(dirname "$0")" && pwd -P)
 IFS=:
 for d in $PATH; do
-  [ "$d" = "$self_dir" ] && continue
+  d_real=$(cd "$d" 2>/dev/null && pwd -P) || continue
+  [ "$d_real" = "$self_dir" ] && continue
   if [ -x "$d/agentbox" ]; then
     unset IFS
     echo "agentbox: $script no longer exists; using $d/agentbox. Run 'agentbox install' to re-point ~/.agentbox/bin/agentbox." >&2
@@ -71,6 +74,8 @@ exit 127
 export interface LauncherTarget {
   node: string;
   script: string;
+  /** The install's version; a launcher pointing at a newer live install is kept. */
+  version?: string;
 }
 
 /**
@@ -90,8 +95,12 @@ export function launcherTarget(
   if (detectExecutionMethod({ argv1 }) !== 'npm') return null;
   const distDir = input.distDir ?? dirname(fileURLToPath(import.meta.url));
   const script = resolve(distDir, '..', 'bin', 'agentbox.js');
+  const execPath = input.execPath ?? process.execPath;
+  // Volta already pins each global package to its own Node, independent of the
+  // project's; a second pin on top would fight its shims.
+  if (isVolta(script) || isVolta(execPath)) return null;
   if (!existsSync(script)) return null;
-  return { node: stableNode(input.execPath ?? process.execPath, script), script };
+  return { node: stableNode(execPath, script), script, version: AGENTBOX_VERSION };
 }
 
 /**
@@ -99,6 +108,10 @@ export function launcherTarget(
  * both are the same binary: Homebrew's execPath is a versioned Cellar path that
  * `brew upgrade` deletes, while `/opt/homebrew/bin/node` survives it.
  */
+function isVolta(p: string): boolean {
+  return p.includes('/.volta/');
+}
+
 function stableNode(execPath: string, script: string): string {
   const i = script.lastIndexOf('/lib/node_modules/');
   if (i < 0) return execPath;
@@ -123,17 +136,36 @@ export function ensureLauncher(
 ): boolean {
   if (!target) return false;
   const path = launcherPath(home);
-  const body = renderLauncher(target.node, target.script);
+  const body = renderLauncher(target.node, target.script, target.version);
+  let current: string | undefined;
   try {
-    if (readFileSync(path, 'utf8') === body) return false;
+    current = readFileSync(path, 'utf8');
   } catch {
     // Missing — write it.
   }
+  if (current === body) return false;
+  if (current !== undefined && keepCurrent(current, target)) return false;
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${String(process.pid)}.tmp`;
   writeFileSync(tmp, body, { mode: 0o755 });
   renameSync(tmp, path);
   return true;
+}
+
+/**
+ * Don't re-point at an older build: a stale copy under another Node (run because
+ * that Node's bin dir comes first in some project) must not take the launcher
+ * from a newer install that still exists.
+ */
+function keepCurrent(current: string, target: LauncherTarget): boolean {
+  const field = (re: RegExp): string | undefined => re.exec(current)?.[1];
+  const node = field(/^node='(.*)'$/m)?.replace(/'\\''/g, "'");
+  const script = field(/^script='(.*)'$/m)?.replace(/'\\''/g, "'");
+  const version = field(/^# version: (\S+)$/m);
+  if (!node || !script || !version || !target.version) return false;
+  if (script === target.script) return false;
+  if (!existsSync(node) || !existsSync(script)) return false;
+  return isNewer(version, target.version);
 }
 
 /** Startup hook: never throws, never prints. */
@@ -152,6 +184,8 @@ export function ensureLauncherQuietly(): void {
  * `npm i -g` would then update an install the launcher doesn't point at.
  */
 export function envWithRunningNode(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  // Under Volta, its npm shim on PATH is what installs into the right place.
+  if (isVolta(process.execPath)) return env;
   const bin = dirname(process.execPath);
   const path = env['PATH'] ?? '';
   const parts = path.split(delimiter).filter((p) => p !== bin);
@@ -182,10 +216,11 @@ export function shellRcFor(
   shellPath: string | undefined = process.env['SHELL'],
   home: string = homedir(),
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): ShellRc | null {
   const name = basename(shellPath ?? '');
   if (name === 'zsh') {
-    const zdot = process.env['ZDOTDIR'];
+    const zdot = env['ZDOTDIR'];
     return {
       shell: 'zsh',
       file: join(zdot && zdot.length > 0 ? zdot : home, '.zshenv'),
@@ -193,11 +228,15 @@ export function shellRcFor(
     };
   }
   if (name === 'bash') {
-    // macOS Terminal opens login shells (~/.bash_profile); Linux terminals open
-    // interactive non-login ones (~/.bashrc).
+    // macOS Terminal opens login shells, Linux terminals interactive non-login
+    // ones (~/.bashrc). A login bash reads only the FIRST of these that exists,
+    // so creating ~/.bash_profile would stop an existing ~/.profile loading.
+    const login = ['.bash_profile', '.bash_login', '.profile'].find((f) =>
+      existsSync(join(home, f)),
+    );
     return {
       shell: 'bash',
-      file: join(home, platform === 'darwin' ? '.bash_profile' : '.bashrc'),
+      file: join(home, platform === 'darwin' ? (login ?? '.bash_profile') : '.bashrc'),
       line: `export PATH="$HOME/.agentbox/bin:$PATH" ${RC_MARKER}`,
     };
   }

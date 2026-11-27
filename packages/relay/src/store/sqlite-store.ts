@@ -46,7 +46,7 @@ const DEFAULT_EVENT_CAP = RELAY_EVENT_RING_SIZE;
 /** Default DB path — sibling of the hub's better-auth `auth.db`. */
 export const DEFAULT_SQLITE_STORE_PATH = join(STATE_DIR, 'hub', 'store.db');
 
-/** `node:sqlite` landed in 22.5 (the repo's engines floor is 20.10). */
+/** `node:sqlite` landed in 22.5 (the CLI's own floor is 22.12, above it). */
 const MIN_NODE_SQLITE = [22, 5] as const;
 
 export interface SqliteStoreOptions {
