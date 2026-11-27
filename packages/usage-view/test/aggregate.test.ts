@@ -25,7 +25,7 @@ import {
   unionSpans,
   UsageStats,
 } from '../src/index.js';
-import type { ActivityEvent, Lane, SessionTurns, Span } from '../src/index.js';
+import type { ActivityEvent, Lane, SessionTurns, Span, TurnRow } from '../src/index.js';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -36,37 +36,197 @@ const every = (fromH: number, toH: number, stepMin = 2): number[] => {
   for (let t = at(fromH); t <= at(toH); t += stepMin * MIN) out.push(t);
   return out;
 };
+/** One turn of continuous work: a typed prompt, then tool rows. */
+const work = (ts: readonly number[]): TurnRow[] =>
+  ts.map((t, i) => ({ at: t, kind: i === 0 ? 'prompt' : 'tool' }));
 const session = (
   id: string,
   boxId: string | null,
   turns: number[],
   extra: Partial<SessionTurns> = {},
-): SessionTurns => ({ sessionId: id, boxId, agent: 'claude', provider: 'docker', turns, ...extra });
+): SessionTurns => ({
+  sessionId: id,
+  boxId,
+  agent: 'claude',
+  provider: 'docker',
+  turns: work(turns),
+  ...extra,
+});
+const row = (t: number, kind: TurnRow['kind']): TurnRow => ({ at: t, kind });
 
 describe('activeIntervals', () => {
-  it('splits at gaps over the idle gap and closes 1 min after the last turn', () => {
-    const turns = [at(9), at(9) + 5 * MIN, at(9) + 15 * MIN, at(9) + 26 * MIN];
+  it('cuts a turn at a pause over the gap and closes 1 min after its last row', () => {
+    const turns = work([at(9), at(9) + 5 * MIN, at(9) + 15 * MIN, at(9) + 26 * MIN]);
     expect(activeIntervals(turns)).toEqual([
       { start: at(9), end: at(9) + 15 * MIN + MIN },
       { start: at(9) + 26 * MIN, end: at(9) + 27 * MIN },
     ]);
   });
 
-  it('keeps a gap of exactly the idle gap inside one interval', () => {
-    const turns = [at(9), at(9) + 10 * MIN];
-    expect(activeIntervals(turns)).toHaveLength(1);
+  it('keeps a pause of exactly the gap inside one interval', () => {
+    expect(activeIntervals(work([at(9), at(9) + 10 * MIN]))).toHaveLength(1);
   });
 
-  it('takes the gap and tail as parameters, in any turn order', () => {
-    const turns = [at(9) + 6 * MIN, at(9)];
-    expect(activeIntervals(turns, { idleGapMs: 5 * MIN, tailMs: 0 })).toEqual([
-      { start: at(9), end: at(9) },
-      { start: at(9) + 6 * MIN, end: at(9) + 6 * MIN },
+  it('takes the gap and tail as parameters, in any row order', () => {
+    const turns = work([at(9), at(9) + 6 * MIN]).reverse();
+    expect(activeIntervals(turns, { idleGapMs: 5 * MIN, tailMs: 1_000 })).toEqual([
+      { start: at(9), end: at(9) + 1_000 },
+      { start: at(9) + 6 * MIN, end: at(9) + 6 * MIN + 1_000 },
     ]);
   });
 
-  it('returns nothing for no turns', () => {
+  it('returns nothing for no rows', () => {
     expect(activeIntervals([])).toEqual([]);
+  });
+
+  it('a 4-hour wait between two prompts adds nothing', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + 2 * MIN, 'tool'),
+      row(at(9) + 3 * MIN, 'reply'),
+      row(at(13) + 3 * MIN, 'prompt'),
+      row(at(13) + 5 * MIN, 'reply'),
+    ];
+    expect(activeIntervals(rows)).toEqual([
+      { start: at(9), end: at(9) + 4 * MIN },
+      { start: at(13) + 3 * MIN, end: at(13) + 6 * MIN },
+    ]);
+  });
+
+  it('a wait shorter than the gap between two turns is not counted either', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + 1 * MIN, 'reply'),
+      row(at(9) + 8 * MIN, 'prompt'),
+      row(at(9) + 9 * MIN, 'reply'),
+    ];
+    expect(totalMs(activeIntervals(rows))).toBe(4 * MIN);
+  });
+
+  it('a watcher heartbeat every 10 minutes all night, answered without a tool, adds nothing', () => {
+    const rows: TurnRow[] = [row(at(22), 'prompt'), row(at(22) + 2 * MIN, 'reply')];
+    for (let t = at(22) + 10 * MIN; t < at(30); t += 10 * MIN) {
+      rows.push(row(t, 'auto'), row(t + 8_000, 'reply'));
+    }
+    rows.push(row(at(30) + 5 * MIN, 'prompt'), row(at(30) + 6 * MIN, 'reply'));
+    expect(activeIntervals(rows)).toEqual([
+      { start: at(22), end: at(22) + 3 * MIN },
+      { start: at(30) + 5 * MIN, end: at(30) + 7 * MIN },
+    ]);
+  });
+
+  it('a task notification that triggers tool work counts its busy stretch', () => {
+    const t = at(3);
+    const rows = [
+      row(at(1), 'prompt'),
+      row(at(1) + MIN, 'reply'),
+      row(t, 'auto'),
+      row(t + 20_000, 'tool'),
+      row(t + 3 * MIN, 'result'),
+      row(t + 4 * MIN, 'tool'),
+      row(t + 4 * MIN + 30_000, 'result'),
+      row(t + 5 * MIN, 'reply'),
+    ];
+    expect(activeIntervals(rows)).toEqual([
+      { start: at(1), end: at(1) + 2 * MIN },
+      { start: t, end: t + 6 * MIN },
+    ]);
+  });
+
+  it('an automated turn counts once it was busy past the threshold', () => {
+    const rows = [row(at(3), 'auto'), row(at(3) + 45_000, 'reply')];
+    expect(activeIntervals(rows)).toEqual([{ start: at(3), end: at(3) + 45_000 + MIN }]);
+    expect(activeIntervals(rows, { autoMinBusyMs: 60_000 })).toEqual([]);
+  });
+
+  it('a stray row long after a no-op wakeup does not make the wakeup count', () => {
+    const rows = [row(at(3), 'auto'), row(at(3) + 3_000, 'reply'), row(at(3) + 20 * MIN, 'reply')];
+    expect(activeIntervals(rows)).toEqual([{ start: at(3) + 20 * MIN, end: at(3) + 21 * MIN }]);
+  });
+
+  it('a long turn with tool rows every few minutes is one span', () => {
+    const rows: TurnRow[] = [row(at(9), 'prompt')];
+    for (let t = at(9) + 3 * MIN; t <= at(12); t += 4 * MIN) rows.push(row(t, 'tool'));
+    rows.push(row(at(12) + MIN, 'reply'));
+    expect(activeIntervals(rows)).toEqual([{ start: at(9), end: at(12) + 2 * MIN }]);
+  });
+
+  it('a 3-hour pause inside a turn is cut by the safety cap', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + MIN, 'tool'),
+      row(at(12) + MIN, 'tool'),
+      row(at(12) + 2 * MIN, 'reply'),
+    ];
+    expect(activeIntervals(rows)).toEqual([
+      { start: at(9), end: at(9) + 2 * MIN },
+      { start: at(12) + MIN, end: at(12) + 3 * MIN },
+    ]);
+  });
+
+  it('a prompt while a tool call has no result yet continues the turn (the tool was running)', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + MIN, 'tool'),
+      // A queued message, consumed when the 6-minute build ended.
+      row(at(9) + 7 * MIN, 'prompt'),
+      row(at(9) + 7 * MIN, 'result'),
+      row(at(9) + 7 * MIN + 5_000, 'reply'),
+    ];
+    expect(activeIntervals(rows)).toEqual([{ start: at(9), end: at(9) + 8 * MIN + 5_000 }]);
+  });
+
+  it('once the last tool call of a turn has its result, the wait for the next prompt is not counted', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + MIN, 'tool'),
+      row(at(9) + MIN + 2_000, 'result'),
+      row(at(9) + 8 * MIN, 'prompt'),
+      row(at(9) + 9 * MIN, 'reply'),
+    ];
+    expect(activeIntervals(rows)).toEqual([
+      { start: at(9), end: at(9) + 2 * MIN + 2_000 },
+      { start: at(9) + 8 * MIN, end: at(9) + 10 * MIN },
+    ]);
+  });
+
+  it('a session that records no results never continues a turn across a prompt', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + MIN, 'tool'),
+      row(at(9) + 8 * MIN, 'prompt'),
+      row(at(9) + 9 * MIN, 'reply'),
+    ];
+    expect(totalMs(activeIntervals(rows))).toBe(2 * MIN + 2 * MIN);
+  });
+
+  it('wakeups every 5 minutes, each acked with a do-nothing tool call, add nothing', () => {
+    const rows: TurnRow[] = [row(at(1), 'prompt'), row(at(1) + MIN, 'reply')];
+    for (let i = 1; i <= 12; i++) {
+      const t = at(1) + i * 5 * MIN;
+      rows.push(row(t, 'auto'), row(t + 4_000, 'tool'), row(t + 5_000, 'result'));
+    }
+    expect(activeIntervals(rows)).toEqual([{ start: at(1), end: at(1) + 2 * MIN }]);
+  });
+
+  it('a wakeup that runs tools for 30 s or more counts', () => {
+    const rows = [row(at(3), 'auto'), row(at(3) + 2_000, 'tool'), row(at(3) + 40_000, 'result')];
+    expect(activeIntervals(rows)).toEqual([{ start: at(3), end: at(3) + 40_000 + MIN }]);
+  });
+
+  it('rows before the first prompt are a turn of their own', () => {
+    const rows = [row(at(9), 'reply'), row(at(9) + MIN, 'tool'), row(at(9) + 2 * MIN, 'reply')];
+    expect(activeIntervals(rows)).toEqual([{ start: at(9), end: at(9) + 3 * MIN }]);
+  });
+
+  it('merges turns whose spans touch', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + MIN, 'reply'),
+      row(at(9) + MIN + 20_000, 'prompt'),
+      row(at(9) + 3 * MIN, 'reply'),
+    ];
+    expect(activeIntervals(rows)).toEqual([{ start: at(9), end: at(9) + 4 * MIN }]);
   });
 });
 
@@ -503,10 +663,7 @@ describe('time zones across DST', () => {
         tz: 'America/New_York',
       },
       now: Date.UTC(2026, 2, 12, 12),
-      sessions: [
-        { ...session('a', 'a', []), turns: turns('2026-03-06') },
-        { ...session('b', 'b', []), turns: turns('2026-03-09') },
-      ],
+      sessions: [session('a', 'a', turns('2026-03-06')), session('b', 'b', turns('2026-03-09'))],
       events: [],
       intervals: { tailMs: 60_000 },
     });

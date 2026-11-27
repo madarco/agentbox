@@ -232,7 +232,9 @@ conversation there; the box's recent switches are listed under it.
 [several accounts per agent](/docs/run-an-agent#several-accounts-per-agent).
 
 The **Usage** page shows what your agents did side by side and what they
-shipped: agent-hours against wall-clock hours (the speed-up over one agent), the
+shipped: agent-hours against wall-clock hours (the speed-up over one agent; an
+hour counts while at least one agent is busy in a turn, never while it waits for
+your next prompt, see [how hours are counted](/docs/cli#usage)), the
 most boxes running at once, merged pull requests, commits, lines and files, a
 Gantt of the busiest days, the biggest sessions, the last 30 days as an activity
 grid (one square per day, a sprint at a glance), the pull requests merged lately

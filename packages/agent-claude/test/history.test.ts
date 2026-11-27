@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { claudeHistoryModule as m } from '../src/history.js';
+import { isInjectedPrompt } from '@agentbox/core';
+import { claudeHistoryModule as m, claudeLineRecords } from '../src/history.js';
 
 const S = 'aaaaaaaa-1111-2222-3333-444444444444';
 const P = 'bbbbbbbb-1111-2222-3333-444444444444';
@@ -139,6 +140,94 @@ describe('claude parse', () => {
     const b = m.parse({ path: 'x', offset: cut, bytes: bytes.subarray(cut) }, a.state);
     expect(b.records[0]).toMatchObject({ kind: 'turn', at: 0 });
     expect(b.state.partial).toBeUndefined();
+  });
+});
+
+describe('claude automated prompts (usage busy spans)', () => {
+  const userLine = (extra: Record<string, unknown>, content: string): Record<string, unknown> => ({
+    type: 'user',
+    timestamp: '2026-11-27T07:50:00Z',
+    message: { role: 'user', content },
+    ...extra,
+  });
+  const autoOf = (line: Record<string, unknown>): unknown =>
+    (claudeLineRecords(line, 0)[0] as { auto?: boolean }).auto;
+
+  it('an injection by its text wins over a human origin', () => {
+    expect(autoOf(userLine({ origin: { kind: 'human' } }, '<task-notification>x'))).toBe(true);
+    expect(
+      autoOf(userLine({ origin: { kind: 'human' }, promptSource: 'sdk' }, '<wake reason="cron">')),
+    ).toBe(true);
+  });
+
+  it('a compact summary and an interrupt marker are not prompts', () => {
+    expect(
+      claudeLineRecords(userLine({ isCompactSummary: true }, 'This session is being continued'), 0),
+    ).toEqual([]);
+    expect(claudeLineRecords(userLine({}, '[Request interrupted by user]'), 0)).toEqual([]);
+    expect(
+      claudeLineRecords(userLine({}, '[Request interrupted by user for tool use]'), 0),
+    ).toEqual([]);
+  });
+
+  it('reads origin.kind first', () => {
+    expect(autoOf(userLine({ origin: { kind: 'human' } }, 'fix the parser'))).toBe(false);
+    expect(autoOf(userLine({ origin: { kind: 'task-notification' } }, 'done'))).toBe(true);
+  });
+
+  it('a typed prompt is human whatever its origin kind', () => {
+    expect(
+      autoOf(userLine({ origin: { kind: 'queued' }, promptSource: 'typed' }, 'and this')),
+    ).toBe(false);
+  });
+
+  it('an image-only prompt starts a turn; a tool result is a result row', () => {
+    const img = {
+      type: 'user',
+      timestamp: 't',
+      message: { role: 'user', content: [{ type: 'image', source: {} }] },
+    };
+    expect(claudeLineRecords(img, 0)).toMatchObject([{ kind: 'turn', role: 'user', auto: false }]);
+    const res = {
+      type: 'user',
+      timestamp: 't',
+      message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
+    };
+    expect(claudeLineRecords(res, 0)).toEqual([{ kind: 'result', ts: 't', at: 0 }]);
+    // Text riding on a tool result is attached context, not a prompt.
+    const both = {
+      type: 'user',
+      timestamp: 't',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', content: 'a' },
+          { type: 'tool_result', content: 'b' },
+          { type: 'text', text: '<system-reminder>x</system-reminder>' },
+        ],
+      },
+    };
+    expect(claudeLineRecords(both, 0).map((r) => r.kind)).toEqual(['result', 'result']);
+  });
+
+  it('then promptSource', () => {
+    expect(autoOf(userLine({ promptSource: 'system' }, 'done'))).toBe(true);
+    expect(autoOf(userLine({ promptSource: 'typed' }, 'done'))).toBe(false);
+  });
+
+  it('then the text, for older transcripts', () => {
+    expect(autoOf(userLine({}, '<task-notification>\n<task-id>b</task-id>'))).toBe(true);
+    expect(
+      autoOf(
+        userLine({}, '<system-reminder>a</system-reminder>\n<system-reminder>b</system-reminder>'),
+      ),
+    ).toBe(true);
+    expect(autoOf(userLine({}, 'fix it\n<system-reminder>a</system-reminder>'))).toBe(false);
+    expect(autoOf(userLine({}, 'fix the <task-notification> parser'))).toBe(false);
+    // Clipped mid-block, as stored text is.
+    expect(isInjectedPrompt('<system-reminder>a</system-reminder><system-reminder>very lo…')).toBe(
+      true,
+    );
   });
 });
 

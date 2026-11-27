@@ -2146,7 +2146,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['History'],
           summary: 'Usage dashboard stats',
           description:
-            "The usage dashboard's `UsageStats` for a window (the shape `@agentbox/usage-view` defines). Agent-hours, wall hours, speed-up and peak at once come from the recorded sessions' active intervals: turns at most 10 minutes apart make one interval, which ends one minute after its last turn; a session with no box counts as provider `host`. Commits, lines, files, merged PRs and box-hours come from the activity ledger; a host-only landing counts only when no published push of the same box follows it. Intervals outlive transcript retention. Cached for a minute per window, zone and subscription.",
+            "The usage dashboard's `UsageStats` for a window (the shape `@agentbox/usage-view` defines). Agent-hours, wall hours, speed-up and peak at once come from the recorded sessions' busy intervals: each turn counts from its prompt to its last reply or tool call, plus one minute, and a pause over 10 minutes inside it cuts it. The wait for the next prompt never counts, and a turn started by an automated wakeup (a task notification, a scheduled tick) counts only when it stays busy for 30 seconds or more. A session with no box counts as provider `host`. Commits, lines, files, merged PRs and box-hours come from the activity ledger; a host-only landing counts only when no published push of the same box follows it. Intervals outlive transcript retention. Cached for a minute per window, zone and subscription.",
           parameters: [
             {
               name: 'since',

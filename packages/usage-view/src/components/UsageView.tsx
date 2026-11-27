@@ -253,6 +253,10 @@ function Header({
   );
 }
 
+const AGENT_HOURS_HINT =
+  'Time agents spent busy in a turn, summed over agents. Waiting for the next prompt never counts, nor a wakeup the agent did nothing with.';
+const WALL_HOURS_HINT = 'Hours with at least one agent busy, not hours a session was open.';
+
 function Hero({ v }: { v: View }): ReactElement {
   const h = v.hero;
   const saved = hoursSaved(h);
@@ -274,10 +278,10 @@ function Hero({ v }: { v: View }): ReactElement {
         </div>
         <h2>
           {who} did{' '}
-          <b>
+          <b title={AGENT_HOURS_HINT}>
             <CountUp value={h.agentHours} format={nf} /> hours
           </b>{' '}
-          of work in <b>{nf(h.wallHours)} hours</b>. Side by side, they got{' '}
+          of work in <b title={WALL_HOURS_HINT}>{nf(h.wallHours)} hours</b>. Side by side, they got{' '}
           <b>{h.speedup.toFixed(1)}×</b> as much done as one agent alone
           {claimsHoursSaved(h) ? (
             <>
@@ -458,7 +462,7 @@ function Kpis({ v }: { v: View }): ReactElement {
           {k.speedup.value.toFixed(1)}
           <small>×</small>
         </div>
-        <div className="meta">
+        <div className="meta" title={WALL_HOURS_HINT}>
           <Delta value={k.speedup.delta} suffix="×" />
           {nf(v.hero.agentHours)} h of work in {nf(v.hero.wallHours)} h
         </div>

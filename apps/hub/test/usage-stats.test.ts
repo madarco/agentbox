@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, beforeEach } from 'vitest';
 import type { ActivityEvent, ActivityQuery } from '@agentbox/relay';
-import { UsageStats } from '@agentbox/usage-view';
-import type { HistoryRecord } from '@agentbox/core';
+import { DEFAULT_TAIL_MS, UsageStats, activeIntervals, turnKindOf } from '@agentbox/usage-view';
+import { isInjectedPrompt, type HistoryRecord } from '@agentbox/core';
 import type { HistoryRepo } from '../lib/backend/history';
 import { openSqliteHistoryRepo } from '../lib/history-sqlite';
 import {
@@ -31,6 +35,8 @@ async function session(
     account?: string;
     project?: string;
     turns: number[];
+    /** Instead of `turns`: the exact records. */
+    records?: HistoryRecord[];
     tokens?: Array<{ at: number; n: number }>;
   },
 ): Promise<string> {
@@ -69,13 +75,16 @@ async function session(
     child: false,
     updatedAt: NOW,
   });
-  const records: HistoryRecord[] = o.turns.map((t, i) => ({
-    kind: 'turn',
-    role: i % 2 ? 'assistant' : 'user',
-    text: 'secret prompt text',
-    ts: iso(t),
-    at: i,
-  }));
+  // One prompt, then the agent's replies: continuous work.
+  const records: HistoryRecord[] =
+    o.records ??
+    o.turns.map((t, i) => ({
+      kind: 'turn',
+      role: i === 0 ? 'user' : 'assistant',
+      text: 'secret prompt text',
+      ts: iso(t),
+      at: i,
+    }));
   for (const [i, t] of (o.tokens ?? []).entries()) {
     records.push({
       kind: 'usage',
@@ -545,5 +554,200 @@ describe('the stats cache', () => {
     expect(shared?.size).toBe(1);
     clearUsageStatsCache();
     expect(shared?.size).toBe(0);
+  });
+});
+
+describe('busy spans in the store', () => {
+  let seq = 0;
+  const turn = (
+    t: number,
+    role: 'user' | 'assistant',
+    text = 'hi',
+    auto?: boolean,
+  ): HistoryRecord => ({
+    kind: 'turn',
+    role,
+    text,
+    ts: iso(t),
+    at: ++seq,
+    ...(auto === undefined ? {} : { auto }),
+  });
+  const tool = (t: number): HistoryRecord => ({
+    kind: 'tool',
+    name: 'Bash',
+    ts: iso(t),
+    at: ++seq,
+  });
+  const result = (t: number): HistoryRecord => ({ kind: 'result', ts: iso(t), at: ++seq });
+  const note = '<task-notification>\n<task-id>b1</task-id>\n</task-notification>';
+
+  /** A night of a coordinator: work, a 4-hour wait, heartbeats, a wakeup that works, a hung tool. */
+  const night = (): HistoryRecord[] => {
+    const r: HistoryRecord[] = [
+      turn(at(20), 'user', 'ship it'),
+      tool(at(20) + MIN),
+      result(at(20) + MIN + 2_000),
+      turn(at(20) + 3 * MIN, 'assistant'),
+    ];
+    for (let t = at(20) + 10 * MIN; t < at(24); t += 10 * MIN) {
+      r.push(turn(t, 'user', note), turn(t + 5_000, 'assistant', 'Still waiting.'));
+    }
+    // Reminder-only text with no origin: automated by its text.
+    r.push(
+      turn(at(24) + MIN, 'user', '<system-reminder>x</system-reminder>'),
+      turn(at(24) + MIN + 3_000, 'assistant'),
+    );
+    // The parser's flag wins over the text.
+    r.push(
+      turn(at(24) + 20 * MIN, 'user', 'looks typed', true),
+      turn(at(24) + 20 * MIN + 2_000, 'assistant'),
+    );
+    r.push(
+      turn(at(25), 'user', note),
+      tool(at(25) + 20_000),
+      result(at(25) + 2 * MIN),
+      tool(at(25) + 3 * MIN),
+      result(at(25) + 3 * MIN + 1_000),
+      turn(at(25) + 4 * MIN, 'assistant'),
+    );
+    r.push(
+      turn(at(28), 'user', 'next'),
+      tool(at(28) + MIN),
+      // A tool that hung for 3 hours.
+      result(at(31)),
+      tool(at(31) + MIN),
+      result(at(31) + MIN + 1_000),
+      turn(at(31) + 2 * MIN, 'assistant'),
+    );
+    return r;
+  };
+
+  it('stores the same spans as activeIntervals over the same rows', async () => {
+    const repo = await openSqliteHistoryRepo(':memory:');
+    const records = night();
+    await session(repo, { id: 's1', boxId: 'a', turns: [], records });
+    await repo.refreshSpans(1000);
+    const stored = (
+      await repo.usageSpans({ sinceMs: at(0), untilMs: at(48), idleGapMs: 10 * MIN })
+    ).map((r) => ({ start: r.start, end: r.last + DEFAULT_TAIL_MS }));
+    const ts = activeIntervals(
+      records.map((r) => ({
+        at: Date.parse(r.ts!),
+        kind: turnKindOf(
+          r.kind,
+          r.kind === 'turn' ? r.role : null,
+          r.kind === 'turn' && (r.auto ?? isInjectedPrompt(r.text)),
+        ),
+      })),
+    );
+    expect(stored.sort((a, b) => a.start - b.start)).toEqual(ts);
+    expect(ts).toEqual([
+      { start: at(20), end: at(20) + 4 * MIN },
+      { start: at(25), end: at(25) + 5 * MIN },
+      { start: at(28), end: at(28) + 2 * MIN },
+      { start: at(31), end: at(31) + 3 * MIN },
+    ]);
+  });
+
+  it('counts busy time, not the night, in agent and wall hours', async () => {
+    const repo = await openSqliteHistoryRepo(':memory:');
+    await session(repo, { id: 's1', boxId: 'a', turns: [], records: night() });
+    await repo.refreshSpans(1000);
+    const q = parseUsageStatsQuery({ since: '2026-11-20', until: '2026-11-21' }, NOW);
+    if (!q.ok) throw new Error(q.message);
+    const stats = await computeUsageStats({ history: repo, ledger: null, now: () => NOW }, q.query);
+    expect(stats.hero.agentHours).toBeCloseTo(14 / 60, 1);
+    expect(stats.hero.wallHours).toBeCloseTo(14 / 60, 1);
+  });
+
+  it('backfills auto from the text and recomputes every session once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'busy-spans-'));
+    try {
+      const file = join(dir, 'history.db');
+      const repo = await openSqliteHistoryRepo(file);
+      await session(repo, { id: 's1', boxId: 'a', turns: [], records: night() });
+      await repo.refreshSpans(1000);
+      // As a hub before the rule: no auto values, no stamp, spans cut by the old gap.
+      const raw = new DatabaseSync(file);
+      raw.exec(
+        'UPDATE history_turns SET auto = NULL; DELETE FROM history_meta; DELETE FROM history_spans',
+      );
+      raw.exec("INSERT INTO history_spans VALUES ('claude:s1', 0, 1)");
+      raw.close();
+      const again = await openSqliteHistoryRepo(file);
+      const check = new DatabaseSync(file);
+      const autos = check
+        .prepare("SELECT auto, COUNT(*) AS c FROM history_turns WHERE role = 'user' GROUP BY auto")
+        .all() as Array<{ auto: number; c: number }>;
+      check.close();
+      // 23 heartbeats, the reminder and the working wakeup; the flagged prompt's flag was not in the text.
+      expect(Object.fromEntries(autos.map((a) => [a.auto, a.c]))).toEqual({ 0: 3, 1: 25 });
+      expect(await again.refreshSpans(1000)).toBe(1);
+      const spans = await again.usageSpans({ sinceMs: 0, untilMs: at(48), idleGapMs: 10 * MIN });
+      expect(spans.map((s) => s.start)).toEqual([
+        0,
+        at(20),
+        at(24) + 20 * MIN,
+        at(25),
+        at(28),
+        at(31),
+      ]);
+      // A second open changes nothing.
+      await openSqliteHistoryRepo(file);
+      expect(await again.refreshSpans(1000)).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the spans of a session behind its parser alone until the re-parse lands', async () => {
+    const repo = await openSqliteHistoryRepo(':memory:');
+    await session(repo, { id: 's1', boxId: 'a', turns: [], records: night() });
+    // The helper stores parser version 1: claude at 6 makes it stale.
+    expect(await repo.refreshSpans(1000, { claude: 6 })).toBe(0);
+    expect(await repo.refreshSpans(1000, { claude: 1 })).toBe(1);
+  });
+
+  it('puts the spans back as they were', async () => {
+    const repo = await openSqliteHistoryRepo(':memory:');
+    const key = await session(repo, { id: 's1', boxId: 'a', turns: [], records: night() });
+    await repo.refreshSpans(1000);
+    const before = await repo.sessionSpans(key);
+    await repo.clearFileRecords((await repo.filesOfSession(key))[0]!.id);
+    await repo.restoreSpans(key, before);
+    // Clean: a refresh does not recompute them from the cleared turns.
+    expect(await repo.refreshSpans(1000)).toBe(0);
+    expect(await repo.sessionSpans(key)).toEqual(before);
+  });
+
+  it('classifies rows an older hub wrote after the stamp', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'busy-spans-'));
+    try {
+      const file = join(dir, 'history.db');
+      const repo = await openSqliteHistoryRepo(file);
+      await session(repo, { id: 's1', boxId: 'a', turns: [], records: night() });
+      await repo.refreshSpans(1000);
+      const raw = new DatabaseSync(file);
+      raw.exec("UPDATE history_turns SET auto = NULL WHERE role = 'user'");
+      raw.close();
+      await openSqliteHistoryRepo(file);
+      const check = new DatabaseSync(file);
+      const nulls = check
+        .prepare("SELECT COUNT(*) AS c FROM history_turns WHERE role = 'user' AND auto IS NULL")
+        .get() as { c: number };
+      check.close();
+      expect(nulls.c).toBe(0);
+      expect(await repo.refreshSpans(1000)).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps result rows out of the turns a session lists', async () => {
+    const repo = await openSqliteHistoryRepo(':memory:');
+    const key = await session(repo, { id: 's1', boxId: 'a', turns: [], records: night() });
+    const listed = await repo.turns(key, 0, 1000);
+    expect(listed.length).toBe(await repo.countTurns(key));
+    expect(listed.every((t) => t.kind === 'tool' || t.role !== null)).toBe(true);
   });
 });

@@ -291,3 +291,15 @@ Open items found while building the phases of
   it). Trim it to what the page draws if the hero stops needing it.
 - **Share dialog at 390 px scrolls sideways a little.** The preview's content is wider
   than the dialog on a phone; the controls still fit.
+- **Busy spans: openclaw heartbeats.** openclaw's periodic heartbeat prompts are stored
+  as typed prompts (`auto = 0`), so a heartbeat answered with `HEARTBEAT_OK` counts its
+  short turn. Classify them in the openclaw parser (its heartbeat prompt or the
+  `HEARTBEAT_OK` reply) and bump its parser version.
+- **Busy spans: purged sessions keep old-rule spans.** A session purged before the
+  busy-spans rule has no turns left to recompute, so its spans still bridge waits under
+  10 minutes. Windows that reach back before the rule read slightly high, and the
+  "vs previous window" deltas compare the two rules until those windows age out.
+- **Busy spans: PCs on an older hub.** A control box merges the intervals each PC pushes
+  as they come. A PC still on a hub before the busy-spans rule sends old-rule intervals
+  (waits under 10 minutes bridged), so its hours read high on the control box until it
+  upgrades.

@@ -9,6 +9,7 @@
  */
 import {
   activityLine,
+  isInjectedPrompt,
   toolActivity,
   type AgentHistoryModule,
   type HistoryRecord,
@@ -54,6 +55,29 @@ function textBlocks(content: unknown): string {
     .join('\n');
 }
 
+/** Content blocks that are all images or documents: a prompt with nothing typed. */
+function attachmentOnly(content: unknown): boolean {
+  if (!Array.isArray(content) || content.length === 0) return false;
+  return content.every((b) => {
+    const t = asObj(b)?.type;
+    return t === 'image' || t === 'document';
+  });
+}
+
+/**
+ * Whether claude, not a person, wrote this prompt. An injection's text wins
+ * (a harness `<wake …>` is recorded with origin `human`); otherwise the line's
+ * `origin.kind` (`human`, `task-notification`, …) unless `promptSource` says it
+ * was typed, else `promptSource` alone (`system` is automated).
+ */
+function promptIsAutomated(line: Json, text: string): boolean {
+  if (isInjectedPrompt(text)) return true;
+  const kind = str(asObj(line.origin)?.kind);
+  const source = str(line.promptSource);
+  if (kind) return kind !== 'human' && source !== 'typed';
+  return source === 'system';
+}
+
 /** The session a file's own lines belong to: its stem, or a subagent's parent dir. */
 function fileSessionId(path: string): string {
   return SUBAGENT_PATH.exec(path)?.[1] ?? stemOf(path);
@@ -95,9 +119,23 @@ export function claudeLineRecords(
   const message = asObj(line.message);
   if (!message) return out;
   if (type === 'user') {
-    if (line.isMeta === true) return out;
-    const text = textBlocks(message.content).trim();
-    if (text) out.push({ kind: 'turn', role: 'user', text: clip(text), ...(ts ? { ts } : {}), at });
+    // A tool result ends its call. Text riding on that line is context the
+    // harness attached, not a prompt.
+    if (Array.isArray(message.content)) {
+      const results = message.content.filter((b) => asObj(b)?.type === 'tool_result').length;
+      for (let i = 0; i < results; i++) out.push({ kind: 'result', ...(ts ? { ts } : {}), at });
+      if (results > 0) return out;
+    }
+    // Not prompts: the harness's own lines, the summary a compaction writes,
+    // and the marker of an interrupt.
+    if (line.isMeta === true || line.isCompactSummary === true) return out;
+    // A prompt with no text (an image, a file) still starts a turn.
+    const text =
+      textBlocks(message.content).trim() || (attachmentOnly(message.content) ? '[attachment]' : '');
+    if (text && !text.startsWith('[Request interrupted by user')) {
+      const auto = promptIsAutomated(line, text);
+      out.push({ kind: 'turn', role: 'user', text: clip(text), ...(ts ? { ts } : {}), at, auto });
+    }
     return out;
   }
   if (type === 'assistant') {
@@ -163,7 +201,9 @@ export const claudeHistoryModule: AgentHistoryModule = {
   // 2: usage on lines copied from another session is no longer counted.
   // 3: `ai-title`, the working-on line and context fill (live status).
   // 4: `auth` records (a refused credential, never on a copied line).
-  parserVersion: 4,
+  // 6: `auto` on user rows (an injected prompt), `result` rows for tool
+  // results, no row for a compact summary or an interrupt marker.
+  parserVersion: 6,
 
   identify(head, path) {
     const sub = SUBAGENT_PATH.exec(path);

@@ -24,8 +24,33 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
+/** The longest pause between two rows of one turn; a longer one cuts it. */
 export const DEFAULT_IDLE_GAP_MS = 10 * MIN;
+/** How long a span stays open after its last row. */
 export const DEFAULT_TAIL_MS = 1 * MIN;
+/** An automated turn counts only when it stayed busy at least this long. */
+export const DEFAULT_AUTO_MIN_BUSY_MS = 30_000;
+
+/**
+ * One transcript row, as the span rule reads it: a typed prompt, an automated
+ * one (a task notification, a wakeup), an assistant reply, a tool call or a
+ * tool call's result.
+ */
+export type TurnKind = 'prompt' | 'auto' | 'reply' | 'tool' | 'result';
+
+export interface TurnRow {
+  /** Epoch ms. */
+  at: number;
+  kind: TurnKind;
+}
+
+/** A stored history row's kind for the span rule. */
+export function turnKindOf(kind: string, role: string | null, auto: boolean): TurnKind {
+  if (kind === 'tool') return 'tool';
+  if (kind === 'result') return 'result';
+  if (role === 'user') return auto ? 'auto' : 'prompt';
+  return 'reply';
+}
 
 /** Half-open `[start, end)` in epoch ms. */
 export interface Span {
@@ -41,11 +66,11 @@ export interface SessionTurns {
   agent: AgentId;
   provider: ProviderId;
   managerId?: string | null;
-  /** Epoch ms of each turn, any order. Ignored when `spans` is given. */
-  turns: number[];
+  /** The session's rows, any order (ties keep their order). Ignored when `spans` is given. */
+  turns: TurnRow[];
   /**
-   * The session's active intervals, already cut at the idle gap (a store that
-   * computes them in SQL sends these instead of every turn).
+   * The session's active intervals, already cut by `activeIntervals` (a store
+   * that keeps them precomputed sends these instead of every row).
    */
   spans?: Span[];
 }
@@ -104,34 +129,80 @@ export interface BoxRun {
 }
 
 export interface IntervalOptions {
-  /** A gap between turns longer than this ends the interval. Default 10 min. */
+  /** A pause between two rows of one turn longer than this cuts it. Default 10 min. */
   idleGapMs?: number;
-  /** How long an interval stays open after its last turn. Default 1 min. */
+  /** How long an interval stays open after its last row. Default 1 min. */
   tailMs?: number;
+  /** An automated turn counts only when it stayed busy this long. Default 30 s. */
+  autoMinBusyMs?: number;
 }
 
 // ---------------------------------------------------------------------------
 // Intervals
 
-/** Active intervals of one session: runs of turns with no gap over `idleGapMs`. */
-export function activeIntervals(turns: readonly number[], opts: IntervalOptions = {}): Span[] {
+/**
+ * A session's busy intervals (docs/usage-dashboard-plan.md, "Busy spans"): each
+ * turn from its prompt to its last row plus the tail, never the wait for the
+ * next prompt. A pause over `idleGapMs` inside a turn cuts it. A prompt that
+ * lands while a tool call has no result yet (within the gap) continues the
+ * turn: the tool was running. A session that records no results never
+ * continues one. An automated turn that was busy for less than
+ * `autoMinBusyMs`, tools included, counts for nothing. Touching intervals merge.
+ */
+export function activeIntervals(rows: readonly TurnRow[], opts: IntervalOptions = {}): Span[] {
   const gap = opts.idleGapMs ?? DEFAULT_IDLE_GAP_MS;
   const tail = opts.tailMs ?? DEFAULT_TAIL_MS;
-  const sorted = turns.filter((t) => Number.isFinite(t)).sort((a, b) => a - b);
-  const out: Span[] = [];
-  let start: number | null = null;
-  let last = 0;
-  for (const t of sorted) {
-    if (start === null) {
-      start = t;
-    } else if (t - last > gap) {
-      out.push({ start, end: last + tail });
-      start = t;
-    }
-    last = t;
+  const autoMin = opts.autoMinBusyMs ?? DEFAULT_AUTO_MIN_BUSY_MS;
+  // Stable: rows with one timestamp keep the order the store gave them.
+  const sorted = rows.filter((r) => Number.isFinite(r.at)).sort((a, b) => a.at - b.at);
+  const tracksResults = sorted.some((r) => r.kind === 'result');
+
+  // Turns: a prompt and the rows up to the next one (rows before the first prompt are one too).
+  const turns: TurnRow[][] = [];
+  for (const r of sorted) {
+    const isPrompt = r.kind === 'prompt' || r.kind === 'auto';
+    if (isPrompt || turns.length === 0) turns.push([r]);
+    else turns[turns.length - 1]!.push(r);
   }
-  if (start !== null) out.push({ start, end: last + tail });
-  return out;
+
+  const out: Span[] = [];
+  let start = 0;
+  let last: TurnRow | null = null;
+  // Tool calls of the current turn still waiting for their result.
+  let open = 0;
+  const close = (): void => {
+    if (last) out.push({ start, end: last.at + tail });
+  };
+  for (let turn of turns) {
+    const head = turn[0]!;
+    const continues = tracksResults && open > 0 && last !== null && head.at - last.at <= gap;
+    if (!continues) {
+      if (head.kind === 'auto') {
+        // Judged on the stretch before any cut: a stray row much later is not this wakeup's work.
+        let cut = 1;
+        while (cut < turn.length && turn[cut]!.at - turn[cut - 1]!.at <= gap) cut++;
+        if (turn[cut - 1]!.at - head.at < autoMin) {
+          turn = turn.slice(cut);
+          if (turn.length === 0) continue;
+        }
+      }
+      close();
+      start = turn[0]!.at;
+      last = null;
+      open = 0;
+    }
+    for (const r of turn) {
+      if (last !== null && r.at - last.at > gap) {
+        close();
+        start = r.at;
+      }
+      if (r.kind === 'tool') open++;
+      else if (r.kind === 'result') open = Math.max(0, open - 1);
+      last = r;
+    }
+  }
+  close();
+  return unionSpans(out);
 }
 
 /** Merge overlapping or touching spans into a sorted, disjoint list. */
