@@ -5,7 +5,9 @@ the social-size export. README.md covers the commands; read it first.
 
 - **Its own package, outside the pnpm workspace.** Install with
   `pnpm install --ignore-workspace`. Nothing in the repo imports from here.
-- **Never use real data.** Every screen runs on `fixtures/acme.mjs`. The fixture
+- **Never use real data.** Every screen runs on `fixtures/acme.mjs`, in one of
+  the scenarios of `fixtures/scenarios.mjs` (`full` is acme.mjs as is; keep it
+  byte-for-byte unless the change is meant for it). The fixture
   hub and the CLI shots use a scratch `HOME` under `.cache/`; the CLI's
   `config.yaml` there sets `relay.port: 3126` so it never reclaims the real hub
   on 8787. Don't point anything here at `~/.agentbox`.

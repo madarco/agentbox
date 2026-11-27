@@ -51,6 +51,13 @@ h2 small { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight
   background: var(--bg2); border-bottom: 1px solid var(--line); }
 .card .t { display: block; padding: 8px 10px 2px; font-weight: 600; }
 .card .m { display: block; padding: 0 10px 9px; color: var(--muted); font-size: 12px; }
+.card .ph, .stage .ph { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 10; padding: 12px; color: var(--muted);
+  font-size: 12px; text-align: center; background: var(--bg2); border-bottom: 1px solid var(--line); }
+.stage .ph { aspect-ratio: auto; height: 100%; border: 0; font-size: 14px; }
+.badges { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px 9px; }
+.badge { padding: 1px 6px; border: 1px solid var(--line); border-radius: 99px; font-size: 11px; color: var(--muted); }
+.badge.simple { border-color: var(--brand); color: var(--brand); }
+#scn { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
 
 /* The flow: a tree that grows to the right. */
 .flow { overflow-x: auto; padding-bottom: 20px; }
@@ -117,6 +124,7 @@ dialog::backdrop { background: var(--shade); }
   <h1>AgentBox screens</h1>
   <span class="count" id="count"></span>
   <input id="q" type="search" placeholder="Search: title, surface, state, route" aria-label="Search screens">
+  <select id="scn" aria-label="Scenario" title="The demo data a picture was taken on (fixtures/scenarios.mjs)"></select>
   <div class="tabs">
     <button id="tab-topic" aria-pressed="true">By topic</button>
     <button id="tab-flow" aria-pressed="false">By flow</button>
@@ -127,7 +135,7 @@ dialog::backdrop { background: var(--shade); }
 
 <script>
 const DATA = __DATA__;
-const { screens, setups, topics } = DATA;
+const { screens, setups, topics, scenarios } = DATA;
 const byId = Object.fromEntries(screens.map((s) => [s.id, s]));
 /* frame() and FORMATS, from scripts/frame.mjs: the export's own layout. */
 /* __FRAME__ */
@@ -150,17 +158,31 @@ const text = (s) =>
   [s.id, s.title, s.topic, s.what, s.url, s.setup, ...(s.usedIn ?? []), ...s.files.map((f) => f.file + " " + (f.state ?? ""))]
     .join(" ")
     .toLowerCase();
-const matches = (s, q) => q.split(/\s+/).every((w) => text(s).includes(w));
+/* The scenario filter: "" shows every picture. Remembered per browser. */
+let scenario = "";
+try {
+  scenario = localStorage.getItem("catalog-scenario") ?? "";
+} catch {}
+if (scenario && !scenarios.some((x) => x.name === scenario)) scenario = "";
+const inScenario = (f) => !scenario || f.scenario === scenario;
+const shownFiles = (s) => s.files.filter(inScenario);
+const matches = (s, q) => shownFiles(s).length > 0 && q.split(/\s+/).every((w) => text(s).includes(w));
+/* The picture a card shows: the cover, unless the filter hides it. */
+const coverOf = (s) => (inScenario(s.files[s.cover ?? 0]) ? s.files[s.cover ?? 0] : shownFiles(s)[0] ?? s.files[0]);
+const picture = (f, alt) => (f.missing ? h("div", { class: "ph" }, f.check ?? "Not taken yet") : h("img", { src: src(f.file), loading: "lazy", alt }));
+const badge = (name) => h("span", { class: "badge" + (name.startsWith("simple") ? " simple" : "") }, name);
 
 function card(s) {
-  const n = s.files.length;
-  const meta = [n > 1 ? n + " states" : null, ...(s.usedIn ?? [])].filter(Boolean).join(" · ");
+  const n = shownFiles(s).length;
+  const meta = [n > 1 ? n + " pictures" : null, ...(s.usedIn ?? [])].filter(Boolean).join(" · ");
+  const kinds = [...new Set(shownFiles(s).map((f) => f.scenario))];
   return h(
     "button",
     { class: "card", onclick: () => open(s.id) },
-    h("img", { src: src((s.files[s.cover ?? 0]).file), loading: "lazy", alt: "" }),
+    picture(coverOf(s), ""),
     h("span", { class: "t" }, s.title),
     h("span", { class: "m" }, meta || s.topic),
+    kinds.length > 1 || (kinds.length === 1 && kinds[0] !== "full") ? h("span", { class: "badges" }, kinds.map(badge)) : null,
   );
 }
 
@@ -181,7 +203,7 @@ function flowView(q) {
     return h(
       "li",
       {},
-      h("div", { class: "node" + (k.length ? " kids" : "") + (q && !matches(s, q) ? " dim" : "") },
+      h("div", { class: "node" + (k.length ? " kids" : "") + (!matches(s, q) ? " dim" : "") },
         h("div", { class: "via" }, h("span", {}, s.via ?? "")), card(s)),
       k.length ? h("ul", {}, k.map(node)) : null,
     );
@@ -248,10 +270,11 @@ function trail(s) {
 
 let current = null;
 let shown = 0;
-function open(id, at = 0) {
+function open(id, at) {
   current = byId[id];
   if (!current) return;
-  shown = Math.min(at, current.files.length - 1);
+  shown = at ?? Math.max(0, current.files.indexOf(coverOf(current)));
+  shown = Math.min(shown, current.files.length - 1);
   history.replaceState(null, "", "#" + (view === "flow" ? "flow/" : "") + id);
   draw();
   const dlg = document.getElementById("dlg");
@@ -263,13 +286,16 @@ function draw() {
   const f = s.files[shown];
   const setup = setups[s.setup];
   const chain = trail(s);
-  const pic = h("div", { class: "pic fit", title: "Click to switch between fitted and full size",
-    onclick: () => pic.classList.toggle("fit") }, h("img", { src: src(f.file), alt: s.title }));
+  const pic = f.missing
+    ? h("div", { class: "pic" }, picture(f, s.title))
+    : h("div", { class: "pic fit", title: "Click to switch between fitted and full size",
+        onclick: () => pic.classList.toggle("fit") }, h("img", { src: src(f.file), alt: s.title }));
+  /* Every picture of the screen, whatever the filter: full and simple side by side. */
   const stage = h("div", { class: "stage" }, pic,
     s.files.length > 1
       ? h("div", { class: "frames" }, s.files.map((x, i) =>
           h("button", { "aria-pressed": String(i === shown), onclick: () => { shown = i; draw(); } },
-            x.state ?? x.file.split("/").pop())))
+            x.state ?? x.file.split("/").pop(), " ", badge(x.scenario))))
       : null);
 
   const info = h("div", { class: "info" },
@@ -277,8 +303,10 @@ function draw() {
     h("h3", {}, s.title),
     s.what ? h("p", {}, s.what) : null,
     f.state ? h("p", {}, h("b", {}, "This state: "), f.state) : null,
+    h("p", {}, h("b", {}, "Scenario: "), f.scenario, " · ", scenarios.find((x) => x.name === f.scenario)?.about ?? ""),
     pathRow(repoPath(f.file)),
     s.check ? h("p", { class: "warn" }, s.check) : null,
+    f.check ? h("p", { class: "warn" }, f.check) : null,
 
     h("h4", {}, "How to reach it"),
     chain.length > 1
@@ -321,6 +349,16 @@ document.addEventListener("keydown", (e) => {
   draw();
 });
 document.getElementById("q").addEventListener("input", render);
+const scn = document.getElementById("scn");
+scn.replaceChildren(h("option", { value: "" }, "All scenarios"), ...scenarios.map((x) => h("option", { value: x.name, title: x.about }, x.name)));
+scn.value = scenario;
+scn.addEventListener("change", () => {
+  scenario = scn.value;
+  try {
+    localStorage.setItem("catalog-scenario", scenario);
+  } catch {}
+  render();
+});
 for (const v of ["topic", "flow"])
   document.getElementById("tab-" + v).addEventListener("click", () => {
     view = v;

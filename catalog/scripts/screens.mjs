@@ -9,6 +9,7 @@
  *   pnpm screens check         # build, and fail if anything is wrong
  *   pnpm screens serve         # build and serve it at http://127.0.0.1:3124/screens/
  *   pnpm screens retake [id]   # run the shoot commands again: every entry, one id, or an id prefix (hub/, tray/, cli/)
+ *   pnpm screens retake [id] --scenario simple   # only the files of one scenario
  */
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -21,6 +22,7 @@ const shots = join(root, "shots");
 const DOCS = join(root, "../apps/web/public/screenshots");
 const { SCREENS, TOPICS } = await import(join(root, "screens/catalog.mjs"));
 const { SETUPS } = await import(join(root, "screens/setups.mjs"));
+const { SCENARIOS } = await import(join(root, "fixtures/scenarios.mjs"));
 const frameSource = readFileSync(join(root, "scripts/frame.mjs"), "utf8");
 
 /* "docs:x.png" is a docs-site screenshot; anything else is under shots/. */
@@ -28,15 +30,23 @@ const pathOf = (file) => (file.startsWith("docs:") ? join(DOCS, file.slice(5)) :
 const urlOf = (file) => (file.startsWith("docs:") ? "../../apps/web/public/screenshots/" + file.slice(5) : "../shots/" + file);
 const repoPath = (file) => (file.startsWith("docs:") ? "apps/web/public/screenshots/" + file.slice(5) : "catalog/shots/" + file);
 
-const mode = process.argv[2];
+const argv = process.argv.slice(2);
+const at = argv.indexOf("--scenario");
+const onlyScenario = at === -1 ? null : argv.splice(at, 2)[1];
+if (onlyScenario !== null && !SCENARIOS[onlyScenario]) throw new Error(`unknown scenario "${onlyScenario}": ${Object.keys(SCENARIOS).join(", ")}`);
+const mode = argv[0];
+/* A file not taken on purpose yet (a tray scenario the tray repo has to add). */
+const pending = (f) => f.check?.startsWith("Not taken yet");
+const scenarioOf = (f) => f.scenario ?? "full";
 
 if (mode === "retake") {
-  const want = process.argv[3];
+  const want = argv[1];
   const list = SCREENS.filter((s) => !want || s.id === want || s.id.startsWith(want));
   let failed = 0;
   for (const s of list)
     for (const f of s.files) {
-      if (!f.shoot) continue;
+      /* A pending picture needs its environment to land first; drop its check to take it. */
+      if (!f.shoot || pending(f) || (onlyScenario && scenarioOf(f) !== onlyScenario)) continue;
       console.log(`\n$ ${f.shoot}`);
       const r = spawnSync("sh", ["-c", f.shoot.replace(/^pnpm /, "pnpm -s ")], { cwd: root, stdio: "inherit" });
       if (r.status !== 0) failed++;
@@ -64,8 +74,15 @@ for (const s of SCREENS) {
   if (!SETUPS[s.setup]) problems.push(`${s.id}: setup "${s.setup}" is not in setups.mjs`);
   if (!s.files?.length) problems.push(`${s.id}: no files`);
   for (const f of s.files ?? []) {
-    if (!existsSync(pathOf(f.file))) problems.push(`${s.id}: ${repoPath(f.file)} does not exist`);
-    else Object.assign(f, size(pathOf(f.file)));
+    const sc = scenarioOf(f);
+    if (!SCENARIOS[sc]) problems.push(`${s.id}: ${f.file} has unknown scenario "${sc}"`);
+    /* The scenario is in the name: hub/skills.png is full, hub/skills.simple.png is simple. */
+    const dotted = /\.([\w-]+)\.\w+$/.exec(f.file)?.[1];
+    const suffix = dotted && SCENARIOS[dotted] ? dotted : "full";
+    if (!f.file.startsWith("docs:") && suffix !== sc) problems.push(`${s.id}: ${f.file} is scenario ${sc}, so its name should end .${sc === "full" ? "png" : sc + ".png"}`);
+    if (!existsSync(pathOf(f.file))) {
+      if (!pending(f)) problems.push(`${s.id}: ${repoPath(f.file)} does not exist`);
+    } else Object.assign(f, size(pathOf(f.file)));
     if (listed.has(f.file)) problems.push(`${s.id}: ${f.file} is in two entries`);
     listed.add(f.file);
   }
@@ -82,8 +99,12 @@ const walk = (dir) =>
     : [];
 for (const file of walk(shots)) if (!listed.has(file)) problems.push(`shots/${file} is not in the catalog`);
 
-const screens = SCREENS.map((s) => ({ ...s, files: s.files.map((f) => ({ ...f, url: urlOf(f.file), path: repoPath(f.file) })) }));
-const data = { screens, setups: SETUPS, topics: TOPICS };
+const screens = SCREENS.map((s) => ({
+  ...s,
+  files: s.files.map((f) => ({ ...f, scenario: scenarioOf(f), missing: !existsSync(pathOf(f.file)), url: urlOf(f.file), path: repoPath(f.file) })),
+}));
+const scenarios = Object.entries(SCENARIOS).map(([name, x]) => ({ name, about: x.about }));
+const data = { screens, setups: SETUPS, topics: TOPICS, scenarios };
 const page = readFileSync(join(root, "screens/template.html"), "utf8")
   .replace("const DATA = __DATA__;", () => `const DATA = ${JSON.stringify(data).replace(/</g, "\\u003c")};`)
   .replace("/* __FRAME__ */", () => frameSource.replace(/^export /gm, ""));
@@ -91,7 +112,8 @@ const out = join(root, "screens/index.html");
 writeFileSync(out, page);
 
 const files = SCREENS.reduce((n, s) => n + s.files.length, 0);
-console.log(`screens/index.html: ${SCREENS.length} screens, ${files} files`);
+const notYet = SCREENS.reduce((n, s) => n + s.files.filter((f) => pending(f) && !existsSync(pathOf(f.file))).length, 0);
+console.log(`screens/index.html: ${SCREENS.length} screens, ${files} files${notYet ? ` (${notYet} not taken yet)` : ""}`);
 for (const p of problems) console.error(`  ! ${p}`);
 
 if (mode === "open") spawnSync("open", [out]);
