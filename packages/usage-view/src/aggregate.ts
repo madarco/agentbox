@@ -28,14 +28,15 @@ const DAY = 24 * HOUR;
 export const DEFAULT_IDLE_GAP_MS = 10 * MIN;
 /** How long a span stays open after its last row. */
 export const DEFAULT_TAIL_MS = 1 * MIN;
-/** An automated turn with no tool call counts only from this long. */
+/** An automated turn counts only when it stayed busy at least this long. */
 export const DEFAULT_AUTO_MIN_BUSY_MS = 30_000;
 
 /**
  * One transcript row, as the span rule reads it: a typed prompt, an automated
- * one (a task notification, a wakeup), an assistant reply or a tool call.
+ * one (a task notification, a wakeup), an assistant reply, a tool call or a
+ * tool call's result.
  */
-export type TurnKind = 'prompt' | 'auto' | 'reply' | 'tool';
+export type TurnKind = 'prompt' | 'auto' | 'reply' | 'tool' | 'result';
 
 export interface TurnRow {
   /** Epoch ms. */
@@ -46,6 +47,7 @@ export interface TurnRow {
 /** A stored history row's kind for the span rule. */
 export function turnKindOf(kind: string, role: string | null, auto: boolean): TurnKind {
   if (kind === 'tool') return 'tool';
+  if (kind === 'result') return 'result';
   if (role === 'user') return auto ? 'auto' : 'prompt';
   return 'reply';
 }
@@ -131,7 +133,7 @@ export interface IntervalOptions {
   idleGapMs?: number;
   /** How long an interval stays open after its last row. Default 1 min. */
   tailMs?: number;
-  /** An automated turn with no tool call counts only from this long. Default 30 s. */
+  /** An automated turn counts only when it stayed busy this long. Default 30 s. */
   autoMinBusyMs?: number;
 }
 
@@ -141,10 +143,11 @@ export interface IntervalOptions {
 /**
  * A session's busy intervals (docs/usage-dashboard-plan.md, "Busy spans"): each
  * turn from its prompt to its last row plus the tail, never the wait for the
- * next prompt. A pause over `idleGapMs` inside a turn cuts it. A prompt right
- * after a tool call (within the gap) continues the turn: the tool was running.
- * An automated turn with no tool call that ended within `autoMinBusyMs` counts
- * for nothing. Touching intervals merge.
+ * next prompt. A pause over `idleGapMs` inside a turn cuts it. A prompt that
+ * lands while a tool call has no result yet (within the gap) continues the
+ * turn: the tool was running. A session that records no results never
+ * continues one. An automated turn that was busy for less than
+ * `autoMinBusyMs`, tools included, counts for nothing. Touching intervals merge.
  */
 export function activeIntervals(rows: readonly TurnRow[], opts: IntervalOptions = {}): Span[] {
   const gap = opts.idleGapMs ?? DEFAULT_IDLE_GAP_MS;
@@ -152,6 +155,7 @@ export function activeIntervals(rows: readonly TurnRow[], opts: IntervalOptions 
   const autoMin = opts.autoMinBusyMs ?? DEFAULT_AUTO_MIN_BUSY_MS;
   // Stable: rows with one timestamp keep the order the store gave them.
   const sorted = rows.filter((r) => Number.isFinite(r.at)).sort((a, b) => a.at - b.at);
+  const tracksResults = sorted.some((r) => r.kind === 'result');
 
   // Turns: a prompt and the rows up to the next one (rows before the first prompt are one too).
   const turns: TurnRow[][] = [];
@@ -164,22 +168,20 @@ export function activeIntervals(rows: readonly TurnRow[], opts: IntervalOptions 
   const out: Span[] = [];
   let start = 0;
   let last: TurnRow | null = null;
+  // Tool calls of the current turn still waiting for their result.
+  let open = 0;
   const close = (): void => {
     if (last) out.push({ start, end: last.at + tail });
   };
   for (let turn of turns) {
     const head = turn[0]!;
-    const continues = last !== null && last.kind === 'tool' && head.at - last.at <= gap;
+    const continues = tracksResults && open > 0 && last !== null && head.at - last.at <= gap;
     if (!continues) {
       if (head.kind === 'auto') {
         // Judged on the stretch before any cut: a stray row much later is not this wakeup's work.
         let cut = 1;
         while (cut < turn.length && turn[cut]!.at - turn[cut - 1]!.at <= gap) cut++;
-        const stretch = turn.slice(0, cut);
-        const worked =
-          stretch.some((r) => r.kind === 'tool') ||
-          stretch[stretch.length - 1]!.at - head.at >= autoMin;
-        if (!worked) {
+        if (turn[cut - 1]!.at - head.at < autoMin) {
           turn = turn.slice(cut);
           if (turn.length === 0) continue;
         }
@@ -187,12 +189,15 @@ export function activeIntervals(rows: readonly TurnRow[], opts: IntervalOptions 
       close();
       start = turn[0]!.at;
       last = null;
+      open = 0;
     }
     for (const r of turn) {
       if (last !== null && r.at - last.at > gap) {
         close();
         start = r.at;
       }
+      if (r.kind === 'tool') open++;
+      else if (r.kind === 'result') open = Math.max(0, open - 1);
       last = r;
     }
   }

@@ -153,8 +153,25 @@ describe('claude automated prompts (usage busy spans)', () => {
   const autoOf = (line: Record<string, unknown>): unknown =>
     (claudeLineRecords(line, 0)[0] as { auto?: boolean }).auto;
 
+  it('an injection by its text wins over a human origin', () => {
+    expect(autoOf(userLine({ origin: { kind: 'human' } }, '<task-notification>x'))).toBe(true);
+    expect(
+      autoOf(userLine({ origin: { kind: 'human' }, promptSource: 'sdk' }, '<wake reason="cron">')),
+    ).toBe(true);
+  });
+
+  it('a compact summary and an interrupt marker are not prompts', () => {
+    expect(
+      claudeLineRecords(userLine({ isCompactSummary: true }, 'This session is being continued'), 0),
+    ).toEqual([]);
+    expect(claudeLineRecords(userLine({}, '[Request interrupted by user]'), 0)).toEqual([]);
+    expect(
+      claudeLineRecords(userLine({}, '[Request interrupted by user for tool use]'), 0),
+    ).toEqual([]);
+  });
+
   it('reads origin.kind first', () => {
-    expect(autoOf(userLine({ origin: { kind: 'human' } }, '<task-notification>x'))).toBe(false);
+    expect(autoOf(userLine({ origin: { kind: 'human' } }, 'fix the parser'))).toBe(false);
     expect(autoOf(userLine({ origin: { kind: 'task-notification' } }, 'done'))).toBe(true);
   });
 
@@ -164,7 +181,7 @@ describe('claude automated prompts (usage busy spans)', () => {
     ).toBe(false);
   });
 
-  it('an image-only prompt starts a turn; a tool result does not', () => {
+  it('an image-only prompt starts a turn; a tool result is a result row', () => {
     const img = {
       type: 'user',
       timestamp: 't',
@@ -176,7 +193,21 @@ describe('claude automated prompts (usage busy spans)', () => {
       timestamp: 't',
       message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
     };
-    expect(claudeLineRecords(res, 0)).toEqual([]);
+    expect(claudeLineRecords(res, 0)).toEqual([{ kind: 'result', ts: 't', at: 0 }]);
+    // Text riding on a tool result is attached context, not a prompt.
+    const both = {
+      type: 'user',
+      timestamp: 't',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'tool_result', content: 'a' },
+          { type: 'tool_result', content: 'b' },
+          { type: 'text', text: '<system-reminder>x</system-reminder>' },
+        ],
+      },
+    };
+    expect(claudeLineRecords(both, 0).map((r) => r.kind)).toEqual(['result', 'result']);
   });
 
   it('then promptSource', () => {

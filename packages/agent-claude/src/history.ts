@@ -65,17 +65,17 @@ function attachmentOnly(content: unknown): boolean {
 }
 
 /**
- * Whether claude, not a person, wrote this prompt: the line's `origin.kind`
- * (`human`, `task-notification`, …) unless `promptSource` says it was typed,
- * else `promptSource` alone (`system` is automated), else the text, for
- * transcripts older than both.
+ * Whether claude, not a person, wrote this prompt. An injection's text wins
+ * (a harness `<wake …>` is recorded with origin `human`); otherwise the line's
+ * `origin.kind` (`human`, `task-notification`, …) unless `promptSource` says it
+ * was typed, else `promptSource` alone (`system` is automated).
  */
 function promptIsAutomated(line: Json, text: string): boolean {
+  if (isInjectedPrompt(text)) return true;
   const kind = str(asObj(line.origin)?.kind);
   const source = str(line.promptSource);
   if (kind) return kind !== 'human' && source !== 'typed';
-  if (source) return source === 'system';
-  return isInjectedPrompt(text);
+  return source === 'system';
 }
 
 /** The session a file's own lines belong to: its stem, or a subagent's parent dir. */
@@ -119,11 +119,20 @@ export function claudeLineRecords(
   const message = asObj(line.message);
   if (!message) return out;
   if (type === 'user') {
-    if (line.isMeta === true) return out;
-    // A prompt with no text (an image, a file) still starts a turn; a tool result does not.
+    // A tool result ends its call. Text riding on that line is context the
+    // harness attached, not a prompt.
+    if (Array.isArray(message.content)) {
+      const results = message.content.filter((b) => asObj(b)?.type === 'tool_result').length;
+      for (let i = 0; i < results; i++) out.push({ kind: 'result', ...(ts ? { ts } : {}), at });
+      if (results > 0) return out;
+    }
+    // Not prompts: the harness's own lines, the summary a compaction writes,
+    // and the marker of an interrupt.
+    if (line.isMeta === true || line.isCompactSummary === true) return out;
+    // A prompt with no text (an image, a file) still starts a turn.
     const text =
       textBlocks(message.content).trim() || (attachmentOnly(message.content) ? '[attachment]' : '');
-    if (text) {
+    if (text && !text.startsWith('[Request interrupted by user')) {
       const auto = promptIsAutomated(line, text);
       out.push({ kind: 'turn', role: 'user', text: clip(text), ...(ts ? { ts } : {}), at, auto });
     }
@@ -192,8 +201,9 @@ export const claudeHistoryModule: AgentHistoryModule = {
   // 2: usage on lines copied from another session is no longer counted.
   // 3: `ai-title`, the working-on line and context fill (live status).
   // 4: `auth` records (a refused credential, never on a copied line).
-  // 5: `auto` on user rows (an injected prompt, from the line's origin).
-  parserVersion: 5,
+  // 6: `auto` on user rows (an injected prompt), `result` rows for tool
+  // results, no row for a compact summary or an interrupt marker.
+  parserVersion: 6,
 
   identify(head, path) {
     const sub = SUBAGENT_PATH.exec(path);

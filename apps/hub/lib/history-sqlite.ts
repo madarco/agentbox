@@ -435,7 +435,14 @@ function migrateSpansRule(db: Db): void {
   const r = db.prepare("SELECT value FROM history_meta WHERE key = 'spans_rule'").get() as
     | Row
     | undefined;
-  if (Number(r?.value ?? 1) >= SPANS_RULE) return;
+  // Also when user rows have no `auto`: an older hub (a downgrade on the
+  // nightly channel) wrote them after the stamp.
+  const unclassified = db
+    .prepare(
+      "SELECT 1 FROM history_turns WHERE kind = 'turn' AND role = 'user' AND auto IS NULL LIMIT 1",
+    )
+    .get();
+  if (Number(r?.value ?? 1) >= SPANS_RULE && !unclassified) return;
   db.exec('BEGIN');
   try {
     // The stored text is the only origin rows parsed before the column have.
@@ -1120,14 +1127,36 @@ export async function openSqliteHistoryRepo(
         costUsd: r.cost === null || r.cost === undefined ? null : n(r.cost),
       }));
     },
-    async refreshSpans(limit) {
+    async refreshSpans(limit, parserVersions = {}) {
+      // A session behind its agent's parser is (or will be) re-parsed: its turns
+      // may be half there, so its spans wait for the re-parse to finish.
       const keys = (
         db
-          .prepare('SELECT key FROM history_sessions WHERE spans_dirty = 1 LIMIT ?')
-          .all(Math.max(1, Math.trunc(limit))) as Row[]
-      ).map((r) => String(r.key));
+          .prepare('SELECT key, agent, parser_version FROM history_sessions WHERE spans_dirty = 1')
+          .all() as Row[]
+      )
+        .filter((r) => n(r.parser_version) >= (parserVersions[String(r.agent)] ?? 0))
+        .slice(0, Math.max(1, Math.trunc(limit)))
+        .map((r) => String(r.key));
       for (const key of keys) tx(() => refreshSpansOf(key));
       return keys.length;
+    },
+    async sessionSpans(key) {
+      return (
+        db
+          .prepare('SELECT start_ms, last_ms FROM history_spans WHERE session_key = ?')
+          .all(key) as Row[]
+      ).map((r) => ({ sessionKey: key, start: n(r.start_ms), last: n(r.last_ms) }));
+    },
+    async restoreSpans(key, spans) {
+      tx(() => {
+        db.prepare('DELETE FROM history_spans WHERE session_key = ?').run(key);
+        const ins = db.prepare(
+          'INSERT OR REPLACE INTO history_spans (session_key, start_ms, last_ms) VALUES (?, ?, ?)',
+        );
+        for (const sp of spans) ins.run(key, sp.start, sp.last);
+        db.prepare('UPDATE history_sessions SET spans_dirty = 0 WHERE key = ?').run(key);
+      });
     },
     async usageSessions(keys) {
       const out: UsageSessionMeta[] = [];
@@ -1316,7 +1345,9 @@ export async function openSqliteHistoryRepo(
 
     async countTurns(key) {
       const r = db
-        .prepare('SELECT COUNT(*) AS n FROM history_turns WHERE session_key = ?')
+        .prepare(
+          "SELECT COUNT(*) AS n FROM history_turns WHERE session_key = ? AND kind <> 'result'",
+        )
         .get(key) as Row;
       return n(r.n);
     },
@@ -1334,7 +1365,7 @@ export async function openSqliteHistoryRepo(
                MAX(t.ts) OVER (PARTITION BY t.file_id ORDER BY t.at, t.seq
                                ROWS UNBOUNDED PRECEDING) AS order_ts
              FROM history_turns t JOIN history_files f ON f.id = t.file_id
-             WHERE t.session_key = ?)
+             WHERE t.session_key = ? AND t.kind <> 'result')
            ORDER BY COALESCE(order_ts, ''), file_id, at, seq LIMIT ? OFFSET ?`,
         )
         .all(key, limit, from) as Row[];

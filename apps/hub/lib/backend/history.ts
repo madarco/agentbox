@@ -371,8 +371,16 @@ export interface HistoryRepo {
    */
   usageTokens(q: UsageWindow & { zone: readonly ZoneSegment[] }): Promise<UsageTokenDay[]>;
   usageSessions(keys: readonly string[]): Promise<UsageSessionMeta[]>;
-  /** Recompute the intervals of up to `limit` sessions whose turns changed; returns how many. */
-  refreshSpans(limit: number): Promise<number>;
+  /**
+   * Recompute the intervals of up to `limit` sessions whose turns changed; returns
+   * how many. A session whose `parser_version` is below its agent's entry in
+   * `parserVersions` is skipped: a re-parse is pending or in flight.
+   */
+  refreshSpans(limit: number, parserVersions?: Readonly<Record<string, number>>): Promise<number>;
+  /** A session's stored intervals, to put back if its re-parse fails. */
+  sessionSpans(key: string): Promise<UsageSpanRow[]>;
+  /** Replace a session's intervals with `spans` and mark them current. */
+  restoreSpans(key: string, spans: readonly UsageSpanRow[]): Promise<void>;
   /** Delete blobs no chunk references; returns how many. */
   gcBlobs(): Promise<number>;
   /** Keys of `agent`'s sessions projected by a parser older than `version`. */
@@ -515,7 +523,14 @@ export interface HistoryService extends HistoryIngestSink {
   repo: HistoryRepo;
 }
 
-const SPAN_BATCH = 50;
+// Small: sqlite blocks the event loop the relay and web server share while a
+// batch runs, and a long session's recompute is a few milliseconds.
+const SPAN_BATCH = 5;
+
+/** Each agent's current parser version, for `refreshSpans`. */
+function parserVersions(): Record<string, number> {
+  return Object.fromEntries(agentHistoryModules().map((m) => [m.id, m.parserVersion]));
+}
 
 export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
   const { repo, archive } = deps;
@@ -782,6 +797,8 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
     // Usage outlives the transcript (Decision 3): a failed re-parse must not
     // lose the rows the previous parser stored.
     const usageBefore = await repo.usageRowsOf(key);
+    // Spans too: a half re-parsed session must not recompute them from part of its turns.
+    const spansBefore = await repo.sessionSpans(key);
     for (const f of files) await repo.clearFileRecords(f.id);
     await repo.clearSessionTitle(key);
     await repo.clearLive(key);
@@ -803,7 +820,10 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
       }
       await repo.updateFile(f.id, { parseState: state });
     }
-    if (!ok) await repo.replaceUsage(key, usageBefore);
+    if (!ok) {
+      await repo.replaceUsage(key, usageBefore);
+      await repo.restoreSpans(key, spansBefore);
+    }
     // Keep the session's activity time: a re-parse is not activity (ordering,
     // retention).
     await repo.refreshSessionTotals(key, session?.updatedAt ?? now());
@@ -980,7 +1000,11 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         } finally {
           reparsing = null;
         }
-        if (done > 0) log(`history: re-parsed ${String(done)} session(s)`);
+        if (done > 0) {
+          log(`history: re-parsed ${String(done)} session(s)`);
+          // Their spans waited for the re-parse (`refreshSpans` skips stale sessions).
+          void service.refreshUsageSpans().catch(() => undefined);
+        }
         return done;
       })();
       return reparsing;
@@ -1001,10 +1025,10 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
             // Small batches with a turn of the event loop between them: the hub's relay
             // and web server share this process, and sqlite blocks while it works.
             for (;;) {
-              const n = await repo.refreshSpans(SPAN_BATCH);
+              const n = await repo.refreshSpans(SPAN_BATCH, parserVersions());
               done += n;
               if (n < SPAN_BATCH) break;
-              await new Promise((r) => setTimeout(r, 0));
+              await new Promise((r) => setImmediate(r));
             }
           } while (spansAgain);
           return done;

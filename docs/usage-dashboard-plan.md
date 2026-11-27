@@ -69,8 +69,9 @@ owner's hub: 130 of 310 user turns start with `<task-notification>`). The rule
 now measures busy time inside turns:
 
 - **A turn** is a prompt row (`history_turns` kind `turn`, role `user`) and the
-  assistant and tool rows after it, up to the next prompt. Rows before a
-  session's first prompt (a resumed or compacted file) are a turn of their own.
+  assistant, tool and tool-result rows after it, up to the next prompt. Rows
+  before a session's first prompt (a resumed or compacted file) are a turn of
+  their own.
 - **Its span** runs from the prompt to its last row, plus the 1-minute tail
   (`DEFAULT_TAIL_MS`). The gap from a turn's end to the next prompt is never
   counted, however long.
@@ -79,48 +80,62 @@ now measures busy time inside turns:
   row while it runs, and Phase 0 showed 5 minutes splits real runs at builds;
   a longer silence inside a turn is a permission prompt waiting for the human
   or a hung tool.
-- **A prompt mid-tool continues the turn.** When the row before a prompt is a
-  tool call (the agent never ends a turn on one) and the prompt is within the
-  cap, the tool was still running: a message queued during a turn, or the
-  reminder claude attaches to a tool result. The time is counted and the prompt
-  does not start a new turn. A turn the human interrupted during a tool, then
-  prompted again within 10 minutes, counts that wait; the cap bounds it.
+- **A prompt continues the turn only while a tool call is still running**: the
+  turn has a `tool` row with no `result` row yet, and the prompt is within the
+  cap (a message queued during a build). Once every call has its result, the
+  next prompt starts a new turn and the wait before it is not counted, even when
+  the turn ended on a tool call (real transcripts do: a `no_reply_needed` tool,
+  measured 2026-11-27). A session with no result rows at all (an agent whose
+  parser records none, an old transcript) never continues a turn across a prompt.
 - **Automated wakeups.** A prompt the harness injected (a `<task-notification>`,
-  a cron or `/loop` wakeup, a system event) is stored with `history_turns.auto
-  = 1`, classified at ingest. A turn it starts counts only if it did real work:
-  at least one tool row, or 30 seconds (`DEFAULT_AUTO_MIN_BUSY_MS`) or more from
-  the prompt to its last row. A no-tool acknowledgement is written in seconds;
-  30 seconds without a tool is a long written answer, which is work. A wakeup
-  that did nothing contributes nothing.
+  a `<wake …>`, a cron or `/loop` wakeup, a system event) is stored with
+  `history_turns.auto = 1`, classified at ingest. A turn it starts counts only if
+  it stayed busy for 30 seconds (`DEFAULT_AUTO_MIN_BUSY_MS`) or more, from the
+  prompt to its last row before any cut, tool rows and results included. A
+  wakeup acknowledged in seconds counts nothing, whether it replied in text or
+  called a do-nothing tool (12 such wakeups 5 minutes apart counted 61 minutes
+  under the first version of this rule). A wakeup that does real work runs
+  longer than that: a CI check read, a PR merged.
 - **A wakeup that did work counts in agent-hours and in wall hours.** It is real
-  work (a CI check read, a PR merged) and an agent was busy while it ran.
+  work and an agent was busy while it ran.
 - Turns whose spans touch or overlap merge, so the span count stays small.
 - **One implementation.** `activeIntervals` in `@agentbox/usage-view` takes the
-  rows (`prompt` / `auto` / `reply` / `tool`); the hub reads a session's rows
-  in `(ts_ms, id)` order and stores that function's output in `history_spans`,
-  so the hub and anything that sends raw turns cut spans the same way.
+  rows (`prompt` / `auto` / `reply` / `tool` / `result`); the hub reads a
+  session's rows in `(ts_ms, id)` order and stores that function's output in
+  `history_spans`, so the hub and anything that sends raw turns cut spans the
+  same way.
 
 **Classification per agent.**
-- claude: the line's `origin.kind` (`human`, `task-notification`, …), anything
-  but `human` being automated unless `promptSource` is `typed`; without an
-  origin, `promptSource` alone (`system` is automated); for transcripts older
-  than both, the text: it starts with `<task-notification>`, or it is nothing
-  but `<system-reminder>` blocks, the last one possibly clipped
-  (`isInjectedPrompt` in `@agentbox/core`). A prompt with only an image or a
-  file is stored as `[attachment]`, so it starts its turn too.
+- claude: a text that is an injection wins (`isInjectedPrompt` in
+  `@agentbox/core`: it starts with `<task-notification>` or `<wake `, or it is
+  nothing but `<system-reminder>` blocks, the last one possibly clipped); harness
+  wakeups are recorded with origin `human`. Otherwise the line's `origin.kind`
+  (anything but `human` is automated unless `promptSource` is `typed`), else
+  `promptSource` alone (`system` is automated). A prompt with only an image or a
+  file is stored as `[attachment]`, so it starts its turn too. Not prompts: a
+  compact summary (`isCompactSummary`), `[Request interrupted by user…]`, and text
+  riding on a tool-result line. Each `tool_result` block is a `result` row.
 - codex already drops its injected user messages (`environment_context`,
-  `user_instructions`, …) at parse time, so every user row it stores is typed.
-- opencode and pi have no injected prompts: every user row is typed.
+  `user_instructions`, …) at parse time, so every user row it stores is typed. It
+  records no `result` rows yet, so its prompts never continue a turn.
+- opencode and pi have no injected prompts: every user row is typed. No `result`
+  rows either.
 - openclaw: its heartbeat prompts are not classified yet (backlog); its
   `custom` injected context is not a turn.
 - Every agent's user rows also go through the text check at ingest.
 
 **Migration.** The `auto` column is backfilled from the stored text of user
-rows (text is kept for every turn) and every non-purged session is marked
-`spans_dirty` once (`history_meta.spans_rule`); the existing background refresh
-recomputes them after hub start, in batches. A purged session keeps the spans
-it had: its turns are gone. claude's parser version goes to 5, so the re-parse
-job also re-derives `auto` from `origin` for the transcripts still archived.
+rows (text is kept for every turn), paged, and every non-purged session is
+marked `spans_dirty` (`history_meta.spans_rule`). It runs again whenever user
+rows with no `auto` exist, as an older hub writes them after a downgrade. The
+background refresh recomputes spans 5 sessions at a time, yielding between
+batches. A purged session keeps the spans it had: its turns are gone. claude's
+parser version goes to 6, so the re-parse job re-derives `auto` from `origin` and
+adds the `result` rows for the transcripts still archived. While a session is
+behind its agent's parser version, the refresh leaves its spans alone (a re-parse
+clears and re-inserts its turns across awaits), and a re-parse that fails puts the
+session's spans back as they were, like its usage rows; the refresh runs once
+the re-parse job ends.
 
 ## Shape
 

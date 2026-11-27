@@ -122,7 +122,9 @@ describe('activeIntervals', () => {
       row(at(1) + MIN, 'reply'),
       row(t, 'auto'),
       row(t + 20_000, 'tool'),
+      row(t + 3 * MIN, 'result'),
       row(t + 4 * MIN, 'tool'),
+      row(t + 4 * MIN + 30_000, 'result'),
       row(t + 5 * MIN, 'reply'),
     ];
     expect(activeIntervals(rows)).toEqual([
@@ -131,7 +133,7 @@ describe('activeIntervals', () => {
     ]);
   });
 
-  it('an automated turn with no tool counts once it ran past the threshold', () => {
+  it('an automated turn counts once it was busy past the threshold', () => {
     const rows = [row(at(3), 'auto'), row(at(3) + 45_000, 'reply')];
     expect(activeIntervals(rows)).toEqual([{ start: at(3), end: at(3) + 45_000 + MIN }]);
     expect(activeIntervals(rows, { autoMinBusyMs: 60_000 })).toEqual([]);
@@ -162,17 +164,54 @@ describe('activeIntervals', () => {
     ]);
   });
 
-  it('a prompt right after a tool call continues the turn (the tool was running)', () => {
+  it('a prompt while a tool call has no result yet continues the turn (the tool was running)', () => {
     const rows = [
       row(at(9), 'prompt'),
       row(at(9) + MIN, 'tool'),
-      // A queued message, and an injected reminder, consumed when the 6-minute build ended.
+      // A queued message, consumed when the 6-minute build ended.
       row(at(9) + 7 * MIN, 'prompt'),
-      row(at(9) + 7 * MIN, 'tool'),
-      row(at(9) + 9 * MIN, 'auto'),
-      row(at(9) + 9 * MIN + 5_000, 'reply'),
+      row(at(9) + 7 * MIN, 'result'),
+      row(at(9) + 7 * MIN + 5_000, 'reply'),
     ];
-    expect(activeIntervals(rows)).toEqual([{ start: at(9), end: at(9) + 10 * MIN + 5_000 }]);
+    expect(activeIntervals(rows)).toEqual([{ start: at(9), end: at(9) + 8 * MIN + 5_000 }]);
+  });
+
+  it('once the last tool call of a turn has its result, the wait for the next prompt is not counted', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + MIN, 'tool'),
+      row(at(9) + MIN + 2_000, 'result'),
+      row(at(9) + 8 * MIN, 'prompt'),
+      row(at(9) + 9 * MIN, 'reply'),
+    ];
+    expect(activeIntervals(rows)).toEqual([
+      { start: at(9), end: at(9) + 2 * MIN + 2_000 },
+      { start: at(9) + 8 * MIN, end: at(9) + 10 * MIN },
+    ]);
+  });
+
+  it('a session that records no results never continues a turn across a prompt', () => {
+    const rows = [
+      row(at(9), 'prompt'),
+      row(at(9) + MIN, 'tool'),
+      row(at(9) + 8 * MIN, 'prompt'),
+      row(at(9) + 9 * MIN, 'reply'),
+    ];
+    expect(totalMs(activeIntervals(rows))).toBe(2 * MIN + 2 * MIN);
+  });
+
+  it('wakeups every 5 minutes, each acked with a do-nothing tool call, add nothing', () => {
+    const rows: TurnRow[] = [row(at(1), 'prompt'), row(at(1) + MIN, 'reply')];
+    for (let i = 1; i <= 12; i++) {
+      const t = at(1) + i * 5 * MIN;
+      rows.push(row(t, 'auto'), row(t + 4_000, 'tool'), row(t + 5_000, 'result'));
+    }
+    expect(activeIntervals(rows)).toEqual([{ start: at(1), end: at(1) + 2 * MIN }]);
+  });
+
+  it('a wakeup that runs tools for 30 s or more counts', () => {
+    const rows = [row(at(3), 'auto'), row(at(3) + 2_000, 'tool'), row(at(3) + 40_000, 'result')];
+    expect(activeIntervals(rows)).toEqual([{ start: at(3), end: at(3) + 40_000 + MIN }]);
   });
 
   it('rows before the first prompt are a turn of their own', () => {

@@ -202,6 +202,8 @@ export type HistoryRecord =
       auto?: boolean;
     }
   | { kind: 'tool'; name: string; ts?: string; at: number }
+  /** A tool call's result came back: the call is over (claude only, so far). */
+  | { kind: 'result'; ts?: string; at: number }
   | {
       kind: 'usage';
       messageId: string;
