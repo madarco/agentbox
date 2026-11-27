@@ -61,7 +61,9 @@ tray runs as a second app with its own bundle id.
    ```
 
    The header of each `scripts/shoot*.mjs` lists its options: steps such as `--click`, `--fill` and `--wait-for` for the hub,
-   `--press <ax id>` and `--alert` for the tray, `--send '<Down>'` for the CLI.
+   `--press <ax id>`, `--alert`, `--window`, `--setup <step>` and `--menu-tip`
+   for the tray, `--send '<Down>'` for the CLI. `TRAY_APP=<path>` points
+   `shoot:tray` at another build of `AgentBoxE2E.app`.
    `pnpm shoot:tray` takes the screen for a moment: it waits until the Mac has
    been idle for 3 seconds, so leave the mouse alone while it runs.
 3. Add an entry to `screens/catalog.mjs` with the `hub()`, `tray()` or `cli()`
@@ -106,6 +108,10 @@ and titles.
 - **Tray:** `pnpm shoot:tray tray/menu.simple.png --restart --scenario simple`
   launches the app with `--fixtures-scenario simple`. `--settings skills`
   opens the Settings window on that page at launch and captures it.
+  `--setup <step>` walks the setup wizard to a step (`welcome`, `provider`,
+  `project`, `project-folder`) and `--menu-tip` takes the menu the wizard
+  hands off to, with its New Box tip. The wizard reads no scenario data, so
+  its steps are taken once.
   A picture whose `check` starts "Not taken yet" is a placeholder: `retake`
   skips it until the check is dropped.
 - **Gallery:** the scenario menu at the top filters the pictures; a screen's

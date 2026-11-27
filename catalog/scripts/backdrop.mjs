@@ -44,7 +44,7 @@ const chunk = (type, data) => {
 
 /* 8-bit RGBA, non-interlaced: what screencapture writes. Other chunks (the
    colour profile among them) are kept as they are. */
-function readPng(file) {
+export function readPng(file) {
   const buf = readFileSync(file);
   const chunks = [];
   const idat = [];
@@ -85,7 +85,7 @@ function readPng(file) {
   return { w, h, px, chunks };
 }
 
-function writePng(file, { w, h, px, chunks }) {
+export function writePng(file, { w, h, px, chunks }) {
   const stride = w * 4;
   const raw = Buffer.alloc((stride + 1) * h);
   for (let y = 0; y < h; y++) px.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
