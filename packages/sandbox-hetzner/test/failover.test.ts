@@ -110,11 +110,16 @@ function run(
     ...(opts.datacenters ? { datacenters: opts.datacenters } : {}),
   });
   const logs: string[] = [];
+  const loads = { count: 0 };
   const promise = createWithLocationFailover({
     serverType,
-    plan,
+    location: opts.location,
     pinned,
     catalog: CATALOG,
+    loadPlan: () => {
+      loads.count++;
+      return Promise.resolve({ plan, locations: LOCATIONS });
+    },
     onLog: (l) => logs.push(l),
     mapError: (err) => mapHetznerProvisionError(err),
     attempt: (location) =>
@@ -125,7 +130,7 @@ function run(
         location,
       }),
   });
-  return { plan, logs, promise };
+  return { plan, logs, loads, promise };
 }
 
 describe('planLocations', () => {
@@ -264,7 +269,7 @@ describe('createWithLocationFailover', () => {
 });
 
 describe('fetchLocationPlanInputs', () => {
-  it('skips the lookups when pinned and swallows lookup failures', async () => {
+  it('swallows lookup failures', async () => {
     let called = 0;
     const c = {
       listLocations: () => {
@@ -276,9 +281,7 @@ describe('fetchLocationPlanInputs', () => {
         return Promise.resolve([] as HetznerDatacenter[]);
       },
     };
-    expect(await fetchLocationPlanInputs(c, true)).toEqual({ locations: [], datacenters: [] });
-    expect(called).toBe(0);
-    expect(await fetchLocationPlanInputs(c, false)).toEqual({ locations: [], datacenters: [] });
+    expect(await fetchLocationPlanInputs(c)).toEqual({ locations: [], datacenters: [] });
     expect(called).toBe(2);
   });
 });
@@ -288,4 +291,66 @@ it('isCapacityError matches both capacity codes only', () => {
   expect(isCapacityError(new HetznerApiError(409, 'placement_error', 'x'))).toBe(true);
   expect(isCapacityError(new HetznerApiError(403, 'resource_limit_exceeded', 'x'))).toBe(false);
   expect(isCapacityError(new Error('x'))).toBe(false);
+});
+
+describe('failover only costs anything after a refusal', () => {
+  it('a first-try success loads no plan and logs no skip', async () => {
+    const api = fakeApi([]);
+    const { promise, logs, loads } = run(api, {
+      location: 'fsn1',
+      datacenters: [dc('fsn1', [22]), dc('nbg1', [33]), dc('hel1', [33])],
+    });
+    expect((await promise).location).toBe('fsn1');
+    expect(loads.count).toBe(0);
+    expect(logs).toEqual([]);
+  });
+
+  it('a pinned refusal never loads the plan', async () => {
+    const api = fakeApi(['fsn1']);
+    const { promise, loads } = run(api, { location: 'fsn1', pinned: true });
+    await promise.catch(() => undefined);
+    expect(loads.count).toBe(0);
+  });
+
+  it('a skipped same-zone location is not offered as another zone in the error', async () => {
+    const api = fakeApi(['fsn1', 'hel1']);
+    const { promise, logs } = run(api, {
+      location: 'fsn1',
+      serverType: 'cpx31',
+      datacenters: [dc('fsn1', [33]), dc('nbg1', [22]), dc('hel1', [33])],
+    });
+    const msg = ((await promise.catch((e: unknown) => e)) as Error).message;
+    expect(logs).toContain('hetzner: skipping nbg1: Hetzner reports no cpx31 capacity there');
+    expect(msg).toContain('fsn1, hel1');
+    expect(msg).toContain('(ash, hil)');
+    expect(msg).not.toMatch(/\(.*nbg1.*\)/);
+  });
+
+  it('without the location list the error makes no zone claim', async () => {
+    const api = fakeApi(['nbg1']);
+    const err = await createWithLocationFailover({
+      serverType: 'cpx31',
+      location: 'nbg1',
+      pinned: false,
+      catalog: CATALOG,
+      loadPlan: () =>
+        Promise.resolve({
+          plan: planLocations({
+            serverType: 'cpx31',
+            location: 'nbg1',
+            pinned: false,
+            catalog: CATALOG,
+            locations: [],
+          }),
+          locations: [],
+        }),
+      onLog: () => {},
+      mapError: (e) => e,
+      attempt: (location) =>
+        api.createServer({ name: 'b', server_type: 'cpx31', image: 1, location }),
+    }).catch((e: unknown) => e);
+    const msg = (err as Error).message;
+    expect(msg).not.toContain('latency');
+    expect(msg).toContain('nbg1');
+  });
 });

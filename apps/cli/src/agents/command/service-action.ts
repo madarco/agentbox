@@ -60,7 +60,11 @@ import {
   type RestoreRequest,
 } from '../../commands/_restore.js';
 import { resolveLimits } from '../../limits.js';
-import { cloudSizingProviderOptions, locationIgnoredWarning } from '../../lib/cloud-sizing.js';
+import {
+  cloudSizingFlags,
+  cloudSizingProviderOptions,
+  locationIgnoredWarning,
+} from '../../lib/cloud-sizing.js';
 import { buildHubCreateOpts } from '../../lib/hub-create-opts.js';
 import { resolveProviderChoice } from '../../provider/spec.js';
 import {
@@ -519,10 +523,7 @@ export async function runServiceAgent(
             providerName,
             ...(remoteHost ? { remoteHost } : {}),
             cfg,
-            flags: {
-              ...(opts.size?.trim() ? { size: opts.size.trim() } : {}),
-              ...(opts.location?.trim() ? { location: opts.location.trim() } : {}),
-            },
+            flags: cloudSizingFlags(opts),
             resolved: {
               ...(persistent !== undefined ? { persistent } : {}),
               ...(borrowCredentials.length > 0 ? { borrowCredentials } : {}),
@@ -569,8 +570,7 @@ export async function runServiceAgent(
           provider.name === 'docker'
             ? {}
             : cloudSizingProviderOptions(provider.name, cfg, {
-                ...(opts.size?.trim() ? { size: opts.size.trim() } : {}),
-                ...(opts.location?.trim() ? { location: opts.location.trim() } : {}),
+                ...cloudSizingFlags(opts),
                 ...(remoteHost ? { remoteHost } : {}),
               });
         const s = makeProgressReporter(opts.verbose === true);

@@ -35,7 +35,11 @@ import { reattachRef } from '../../box-ref.js';
 import { warnCheckpointAgentMismatch } from '../../checkpoint-lookup.js';
 import { assertAgentCredsAvailable, MissingAgentCredsError } from '../../lib/queue/assert-creds.js';
 import { buildPromptArgs } from '../../lib/queue/build-prompt-args.js';
-import { cloudSizingProviderOptions, locationIgnoredWarning } from '../../lib/cloud-sizing.js';
+import {
+  cloudSizingFlags,
+  cloudSizingProviderOptions,
+  locationIgnoredWarning,
+} from '../../lib/cloud-sizing.js';
 import { buildHubCreateOpts } from '../../lib/hub-create-opts.js';
 import {
   assignTasksBestEffort,
@@ -128,16 +132,6 @@ function buildCliOverrides(a: AgentCliSpec, opts: AgentCreateOptions): Partial<U
   return out;
 }
 
-/** `--size` / `--location` as typed; absent when not given. */
-export function cloudSizingFlags(opts: AgentCreateOptions): { size?: string; location?: string } {
-  return {
-    ...(typeof opts.size === 'string' && opts.size.trim() ? { size: opts.size.trim() } : {}),
-    ...(typeof opts.location === 'string' && opts.location.trim()
-      ? { location: opts.location.trim() }
-      : {}),
-  };
-}
-
 /** The subset of the create flags the background-queue worker replays. */
 export function pickQueueCreateOpts(
   a: AgentCliSpec,
@@ -164,6 +158,7 @@ export function pickQueueCreateOpts(
     pidsLimit: opts.pidsLimit,
     disk: opts.disk,
     ...cloudSizingFlags(opts),
+    ...(cloudSizingFlags(opts).location ? { locationPinned: true } : {}),
   };
 }
 

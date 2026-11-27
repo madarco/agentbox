@@ -244,6 +244,7 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     'carryYes',
     'carrySkip',
     'carryAsk',
+    'locationPinned',
   ] as const;
   for (const f of boolFields) {
     const r = optionalBool(v[f], `opts.${f}`);

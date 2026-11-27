@@ -1059,6 +1059,7 @@ export const createCommand = new Command('create')
           bundleDepth: cfg.effective.box.bundleDepth,
           size: opts.size,
           location: opts.location,
+          ...(opts.location?.trim() ? { locationPinned: true } : {}),
           inbound: opts.inbound,
           useBranch,
           build: opts.build,

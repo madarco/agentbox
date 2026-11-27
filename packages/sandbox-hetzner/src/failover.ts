@@ -106,18 +106,24 @@ export function planLocations(input: LocationPlanInput): LocationPlan {
 }
 
 /**
- * Locations outside the tried set where the type is offered, to name in the
- * final error. These are the other zones: crossing them is the user's call.
+ * Locations to name in the final error: where the type is offered, outside
+ * the zone that was tried (when the zone is known), and not already tried.
  */
-function otherOfferedLocations(
-  serverType: string,
-  catalog: HetznerServerType[],
-  tried: readonly string[],
-): string[] {
+function otherOfferedLocations(args: {
+  serverType: string;
+  catalog: HetznerServerType[];
+  tried: readonly string[];
+  zone?: string;
+  locations: HetznerLocation[];
+}): string[] {
+  const { serverType, catalog, tried, zone, locations } = args;
   const type = catalog.find((t) => t.name === serverType);
+  const zoneOf = new Map(locations.map((l) => [l.name, l.network_zone]));
   const seen = new Set<string>();
   for (const p of type?.prices ?? []) {
-    if (p.location && !tried.includes(p.location)) seen.add(p.location);
+    if (!p.location || tried.includes(p.location)) continue;
+    if (zone && zoneOf.get(p.location) === zone) continue;
+    seen.add(p.location);
   }
   return [...seen];
 }
@@ -132,31 +138,36 @@ export function capacityExhaustedError(args: {
   pinned: boolean;
   catalog: HetznerServerType[];
   lastError: unknown;
+  /** The tried zone and the location list, when known: other zones are named as such. */
+  zone?: string;
+  locations?: HetznerLocation[];
 }): UserFacingError {
-  const { serverType, tried, pinned, catalog, lastError } = args;
+  const { serverType, tried, pinned, catalog, lastError, zone } = args;
+  const locations = args.locations ?? [];
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  const elsewhere = otherOfferedLocations(serverType, catalog, tried);
   const sizeHint =
     'Pick a different server type with `--size <type>` or ' +
     '`agentbox config set box.sizeHetzner <type>`.';
-  const where = elsewhere.length > 0 ? elsewhere.join(', ') : null;
 
   if (pinned) {
     const loc = tried[0] ?? '';
+    const others = otherOfferedLocations({ serverType, catalog, tried, locations });
     return new UserFacingError(
       `Hetzner has no capacity for "${serverType}" in "${loc}" right now (${detail}).\n` +
         `\`--location ${loc}\` pins the box there, so no other location was tried. ` +
         'Leave `--location` out to let the create fail over to another location' +
-        (where ? `, or pin a different one (${where}).` : '.') +
+        (others.length > 0 ? `, or pin a different one (${others.join(', ')}).` : '.') +
         `\n${sizeHint}`,
     );
   }
 
-  const locHint = where
-    ? `\nOr choose a location outside the ones tried (${where}) with \`--location <name>\` or ` +
-      '`agentbox config set box.hetznerLocation <name>`. Those are in another network zone, ' +
-      'so latency and price differ.'
-    : '';
+  const elsewhere = otherOfferedLocations({ serverType, catalog, tried, zone, locations });
+  const locHint =
+    elsewhere.length === 0
+      ? ''
+      : `\nOr choose another location (${elsewhere.join(', ')}) with \`--location <name>\` or ` +
+        '`agentbox config set box.hetznerLocation <name>`.' +
+        (zone ? ` Those are outside ${zone}, so latency and price differ.` : '');
   return new UserFacingError(
     `Hetzner has no capacity for "${serverType}" right now in any of: ${tried.join(', ')} ` +
       `(last error: ${detail}).\n${sizeHint}${locHint}`,
@@ -165,41 +176,68 @@ export function capacityExhaustedError(args: {
 
 export interface FailoverCreateArgs<T> {
   serverType: string;
-  plan: LocationPlan;
+  /** The configured or explicit location: always the first attempt. */
+  location: string;
   pinned: boolean;
   catalog: HetznerServerType[];
+  /**
+   * The failover plan, loaded only after the first location refuses for
+   * capacity, so a normal create pays no extra API calls. Never called when
+   * pinned.
+   */
+  loadPlan: () => Promise<{ plan: LocationPlan; locations: HetznerLocation[] }>;
   /** One create attempt in `location`. Throws the raw Hetzner error. */
   attempt: (location: string) => Promise<T>;
-  /** Maps a non-capacity error (account limit, …) to its user-facing form. */
+  /** Maps a non-capacity error (account limit, ...) to its user-facing form. */
   mapError: (err: unknown, location: string) => unknown;
   onLog: (line: string) => void;
 }
 
 /**
- * Run `attempt` over the plan's candidates until one is not refused for
- * capacity. Any other error stops the loop at once: an account limit or a bad
- * request will fail the same way everywhere.
+ * Try `location`; on a capacity refusal load the plan and walk its remaining
+ * candidates until one is not refused for capacity. Any other error stops at
+ * once: an account limit or a bad request fails the same way everywhere.
  */
 export async function createWithLocationFailover<T>(
   args: FailoverCreateArgs<T>,
 ): Promise<{ result: T; location: string; tried: string[] }> {
-  const { serverType, plan, pinned, catalog, attempt, mapError, onLog } = args;
+  const { serverType, location, pinned, catalog, loadPlan, attempt, mapError, onLog } = args;
   const tried: string[] = [];
   let lastError: unknown;
-  for (const [i, location] of plan.candidates.entries()) {
-    if (i > 0) {
-      onLog(`hetzner: no ${serverType} capacity in ${tried[i - 1] ?? ''}, trying ${location}`);
-    }
+  const tryOne = async (loc: string): Promise<{ ok: true; result: T } | { ok: false }> => {
     try {
-      const result = await attempt(location);
-      return { result, location, tried: [...tried, location] };
+      return { ok: true, result: await attempt(loc) };
     } catch (err) {
-      if (!isCapacityError(err)) throw mapError(err, location);
-      tried.push(location);
+      if (!isCapacityError(err)) throw mapError(err, loc);
+      tried.push(loc);
       lastError = err;
+      return { ok: false };
     }
+  };
+
+  const first = await tryOne(location);
+  if (first.ok) return { result: first.result, location, tried: [location] };
+  if (pinned) {
+    throw capacityExhaustedError({ serverType, tried, pinned, catalog, lastError });
   }
-  throw capacityExhaustedError({ serverType, tried, pinned, catalog, lastError });
+
+  const { plan, locations } = await loadPlan();
+  for (const sk of plan.skipped) onLog(`hetzner: skipping ${sk.location}: ${sk.reason}`);
+  for (const loc of plan.candidates) {
+    if (tried.includes(loc)) continue;
+    onLog(`hetzner: no ${serverType} capacity in ${tried[tried.length - 1] ?? ''}, trying ${loc}`);
+    const r = await tryOne(loc);
+    if (r.ok) return { result: r.result, location: loc, tried: [...tried, loc] };
+  }
+  throw capacityExhaustedError({
+    serverType,
+    tried,
+    pinned,
+    catalog,
+    lastError,
+    ...(plan.zone ? { zone: plan.zone } : {}),
+    locations,
+  });
 }
 
 /**
@@ -208,9 +246,7 @@ export async function createWithLocationFailover<T>(
  */
 export async function fetchLocationPlanInputs(
   c: Pick<HetznerClient, 'listLocations' | 'listDatacenters'>,
-  pinned: boolean,
 ): Promise<{ locations: HetznerLocation[]; datacenters: HetznerDatacenter[] }> {
-  if (pinned) return { locations: [], datacenters: [] };
   const [locations, datacenters] = await Promise.all([
     c.listLocations().catch(() => [] as HetznerLocation[]),
     c.listDatacenters().catch(() => [] as HetznerDatacenter[]),

@@ -18,6 +18,16 @@ export const LOCATION_OPTION = {
     'Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.',
 } as const;
 
+/** `--size` / `--location` as typed (trimmed); a key is absent when not given. */
+export function cloudSizingFlags(opts: { size?: unknown; location?: unknown }): {
+  size?: string;
+  location?: string;
+} {
+  const size = typeof opts.size === 'string' ? opts.size.trim() : '';
+  const location = typeof opts.location === 'string' ? opts.location.trim() : '';
+  return { ...(size ? { size } : {}), ...(location ? { location } : {}) };
+}
+
 /** True when `--location` means something for this provider. */
 export function providerTakesLocation(providerName: string): boolean {
   if (providerName === 'hetzner' || providerName === 'digitalocean') return true;
@@ -39,6 +49,12 @@ export interface CloudSizingFlags {
   size?: string;
   /** `--location <name>` (hetzner / digitalocean) */
   location?: string;
+  /**
+   * Whether `location` is a pin. Defaults to "a location flag was given"; the
+   * queue worker passes it explicitly, since its `location` may be a replayed
+   * configured value rather than a typed flag.
+   */
+  locationPinned?: boolean;
   /** `--inbound <spec>` (hetzner / digitalocean) */
   inbound?: string;
   /**
@@ -141,7 +157,8 @@ export function cloudSizingProviderOptions(
   // A `--location` typed for this create is a pin: a backend that fails over on
   // a capacity refusal (hetzner) must not move the box. One from config or the
   // provider default carries no pin, so the backend may place it elsewhere.
-  if (typeof out.location === 'string' && (flags.location?.trim() ?? '') !== '') {
+  const pinned = flags.locationPinned ?? (flags.location?.trim() ?? '') !== '';
+  if (typeof out.location === 'string' && (flags.location?.trim() ?? '') !== '' && pinned) {
     out.locationPinned = true;
   }
   if (providerName === 'vercel') {

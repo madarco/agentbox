@@ -1,10 +1,15 @@
 import type { EffectiveConfig } from '@agentbox/config';
+import type { AgentCliSpec } from '@agentbox/cli-kit';
 import { describe, expect, it } from 'vitest';
 import { agentCommandEntry } from '../src/agents/commands.js';
-import { cloudSizingFlags } from '../src/agents/command/create-action.js';
+import { pickQueueCreateOpts } from '../src/agents/command/create-action.js';
 import type { AgentCreateOptions } from '../src/agents/command/options.js';
 import { buildHubCreateOpts } from '../src/lib/hub-create-opts.js';
-import { cloudSizingProviderOptions, locationIgnoredWarning } from '../src/lib/cloud-sizing.js';
+import {
+  cloudSizingFlags,
+  cloudSizingProviderOptions,
+  locationIgnoredWarning,
+} from '../src/lib/cloud-sizing.js';
 
 function makeCfg(box: Record<string, unknown> = {}): EffectiveConfig {
   return {
@@ -72,6 +77,22 @@ describe('agent commands take --size and --location', () => {
       location: 'fsn1',
       locationPinned: true,
     });
+  });
+
+  it('the -i queue job carries the pin explicitly, and the worker honours only that', () => {
+    // pickQueueCreateOpts reads only `runtime.skipPermissions` off the spec.
+    const spec = { runtime: { skipPermissions: false } } as unknown as AgentCliSpec;
+    const typed = parseClaude(['--provider', 'hetzner', '--size', 'cx33', '--location', 'hel1']);
+    const job = pickQueueCreateOpts(spec, typed);
+    expect(job).toMatchObject({ size: 'cx33', location: 'hel1', locationPinned: true });
+    expect(pickQueueCreateOpts(spec, parseClaude(['--provider', 'hetzner']))).not.toHaveProperty(
+      'locationPinned',
+    );
+    // A replayed location without the pin (a clone, a web create, a config value
+    // resolved by a remote submitter) may fail over.
+    expect(
+      cloudSizingProviderOptions('hetzner', makeCfg(), { location: 'hel1', locationPinned: false }),
+    ).not.toHaveProperty('locationPinned');
   });
 
   it('every visible agent and openclaw declare both flags', () => {

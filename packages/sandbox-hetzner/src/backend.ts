@@ -495,17 +495,9 @@ export const hetznerBackend: CloudBackend = {
     const image = typeof imageRef === 'number' ? await c.getImage(imageRef) : null;
     const catalog = await c.listServerTypes();
     validateServerChoice(choice, catalog, image);
-    // Where to go when `location` has no capacity for the type. A `--location`
-    // typed for this create pins it; a configured or default one fails over
-    // within its network zone (see failover.ts).
+    // A `--location` typed for this create pins it; a configured or default one
+    // fails over within its network zone on a capacity refusal (failover.ts).
     const pinned = req.locationPinned === true;
-    const plan = planLocations({
-      serverType,
-      location,
-      pinned,
-      catalog,
-      ...(await fetchLocationPlanInputs(c, pinned)),
-    });
 
     // 2. Resolve the inbound-access policy (`--inbound` / `box.inbound`) into
     // the firewall's source CIDRs. `locked`/`whitelist` need the host egress IP
@@ -588,11 +580,15 @@ export const hetznerBackend: CloudBackend = {
       // refusal. A refused create makes no server, and the firewall, key and
       // image are not location-bound, so each attempt only changes `location`.
       // Other late errors (account limit) map to actionable guidance.
-      for (const sk of plan.skipped) progress(`skipping ${sk.location}: ${sk.reason}`);
       const { result: created, location: landed } = await createWithLocationFailover({
         serverType,
-        plan,
+        location,
         pinned,
+        loadPlan: async () => {
+          const inputs = await fetchLocationPlanInputs(c);
+          const plan = planLocations({ serverType, location, pinned, catalog, ...inputs });
+          return { plan, locations: inputs.locations };
+        },
         catalog,
         onLog,
         mapError: (err) => mapHetznerProvisionError(err),

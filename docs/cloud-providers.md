@@ -881,10 +881,14 @@ The `CloudBackend` interface is the same, but the implementation
   configured one. Candidates where the type isn't offered (`prices[].location`)
   or where every datacenter reports it not `available` (`GET /datacenters`) are
   skipped; the first location is always tried. The zone is never left (latency,
-  price, and cx types are EU-only). Pin: `cloudSizingProviderOptions` sets
-  `providerOptions.locationPinned` only when `--location` was typed, the scaffold
-  passes it as `CloudProvisionRequest.locationPinned`, and a pinned create never
-  moves. Nothing is location-bound besides the server: the firewall is
+  price, and cx types are EU-only). The plan (`GET /locations` + `/datacenters`)
+  is loaded only after the first refusal, so a normal create pays nothing. Pin:
+  `cloudSizingProviderOptions` sets `providerOptions.locationPinned` only when
+  `--location` was typed; the queue job carries it as its own
+  `QueueJobCreateOpts.locationPinned` (hub wire: `opts.locationPinned`), never
+  derived from `location`, so a clone's or a remote submitter's resolved
+  location still fails over. The scaffold passes it as
+  `CloudProvisionRequest.locationPinned`, and a pinned create never moves. Nothing is location-bound besides the server: the firewall is
   project-wide, the key rides cloud-init, snapshots (base and checkpoint) boot in
   any location, and a refused create makes no server. The landed location goes
   back as `CloudHandle.location` and the record's `cloud.location` stores it.
