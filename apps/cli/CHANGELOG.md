@@ -63,6 +63,10 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Python venvs no longer cross between host and box.** `.venv`, `venv` and
+  `__pycache__` are dropped at any depth by `download`, `clone`, `upload` and
+  the create seed, whatever `.gitignore` says; `download --include-venv` and
+  `box.carryVenv` bring them back.
 - **Box URLs never point at a dead `<box>.localhost`.** The Portless alias is
   handed out only while a proxy serves it, otherwise the loopback URL, and
   `agentbox install` now sets Portless up as its own step.

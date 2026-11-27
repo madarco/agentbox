@@ -415,6 +415,17 @@ mechanism. The invariant must hold in a project whose `.gitignore` the user has
 since edited, which is why the carry-over lists are filtered even though
 `--exclude-standard` would usually have done it.
 
+Python env dirs (`PYTHON_ENV_DIR_NAMES`: `.venv`, `venv`, `__pycache__`) ride
+the same lists, matched at any depth in both directions: the git-mode pull
+pathspecs and `workspaceExcludes()` (download, clone, non-git upload), and
+`seedExcludeTarArgs` / `dropHostOnlyPaths` (both seeds, custody, and the resync's
+`listHostUntracked`). A venv is platform-specific, and git in the box never sees
+the host's global gitignore, so a project relying on one had a Linux `.venv`
+pulled over the Mac's. The pull opts back in with `download --include-venv`; the
+host→box side reads `box.carryVenv` at the seed (`resolveCarryVenv`), so every
+create entrypoint agrees without threading a flag. Tracked files are not
+filtered on the way in: they arrive through git itself.
+
 `BoxFilePorts` (`sandbox-core/src/sync/concerns/box-files.ts`) is the seam that
 makes that possible without a new provider method: whole-tree file movement needs
 only `exec` + `uploadPath` + `downloadPath`, which every provider already

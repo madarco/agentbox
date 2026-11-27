@@ -119,7 +119,7 @@ When `/workspace` is **not** a git repo — a service box, a scratch folder, any
 files with an exclude list instead. It is not a degraded fallback: for those boxes it is the normal
 mode, and the output says so.
 
-The list drops `.git`, `node_modules`, `media/`, live databases (`*.sqlite*`, `*.db`, `*.db-*`) and
+The list drops `.git`, `node_modules`, `media/`, Python env dirs (`.venv`, `venv`, `__pycache__`), live databases (`*.sqlite*`, `*.db`, `*.db-*`) and
 every agent's state directory (`.claude`, `.codex`, `.config/opencode`, …). Live databases are never
 safe to copy — the main file without its write-ahead log is a torn read — and an agent's state
 directory belongs to the box, not to your project folder. `--no-respect-gitignore` forces this mode
@@ -129,6 +129,14 @@ even in a git workspace.
 switch that overrides that. It used to be excluded only by your `.gitignore`, so a repo that does
 not ignore it had the box's copy pulled back — a Linux-built `node_modules` landing on a macOS
 checkout, and, because the staged copy never contained it, a download that failed outright.
+
+Python environment dirs (`.venv`, `venv` and `__pycache__`, at any depth) get the same treatment,
+in **both** directions and on every provider, whatever your `.gitignore` says. A venv is built for
+one platform: the box's `uv sync` writes a Linux one that breaks a macOS checkout, and git inside
+the box never sees your global gitignore, so a project that relies on it for `.venv` would have
+the box's copy pulled over yours. `download --include-venv` keeps them in a download; the
+`box.carryVenv` config key keeps the host's copies in the create seed, `upload` and the
+session-start resync.
 
 Files an agent generated in the workspace — openclaw's `AGENTS.md`, `SOUL.md`, `IDENTITY.md` and
 `USER.md`, which it writes because its workspace _is_ your project — are neither dropped nor copied

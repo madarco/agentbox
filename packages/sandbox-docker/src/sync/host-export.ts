@@ -444,6 +444,8 @@ export interface PullOptions {
   respectGitignore?: boolean;
   /** Default false. When true, keep node_modules — in BOTH git and exclude-list mode. */
   includeNodeModules?: boolean;
+  /** Default false. When true, keep `.venv` / `venv` / `__pycache__` — in BOTH modes. */
+  includeVenv?: boolean;
   /** Paths the user declined; dropped before copying. */
   skipPaths?: readonly string[];
   /**
@@ -530,7 +532,10 @@ export async function pullToHost(
   // same script the cloud pull runs — so a non-git workspace gets the same
   // exclude defaults (live databases, `media/`, agent state dirs) on every
   // provider instead of docker's old bare `--exclude=.git,node_modules`.
-  const excludes = workspaceExcludes({ includeNodeModules: opts.includeNodeModules });
+  const excludes = workspaceExcludes({
+    includeNodeModules: opts.includeNodeModules,
+    includeVenv: opts.includeVenv,
+  });
   const listed = await execInBox(
     record.container,
     [
@@ -540,6 +545,7 @@ export async function pullToHost(
         respectGitignore: opts.respectGitignore,
         excludes,
         includeNodeModules: opts.includeNodeModules,
+        includeVenv: opts.includeVenv,
       }),
     ],
     { user: 'root' },

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   GIT_MODE_EXCLUDE_DIRS,
+  PYTHON_ENV_DIR_NAMES,
   dropHostOnlyPaths,
   seedExcludeTarArgs,
 } from '../src/sync/concerns/workspace-files.js';
@@ -22,7 +23,12 @@ describe('seedExcludeTarArgs', () => {
     // If someone adds a dir to GIT_MODE_EXCLUDE_DIRS, the seed must drop it too
     // — a dir the pull refuses to bring back but the seed still pushes in is
     // the asymmetry this whole change exists to remove.
-    expect(seedExcludeTarArgs()).toEqual(GIT_MODE_EXCLUDE_DIRS.map((d) => `--exclude=${d}`));
+    expect(seedExcludeTarArgs({ includeVenv: true })).toEqual(
+      GIT_MODE_EXCLUDE_DIRS.map((d) => `--exclude=${d}`),
+    );
+    expect(seedExcludeTarArgs()).toEqual(
+      [...GIT_MODE_EXCLUDE_DIRS, ...PYTHON_ENV_DIR_NAMES].map((d) => `--exclude=${d}`),
+    );
   });
 
   it('emits a bare name, which is what both tars can actually honour', () => {

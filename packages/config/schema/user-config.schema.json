@@ -104,6 +104,9 @@
         "withEnv": {
           "type": "boolean"
         },
+        "carryVenv": {
+          "type": "boolean"
+        },
         "resyncOnStart": {
           "type": "boolean"
         },

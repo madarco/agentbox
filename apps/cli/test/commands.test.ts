@@ -99,7 +99,7 @@ describe('lifecycle CLI surface', () => {
   it('download can be told about node_modules and agent-generated files', () => {
     const longs = downloadCommand.options.map((o) => o.long);
     expect(longs).toEqual(
-      expect.arrayContaining(['--include-node-modules', '--include-agent-files']),
+      expect.arrayContaining(['--include-node-modules', '--include-venv', '--include-agent-files']),
     );
     // node_modules is now one switch for BOTH modes. The old text promised the
     // opposite ("no effect in gitignore mode"), which is what made a repo that

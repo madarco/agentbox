@@ -25,6 +25,7 @@
 import type { BoxRecord, Provider } from '@agentbox/core';
 import { detectGitRepos } from '../../git-detect.js';
 import { boxOverlayPorts, providerBoxFilePorts } from './box-files.js';
+import { resolveCarryVenv } from './carry-venv.js';
 import { overlayHostDirIntoBox, workspaceExcludes } from './workspace-files.js';
 
 export interface UploadWorkspaceArgs {
@@ -34,6 +35,8 @@ export interface UploadWorkspaceArgs {
   boxWorkspaceDir?: string;
   /** Default false. Keep `node_modules` in the non-git push. */
   includeNodeModules?: boolean;
+  /** Keep the host's Python env dirs in the non-git push. Unset reads `box.carryVenv`. */
+  includeVenv?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -76,7 +79,10 @@ export async function uploadWorkspaceToBox(
   const ports = providerBoxFilePorts(args.provider, args.box);
   const overlay = await overlayHostDirIntoBox({
     hostDir: args.box.workspacePath,
-    excludes: workspaceExcludes({ includeNodeModules: args.includeNodeModules }),
+    excludes: workspaceExcludes({
+      includeNodeModules: args.includeNodeModules,
+      includeVenv: args.includeVenv ?? (await resolveCarryVenv(args.box.workspacePath)),
+    }),
     ports: boxOverlayPorts(ports, boxDir),
     onLog: log,
   });

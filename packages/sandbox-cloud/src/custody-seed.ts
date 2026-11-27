@@ -34,6 +34,7 @@ import { execa } from 'execa';
 import {
   custodySlugCandidates,
   dropHostOnlyPaths,
+  resolveCarryVenv,
   legacyProjectSlugFromOriginUrl,
   scanHostEnvFiles,
 } from '@agentbox/sandbox-core';
@@ -269,7 +270,7 @@ async function buildUntrackedTar(repo: string): Promise<Buffer | null> {
     },
   );
   if (list.exitCode !== 0 || list.stdout.length === 0) return null;
-  const paths = dropHostOnlyPaths(list.stdout);
+  const paths = dropHostOnlyPaths(list.stdout, { includeVenv: await resolveCarryVenv(repo) });
   if (paths.length === 0) return null;
   return tarNulList(repo, paths);
 }

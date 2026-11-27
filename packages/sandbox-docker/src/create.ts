@@ -19,6 +19,7 @@ import {
   isRealAgentCredential,
   readCredentialBackup,
   resolveAgentSpec,
+  resolveCarryVenv,
   STATE_DIR,
   type RegistrationOrigin,
 } from '@agentbox/sandbox-core';
@@ -646,6 +647,8 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       });
     }
   }
+  // `box.carryVenv`: whether the seed keeps the host's Python env dirs.
+  const includeVenv = await resolveCarryVenv(opts.projectRoot ?? workspace);
   if (!checkpointImage) {
     const repos = await detectGitRepos(workspace);
     if (repos.length > 0) {
@@ -695,7 +698,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
           : `agentbox/${name}--${r.relPathFromWorkspace.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
       const branch = await pickFreshBranch(r.hostMainRepo, branchBase);
       const gitWorktreePath = gitWorktreePathFor(branch);
-      const carry = await collectRepoCarryOver(r, branch, containerPath, gitWorktreePath);
+      const carry = await collectRepoCarryOver(r, branch, containerPath, gitWorktreePath, {
+        includeVenv,
+      });
       repoCarryOvers.push(carry);
       gitWorktreeRecords.push({
         kind: r.kind,
@@ -1223,7 +1228,12 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       }
     } else {
       const source = snapshotDir ?? workspace;
-      await seedWorkspaceFromDir({ container: containerName, hostSource: source, onLog: log });
+      await seedWorkspaceFromDir({
+        container: containerName,
+        hostSource: source,
+        includeVenv,
+        onLog: log,
+      });
     }
   } else if (restoreWorktreePlans.length > 0) {
     // gitWorktreeRecords was populated above (pre-`docker run`) with FRESH
