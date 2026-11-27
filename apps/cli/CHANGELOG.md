@@ -31,8 +31,25 @@ CLI, not the raw commits.
   - Agents in boxes can search past sessions and memory through the hub's MCP
     server.
 - **LLM accounts.** Keep several named logins, setup tokens or API keys per
-  agent with `agentbox accounts`, and pick one per box with `--account` or the
-  `<agent>.account` key. Credential refreshes stay within that account.
+  agent with `agentbox credentials` (a table TUI, plus `add`, `renew`, `use`,
+  `switch`, `rm`), and pick one per box with `--account` or the
+  `<agent>.account` key. Credential refreshes stay within that account, and
+  `agentbox ls` shows each box's SUBSCRIPTION.
+  - **Switch a running box to another login** from the hub or with
+    `agentbox credentials switch`; claude keeps running and picks it up on its
+    next request. `accounts.onLimit` switches automatically at a plan limit.
+  - The hub marks a login **revoked** when the agent reports it, and shows each
+    subscription's plan limits with a quota meter.
+- **Usage dashboard.** `agentbox usage` and the hub's Usage page show
+  agent-hours, how many agents ran at once, hours saved against one agent at a
+  time, a 30-day activity grid and what shipped (PRs, commits, lines). Share a
+  metrics-only card with `agentbox usage share` or the Share button.
+- **Live status per box:** the session title, what the agent is working on and
+  its tokens, in the hub web UI and `agentbox ls`.
+- **The hub web UI has a new design**: a Dashboard, a sidebar with a Settings
+  section (General, Subscriptions, Skills, Files, Devices), and dark mode.
+- **Hetzner creates move to another location** when the first one is out of
+  capacity, and agent commands take `--size` and `--location`.
 - **LLM egress through the hub** (`llm.proxy: forward`, `--llm-proxy`): a box's
   model traffic leaves from the hub's IP.
 - **Several PCs on one hub.**
@@ -46,6 +63,13 @@ CLI, not the raw commits.
   Sync Skills per box, and pending skill updates in the badge.
 
 ### Changed
+
+- **`agentbox credentials` replaces `agentbox accounts`.**
+- **Claude sessions from a box come home on stop and pause**, into your PC's
+  `~/.claude/projects`, so `claude --resume` finds them.
+- **After a create or a queued `-i` run, one line names the skills** that are
+  not in sync with the hub (`skills.notice: false` turns it off). A skill can be
+  marked never to sync on Settings > Skills.
 
 - **Node 22.12 or newer is required.** On an older Node, `agentbox` stops with
   one line saying which version it found and how to upgrade, instead of
@@ -62,6 +86,11 @@ CLI, not the raw commits.
 - **A pushed login never replaces a newer one held by the hub.**
 
 ### Fixed
+
+- **Hetzner and DigitalOcean boxes and control boxes get swap**, so a cx23 no
+  longer runs out of memory during a build (`box.swap` sets the size).
+- **`hub setup` names what it copies** ("Copy your credentials to the hub?")
+  and its note fits an 80-column terminal.
 
 - **Generated dirs stay where they were built.** Untracked `node_modules`,
   `dist`, `build`, `.venv`, `__pycache__` and the like are skipped at any depth
