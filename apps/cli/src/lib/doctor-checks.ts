@@ -46,8 +46,9 @@ export interface CheckGroup {
 /** Provider group name — a built-in `ProviderKind` or a registered plugin provider. */
 export type ProviderName = ProviderKind | (string & {});
 
-const NODE_MIN_MAJOR = 20;
-const NODE_MIN_MINOR = 10;
+// Mirrors MIN_NODE in bin/node-check.js (the bin refuses to start below it).
+const NODE_MIN_MAJOR = 22;
+const NODE_MIN_MINOR = 12;
 
 async function probeVersion(bin: string, args: string[] = ['--version']): Promise<string | null> {
   try {

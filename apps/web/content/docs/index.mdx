@@ -19,7 +19,7 @@ Before the quickstart, make sure you have the runtime in place. Everything here 
 the **local Docker** provider, which needs no account.
 
 - **Docker** — Desktop or OrbStack, running.
-- **Node** `>=20.10` on your `PATH`.
+- **Node** `>=22.12` on your `PATH`. On an older Node, `agentbox` stops with a message saying which version to install.
 - **MacOS** or **Linux**
 - An agent CLI — e.g. `claude`, `codex`, `opencode` or `pi`.
 - (Optional) an account for Vercel, Hetzner, DigitalOcean or Daytona.
@@ -51,6 +51,35 @@ each selected provider (e.g. the local Ubuntu Docker image, the Vercel base
 sandbox, the E2B template, etc.) so the first box starts fast, and finally whether
 to make that provider the **default for new boxes** — say yes and a plain
 `agentbox claude` goes there, with no `--provider` flag or provider prefix.
+
+### Node version managers (nvm, fnm, volta, asdf)
+
+`npm -g` installs AgentBox under the Node that is active at the time. A project
+that pins another Node version (an `.nvmrc`, say) puts that version first on
+`PATH`, and that version may not have AgentBox. To keep `agentbox` working
+everywhere, AgentBox writes a small launcher at `~/.agentbox/bin/agentbox`. The
+launcher runs the install and the Node you installed it with, whatever `node` is
+active.
+
+`agentbox install` offers to add one line to your shell startup file (`~/.zshenv`
+for zsh, `~/.bashrc` or your existing login file for bash on macOS, `config.fish`
+for fish), marked `# added by agentbox`:
+
+```bash
+export PATH="$PATH:$HOME/.agentbox/bin" # added by agentbox
+```
+
+The folder goes at the **end** of `PATH`. When the active Node has its own
+`agentbox`, that one runs (and the launcher switches to it). When it doesn't, the
+launcher runs instead. If you say no, AgentBox prints the line so you can add it
+yourself. With `-y` the line is added for you.
+
+`agentbox self-update` updates the install the launcher points at. If you later
+uninstall that Node version, the launcher falls back to another `agentbox` on
+your `PATH` and warns you. Reinstall with `npm -g i @madarco/agentbox` under the
+Node you want, and the launcher switches to it on the next run. With Volta,
+AgentBox writes no launcher: Volta already pins each global package to its own
+Node.
 
 <Callout title="NOTE">
   You can run `agentbox install` again at any time to add more providers — each run only logs in and

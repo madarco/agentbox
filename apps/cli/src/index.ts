@@ -36,6 +36,7 @@ import { fileURLToPath as _fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { registerAllAgentModules, registerInstalledAgentModules } from '@agentbox/agent-modules';
 import { applyRelayPortAtStartup } from './relay-port-override.js';
+import { ensureLauncherQuietly } from './lib/launcher.js';
 import { applyHostReachEnvAtStartup } from './host-reach-env.js';
 import { buildCompactHelp, buildGroupedHelp } from './help.js';
 import { agentCommand } from './commands/agent.js';
@@ -452,6 +453,11 @@ if (AGENTBOX_VERSION !== '0.0.0-dev') {
   // with it, to ask about something you can act on any time. It's reported as a
   // one-line nudge after the command instead (see `nudgeMessage`).
 }
+
+// Keep ~/.agentbox/bin/agentbox pointing at this install and this Node: a no-op
+// unless it is an npm global install whose launcher target changed (another
+// Node, a reinstall). One small file read on every run.
+ensureLauncherQuietly();
 
 // Daily update check: no-op while the cached result is < 24h old (zero
 // network on normal CLI calls); otherwise one background npm-registry +

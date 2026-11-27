@@ -15,6 +15,7 @@
  * login) — the command layer mints those (`ensureControlPlaneEnv` +
  * `ensureLocalHubAuth`) before calling in here, so this stays UI-free.
  */
+import { cliInvocation } from '../lib/launcher.js';
 import { networkInterfaces } from 'node:os';
 import { setConfigValue, unsetConfigValue } from '@agentbox/config';
 import {
@@ -204,7 +205,7 @@ export async function runExpose(opts: ExposeOptions): Promise<ExposeResult> {
   let autostart: AutostartResult | null = null;
   if (opts.autostart !== false) {
     autostart = await installAutostart(
-      { execPath: process.execPath, cliEntry: process.argv[1] ?? 'agentbox' },
+      { argv: cliInvocation() },
       { logFile: join(homedir(), '.agentbox', 'hub.log') },
     );
   }

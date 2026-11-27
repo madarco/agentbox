@@ -109,7 +109,7 @@ describe('cloudflaredAsset', () => {
 });
 
 describe('autostart unit bodies', () => {
-  const inv = { execPath: '/usr/bin/node', cliEntry: '/opt/agentbox/index.js' };
+  const inv = { argv: ['/usr/bin/node', '/opt/agentbox/index.js'] };
 
   it('launchd plist runs `hub start` at load and escapes XML', () => {
     const plist = launchdPlist(inv, '/home/me/.agentbox/hub.log');
@@ -117,13 +117,24 @@ describe('autostart unit bodies', () => {
     expect(plist).toContain('<string>hub</string>');
     expect(plist).toContain('<string>start</string>');
     expect(plist).toContain('<key>RunAtLoad</key>');
-    expect(launchdPlist({ execPath: 'a&b', cliEntry: 'x' }, 'log')).toContain('a&amp;b');
+    expect(launchdPlist({ argv: ['a&b', 'x'] }, 'log')).toContain('a&amp;b');
   });
 
   it('systemd unit runs `hub start` and starts on default.target', () => {
     const unit = systemdUnit(inv);
     expect(unit).toContain('ExecStart=/usr/bin/node /opt/agentbox/index.js hub start --no-open');
     expect(unit).toContain('WantedBy=default.target');
+  });
+
+  it('runs the launcher alone when given one, quoted for systemd', () => {
+    const launcher = { argv: ['/home/my user/.agentbox/bin/agentbox'] };
+    expect(systemdUnit(launcher)).toContain(
+      'ExecStart="/home/my user/.agentbox/bin/agentbox" hub start --no-open',
+    );
+    const plist = launchdPlist(launcher, 'log');
+    expect(plist).toContain(
+      '<array>\n    <string>/home/my user/.agentbox/bin/agentbox</string>\n    <string>hub</string>',
+    );
   });
 });
 

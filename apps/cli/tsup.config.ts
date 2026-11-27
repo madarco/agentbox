@@ -34,7 +34,7 @@ export default defineConfig({
     'pty-host': 'src/manager/pty-host-entry.ts',
   },
   format: ['esm'],
-  target: 'node20',
+  target: 'node22',
   clean: true,
   dts: false,
   sourcemap: true,

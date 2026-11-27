@@ -303,7 +303,7 @@ export const PROVIDERS = [
     name: 'vercel',
     kind: 'cloud',
     label: 'Vercel (cloud microVM)',
-    loginHint: 'installs the Vercel sandbox CLI, then a browser sign-in',
+    loginHint: 'installs the Vercel CLI, then a browser sign-in',
     credentials: {
       envKeys: ['VERCEL_TOKEN', 'VERCEL_OIDC_TOKEN', 'VERCEL_AUTH_SOURCE'],
       fields: [
@@ -398,7 +398,7 @@ export const PROVIDERS = [
     name: 'digitalocean',
     kind: 'cloud',
     label: 'DigitalOcean (cloud VPS)',
-    loginHint: 'paste a Personal Access Token from the DigitalOcean Console',
+    loginHint: 'paste an API token from DigitalOcean',
     credentials: {
       envKeys: ['DIGITALOCEAN_TOKEN'],
       fields: [
@@ -458,7 +458,7 @@ export const PROVIDERS = [
     label: 'Remote Docker (your own machine over SSH)',
     // It connects as you, over your own ~/.ssh/config — there is no credential
     // to store, so there is none to check.
-    loginHint: 'point it at an SSH host you can already reach (no login needed)',
+    loginHint: 'any SSH host you can reach',
     credentials: { envKeys: [], fields: [] },
     // Usable as soon as one host alias is registered: the image builds lazily on
     // first create. Readiness is the alias count, not a base marker.

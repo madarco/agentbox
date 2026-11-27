@@ -11,6 +11,7 @@
  * the consent boundary — it names the package and warns before recording.
  */
 
+import { envWithRunningNode } from '../lib/launcher.js';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
@@ -42,7 +43,10 @@ function resolutionPaths(): string[] {
   const paths = new Set<string>();
   paths.add(process.cwd());
   try {
-    const g = execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim();
+    const g = execFileSync('npm', ['root', '-g'], {
+      encoding: 'utf8',
+      env: envWithRunningNode(),
+    }).trim();
     if (g) paths.add(g);
   } catch {
     // npm not on PATH / offline — fall through to the other candidates.
