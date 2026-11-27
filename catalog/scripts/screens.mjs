@@ -45,7 +45,8 @@ if (mode === "retake") {
   let failed = 0;
   for (const s of list)
     for (const f of s.files) {
-      if (!f.shoot || (onlyScenario && scenarioOf(f) !== onlyScenario)) continue;
+      /* A pending picture needs its environment to land first; drop its check to take it. */
+      if (!f.shoot || pending(f) || (onlyScenario && scenarioOf(f) !== onlyScenario)) continue;
       console.log(`\n$ ${f.shoot}`);
       const r = spawnSync("sh", ["-c", f.shoot.replace(/^pnpm /, "pnpm -s ")], { cwd: root, stdio: "inherit" });
       if (r.status !== 0) failed++;
@@ -76,7 +77,8 @@ for (const s of SCREENS) {
     const sc = scenarioOf(f);
     if (!SCENARIOS[sc]) problems.push(`${s.id}: ${f.file} has unknown scenario "${sc}"`);
     /* The scenario is in the name: hub/skills.png is full, hub/skills.simple.png is simple. */
-    const suffix = /\.([\w-]+)\.\w+$/.exec(f.file)?.[1] ?? "full";
+    const dotted = /\.([\w-]+)\.\w+$/.exec(f.file)?.[1];
+    const suffix = dotted && SCENARIOS[dotted] ? dotted : "full";
     if (!f.file.startsWith("docs:") && suffix !== sc) problems.push(`${s.id}: ${f.file} is scenario ${sc}, so its name should end .${sc === "full" ? "png" : sc + ".png"}`);
     if (!existsSync(pathOf(f.file))) {
       if (!pending(f)) problems.push(`${s.id}: ${repoPath(f.file)} does not exist`);

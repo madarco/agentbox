@@ -75,7 +75,9 @@ const src = `data:image/png;base64,${png.toString("base64")}`;
 const outDir = join(root, "out/social");
 mkdirSync(outDir, { recursive: true });
 const assets = process.env.MARKETING_ASSETS ? resolve(process.env.MARKETING_ASSETS) : null;
-const base = id.replace(/\//g, "-") + (scenarioOf(f) === "full" ? "" : `.${scenarioOf(f)}`) + (s.files.filter((x) => scenarioOf(x) === scenarioOf(f)).indexOf(f) > 0 ? `-${fileIndex}` : "");
+/* hub-dashboard.simple-1: the entry's second simple picture. */
+const nth = s.files.filter((x) => scenarioOf(x) === scenarioOf(f)).indexOf(f);
+const base = id.replace(/\//g, "-") + (scenarioOf(f) === "full" ? "" : `.${scenarioOf(f)}`) + (nth ? `-${nth}` : "");
 
 const browser = await chromium.launch();
 try {

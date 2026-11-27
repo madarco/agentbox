@@ -74,14 +74,16 @@ const SIMPLE_SCALE = {
   days: (rnd, ago) => (ago <= 1 ? 1 : rnd() < 0.25 ? 2 : 1),
   hours: (w, rnd) => (1.4 + rnd() * 1.6) * (0.6 + w * 0.5),
   prBefore: { "acme/storefront-web": 405 },
-  titles: {
+  /* Added to activity.mjs's own titles for the two repos, so 60 days don't run dry. */
+  extraTitles: {
     "acme/storefront-web": ["EU cookie banner copy", "Fix VAT line on the order summary", "Klarna badge on the PDP", "Localise size names for DE and FR", "Fix the empty-cart illustration on dark mode", "Shipping estimate under the CTA", "Trim unused Tailwind classes", "Fix the coupon field on Safari", "Preload the checkout fonts", "Fix the address autocomplete on mobile", "EU returns policy page", "Show delivery dates per country", "Fix the price flash on currency switch", "Bigger tap targets in the cart"],
     "acme/checkout-api": ["Log the Stripe event id on every webhook", "Reject duplicate order submissions", "VAT rates for Portugal and Ireland", "Faster GET /cart for big baskets", "Retry tax quotes on a timeout", "Health check for the Stripe client", "Fix the currency on refund emails", "Idempotency keys on POST /refunds", "Order export for the finance team", "Fix rounding on split payments", "Webhook signature check on every route", "Clean up expired payment intents"],
   },
 };
 
-/* A skill folder's version id, as the PC and the hub compute it (sandbox-core
-   treeHash): one SKILL.md, mode 644. With it the CLI's own comparison of the
+/* A skill folder's version id, as the PC and the hub compute it: a copy of
+   sandbox-core's treeHash (packages/sandbox-core/src/skills/tree.ts) for one
+   SKILL.md, mode 644; keep the two in step. With it the CLI's own comparison of the
    scratch HOME's skills agrees with the fixture hub's. */
 const treeOf = (content) => {
   const file = createHash("sha256").update(content).digest("hex");
@@ -109,11 +111,11 @@ const SIMPLE_SKILLS = [
 ];
 const RELEASE_NOTES = ["release-notes", { kind: "marketplace", marketplace: "acme-tools", url: "https://github.com/acme/claude-plugins.git", plugin: "release", commit: sha("5e2f88") }, "manual", 45];
 
-const hubSkill = ([name, origin, policy, age], i) => {
+const hubSkill = ([name, origin, policy, age]) => {
   const [description, body] = SKILL_TEXT[name];
   const content = skillMdOf(name, description, body);
   return { name, description, current: treeOf(content), size: content.length, files: 1, tarballBytes: 400 + content.length, updatedAt: iso(age), /* A marketplace skill came to the hub from the marketplace, not from a PC. */
-    source: origin.kind === "marketplace" ? {} : { host: HOST, ...(origin.kind === "folder" ? { path: origin.path } : {}) }, versions: 2 + (i % 4), origin, policy };
+    source: origin.kind === "marketplace" ? {} : { host: HOST, ...(origin.kind === "folder" ? { path: origin.path } : {}) }, versions: 2 + (parseInt(sha(name).slice(-2), 16) % 4), origin, policy };
 };
 
 /* The skills page's comparison of studio-mac, the shared rules

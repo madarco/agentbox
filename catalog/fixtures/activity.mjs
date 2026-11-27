@@ -22,13 +22,7 @@ import {
   totalMs,
   clipSpans,
 } from '../../packages/usage-view/dist/index.js';
-import {
-  MACHINES,
-  NOW,
-  boxes as fullBoxes,
-  sessions as fullSessions,
-  usageRows as fullRows,
-} from './acme.mjs';
+import { MACHINES, NOW } from './acme.mjs';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -166,7 +160,7 @@ export function makeActivity({ boxes: liveBoxes, sessions: recorded, usageRows }
   /* Copies: generation takes titles and PR numbers from them. */
   const REPOS = Object.fromEntries(Object.entries(REPOS_ALL).map(([k, v]) => [k, { ...v }]));
   const TITLES = Object.fromEntries(
-    Object.entries(TITLES_ALL).map(([k, v]) => [k, [...v, ...(scale.titles?.[k] ?? [])]]),
+    Object.entries(TITLES_ALL).map(([k, v]) => [k, [...v, ...(scale.extraTitles?.[k] ?? [])]]),
   );
   const projectPick = () => {
     let r = rnd() * PROJECT_WEIGHT.reduce((a, [, w]) => a + w, 0);
@@ -242,7 +236,7 @@ export function makeActivity({ boxes: liveBoxes, sessions: recorded, usageRows }
       const repo = projectPick();
       /* scale.refill: a repo out of titles starts its list again (weeks later, it reads as new work). */
       if (!TITLES[repo].length && scale.refill)
-        TITLES[repo] = [...TITLES_ALL[repo], ...(scale.titles?.[repo] ?? [])];
+        TITLES[repo] = [...TITLES_ALL[repo], ...(scale.extraTitles?.[repo] ?? [])];
       if (!TITLES[repo].length) continue;
       const title = TITLES[repo].splice(Math.floor(rnd() * TITLES[repo].length), 1)[0];
       const [agent, account] = pick(AGENTS);
@@ -816,10 +810,3 @@ export function makeActivity({ boxes: liveBoxes, sessions: recorded, usageRows }
 
   return { ledger, activity, usageStatsQuery, usageStats, tokenRows };
 }
-
-/* The full story's, for anything that imports this module directly. */
-export const { ledger, activity, usageStatsQuery, usageStats, tokenRows } = makeActivity({
-  boxes: fullBoxes,
-  sessions: fullSessions,
-  usageRows: fullRows,
-});

@@ -39,7 +39,7 @@
  *                     The app is relaunched when the scenario changes.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,16 +118,19 @@ const STAMP = join(tmpdir(), "agentbox-shoot-tray-scenario");
 const scenarioArgs = opts.scenario ? ["--fixtures-scenario", opts.scenario] : [];
 async function launch(extra = []) {
   spawnSync("open", ["-n", APP, "--args", "--fixtures", ...scenarioArgs, ...extra]);
-  writeFileSync(STAMP, opts.scenario ?? "full");
   for (let i = 0; i < 50; i++) {
     await sleep(200);
     const pid = pidOf();
-    if (pid && spawnSync(DRIVER, ["find", "--pid", String(pid), "--id", "agentbox.statusItem", "--timeout", "0.5"]).status === 0) return pid;
+    if (pid && spawnSync(DRIVER, ["find", "--pid", String(pid), "--id", "agentbox.statusItem", "--timeout", "0.5"]).status === 0) {
+      writeFileSync(STAMP, opts.scenario ?? "full");
+      return pid;
+    }
   }
   throw new Error(`${PROC} did not show its status item`);
 }
 async function quit() {
   spawnSync("pkill", ["-x", PROC]);
+  rmSync(STAMP, { force: true });
   for (let i = 0; i < 25 && pidOf(); i++) await sleep(200);
 }
 

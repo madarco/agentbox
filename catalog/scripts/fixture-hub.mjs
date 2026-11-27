@@ -60,8 +60,9 @@ function scenarioOf(req, url) {
   if (asked) return asked;
   const token = /^Bearer fixture-scenario-([\w-]+)$/.exec(req.headers.authorization ?? "");
   if (token) return token[1];
+  /* A cookie naming a scenario that no longer exists falls back to full. */
   const cookie = new RegExp(`(?:^|;\\s*)${COOKIE}=([\\w-]+)`).exec(req.headers.cookie ?? "");
-  return cookie ? cookie[1] : "full";
+  return cookie && SCENARIOS[cookie[1]] ? cookie[1] : "full";
 }
 const scenariosPage = (active) => `<!doctype html><meta charset="utf-8"><title>Fixture scenarios</title>
 <style>body{font:15px/1.5 system-ui,sans-serif;max-width:640px;margin:48px auto;padding:0 16px}li{margin:10px 0}b{font-weight:600}</style>

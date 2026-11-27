@@ -182,7 +182,7 @@ function card(s) {
     picture(coverOf(s), ""),
     h("span", { class: "t" }, s.title),
     h("span", { class: "m" }, meta || s.topic),
-    kinds.length > 1 || kinds[0] !== "full" ? h("span", { class: "badges" }, kinds.map(badge)) : null,
+    kinds.length > 1 || (kinds.length === 1 && kinds[0] !== "full") ? h("span", { class: "badges" }, kinds.map(badge)) : null,
   );
 }
 
@@ -203,7 +203,7 @@ function flowView(q) {
     return h(
       "li",
       {},
-      h("div", { class: "node" + (k.length ? " kids" : "") + (q && !matches(s, q) ? " dim" : "") },
+      h("div", { class: "node" + (k.length ? " kids" : "") + (!matches(s, q) ? " dim" : "") },
         h("div", { class: "via" }, h("span", {}, s.via ?? "")), card(s)),
       k.length ? h("ul", {}, k.map(node)) : null,
     );
