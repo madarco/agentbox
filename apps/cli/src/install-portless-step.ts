@@ -108,12 +108,14 @@ export async function runPortlessInstallStep(args: {
     if (decision === 'ask' || decision === 'ask-optional') {
       const optional = decision === 'ask-optional';
       note(
+        // Kept under ~70 columns: the note's frame must fit an 80-column terminal.
         [
-          'Portless gives each box web app a stable https://<box>.localhost URL,',
-          'the same one that works inside the box, instead of a random 127.0.0.1 port.',
-          ...(optional ? [`Only needed for ${ALIAS_CLOUDS} boxes on this machine.`] : []),
-          'It installs the portless CLI, starts its proxy, and can start it at boot',
-          '(you may be asked for your password).',
+          'Portless gives each box web app a stable https://<box>.localhost',
+          'URL, the same one that works inside the box, instead of a random',
+          '127.0.0.1 port.',
+          ...(optional ? [`Only needed for ${ALIAS_CLOUDS} boxes.`] : []),
+          'It installs the portless CLI, starts its proxy, and can start it',
+          'at boot (you may be asked for your password).',
         ].join('\n'),
         'Box URLs',
       );
