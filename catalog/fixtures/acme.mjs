@@ -57,16 +57,16 @@ const COPY = "mgr-fx-commerce-codex";
 
 /* name, project, agent, status/state, provider, host, created minutes ago, ... */
 const raw = [
-  { id: "7f3a9c21b8d4", projectId: "fx-payments-worker", name: "payment-retries", agent: "codex", status: "running", provider: "docker", host: "local · docker", age: 145, webUrl: "https://payment-retries.localhost", branch: "agentbox/payment-retries", activity: "working", title: "Retry failed charges with backoff", managerId: PLAN, pr: { repo: "acme/payments-worker", number: 412, url: "https://github.com/acme/payments-worker/pull/412", state: "open" }, commits: 4, files: 9, tasks: { total: 2, done: 0, current: { id: "T-16", title: "Integration tests for retry flow" } } },
+  { id: "7f3a9c21b8d4", projectId: "fx-payments-worker", name: "payment-retries", agent: "codex", status: "running", provider: "docker", host: "local · docker", age: 145, webUrl: "https://payment-retries.localhost", branch: "agentbox/payment-retries", activity: "working", title: "Retry failed charges with backoff", managerId: PLAN, accounts: { codex: "team" }, pr: { repo: "acme/payments-worker", number: 412, url: "https://github.com/acme/payments-worker/pull/412", state: "open" }, commits: 4, files: 9, tasks: { total: 2, done: 0, current: { id: "T-16", title: "Integration tests for retry flow" } } },
   { id: "c41e07a95b2f", projectId: "fx-storefront-web", name: "checkout-copy", agent: "claude", status: "running", provider: "vercel", host: "vercel · iad1", age: 130, webUrl: "https://sb-4kq2x9.vercel.run", branch: "feat/checkout-copy", activity: "idle", title: "Tighten checkout copy for EU locales", managerId: PLAN, pr: { repo: "acme/storefront-web", number: 409, url: "https://github.com/acme/storefront-web/pull/409", state: "ready" }, accounts: { claude: "work" }, commits: 3, files: 6, vnc: true, tasks: { total: 2, done: 2, current: null } },
   { id: "2b98d6f1e0a7", projectId: "fx-checkout-api", name: "fix-webhooks", agent: "codex", status: "running", provider: "hetzner", host: "hetzner · nbg1 · cx23", age: 60 * 26, webUrl: "https://fix-webhooks.localhost", persistent: true, branch: "agentbox/fix-webhooks", activity: "thinking", title: "Make Stripe webhook handlers idempotent", managerId: PLAN, commits: 7, files: 14, accounts: { codex: "personal" }, tasks: { total: 3, done: 1, current: { id: "T-2", title: "Make webhook handlers idempotent" } } },
-  { id: "9e5c3a7d14b6", projectId: "fx-payments-worker", name: "queue-retries", agent: "claude", status: "running", provider: "e2b", host: "e2b", age: 45, webUrl: "https://8080-i3kq2m9x.e2b.app", branch: "agentbox/queue-retries", activity: "waiting", title: "Move charge retries onto the job queue", managerId: PLAN, commits: 1, files: 3, tasks: { total: 1, done: 0, current: { id: "T-4", title: "Move charge retries onto the job queue" } } },
+  { id: "9e5c3a7d14b6", projectId: "fx-payments-worker", name: "queue-retries", agent: "claude", status: "running", provider: "e2b", host: "e2b", age: 45, webUrl: "https://8080-i3kq2m9x.e2b.app", branch: "agentbox/queue-retries", activity: "waiting", title: "Move charge retries onto the job queue", managerId: PLAN, accounts: { claude: "work" }, commits: 1, files: 3, tasks: { total: 1, done: 0, current: { id: "T-4", title: "Move charge retries onto the job queue" } } },
   { id: "job:q7k2m9", projectId: "fx-storefront-web", label: "promo-banner", agent: "opencode", status: "creating", provider: "docker", host: "local · docker", age: 2, managerId: PLAN },
-  { id: "5d27b0c8f39e", projectId: "fx-storefront-web", name: "cart-badges", agent: "codex", status: "paused", provider: "docker", host: "local · docker", age: 60 * 5, branch: "fix/cart-badges", activity: "idle", title: "Cart badge count drifts after refresh", managerId: COPY, tasks: { total: 2, done: 0, current: { id: "T-6", title: "Fix cart badge count after a refresh" } }, commits: 2, files: 2 },
-  { id: "a3c9e61d20f4", projectId: "fx-storefront-web", name: "perf-audit", agent: "claude", status: "running", provider: "docker", host: "local · docker", age: 20, webUrl: "https://perf-audit.localhost", branch: "agentbox/perf-audit", activity: "idle", title: "Audit storefront page weight", commits: 0, files: 0, vnc: true , accounts: { claude: "work" }, accountSwitches: [{ at: iso(60 * 5), agent: "claude", from: "default", to: "ci", how: "env", reason: "limit" }, { at: iso(40), agent: "claude", from: "ci", to: "work", how: "recreate", reason: "manual" }] },
+  { id: "5d27b0c8f39e", projectId: "fx-storefront-web", name: "cart-badges", agent: "codex", status: "paused", provider: "docker", host: "local · docker", age: 60 * 5, branch: "fix/cart-badges", activity: "idle", title: "Cart badge count drifts after refresh", managerId: COPY, accounts: { codex: "team" }, tasks: { total: 2, done: 0, current: { id: "T-6", title: "Fix cart badge count after a refresh" } }, commits: 2, files: 2 },
+  { id: "a3c9e61d20f4", projectId: "fx-storefront-web", name: "perf-audit", agent: "claude", status: "running", provider: "docker", host: "local · docker", age: 20, webUrl: "https://perf-audit.localhost", branch: "agentbox/perf-audit", activity: "idle", title: "Audit storefront page weight", commits: 0, files: 0, vnc: true , accounts: { claude: "work" }, accountSwitches: [{ at: iso(60 * 5), agent: "claude", from: "default", to: "ci", how: "env", reason: "limit" }, { at: iso(40), agent: "claude", from: "ci", to: "work", how: "file", reason: "manual" }] },
   { id: "job:r4t8w1", projectId: "fx-checkout-api", label: "refund-limits", agent: "claude", status: "error", provider: "e2b", host: "e2b", age: 30, error: "e2b base template not found: run agentbox prepare --provider e2b" },
   { id: "b6f14e92ad03", projectId: "fx-docs", name: "search-filters", agent: "opencode", status: "running", provider: "docker", host: "local · docker", age: 35, webUrl: "https://search-filters.localhost", branch: "agentbox/search-filters", activity: "working", title: "Add faceted search filters to the docs", commits: 2, files: 5 },
-  { id: "e08a5c3f71b9", projectId: "fx-sandbox", name: "scratch", agent: "claude", status: "stopped", provider: "docker", host: "local · docker", age: 60 * 50, activity: "idle", hasGit: false, commits: null, files: null },
+  { id: "e08a5c3f71b9", projectId: "fx-sandbox", name: "scratch", agent: "claude", status: "stopped", provider: "docker", host: "local · docker", age: 60 * 50, activity: "idle", hasGit: false, commits: null, files: null, accounts: { claude: "work" } },
 ];
 
 // Live status (docs/agent-live-status-plan.md): the working-on line and the
@@ -82,9 +82,10 @@ const LIVE = {
 };
 
 const ACCOUNT_INFO = {
-  "claude:work": { label: "Acme work", kind: "login" },
+  "claude:work": { kind: "login" },
   "claude:ci": { kind: "setup-token" },
-  "codex:personal": { label: "Personal", kind: "api-key" },
+  "codex:personal": { kind: "api-key" },
+  "codex:team": { kind: "login" },
 };
 
 export const boxes = raw.map((b) => {
@@ -142,6 +143,8 @@ export const boxes = raw.map((b) => {
   if (b.pr) box.pr = b.pr;
   if (b.accountSwitches) box.accountSwitches = b.accountSwitches;
   if (b.accounts) {
+    /* As the hub derives it: from the named accounts only. */
+    box.subscriptions = Object.fromEntries(Object.entries(b.accounts).map(([agent, account]) => [agent, `${agent}/${account}`]));
     box.accounts = b.accounts;
     box.accountsInfo = Object.entries(b.accounts).map(([agent, account]) => ({ agent, account, ...ACCOUNT_INFO[`${agent}:${account}`] }));
   }
@@ -240,11 +243,11 @@ export const hubState = {
 export const accounts = {
   accounts: [
     /* limits: one window per limit the plan reports (hub settings 3b); a Max login here has two weekly windows. */
-    { agent: "claude", id: "work", label: "Acme work", kind: "login", identity: { email: "dev@acme.example", org: "Acme", plan: "Max" }, hasSecret: true, boxes: ["checkout-copy", "queue-retries", "perf-audit"], createdAt: iso(60 * 24 * 9), updatedAt: iso(60 * 3),
+    { agent: "claude", id: "work", kind: "login", auth: { state: "ok" }, default: { global: true }, identity: { email: "dev@acme.example", org: "Acme", plan: "Max" }, hasSecret: true, boxes: ["checkout-copy", "queue-retries", "perf-audit", "scratch"], createdAt: iso(60 * 24 * 9), updatedAt: iso(60 * 3),
       limits: { windows: [{ id: "weekly_all", label: "Weekly, all models", pct: 64, resetsAt: iso(-60 * 24 * 3.6), windowMinutes: 10080 }, { id: "weekly_scoped:Fable", label: "Weekly, Fable", pct: 31, resetsAt: iso(-60 * 24 * 3.6), windowMinutes: 10080 }], atLimit: false, updatedAt: iso(2), source: "usage-api" } },
-    { agent: "claude", id: "ci", kind: "setup-token", hasSecret: true, boxes: [], createdAt: iso(60 * 24 * 4), updatedAt: iso(60 * 24 * 4) },
-    { agent: "codex", id: "personal", label: "Personal", kind: "api-key", hasSecret: true, boxes: ["fix-webhooks"], createdAt: iso(60 * 24 * 6), updatedAt: iso(60 * 24 * 6) },
-    { agent: "codex", id: "team", label: "Acme team", kind: "login", identity: { email: "eng@acme.example", plan: "Team" }, hasSecret: true, boxes: ["payment-retries"], createdAt: iso(60 * 24 * 2), updatedAt: iso(60 * 30),
+    { agent: "claude", id: "ci", kind: "setup-token", auth: { state: "expiring", since: iso(-60 * 24 * 18) }, hasSecret: true, boxes: [], createdAt: iso(60 * 24 * 4), updatedAt: iso(60 * 24 * 4) },
+    { agent: "codex", id: "personal", kind: "api-key", auth: { state: "ok" }, hasSecret: true, boxes: ["fix-webhooks"], createdAt: iso(60 * 24 * 6), updatedAt: iso(60 * 24 * 6) },
+    { agent: "codex", id: "team", kind: "login", auth: { state: "ok" }, default: { global: true }, identity: { email: "eng@acme.example", plan: "Team" }, hasSecret: true, boxes: ["payment-retries", "cart-badges"], createdAt: iso(60 * 24 * 2), updatedAt: iso(60 * 30),
       limits: { windows: [{ id: "primary", label: "5-hour", pct: 100, resetsAt: iso(-95), windowMinutes: 300 }, { id: "secondary", label: "Weekly", pct: 47, resetsAt: iso(-60 * 24 * 2.2), windowMinutes: 10080 }], atLimit: true, updatedAt: iso(6), source: "transcript" } },
   ],
   agents: [
@@ -258,8 +261,11 @@ export const accounts = {
 /* ---- Skills (GET /api/v1/skills, /api/v1/skill-status) ---- */
 /* A 40-hex sha that starts with the readable prefix given. */
 const sha = (s) => (s + hex(s, 40)).slice(0, 40);
+/* sql-style is skipped ("never sync"): it stays on the PC and never reaches a box. */
+export const skillSkips = [{ name: "sql-style", at: iso(60 * 24 * 2) }];
 export const skills = {
   seeded: true,
+  skipped: skillSkips.map((x) => x.name),
   skills: [
     { name: "review-pr", description: "Review a pull request against the team checklist and leave inline comments.", current: sha("0d9e8f7a6b5c4d3e2f1a"), size: 18_432, files: 4, tarballBytes: 6_210, updatedAt: iso(60 * 24 * 3), source: { host: HOST, path: `${HOME}/.claude/skills/review-pr` }, versions: 5, origin: { kind: "git", url: "https://github.com/acme/agent-skills.git", ref: "main", path: "review-pr", commit: sha("a91c3e") }, policy: "manual", pending: { version: "4e1f0a9c7b3d52e8a6f1c0d94b7e2a3518c6f0d2", uploadedAt: iso(50), size: 19_880, files: 4, commit: sha("c07d21") } },
     { name: "release-notes", description: "Draft release notes from the commits since the last tag.", current: sha("71b0c9d8e7f6"), size: 7_120, files: 2, tarballBytes: 2_904, updatedAt: iso(60 * 24 * 8), source: { host: HOST }, versions: 3, origin: { kind: "marketplace", marketplace: "acme-tools", url: "https://github.com/acme/claude-plugins.git", plugin: "release", commit: sha("5e2f88") }, policy: "manual", pending: { version: "b7c3e91d05a4f6280e3b1c7d9a52f4e6018b3c7a", uploadedAt: iso(140), size: 7_480, files: 2 } },
@@ -545,8 +551,12 @@ const SESSIONS = [
 const boxIdByName = { ...Object.fromEntries(boxes.filter((b) => b.name).map((b) => [b.name, b.id])), ...DESTROYED, "release-1-14": "2c7d91e4a0b3", "ledger-backfill": "84f0b6d2e9a1", "a11y-pass": "5e1a3c8f7b02" };
 const startOfDay = (ms) => ms - (ms % DAY);
 
+const sessionKeyOf = (s, si) => `${s.agent}:${hex(`session-${si}`, 8)}-${hex(`s${si}a`, 4)}-4${hex(`s${si}b`, 3)}-a${hex(`s${si}c`, 3)}-${hex(`s${si}d`, 12)}`;
+/* The same sessions for the usage stats (activity.mjs), with their keys and box ids. */
+export const sessions = SESSIONS.map((s, si) => ({ ...s, session: sessionKeyOf(s, si), account: `${s.agent}/${s.account}`, boxId: s.box ? boxIdByName[s.box] : null }));
+
 export const usageRows = SESSIONS.flatMap((s, si) => {
-  const sessionKey = `${s.agent}:${hex(`session-${si}`, 8)}-${hex(`s${si}a`, 4)}-4${hex(`s${si}b`, 3)}-a${hex(`s${si}c`, 3)}-${hex(`s${si}d`, 12)}`;
+  const sessionKey = sessionKeyOf(s, si);
   const avg = PER_RESPONSE[s.agent];
   return s.days.map(([ago, messages], di) => {
     /* A little spread so two equal days don't look copy-pasted. */
@@ -688,7 +698,8 @@ const EVERY = ["codex", "opencode", "pi", "openclaw"];
 export const skillCompare = {
   [MACHINES.studio]: {
     machine: skillMachines.machines[0],
-    outOfSync: 4,
+    outOfSync: 3,
+    skipped: skillSkips.map((x) => x.name),
     rows: [
       { name: "db-migrations", description: skills.skills[2].description, status: "same", agents: ["claude", "opencode"], hub: hubOf("db-migrations"), pc: pcSkill("db-migrations", ".claude/skills") },
       { name: "e2e-playwright", description: skills.skills[4].description, status: "hub-only", agents: [], hub: hubOf("e2e-playwright") },
@@ -696,13 +707,14 @@ export const skillCompare = {
       { name: "release-notes", description: skills.skills[1].description, status: "same", agents: EVERY, hub: hubOf("release-notes"), pc: pcSkill("release-notes", ".agents/skills") },
       { name: "review-pr", description: skills.skills[0].description, status: "same", agents: ["claude", "opencode"], hub: hubOf("review-pr"), pc: pcSkill("review-pr", ".claude/skills") },
       { name: "stripe-webhooks", description: skills.skills[3].description, status: "differs", newer: "local", agents: EVERY, hub: hubOf("stripe-webhooks"), pc: pcSkill("stripe-webhooks", ".agents/skills") },
-      { name: "sql-style", description: "Acme's SQL style: CTEs over subqueries, explicit column lists.", status: "local-only", agents: ["claude", "opencode"], pc: pcSkill("sql-style", ".claude/skills") },
+      { name: "sql-style", description: "Acme's SQL style: CTEs over subqueries, explicit column lists.", status: "skipped", agents: ["claude", "opencode"], pc: pcSkill("sql-style", ".claude/skills") },
     ],
   },
   [MACHINES.laptop]: {
     machine: skillMachines.machines[1],
     error: "dev-laptop is offline",
     outOfSync: 0,
+    skipped: skillSkips.map((x) => x.name),
     rows: skills.skills.map((s) => ({ name: s.name, description: s.description, status: "unknown", agents: [], hub: hubOf(s.name) })),
   },
 };

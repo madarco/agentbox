@@ -11,13 +11,16 @@
  *   pnpm shoot hub/box-detail.png /boxes/7f3a9c21b8d4 --full
  *
  * Every page opens with the clock pinned to the fixtures' NOW, animations off,
- * light theme, en-US, UTC. Start the fixture hub first (`pnpm fixture-hub`).
+ * light theme (unless --dark), en-US, UTC. Start the fixture hub first (`pnpm fixture-hub`).
  *
  * Options
  *   --size <WxH>       viewport in CSS pixels (default 1440x900)
  *   --scale <n>        pixel density (default 2)
  *   --full             grow the window until the page's whole height fits
  *   --el <selector>    capture one element, not the window
+ *   --dark             dark theme (the hub follows the OS scheme when no theme is saved)
+ *   --storage <k>=<v>  a localStorage entry set before the page loads, e.g.
+ *                      hub-sidebar=collapsed for the collapsed rail (repeatable)
  *   --base <url>       the fixture hub (default $HUB_FIXTURE_URL or http://127.0.0.1:3126)
  *
  * Steps run in the order given, after the page loads. Selectors are Playwright's.
@@ -55,6 +58,8 @@ for (let i = 0; i < args.length; i++) {
       steps.push({ action, target: value.slice(0, value.indexOf("=")), value: value.slice(value.indexOf("=") + 1) });
     else steps.push({ action, target: value });
   } else if (a === "--full") opts.full = true;
+  else if (a === "--dark") opts.dark = true;
+  else if (a === "--storage") (opts.storage ??= []).push(args[++i]);
   else if (["--size", "--scale", "--el", "--base"].includes(a)) opts[a.slice(2)] = args[++i];
   else if (a.startsWith("--")) throw new Error(`Unknown option ${a}`);
   else rest.push(a);
@@ -71,7 +76,9 @@ async function run(page, step) {
   if (step.action === "hover") return el.hover();
   if (step.action === "fill") return el.fill(step.value);
   if (step.action === "waitFor") return el.waitFor({ state: "visible" });
-  if (step.action === "scrollTo") return el.evaluate((node) => node.scrollIntoView({ block: "start" }));
+  /* The hub's top bar is sticky: leave room for it above the element. */
+  if (step.action === "scrollTo")
+    return el.evaluate((node) => window.scrollTo(0, node.getBoundingClientRect().top + window.scrollY - 80));
   if (step.action === "hide")
     return page.locator(step.target).evaluateAll((nodes) => nodes.forEach((node) => (node.style.display = "none")));
   return page.waitForTimeout(step.ms);
@@ -85,12 +92,22 @@ try {
   const context = await browser.newContext({
     viewport: { width, height },
     deviceScaleFactor: Number(opts.scale),
-    colorScheme: "light",
+    colorScheme: opts.dark ? "dark" : "light",
     reducedMotion: "reduce",
     locale: "en-US",
     timezoneId: "UTC",
   });
   await context.clock.setFixedTime(new Date(NOW));
+  if (opts.storage) {
+    const entries = opts.storage.map((kv) => {
+      const at = kv.indexOf("=");
+      if (at < 1) throw new Error(`--storage wants <key>=<value>, got "${kv}"`);
+      return [kv.slice(0, at), kv.slice(at + 1)];
+    });
+    await context.addInitScript((list) => {
+      for (const [k, v] of list) localStorage.setItem(k, v);
+    }, entries);
+  }
   const page = await context.newPage();
   const missing = [];
   page.on("response", (r) => {
