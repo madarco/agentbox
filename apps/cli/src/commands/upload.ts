@@ -10,7 +10,7 @@ import {
 import { handleLifecycleError } from './_errors.js';
 
 interface UploadOpts {
-  includeNodeModules?: boolean;
+  all?: boolean;
 }
 
 /**
@@ -38,7 +38,10 @@ export const uploadCommand = new Command('upload')
     '[box]',
     'box ref: project index, id, id prefix, name, or container (default: the only box in this project)',
   )
-  .option('--include-node-modules', 'also push node_modules (non-git workspaces only)')
+  .option(
+    '--all',
+    'also push generated dirs (node_modules, dist, .venv, ...); non-git workspaces only, a git one reads box.carryAll',
+  )
   .action(async (idOrName: string | undefined, opts: UploadOpts) => {
     try {
       const box = await resolveBoxOrExit(idOrName);
@@ -52,7 +55,7 @@ export const uploadCommand = new Command('upload')
 
       await withHubClient({ preferLocal: boxOwningHubIsLocal(box) }, async (client) => {
         const result = await client.uploadBox(box.id, {
-          includeNodeModules: opts.includeNodeModules === true,
+          all: opts.all === true,
         });
 
         if (result.mode === 'files') {

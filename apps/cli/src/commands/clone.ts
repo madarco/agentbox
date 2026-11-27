@@ -52,10 +52,7 @@ export function resolveIntoDir(
  * divergence therefore shows up as a prompt that disagrees with the result,
  * which is visible, instead of a wrong path the CLI talked the hub into.
  */
-export function defaultCloneDisplay(
-  source: { projectRoot?: string },
-  cloneName: string,
-): string {
+export function defaultCloneDisplay(source: { projectRoot?: string }, cloneName: string): string {
   if (!source.projectRoot) return `~/.agentbox/clones/${cloneName}`;
   return join(botWorkspaceRoot(source.projectRoot), BOTS_DIR_REL, cloneName, 'workspace');
 }
@@ -64,7 +61,7 @@ interface CloneOpts {
   name?: string;
   provider?: string;
   into?: string;
-  includeNodeModules?: boolean;
+  all?: boolean;
   yes?: boolean;
   /**
    * `--persistent` / `--no-persistent`. Both are declared so commander leaves
@@ -104,7 +101,10 @@ export const cloneCommand = new Command('clone')
     '--into <dir>',
     "dir for the clone's workspace on the hub's machine (relative paths resolve against your cwd; default: ~/.agentbox/clones/<name>)",
   )
-  .option('--include-node-modules', 'carry node_modules into the clone as well')
+  .option(
+    '--all',
+    'also carry generated dirs (node_modules, dist, build, .venv, ...) into the clone',
+  )
   .option(
     '--persistent',
     'always-on clone (default: inherit the source box — a service box clones to a service box)',
@@ -145,7 +145,7 @@ export const cloneCommand = new Command('clone')
             name: opts.name?.trim() || undefined,
             provider: opts.provider?.trim() || undefined,
             into,
-            includeNodeModules: opts.includeNodeModules === true,
+            all: opts.all === true,
             persistent: opts.persistent,
           });
           cmdLog.write(

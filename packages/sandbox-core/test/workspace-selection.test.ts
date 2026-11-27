@@ -19,7 +19,7 @@ import {
 const EXCLUDES = ['.git', 'node_modules', 'media'];
 let repo: string;
 
-function list(opts: { includeNodeModules?: boolean } = {}): string[] {
+function list(opts: { all?: boolean } = {}): string[] {
   const script = buildWorkspaceListScript({ workspaceDir: repo, excludes: EXCLUDES, ...opts });
   const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', maxBuffer: 1e8 });
   return parseWorkspaceList(out).paths.sort();
@@ -68,8 +68,8 @@ describe('the git-mode selection, executed', { timeout: 30_000 }, () => {
     expect(list()).not.toContain('pkg/node_modules/y');
   });
 
-  it('returns both when the user asks for node_modules', () => {
-    const paths = list({ includeNodeModules: true });
+  it('returns both under --all', () => {
+    const paths = list({ all: true });
     expect(paths).toContain('node_modules/x');
     expect(paths).toContain('pkg/node_modules/y');
   });

@@ -108,7 +108,7 @@ export async function collectRepoCarryOver(
   branch: string,
   containerPath: string,
   gitWorktreePath: string,
-  opts: { includeVenv?: boolean } = {},
+  opts: { all?: boolean } = {},
 ): Promise<RepoCarryOver> {
   // `stash create` writes a stash commit without touching the working tree or
   // stash list; empty output = clean. The commit lands in the host's `.git/`
@@ -124,7 +124,8 @@ export async function collectRepoCarryOver(
   );
   // Host-only dirs stripped here rather than at the tar: this list is also
   // replayed by the resync path, and `.agentbox/` is never the box's business.
-  // Nor is a host Python venv, built for the host's platform (`box.carryVenv`).
+  // Nor are untracked generated dirs (`node_modules`, `.venv`, ...) unless
+  // `box.carryAll` keeps them: the box builds its own, for its own platform.
   const untrackedNul = untracked.exitCode === 0 ? dropHostOnlyPaths(untracked.stdout, opts) : '';
 
   return {
@@ -729,21 +730,14 @@ export async function regenerateRestoredWorktrees(opts: {
 export async function seedWorkspaceFromDir(opts: {
   container: string;
   hostSource: string;
-  /** `box.carryVenv`: keep the host's `.venv` / `venv` / `__pycache__`. */
-  includeVenv?: boolean;
+  /** `box.carryAll`: keep the generated dirs (`node_modules`, `dist`, `.venv`, ...). */
+  carryAll?: boolean;
   onLog?: (line: string) => void;
 }): Promise<void> {
   const log = opts.onLog ?? (() => {});
   const tarOut = await execa(
     'tar',
-    [
-      '-C',
-      opts.hostSource,
-      ...seedExcludeTarArgs({ includeVenv: opts.includeVenv }),
-      '-cf',
-      '-',
-      '.',
-    ],
+    ['-C', opts.hostSource, ...seedExcludeTarArgs({ all: opts.carryAll }), '-cf', '-', '.'],
     {
       encoding: 'buffer',
       reject: false,

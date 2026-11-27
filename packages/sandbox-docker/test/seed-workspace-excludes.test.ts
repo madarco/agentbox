@@ -68,7 +68,7 @@ describe('collectRepoCarryOver', () => {
     expect(carry.untrackedNul).toBe('src/app.ts\0');
   });
 
-  it('drops host Python env dirs at any depth, and keeps them under box.carryVenv', async () => {
+  it('drops untracked generated dirs at any depth, and keeps them under box.carryAll', async () => {
     // A project with no `.venv` gitignore entry (one that relied on a global
     // ignore the box never sees) would otherwise ship a Mac venv into the box.
     execaMock.mockImplementation((bin: string, argv: string[]) => {
@@ -76,7 +76,8 @@ describe('collectRepoCarryOver', () => {
         return Promise.resolve({
           exitCode: 0,
           stdout:
-            '.venv/bin/python\0services/api/.venv/pyvenv.cfg\0src/__pycache__/a.pyc\0src/a.py\0',
+            '.venv/bin/python\0services/api/.venv/pyvenv.cfg\0src/__pycache__/a.pyc\0' +
+            'node_modules/x/i.js\0pkg/dist/b.js\0scripts/build\0src/a.py\0',
           stderr: '',
         });
       }
@@ -86,28 +87,29 @@ describe('collectRepoCarryOver', () => {
     const wt = '/home/vscode/.agentbox-worktrees/x';
 
     const dropped = await collectRepoCarryOver(repo, 'agentbox/x', '/workspace', wt);
-    expect(dropped.untrackedNul).toBe('src/a.py\0');
+    expect(dropped.untrackedNul).toBe('scripts/build\0src/a.py\0');
 
     const kept = await collectRepoCarryOver(repo, 'agentbox/x', '/workspace', wt, {
-      includeVenv: true,
+      all: true,
     });
-    expect(kept.untrackedNul.split('\0').filter(Boolean)).toHaveLength(4);
+    expect(kept.untrackedNul.split('\0').filter(Boolean)).toHaveLength(7);
   });
 });
 
-describe('seedWorkspaceFromDir and Python env dirs', () => {
+describe('seedWorkspaceFromDir and the generated dirs', () => {
   const tarArgv = (): string[] =>
     execaMock.mock.calls.find((c) => c[0] === 'tar' && (c[1] as string[]).includes('-cf'))![1];
 
-  it('excludes .venv, venv and __pycache__ by default', async () => {
+  it('excludes the shared list by default', async () => {
     await seedWorkspaceFromDir({ container: 'agentbox-x', hostSource: '/proj' });
-    for (const d of ['.venv', 'venv', '__pycache__']) expect(tarArgv()).toContain(`--exclude=${d}`);
+    for (const d of ['node_modules', 'dist', '.venv', 'venv', '__pycache__']) {
+      expect(tarArgv()).toContain(`--exclude=${d}`);
+    }
   });
 
-  it('keeps them under box.carryVenv, and still drops .agentbox', async () => {
-    await seedWorkspaceFromDir({ container: 'agentbox-x', hostSource: '/proj', includeVenv: true });
-    expect(tarArgv()).toContain('--exclude=.agentbox');
-    expect(tarArgv().some((a) => a.includes('venv') || a.includes('__pycache__'))).toBe(false);
+  it('keeps them under box.carryAll, and still drops .agentbox', async () => {
+    await seedWorkspaceFromDir({ container: 'agentbox-x', hostSource: '/proj', carryAll: true });
+    expect(tarArgv().filter((a) => a.startsWith('--exclude='))).toEqual(['--exclude=.agentbox']);
   });
 });
 

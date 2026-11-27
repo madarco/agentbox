@@ -327,7 +327,7 @@ export interface HubApiCloneInput {
    * in `commands/clone.ts` is what makes it absolute).
    */
   into?: string;
-  includeNodeModules?: boolean;
+  all?: boolean;
   /**
    * `--persistent` / `--no-persistent`. Absent inherits the SOURCE box's
    * persistence; `false` is only ever an explicit opt-out.
@@ -1985,7 +1985,7 @@ export class HubApiClient {
    * guard that keeps a remote control box from silently uploading its own
    * workspace instead of yours.
    */
-  uploadBox(id: string, body: { includeNodeModules?: boolean } = {}): Promise<HubApiUploadResult> {
+  uploadBox(id: string, body: { all?: boolean } = {}): Promise<HubApiUploadResult> {
     return this.request<HubApiUploadResult>(
       'POST',
       `/boxes/${encodeURIComponent(id)}/upload`,

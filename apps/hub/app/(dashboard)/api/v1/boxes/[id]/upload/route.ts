@@ -25,11 +25,11 @@ export async function POST(
   const raw = await readJson(req);
   if (!raw.ok) return fail('invalid_request', raw.message);
   const body = (typeof raw.value === 'object' && raw.value !== null ? raw.value : {}) as {
-    includeNodeModules?: unknown;
+    all?: unknown;
   };
 
   const res = await backend.uploadBox(id, {
-    includeNodeModules: body.includeNodeModules === true,
+    all: body.all === true,
   });
   if (!res.ok) return failFromAction(res.error);
   return ok({ mode: res.mode, copied: res.copied, conflicts: res.conflicts });

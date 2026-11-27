@@ -13,6 +13,7 @@ import {
   parseWorkspaceList,
   rsyncPullToHost,
   workspaceExcludes,
+  GENERATED_DIR_NAMES,
   BOX_HOME,
   ENV_PRUNE_DIRS,
 } from '@agentbox/sandbox-core';
@@ -214,6 +215,12 @@ export async function getHostPaths(
 export interface RefreshOptions {
   /** When true, include /workspace/node_modules in the merged export. Off by default. */
   includeNodeModules?: boolean;
+  /**
+   * The mirror's `--exclude` patterns, overriding the `includeNodeModules`
+   * default. A pull passes {@link mirrorExcludesForSelection} of its own file
+   * list, which is how the mirror stays a superset of it.
+   */
+  mirrorExcludes?: readonly string[];
 }
 
 export interface RefreshResult {
@@ -239,22 +246,35 @@ async function hasContainerPath(container: string, path: string): Promise<boolea
  * bind.
  */
 /**
- * What the box→scratch mirror leaves behind, as rsync/tar `--exclude` patterns.
+ * What the box→scratch mirror for `open` / `path` leaves behind, as rsync/tar
+ * `--exclude` patterns. A pull does not use this: it derives the mirror from its
+ * own selection ({@link mirrorExcludesForSelection}).
+ */
+export function exportMirrorExcludes(opts: RefreshOptions = {}): string[] {
+  if (opts.mirrorExcludes) return [...opts.mirrorExcludes];
+  return opts.includeNodeModules ? [] : ['node_modules'];
+}
+
+/**
+ * The generated dirs a pull's mirror can skip: those that appear in NO segment
+ * of any selected path.
  *
  * THE INVARIANT: the mirror must be a SUPERSET of the selection. A superset
  * costs nothing — `rsync --files-from` simply ignores the extra files — while a
- * subset is fatal, because a selected path that is not in the mirror makes rsync
- * exit 23 and takes the whole download with it. That is exactly what happened
- * when a repo did not gitignore `node_modules`: git listed it, this mirror had
- * dropped it.
+ * subset loses files: a selected path that is not in the mirror is reported
+ * missing instead of copied. That is what happened when a repo did not
+ * gitignore `node_modules`: git listed it, the mirror had dropped it.
  *
- * So the mirror may keep on copying `.git`, `media/`, state dirs and sqlite
- * files that the selection then drops — but it may only drop `node_modules` when
- * the selection drops it too, which is why both sides now read the same flag
- * through this one function.
+ * Derived from the selection rather than from the flags, because the selection
+ * keeps a TRACKED file under `dist/` while dropping untracked ones, and no
+ * flag-shaped rule can say "skip `dist` except that one file". Checking every
+ * segment (not only directory segments) keeps the bare-name exclude safe for the
+ * tar fallback too, which would also drop a FILE called `dist`.
  */
-export function exportMirrorExcludes(opts: RefreshOptions = {}): string[] {
-  return opts.includeNodeModules ? [] : ['node_modules'];
+export function mirrorExcludesForSelection(paths: Iterable<string>): string[] {
+  const seen = new Set<string>();
+  for (const p of paths) for (const seg of p.split('/')) seen.add(seg);
+  return GENERATED_DIR_NAMES.filter((d) => !seen.has(d));
 }
 
 export async function refreshExport(
@@ -442,10 +462,11 @@ export async function copyHostFilesToBox(opts: CopyHostFilesOptions): Promise<{ 
 export interface PullOptions {
   /** Default true. When false, skip git ls-files and use the static exclude-list. */
   respectGitignore?: boolean;
-  /** Default false. When true, keep node_modules — in BOTH git and exclude-list mode. */
-  includeNodeModules?: boolean;
-  /** Default false. When true, keep `.venv` / `venv` / `__pycache__` — in BOTH modes. */
-  includeVenv?: boolean;
+  /**
+   * Default false. When true, keep the untracked generated dirs
+   * (`GENERATED_DIR_NAMES`) — in BOTH git and exclude-list mode. `download --all`.
+   */
+  all?: boolean;
   /** Paths the user declined; dropped before copying. */
   skipPaths?: readonly string[];
   /**
@@ -496,12 +517,13 @@ export interface PullResult {
  * host-side rsync copies scratch → `workspacePath`.
  *
  * Filtering: by default we ask git *inside the box* which files it would
- * track (`git ls-files --cached --others --exclude-standard`) so build dirs and
- * gitignored secrets never leak back. Non-git workspaces (or
- * `respectGitignore: false`) fall back to a static `--exclude` list.
- * `node_modules` is dropped in BOTH modes unless `includeNodeModules` says
- * otherwise — the claim that git mode alone kept it out only held for repos that
- * gitignore it, and a repo that does not used to fail the pull outright.
+ * track (`git ls-files --cached`, plus `--others --exclude-standard`) so
+ * gitignored build dirs and secrets never leak back. Non-git workspaces (or
+ * `respectGitignore: false`) fall back to a static `--exclude` list. The
+ * generated dirs (`node_modules`, `dist`, `.venv`, ...) are dropped from the
+ * UNTRACKED files in BOTH modes unless `all` says otherwise: git in the box
+ * never sees the host's global gitignore, so gitignore alone does not keep a
+ * box-built Linux `.venv` off the Mac.
  *
  * Never passes `--delete`: files that exist on the host but not in the box
  * are preserved. Removals are the user's call.
@@ -512,17 +534,6 @@ export async function pullToHost(
 ): Promise<PullResult> {
   const paths = await getHostPaths(record);
 
-  let scratchDir: string;
-  if (opts.noRefresh) {
-    scratchDir = paths.mergedExport;
-    await mkdir(scratchDir, { recursive: true });
-  } else {
-    const refreshed = await refreshExport(record, {
-      includeNodeModules: opts.includeNodeModules,
-    });
-    scratchDir = refreshed.hostPath;
-  }
-
   // The rsync file list is the union of up to two independent NUL-delimited
   // segments: the PRIMARY selection (git-tracked when /workspace is a repo, else
   // the exclude-list `find`) and the env-pattern one (gitignore bypassed). Both
@@ -532,10 +543,7 @@ export async function pullToHost(
   // same script the cloud pull runs — so a non-git workspace gets the same
   // exclude defaults (live databases, `media/`, agent state dirs) on every
   // provider instead of docker's old bare `--exclude=.git,node_modules`.
-  const excludes = workspaceExcludes({
-    includeNodeModules: opts.includeNodeModules,
-    includeVenv: opts.includeVenv,
-  });
+  const excludes = workspaceExcludes({ all: opts.all });
   const listed = await execInBox(
     record.container,
     [
@@ -544,8 +552,7 @@ export async function pullToHost(
       buildWorkspaceListScript({
         respectGitignore: opts.respectGitignore,
         excludes,
-        includeNodeModules: opts.includeNodeModules,
-        includeVenv: opts.includeVenv,
+        all: opts.all,
       }),
     ],
     { user: 'root' },
@@ -569,6 +576,19 @@ export async function pullToHost(
     }
   }
   const fileList = selected.size > 0 ? [...selected].join('\0') : null;
+
+  // Listed first, mirrored second: the mirror skips only the generated dirs
+  // the selection never names, so it is a superset of it by construction.
+  let scratchDir: string;
+  if (opts.noRefresh) {
+    scratchDir = paths.mergedExport;
+    await mkdir(scratchDir, { recursive: true });
+  } else {
+    const refreshed = await refreshExport(record, {
+      mirrorExcludes: mirrorExcludesForSelection(selected),
+    });
+    scratchDir = refreshed.hostPath;
+  }
 
   const destDir = opts.destDir ?? record.workspacePath;
   const { changes, applied, missing } = await rsyncPullToHost({

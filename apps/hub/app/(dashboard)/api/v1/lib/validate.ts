@@ -483,7 +483,7 @@ export function parseProject(body: unknown): Parsed<ProjectRequest> {
 export function parseCloneBox(body: unknown): Parsed<CloneBoxInput> {
   if (body === undefined || body === null) return { ok: true, value: {} };
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
-  const { name, provider, into, includeNodeModules, persistent } = body;
+  const { name, provider, into, all, persistent } = body;
 
   const out: CloneBoxInput = {};
   const str = (v: unknown, field: string): Parsed<string | undefined> => {
@@ -515,10 +515,10 @@ export function parseCloneBox(body: unknown): Parsed<CloneBoxInput> {
     out.into = i.value;
   }
 
-  if (includeNodeModules !== undefined && typeof includeNodeModules !== 'boolean') {
-    return { ok: false, message: 'includeNodeModules must be a boolean' };
+  if (all !== undefined && typeof all !== 'boolean') {
+    return { ok: false, message: 'all must be a boolean' };
   }
-  if (includeNodeModules === true) out.includeNodeModules = true;
+  if (all === true) out.all = true;
 
   if (persistent !== undefined && typeof persistent !== 'boolean') {
     return { ok: false, message: 'persistent must be a boolean' };
@@ -929,7 +929,7 @@ export function parseBoxBackup(body: unknown): Parsed<{
   name?: string;
   keep?: number;
   agent?: string;
-  includeNodeModules?: boolean;
+  all?: boolean;
 }> {
   if (body === undefined || body === null) return { ok: true, value: {} };
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
@@ -942,15 +942,15 @@ export function parseBoxBackup(body: unknown): Parsed<{
   if (keep.value !== undefined && (!Number.isInteger(keep.value) || keep.value < 1)) {
     return { ok: false, message: 'keep must be a positive integer' };
   }
-  const includeNodeModules = optionalBool(body.includeNodeModules, 'includeNodeModules');
-  if (!includeNodeModules.ok) return includeNodeModules;
+  const all = optionalBool(body.all, 'all');
+  if (!all.ok) return all;
   return {
     ok: true,
     value: {
       name: name.value,
       keep: keep.value,
       agent: agent.value,
-      includeNodeModules: includeNodeModules.value,
+      all: all.value,
     },
   };
 }

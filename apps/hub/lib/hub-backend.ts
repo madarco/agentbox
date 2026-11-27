@@ -3903,7 +3903,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         const result = await uploadWorkspaceToBox({
           provider: rp.provider,
           box: rp.box,
-          includeNodeModules: opts?.includeNodeModules,
+          all: opts?.all,
           onLog: (line) => {
             console.log(`[hub] ${line}`);
           },
@@ -3941,7 +3941,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           box: rp.box,
           destDir: target.workspaceDir,
           dropAgentScaffolding: false,
-          ...(input?.includeNodeModules ? { includeNodeModules: true } : {}),
+          ...(input?.all ? { all: true } : {}),
           onLog: (line) => {
             console.log(`[hub] ${line}`);
           },
@@ -3983,7 +3983,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           ...(target.agent ? { agent: target.agent } : {}),
           state,
           ...(databases && databases.length > 0 ? { databases } : {}),
-          ...(input?.includeNodeModules ? { includeNodeModules: true } : {}),
+          ...(input?.all ? { all: true } : {}),
         });
         await linkLatest(target.projectRoot, target.bot, target.stamp);
         const pruned = await pruneBackups(target.projectRoot, target.bot, target.keep);
@@ -4190,7 +4190,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           provider: rp.provider,
           box: rp.box,
           destDir: workspace,
-          includeNodeModules: input?.includeNodeModules,
+          all: input?.all,
           ...(boxAgent ? { agent: boxAgent } : {}),
           onLog: (line) => {
             console.log(`[hub] ${line}`);

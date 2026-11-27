@@ -370,8 +370,9 @@ A superset is free — `rsync --files-from` ignores files it was not asked for �
 while a subset is fatal, because a selected path that stage 1 never materialized
 makes rsync exit 23, and one bad path used to take the whole download with it.
 The cloud half satisfies this by construction (it tars exactly the selection);
-docker's mirror satisfies it by deriving its one exclude from the same flag the
-selection reads (`exportMirrorExcludes`, with a drift test). Two further guards
+docker's mirror satisfies it by listing first and mirroring second: it skips only
+the generated dirs no selected path goes through (`mirrorExcludesForSelection`),
+so a tracked `dist/` file or an `--all` pull keeps its dir in the mirror. Two further guards
 make a residual mismatch survivable: the selection can only name paths that
 exist in the box (`git ls-files --cached` happily prints a deleted file, which
 killed the cloud tar the same way), and stage 2 reconciles the list with the
@@ -415,16 +416,39 @@ mechanism. The invariant must hold in a project whose `.gitignore` the user has
 since edited, which is why the carry-over lists are filtered even though
 `--exclude-standard` would usually have done it.
 
-Python env dirs (`PYTHON_ENV_DIR_NAMES`: `.venv`, `venv`, `__pycache__`) ride
-the same lists, matched at any depth in both directions: the git-mode pull
-pathspecs and `workspaceExcludes()` (download, clone, non-git upload), and
-`seedExcludeTarArgs` / `dropHostOnlyPaths` (both seeds, custody, and the resync's
-`listHostUntracked`). A venv is platform-specific, and git in the box never sees
-the host's global gitignore, so a project relying on one had a Linux `.venv`
-pulled over the Mac's. The pull opts back in with `download --include-venv`; the
-host→box side reads `box.carryVenv` at the seed (`resolveCarryVenv`), so every
-create entrypoint agrees without threading a flag. Tracked files are not
-filtered on the way in: they arrive through git itself.
+### Generated dirs: one list, untracked only, one switch per direction
+
+`GENERATED_DIR_NAMES` (`sandbox-core/src/sync/concerns/workspace-files.ts`) is
+the one list of dirs a workspace move skips on top of gitignore: `node_modules`,
+`.next`, `.nuxt`, `.turbo`, `.svelte-kit`, `dist`, `build`, `out`, `target`,
+`.venv`, `venv`, `__pycache__`, `.cache`, `.parcel-cache`. The docker host
+snapshot's `EXCLUDE_DIRS` is built from it (plus `.agentbox`), so the two cannot
+drift. Most are platform-specific, and git in the box never sees the host's
+global gitignore, so a project relying on one had a Linux `.venv` pulled over
+the Mac's.
+
+It applies to UNTRACKED files only. The git-mode pull lists in two legs,
+`ls-files --cached` (only `.agentbox` excluded) and `ls-files --others
+--exclude-standard` with `untrackedExcludePathspecs()`, so a committed
+`dist/x.js` comes back. The host→box carry-over lists are `--others` lists by
+nature, and tracked files arrive through git. With no git (exclude-list mode, the
+no-git tar seeds) every file is untracked and the list applies to all of them.
+
+Matching is by directory at any depth: the pathspecs are `d/*` and `*/d/*`, the
+`find` prune and rsync use `d/`, and `isExcludedPath` reads a trailing `/` as
+"directory segment only", so `distribution/`, `my_build.py` and a file named
+`scripts/build` survive. The no-git tar seed is the one exception: neither tar
+can exclude a directory only (bsdtar reads `build/` as file-or-dir, GNU tar
+ignores the trailing slash; both measured), so a FILE named exactly like a
+generated dir is dropped there too.
+
+One switch per direction turns the list off. Pull: `download --all` /
+`clone --all` (`all` on `stageBoxWorkspace`, `pullToHost`, `exportBoxWorkspace`);
+`--all` in exclude-list mode lifts the `media/` default as well. Push:
+`box.carryAll`, read at the seed (`resolveCarryAll`) so every create entrypoint,
+`upload` and the resync agree without threading a flag; `upload --all` overrides
+it for a non-git push. Neither switch ever moves `.git`, `.agentbox`, an agent's
+state dir or a live database: those are identity and torn reads, not junk.
 
 `BoxFilePorts` (`sandbox-core/src/sync/concerns/box-files.ts`) is the seam that
 makes that possible without a new provider method: whole-tree file movement needs

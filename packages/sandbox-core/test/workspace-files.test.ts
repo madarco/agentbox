@@ -8,7 +8,7 @@ import {
   agentCloneDropPaths,
   agentWorkspaceArtifactPaths,
   buildWorkspaceListScript,
-  gitModeExcludePathspecs,
+  untrackedExcludePathspecs,
   isAgentWorkspaceArtifact,
   parseItemizedEntries,
   isExcludedPath,
@@ -22,7 +22,7 @@ describe('workspaceExcludes', () => {
   it('carries the dir names, the live-database globs and the agent state paths', () => {
     const ex = workspaceExcludes();
     expect(ex).toContain('.git');
-    expect(ex).toContain('node_modules');
+    expect(ex).toContain('node_modules/');
     expect(ex).toContain('media');
     expect(ex).toContain('*.sqlite*');
     // Derived from the registry, not listed — the reason a new agent needs no
@@ -31,8 +31,14 @@ describe('workspaceExcludes', () => {
     expect(agentStateExcludePaths()).toContain('.claude');
   });
 
-  it('keeps node_modules when asked', () => {
-    expect(workspaceExcludes({ includeNodeModules: true })).not.toContain('node_modules');
+  it('keeps the generated dirs and media under all, never .git/.agentbox or state', () => {
+    const ex = workspaceExcludes({ all: true });
+    expect(ex).not.toContain('node_modules/');
+    expect(ex).not.toContain('media');
+    expect(ex).toContain('.git');
+    expect(ex).toContain('.agentbox');
+    expect(ex).toContain('*.sqlite*');
+    expect(ex).toEqual(expect.arrayContaining(agentStateExcludePaths()));
   });
 });
 
@@ -62,7 +68,8 @@ describe('buildWorkspaceListScript', () => {
   it('probes git first and falls through to find', () => {
     const script = buildWorkspaceListScript({ excludes: ['node_modules'] });
     expect(script).toContain('git rev-parse --is-inside-work-tree');
-    expect(script).toContain('git ls-files -z --cached --others --exclude-standard');
+    expect(script).toContain('git ls-files -z --cached --');
+    expect(script).toContain('git ls-files -z --others --exclude-standard --');
     expect(script).toContain('MODE=git');
     expect(script).toContain('MODE=exclude');
     expect(script).toContain("-name 'node_modules'");
@@ -183,44 +190,31 @@ describe('overlayHostDirIntoBox', () => {
   });
 });
 
-describe('gitModeExcludePathspecs', () => {
-  it('anchors .agentbox at the root but node_modules at every depth', () => {
-    // Not a stylistic difference. `.agentbox` is one dir at the workspace root,
-    // while `node_modules` has to mean what the docker mirror's
-    // `--exclude=node_modules` means — a basename at ANY depth. Measured against
-    // git 2.39: the root-anchored form alone still lists 3310 nested paths in
-    // this repo, so a monorepo would select files the mirror never wrote.
-    const specs = gitModeExcludePathspecs();
+describe('untrackedExcludePathspecs', () => {
+  it('anchors .agentbox at the root but the generated dirs at every depth', () => {
+    const specs = untrackedExcludePathspecs();
     expect(specs).toContain(':(exclude).agentbox');
-    expect(specs).toContain(':(exclude)node_modules');
-    expect(specs).toContain(':(exclude)*/node_modules');
+    expect(specs).toContain(':(exclude)node_modules/*');
     expect(specs).toContain(':(exclude)*/node_modules/*');
+    expect(specs).toContain(':(exclude)*/.venv/*');
   });
 
-  it('keeps node_modules when the user asked for it, and still drops .agentbox', () => {
-    const specs = gitModeExcludePathspecs({ includeNodeModules: true, includeVenv: true });
-    expect(specs).toEqual([':(exclude).agentbox']);
+  it('keeps the generated dirs under all, and still drops .agentbox', () => {
+    expect(untrackedExcludePathspecs({ all: true })).toEqual([':(exclude).agentbox']);
   });
 
-  it('drops the Python env dirs at every depth unless includeVenv keeps them', () => {
-    const specs = gitModeExcludePathspecs({ includeNodeModules: true });
-    for (const d of ['.venv', 'venv', '__pycache__']) {
-      expect(specs).toContain(`:(exclude)${d}`);
-      expect(specs).toContain(`:(exclude)*/${d}`);
-      expect(specs).toContain(`:(exclude)*/${d}/*`);
-    }
-    expect(gitModeExcludePathspecs({ includeVenv: true }).some((s) => s.includes('venv'))).toBe(
-      false,
-    );
-  });
-
-  it('is what the script actually passes to git', () => {
-    const script = buildWorkspaceListScript({ excludes: [] });
-    const gitLine = script.split('\n').find((l) => l.includes('git ls-files'))!;
-    for (const spec of gitModeExcludePathspecs()) expect(gitLine).toContain(`'${spec}'`);
+  it('is what the script passes to the untracked leg, and only there', () => {
+    const lines = buildWorkspaceListScript({ excludes: [] }).split('\n');
+    const tracked = lines.find((l) => l.includes('git ls-files -z --cached'))!;
+    const untracked = lines.find((l) => l.includes('git ls-files -z --others'))!;
+    for (const spec of untrackedExcludePathspecs()) expect(untracked).toContain(`'${spec}'`);
+    // A tracked file under a committed `dist/` is the user's content.
+    expect(tracked).not.toContain('dist');
+    expect(tracked).toContain("':(exclude).agentbox'");
     // The positive `.` must survive: on git 2.39 a DIRECTORY positive pathspec
     // plus any exclude returns nothing at all.
-    expect(gitLine).toContain('-- . ');
+    expect(tracked).toContain('-- . ');
+    expect(untracked).toContain('-- . ');
   });
 });
 

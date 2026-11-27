@@ -1,8 +1,8 @@
 import { loadEffectiveConfig } from '@agentbox/config';
 
 /**
- * `box.carryVenv` for the project at `dir`: whether a host -> box workspace
- * move keeps the Python env dirs (`PYTHON_ENV_DIR_NAMES`).
+ * `box.carryAll` for the project at `dir`: whether a host -> box workspace move
+ * keeps the untracked generated dirs (`GENERATED_DIR_NAMES`) it otherwise drops.
  *
  * Read at the seed itself, not threaded from the CLI, for the reason
  * `autoApproveHostActions` is: every entrypoint that seeds a box (create, the
@@ -10,9 +10,9 @@ import { loadEffectiveConfig } from '@agentbox/config';
  * carrying the flag. An unreadable config means the default, which is the safe
  * side: drop them.
  */
-export async function resolveCarryVenv(dir: string): Promise<boolean> {
+export async function resolveCarryAll(dir: string): Promise<boolean> {
   try {
-    return (await loadEffectiveConfig(dir)).effective.box.carryVenv === true;
+    return (await loadEffectiveConfig(dir)).effective.box.carryAll === true;
   } catch {
     return false;
   }

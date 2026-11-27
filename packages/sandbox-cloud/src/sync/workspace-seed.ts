@@ -6,7 +6,7 @@ import type { CloudBackend, CloudHandle, ResyncResult } from '@agentbox/core';
 import {
   detectGitRepos,
   dropHostOnlyPaths,
-  resolveCarryVenv,
+  resolveCarryAll,
   seedExcludeTarArgs,
 } from '@agentbox/sandbox-core';
 import { bashScript, quoteShellArgv } from '../shell.js';
@@ -82,11 +82,11 @@ export interface SeedCloudWorkspaceArgs {
    */
   skipCarryOver?: boolean;
   /**
-   * Keep the host's Python env dirs (`.venv` / `venv` / `__pycache__`) in the
-   * carry-over and the no-git tarball. Unset reads `box.carryVenv` for
-   * `workspacePath`; the default drops them.
+   * Keep the host's untracked generated dirs (`node_modules`, `dist`, `.venv`,
+   * ...) in the carry-over and the no-git tarball. Unset reads `box.carryAll`
+   * for `workspacePath`; the default drops them.
    */
-  includeVenv?: boolean;
+  carryAll?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -112,7 +112,7 @@ export async function seedCloudWorkspace(
   const repos = await detectGitRepos(args.workspacePath);
   const root = repos.find((r) => r.kind === 'root');
   const nested = repos.filter((r) => r.kind === 'nested');
-  const includeVenv = args.includeVenv ?? (await resolveCarryVenv(args.workspacePath));
+  const carryAll = args.carryAll ?? (await resolveCarryAll(args.workspacePath));
 
   if (!root && args.overlay) {
     // Checkpoint restore of a non-git workspace: there's no branch to fork and
@@ -144,7 +144,7 @@ export async function seedCloudWorkspace(
       useBranch: args.useBranch,
       overlay: args.overlay,
       skipCarryOver: args.skipCarryOver,
-      includeVenv,
+      carryAll,
       onLog: log,
     });
     if (args.overlay) resyncRepos.push({ containerPath: workspaceDir, ...rootConflicts });
@@ -164,7 +164,7 @@ export async function seedCloudWorkspace(
         bundleDepth: args.bundleDepth,
         overlay: args.overlay,
         skipCarryOver: args.skipCarryOver,
-        includeVenv,
+        carryAll,
         onLog: log,
       });
       if (args.overlay) resyncRepos.push({ containerPath: sub, ...nestedConflicts });
@@ -186,7 +186,7 @@ export async function seedCloudWorkspace(
     handle: args.handle,
     hostDir: args.workspacePath,
     workspaceDir,
-    includeVenv,
+    carryAll,
   });
   return { fromGit: false, branch: args.branch };
 }
@@ -207,8 +207,8 @@ interface SeedFromGitCloneArgs {
   overlay?: boolean;
   /** See `SeedCloudWorkspaceArgs.skipCarryOver`. Re-branch but skip stash/untracked. */
   skipCarryOver?: boolean;
-  /** See `SeedCloudWorkspaceArgs.includeVenv`. */
-  includeVenv?: boolean;
+  /** See `SeedCloudWorkspaceArgs.carryAll`. */
+  carryAll?: boolean;
   onLog?: (line: string) => void;
 }
 
@@ -363,7 +363,7 @@ async function seedFromGitClone(args: SeedFromGitCloneArgs): Promise<RepoSeedCon
   const untrackedSize =
     args.useBranch || args.skipCarryOver
       ? 0
-      : await maybeBuildUntrackedTar(args.hostRepo, untrackedTarPath, args.includeVenv);
+      : await maybeBuildUntrackedTar(args.hostRepo, untrackedTarPath, args.carryAll);
   let stashRefCreated = false;
   try {
     if (stashSha) {
@@ -593,7 +593,7 @@ async function tryReseedRepoDelta(args: SeedFromGitCloneArgs): Promise<RepoSeedC
   const untrackedSize =
     args.useBranch || args.skipCarryOver
       ? 0
-      : await maybeBuildUntrackedTar(args.hostRepo, untrackedTarPath, args.includeVenv);
+      : await maybeBuildUntrackedTar(args.hostRepo, untrackedTarPath, args.carryAll);
   let stashRefCreated = false;
   try {
     if (stashSha) {
@@ -920,7 +920,7 @@ async function safeStashCreate(hostRepo: string): Promise<string | null> {
 async function maybeBuildUntrackedTar(
   hostRepo: string,
   outPath: string,
-  includeVenv?: boolean,
+  carryAll?: boolean,
 ): Promise<number> {
   const list = await execa(
     'git',
@@ -928,7 +928,7 @@ async function maybeBuildUntrackedTar(
     { reject: false },
   );
   if (list.exitCode !== 0 || list.stdout.length === 0) return 0;
-  const paths = dropHostOnlyPaths(list.stdout, { includeVenv });
+  const paths = dropHostOnlyPaths(list.stdout, { all: carryAll });
   if (paths.length === 0) return 0;
   // Feed NUL-delimited paths to `tar --null -T -` so spaces / quotes /
   // newlines in filenames survive. Use COPYFILE_DISABLE=1 to suppress
@@ -972,14 +972,14 @@ interface SeedFromTarArgs {
   handle: CloudHandle;
   hostDir: string;
   workspaceDir: string;
-  includeVenv?: boolean;
+  carryAll?: boolean;
 }
 
 async function seedFromTar(args: SeedFromTarArgs): Promise<void> {
   const stage = await mkdtemp(join(tmpdir(), 'agentbox-tar-'));
   const tarPath = join(stage, 'workspace.tar.gz');
   try {
-    const excludes = seedExcludeTarArgs({ includeVenv: args.includeVenv });
+    const excludes = seedExcludeTarArgs({ all: args.carryAll });
     await execa('tar', ['-C', args.hostDir, ...excludes, '-czf', tarPath, '.'], {
       // COPYFILE_DISABLE stops macOS BSD tar emitting `._*` AppleDouble stubs,
       // which extract on Linux as literal junk in the box's /workspace. Every
