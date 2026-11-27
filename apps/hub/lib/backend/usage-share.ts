@@ -297,7 +297,7 @@ function failedStatus(res: Response, site: string, verb: 'share' | 'delete'): ne
  * as the site checks it: the share schema admits only numbers, dates, enum ids and
  * the display name, so nothing else can ride along.
  */
-function previewedShare(raw: unknown): { share: UsageShare; text: string } {
+function previewedShare(raw: unknown): UsageShare {
   let text: string;
   try {
     text = JSON.stringify(raw);
@@ -305,8 +305,7 @@ function previewedShare(raw: unknown): { share: UsageShare; text: string } {
     throw new ShareError('invalid_request', 'share must be JSON');
   }
   try {
-    // The strict schema refuses an unknown key, so the text holds nothing the parse dropped.
-    return { share: parseShareBody(text), text };
+    return parseShareBody(text);
   } catch (e) {
     throw new ShareError(
       'invalid_request',
@@ -326,9 +325,10 @@ export async function postUsageShare(
   previewed?: unknown,
 ): Promise<UsageSharePosted> {
   const given = previewed === undefined ? undefined : previewedShare(previewed);
-  const name = checkName(given ? given.share.name : nameRaw);
+  const name = checkName(given ? given.name : nameRaw);
   const endpoint = parseShareEndpoint(await deps.endpoint());
-  const payload = given ? given.text : JSON.stringify(toShare(await deps.stats(), name));
+  // Re-serialized from the parse, never the caller's text.
+  const payload = JSON.stringify(given ?? toShare(await deps.stats(), name));
   // A store that can't be read can't keep the delete secret: fail before publishing.
   await deps.store.list();
   const doFetch = deps.fetch ?? fetch;

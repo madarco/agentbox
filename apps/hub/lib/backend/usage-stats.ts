@@ -65,7 +65,7 @@ export interface UsageStatsDeps {
   /** This hub's own machine id: a contribution under it is never merged. */
   selfMachineId?: string;
   /**
-   * PR titles and line counts by `owner/name#number`, from the workspace timelines:
+   * PR titles and line counts by lowercased `owner/name#number`, from the workspace timelines:
    * the ledger keeps only a PR's repo and number.
    */
   prDetails?: () => Promise<ReadonlyMap<string, PrDetail>>;
@@ -272,7 +272,7 @@ export async function loadUsageRows(
   w: { readFrom: number; from: number; to: number; tz: string; account?: string; now: number },
 ): Promise<UsageRows> {
   const { readFrom, from, to, tz, account, now } = w;
-  const [spanRows, tokenRows, ledgerRows, prDetails] = await Promise.all([
+  const [spanRows, tokenRows, ledgerRows] = await Promise.all([
     deps.history
       ? deps.history.usageSpans({
           sinceMs: readFrom,
@@ -292,7 +292,6 @@ export async function loadUsageRows(
     // Up to now, not `to`: a published push after the window decides whether a
     // host-only landing inside it counts.
     deps.ledger ? readLedger(deps.ledger, readFrom, Math.max(to, now)) : [],
-    deps.prDetails ? deps.prDetails().catch(() => null) : null,
   ]);
 
   const metaKeys = [...new Set([...spanRows, ...tokenRows].map((r) => r.sessionKey))];
@@ -398,6 +397,11 @@ export async function loadUsageRows(
       deletions: e.deletions ?? 0,
     });
   }
+  // Timelines are read only when there is a merged PR to name.
+  const prDetails =
+    deps.prDetails && ledgerRows.some((e) => e.type === 'pr.merged')
+      ? await deps.prDetails().catch(() => null)
+      : null;
   const mergedSeen = new Set<string>();
   const prState = new Map<string, string>();
   for (const e of rows) {
@@ -407,7 +411,7 @@ export async function loadUsageRows(
     if (e.type !== 'pr.merged' || mergedSeen.has(prKey)) continue;
     mergedSeen.add(prKey);
     // "Recently merged" lists a PR only with a title: the timeline's, else its branch.
-    const detail = e.pr ? prDetails?.get(prKey) : undefined;
+    const detail = e.pr ? prDetails?.get(prKey.toLowerCase()) : undefined;
     const title = detail?.title ?? e.branch;
     events.push({
       type: 'pr.merged',

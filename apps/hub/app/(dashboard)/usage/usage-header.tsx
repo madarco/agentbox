@@ -44,7 +44,8 @@ export function UsageHeader({ view, actions }: { view: UsageViewId; actions?: Re
     if (id === 'tokens') q.set('view', 'tokens');
     else q.delete('view');
     const rest = q.toString();
-    router.replace(rest ? `${pathname}?${rest}` : pathname, { scroll: false });
+    // A history entry per switch: Back returns to the other view.
+    router.push(rest ? `${pathname}?${rest}` : pathname, { scroll: false });
   };
   const copy = COPY[view];
   return (

@@ -1212,7 +1212,7 @@ export interface TimelineBackend {
   ): Promise<TimelineRecordResult | null>;
   /**
    * Title and line counts of every PR any workspace timeline has seen, keyed
-   * `owner/name#number`. The activity ledger keeps only a PR's repo and number,
+   * `owner/name#number` lowercased. The activity ledger keeps only a PR's repo and number,
    * so the usage page's "Recently merged" names a PR from here.
    */
   prDetails(): Promise<Map<string, PrDetail>>;

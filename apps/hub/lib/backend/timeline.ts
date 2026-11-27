@@ -474,18 +474,22 @@ export function createTimelineBackend(
       const workspaces = await listWorkspaces().catch(() => []);
       const logs = await Promise.all(workspaces.map((ws) => readTimeline(ws.id).catch(() => [])));
       // A log reads newest first: the newest title wins, and line counts come from
-      // the newest row that has them (the merge, once the sync measured it).
+      // the newest row that has them (the merge, once the sync measured it). Keys are
+      // lowercased: GitHub's `owner/name` and the ledger's may differ in case.
+      const counts = new Map<string, { additions?: number; deletions?: number }>();
       for (const events of logs) {
         for (const ev of events) {
           const pr = ev.pr;
-          if (!pr?.title) continue;
-          const key = `${pr.repo}#${String(pr.number)}`;
-          const d = out.get(key) ?? { title: pr.title };
-          if (d.additions === undefined && pr.additions !== undefined) d.additions = pr.additions;
-          if (d.deletions === undefined && pr.deletions !== undefined) d.deletions = pr.deletions;
-          out.set(key, d);
+          if (!pr) continue;
+          const key = `${pr.repo}#${String(pr.number)}`.toLowerCase();
+          const c = counts.get(key) ?? {};
+          if (c.additions === undefined && pr.additions !== undefined) c.additions = pr.additions;
+          if (c.deletions === undefined && pr.deletions !== undefined) c.deletions = pr.deletions;
+          counts.set(key, c);
+          if (pr.title && !out.has(key)) out.set(key, { title: pr.title });
         }
       }
+      for (const [key, d] of out) Object.assign(d, counts.get(key));
       return out;
     },
 

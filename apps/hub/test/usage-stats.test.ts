@@ -307,7 +307,7 @@ describe('computeUsageStats', () => {
       ev('pr.merged', at(10), {
         boxId: 'a',
         branch: 'feat/a',
-        pr: { repo: 'acme/api', number: 7 },
+        pr: { repo: 'Acme/API', number: 7 },
       }),
       ev('pr.merged', at(11), {
         boxId: 'a',
@@ -317,6 +317,7 @@ describe('computeUsageStats', () => {
     ]);
     const prDetails = async () =>
       new Map([['acme/api#7', { title: 'Add the thing', additions: 40, deletions: 2 }]]);
+    // The ledger's repo spelled differently from GitHub's still matches.
     const stats = await computeUsageStats(
       { history: null, ledger, prDetails, now: () => NOW },
       window,

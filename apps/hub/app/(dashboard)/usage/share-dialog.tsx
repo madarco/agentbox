@@ -8,7 +8,7 @@
 // schema. PURE REST CLIENT: the hub posts to and deletes on agent-box.sh, the browser
 // only calls /api/v1/usage/share.
 
-import { SHARE_NAME_RE, type RangeId, type UsageShare } from '@agentbox/usage-view';
+import { SHARE_NAME_RE, UsageShare, type RangeId } from '@agentbox/usage-view';
 import { UsageView } from '@agentbox/usage-view/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -127,15 +127,23 @@ export function ShareDialog({
 
   const valid = name === '' || SHARE_NAME_RE.test(name);
   // The one object the page preview, the JSON tab and the POST all use.
+  // Through the schema, as the hub will parse it: same key order, so the JSON shown
+  // is the JSON the hub re-serializes and posts.
   const shown: UsageShare | null = useMemo(
-    () => (preview ? (name && valid ? { ...preview.share, name } : preview.share) : null),
+    () =>
+      preview
+        ? name && valid
+          ? UsageShare.parse({ ...preview.share, name })
+          : preview.share
+        : null,
     [preview, name, valid],
   );
-  const json = useMemo(() => (shown ? JSON.stringify(shown, null, 2) : ''), [shown]);
-  const bytes = useMemo(
-    () => (shown ? new TextEncoder().encode(JSON.stringify(shown)).length : 0),
-    [shown],
+  const json = useMemo(
+    () => (shown && tab === 'json' ? JSON.stringify(shown, null, 2) : ''),
+    [shown, tab],
   );
+  // The server measured the share without a name; a name adds `"name":"…",`.
+  const bytes = preview ? preview.bytes + (shown?.name ? shown.name.length + 10 : 0) : 0;
 
   const submit = useCallback(async () => {
     if (!valid || posting || !shown) return;
@@ -190,6 +198,14 @@ export function ShareDialog({
   const endpoint = preview?.endpoint ?? settings?.endpoint ?? 'https://agent-box.sh/api/share';
   const site = host(endpoint);
   const origin = originOf(endpoint);
+  // agent-box.sh serves `/s/<id>` next to `/api/share`; another layout, we can't say.
+  const guessable = (() => {
+    try {
+      return new URL(endpoint).pathname === '/api/share';
+    } catch {
+      return false;
+    }
+  })();
   const past = settings?.shares ?? [];
 
   return (
@@ -231,8 +247,14 @@ export function ShareDialog({
             className="min-w-0 flex-1 truncate rounded-lg border border-dashed border-border px-3 py-1.5 font-mono text-[13px] text-muted-foreground"
             title="The site picks the random id when the page is published"
           >
-            {origin}/s/<span className="italic">random-id</span>
-            <span className="ml-2 font-sans text-xs">(made when you share)</span>
+            {guessable ? (
+              <>
+                {origin}/s/<span className="italic">random-id</span>
+                <span className="ml-2 font-sans text-xs">(made when you share)</span>
+              </>
+            ) : (
+              <span className="font-sans">A random link on {site}, made when you share</span>
+            )}
           </span>
         )}
       </div>

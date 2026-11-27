@@ -147,7 +147,7 @@ describe('postUsageShare', () => {
   it('posts the previewed share as it is, its name included, without rebuilding it', async () => {
     const f = fakeFetch(() => created());
     const preview = await previewUsageShare(deps(), undefined);
-    const shown = { ...preview.share, name: 'dana' };
+    const shown = UsageShare.parse({ ...preview.share, name: 'dana' });
     let built = 0;
     const d = deps({ fetch: f.fetch });
     await postUsageShare(
