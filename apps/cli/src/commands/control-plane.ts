@@ -360,21 +360,21 @@ async function resolveHubGitToken(logLine: (line: string) => void): Promise<stri
 
   const wide = overbroadScopes(scopes);
   const detail = [
-    `The control box will hold this token and use it to clone and push on your boxes' behalf.`,
-    `Boxes never receive it.`,
+    // Short lines: @clack's note box breaks apart when a line is wider than the terminal.
+    `The remote hub will hold your credentials and use them\nto clone and push. Boxes never receive them.`,
     login ? `Account: @${login}` : null,
     scopes.length > 0 ? `Scopes: ${scopes.join(', ')}` : null,
     wide.length > 0
-      ? `Warning: this token carries ${wide.join(', ')} — far more than the hub needs (contents + pull requests). Consider a fine-grained token scoped to the repos you'll use.`
+      ? `Warning: this token carries ${wide.join(', ')},\nfar more than the hub needs (contents + pull requests).\nConsider a fine-grained token scoped to the repos you'll use.`
       : null,
   ]
     .filter(Boolean)
     .join('\n');
-  note(detail, 'Git credential');
+  note(detail, 'Git credentials');
 
-  const ok = await confirm({ message: 'Copy this token to the control box?' });
+  const ok = await confirm({ message: 'Copy your credentials to the hub?' });
   if (isCancel(ok) || !ok) {
-    log.warn('cancelled — no token copied.');
+    log.warn('cancelled, no credentials copied.');
     return null;
   }
   return found.token;
