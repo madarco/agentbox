@@ -67,6 +67,48 @@ describe('collectRepoCarryOver', () => {
     );
     expect(carry.untrackedNul).toBe('src/app.ts\0');
   });
+
+  it('drops host Python env dirs at any depth, and keeps them under box.carryVenv', async () => {
+    // A project with no `.venv` gitignore entry (one that relied on a global
+    // ignore the box never sees) would otherwise ship a Mac venv into the box.
+    execaMock.mockImplementation((bin: string, argv: string[]) => {
+      if (bin === 'git' && argv.includes('ls-files')) {
+        return Promise.resolve({
+          exitCode: 0,
+          stdout:
+            '.venv/bin/python\0services/api/.venv/pyvenv.cfg\0src/__pycache__/a.pyc\0src/a.py\0',
+          stderr: '',
+        });
+      }
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    });
+    const repo = { kind: 'root', hostMainRepo: '/proj', containerPath: '/workspace' } as never;
+    const wt = '/home/vscode/.agentbox-worktrees/x';
+
+    const dropped = await collectRepoCarryOver(repo, 'agentbox/x', '/workspace', wt);
+    expect(dropped.untrackedNul).toBe('src/a.py\0');
+
+    const kept = await collectRepoCarryOver(repo, 'agentbox/x', '/workspace', wt, {
+      includeVenv: true,
+    });
+    expect(kept.untrackedNul.split('\0').filter(Boolean)).toHaveLength(4);
+  });
+});
+
+describe('seedWorkspaceFromDir and Python env dirs', () => {
+  const tarArgv = (): string[] =>
+    execaMock.mock.calls.find((c) => c[0] === 'tar' && (c[1] as string[]).includes('-cf'))![1];
+
+  it('excludes .venv, venv and __pycache__ by default', async () => {
+    await seedWorkspaceFromDir({ container: 'agentbox-x', hostSource: '/proj' });
+    for (const d of ['.venv', 'venv', '__pycache__']) expect(tarArgv()).toContain(`--exclude=${d}`);
+  });
+
+  it('keeps them under box.carryVenv, and still drops .agentbox', async () => {
+    await seedWorkspaceFromDir({ container: 'agentbox-x', hostSource: '/proj', includeVenv: true });
+    expect(tarArgv()).toContain('--exclude=.agentbox');
+    expect(tarArgv().some((a) => a.includes('venv') || a.includes('__pycache__'))).toBe(false);
+  });
 });
 
 describe('the APFS workspace snapshot', () => {

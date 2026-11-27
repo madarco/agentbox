@@ -211,8 +211,10 @@ export {
   withServiceSignIn,
   type ServiceUrlFieldValue,
 } from './concerns/service-url.js';
+export { resolveCarryVenv } from './concerns/carry-venv.js';
 export {
   GIT_MODE_EXCLUDE_DIRS,
+  PYTHON_ENV_DIR_NAMES,
   WORKSPACE_EXCLUDE_DIR_NAMES,
   agentStateExcludePaths,
   agentCloneDropPaths,

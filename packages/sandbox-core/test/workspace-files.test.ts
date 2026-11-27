@@ -198,8 +198,20 @@ describe('gitModeExcludePathspecs', () => {
   });
 
   it('keeps node_modules when the user asked for it, and still drops .agentbox', () => {
-    const specs = gitModeExcludePathspecs({ includeNodeModules: true });
+    const specs = gitModeExcludePathspecs({ includeNodeModules: true, includeVenv: true });
     expect(specs).toEqual([':(exclude).agentbox']);
+  });
+
+  it('drops the Python env dirs at every depth unless includeVenv keeps them', () => {
+    const specs = gitModeExcludePathspecs({ includeNodeModules: true });
+    for (const d of ['.venv', 'venv', '__pycache__']) {
+      expect(specs).toContain(`:(exclude)${d}`);
+      expect(specs).toContain(`:(exclude)*/${d}`);
+      expect(specs).toContain(`:(exclude)*/${d}/*`);
+    }
+    expect(gitModeExcludePathspecs({ includeVenv: true }).some((s) => s.includes('venv'))).toBe(
+      false,
+    );
   });
 
   it('is what the script actually passes to git', () => {

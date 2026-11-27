@@ -35,6 +35,7 @@ interface DownloadOpts {
   dryRun?: boolean;
   respectGitignore: boolean; // commander gives `--no-respect-gitignore` => false
   includeNodeModules?: boolean;
+  includeVenv?: boolean;
   includeAgentFiles?: boolean;
   refresh: boolean; // commander gives `--no-refresh` => false
   withEnv?: boolean;
@@ -79,6 +80,10 @@ export const downloadCommand = new Command('download')
   .option(
     '--include-node-modules',
     'keep node_modules in the selection (both gitignore and exclude-list mode)',
+  )
+  .option(
+    '--include-venv',
+    'keep Python env dirs (.venv, venv, __pycache__) in the selection (both modes)',
   )
   .option(
     '--include-agent-files',
@@ -137,6 +142,7 @@ export const downloadCommand = new Command('download')
             destDir,
             respectGitignore: opts.respectGitignore,
             includeNodeModules: opts.includeNodeModules,
+            includeVenv: opts.includeVenv,
             envPatterns,
             dryRun: o.dryRun,
             noRefresh: o.noRefresh,
@@ -160,6 +166,7 @@ export const downloadCommand = new Command('download')
             destDir,
             respectGitignore: opts.respectGitignore,
             includeNodeModules: opts.includeNodeModules,
+            includeVenv: opts.includeVenv,
             envPatterns,
             noRefresh: o.noRefresh,
             skipPaths: o.skipPaths,

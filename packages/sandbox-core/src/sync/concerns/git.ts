@@ -20,6 +20,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execa } from 'execa';
 import type { RepoResyncResult, ResyncWorktree, WorkspaceResyncPorts } from '@agentbox/core';
+import { resolveCarryVenv } from './carry-venv.js';
+import { dropHostOnlyPaths } from './workspace-files.js';
 
 /**
  * Sentinel token the box-side probe emits for a path that exists but is NOT a
@@ -268,7 +270,11 @@ export function makeHostGitPorts(): Pick<
         ['-C', hostMain, 'ls-files', '--others', '--exclude-standard', '-z'],
         { reject: false },
       );
-      return untracked.exitCode === 0 ? splitNul(untracked.stdout) : [];
+      if (untracked.exitCode !== 0) return [];
+      // Same drop as the create-time carry-over: `.agentbox/`, and the host's
+      // Python env dirs unless `box.carryVenv` keeps them.
+      const includeVenv = await resolveCarryVenv(hostMain);
+      return splitNul(dropHostOnlyPaths(untracked.stdout, { includeVenv }));
     },
     async hashHostFile(hostMain, relPath) {
       return createHash('sha256')

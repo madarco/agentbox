@@ -53,6 +53,8 @@ export interface StageWorkspaceArgs {
   respectGitignore?: boolean;
   /** Default false. Keep `node_modules` — in BOTH git and exclude-list mode. */
   includeNodeModules?: boolean;
+  /** Default false. Keep `.venv` / `venv` / `__pycache__` — in BOTH modes. */
+  includeVenv?: boolean;
   /**
    * Extra env/config basename globs pulled regardless of gitignore (the
    * `--with-env` set). Composes WITH the primary selection.
@@ -104,7 +106,10 @@ function fileListPath(scratchDir: string): string {
 export async function stageBoxWorkspace(args: StageWorkspaceArgs): Promise<StagedWorkspace> {
   const boxDir = args.boxWorkspaceDir ?? '/workspace';
   const ports = providerBoxFilePorts(args.provider, args.box);
-  const excludes = workspaceExcludes({ includeNodeModules: args.includeNodeModules });
+  const excludes = workspaceExcludes({
+    includeNodeModules: args.includeNodeModules,
+    includeVenv: args.includeVenv,
+  });
 
   const listed = await ports.run(
     buildWorkspaceListScript({
@@ -112,6 +117,7 @@ export async function stageBoxWorkspace(args: StageWorkspaceArgs): Promise<Stage
       respectGitignore: args.respectGitignore,
       excludes,
       includeNodeModules: args.includeNodeModules,
+      includeVenv: args.includeVenv,
     }),
     { asRoot: true },
   );
@@ -229,7 +235,10 @@ export async function pullWorkspaceToHost(args: PullWorkspaceArgs): Promise<Pull
     scratchDir: staged.scratchDir,
     destDir: args.destDir,
     fileList: staged.fileList,
-    excludes: workspaceExcludes({ includeNodeModules: args.includeNodeModules }),
+    excludes: workspaceExcludes({
+      includeNodeModules: args.includeNodeModules,
+      includeVenv: args.includeVenv,
+    }),
     dryRun: args.dryRun,
     skipPaths: args.skipPaths,
   });

@@ -74,6 +74,25 @@ export const WORKSPACE_EXCLUDE_DIR_NAMES: readonly string[] = [
 export const GIT_MODE_EXCLUDE_DIRS: readonly string[] = ['.agentbox'];
 
 /**
+ * Python environment dirs, by basename at ANY depth, dropped from every
+ * host <-> box workspace move unless the caller opts back in (`includeVenv`).
+ *
+ * They are built for one platform: a box's `uv sync` writes a Linux `.venv`
+ * whose interpreter symlinks and compiled wheels are useless on a Mac, and a
+ * Mac venv is as useless in the box. Gitignore is not enough to keep them out,
+ * because git inside the box never sees the host's GLOBAL gitignore -- a project
+ * that relies on one for `.venv` had the box's venv pulled over the Mac's.
+ * Handled like `node_modules`: a default drop with one switch, not a gitignore
+ * question.
+ */
+export const PYTHON_ENV_DIR_NAMES: readonly string[] = ['.venv', 'venv', '__pycache__'];
+
+/** The basenames a host -> box seed drops: ours, plus the Python env dirs unless kept. */
+function seedDropNames(opts: WorkspaceExcludeOptions): string[] {
+  return [...GIT_MODE_EXCLUDE_DIRS, ...(opts.includeVenv ? [] : PYTHON_ENV_DIR_NAMES)];
+}
+
+/**
  * The same dirs, as `tar --exclude` arguments for a host -> box workspace SEED.
  *
  * The invariant this closes: **`.agentbox/` never crosses the box boundary, in
@@ -96,8 +115,8 @@ export const GIT_MODE_EXCLUDE_DIRS: readonly string[] = ['.agentbox'];
  * depth; the git-mode PULL pathspec stays root-anchored, so the seed refuses
  * slightly more than the pull brings back, which is the safe direction.
  */
-export function seedExcludeTarArgs(): string[] {
-  return GIT_MODE_EXCLUDE_DIRS.map((d) => `--exclude=${d}`);
+export function seedExcludeTarArgs(opts: WorkspaceExcludeOptions = {}): string[] {
+  return seedDropNames(opts).map((d) => `--exclude=${d}`);
 }
 
 /**
@@ -118,10 +137,9 @@ export function seedExcludeTarArgs(): string[] {
  * NUL-separates, and treating the two the same is how the last path in a list
  * has been dropped here before.
  */
-export function dropHostOnlyPaths(nulList: string): string {
-  const kept = nulList
-    .split('\0')
-    .filter((p) => p.length > 0 && !isExcludedPath(p, GIT_MODE_EXCLUDE_DIRS));
+export function dropHostOnlyPaths(nulList: string, opts: WorkspaceExcludeOptions = {}): string {
+  const drop = seedDropNames(opts);
+  const kept = nulList.split('\0').filter((p) => p.length > 0 && !isExcludedPath(p, drop));
   return kept.length > 0 ? `${kept.join('\0')}\0` : '';
 }
 
@@ -149,8 +167,12 @@ export function dropHostOnlyPaths(nulList: string): string {
  */
 export function gitModeExcludePathspecs(opts: WorkspaceExcludeOptions = {}): string[] {
   const specs = GIT_MODE_EXCLUDE_DIRS.map((d) => `:(exclude)${d}`);
-  if (!opts.includeNodeModules) {
-    specs.push(':(exclude)node_modules', ':(exclude)*/node_modules', ':(exclude)*/node_modules/*');
+  const anyDepth = [
+    ...(opts.includeNodeModules ? [] : ['node_modules']),
+    ...(opts.includeVenv ? [] : PYTHON_ENV_DIR_NAMES),
+  ];
+  for (const d of anyDepth) {
+    specs.push(`:(exclude)${d}`, `:(exclude)*/${d}`, `:(exclude)*/${d}/*`);
   }
   return specs;
 }
@@ -177,6 +199,8 @@ export function agentStateExcludePaths(): string[] {
 export interface WorkspaceExcludeOptions {
   /** Default false. When true, keep `node_modules` in the selection. */
   includeNodeModules?: boolean;
+  /** Default false. When true, keep the {@link PYTHON_ENV_DIR_NAMES} dirs. */
+  includeVenv?: boolean;
 }
 
 /**
@@ -189,7 +213,8 @@ export function workspaceExcludes(opts: WorkspaceExcludeOptions = {}): string[] 
   const dirs = WORKSPACE_EXCLUDE_DIR_NAMES.filter(
     (d) => d !== 'node_modules' || !opts.includeNodeModules,
   );
-  return [...dirs, ...agentStateExcludePaths(), ...LIVE_DATABASE_EXCLUDES];
+  const venvs = opts.includeVenv ? [] : PYTHON_ENV_DIR_NAMES;
+  return [...dirs, ...venvs, ...agentStateExcludePaths(), ...LIVE_DATABASE_EXCLUDES];
 }
 
 /** Split an exclude pattern list into the three shapes `find` needs. */
@@ -232,6 +257,8 @@ export interface WorkspaceListScriptOptions {
    * told, or the two modes disagree about the one flag the user set.
    */
   includeNodeModules?: boolean;
+  /** Default false. Same contract as `includeNodeModules`, for the Python env dirs. */
+  includeVenv?: boolean;
 }
 
 /**
