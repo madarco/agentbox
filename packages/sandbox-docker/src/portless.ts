@@ -5,6 +5,7 @@ import { request as httpsRequest } from 'node:https';
 import { homedir, userInfo } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { execa } from 'execa';
+import { loadEffectiveConfig } from '@agentbox/config';
 import type { CheckResult } from '@agentbox/sandbox-core';
 
 /**
@@ -501,17 +502,33 @@ export type PortlessRouteState = 'routed' | 'not-routed' | 'unknown';
 /**
  * Whether a response is Portless's own "no app registered for <host>" answer, as
  * opposed to a 404 the app behind a route sent (Portless puts `X-Portless` on
- * proxied responses too). 0.18+ answers `{"error":"not_found"}` to a non-HTML
- * Accept; 0.15 always sends an HTML page saying "No app registered for". Pure.
+ * proxied responses too, and `{"error":"not_found"}` is a common app body). Both
+ * shapes name the requested host: 0.18+ answers a non-HTML Accept with
+ * `{"error":"not_found","upstream":"<host>",…}`; 0.15 always sends an HTML page
+ * saying "No app registered for <strong><host></strong>". Pure.
  */
 export function isPortlessNotFound(
   status: number,
   headers: Record<string, string | string[] | undefined>,
   body: string,
+  hostname: string,
 ): boolean {
   if (status !== 404 || headers['x-portless'] === undefined) return false;
-  return /"error"\s*:\s*"not_found"/.test(body) || body.includes('No app registered for');
+  if (body.includes(`No app registered for <strong>${hostname}</strong>`)) return true;
+  try {
+    const json = JSON.parse(body) as { error?: unknown; upstream?: unknown };
+    return json.error === 'not_found' && json.upstream === hostname;
+  } catch {
+    return false;
+  }
 }
+
+/**
+ * Path the route probe asks for. Portless decides "no route" before it looks at
+ * the path; a routed app gets a path it has no reason to serve, rather than a
+ * GET of its root page (which can trigger a dev-server compile).
+ */
+const ROUTE_PROBE_PATH = '/.agentbox-route-probe';
 
 /** One GET with `Host: <hostname>` against the live proxy. Never throws. */
 async function portlessRouteStateOn(
@@ -523,7 +540,7 @@ async function portlessRouteStateOn(
     const opts = {
       host: '127.0.0.1',
       port: mode.port,
-      path: '/',
+      path: ROUTE_PROBE_PATH,
       method: 'GET',
       headers: { host: hostname, accept: 'application/json' },
       timeout: timeoutMs,
@@ -535,13 +552,25 @@ async function portlessRouteStateOn(
         resolve(res.headers['x-portless'] !== undefined ? 'routed' : 'unknown');
         return;
       }
-      let body = '';
+      // Portless 0.15's page inlines ~150KB of font CSS before the text that
+      // matters, so match while streaming instead of keeping a prefix: the JSON
+      // shape is small (kept whole up to 4KB), the HTML marker is searched in a
+      // window that spans chunk boundaries.
+      const marker = `No app registered for <strong>${hostname}</strong>`;
+      let head = '';
+      let tail = '';
+      let sawMarker = false;
       res.setEncoding('utf8');
       res.on('data', (chunk: string) => {
-        if (body.length < 16_384) body += chunk;
+        if (head.length < 4096) head += chunk.slice(0, 4096 - head.length);
+        if (sawMarker) return;
+        const window = tail + chunk;
+        if (window.includes(marker)) sawMarker = true;
+        tail = window.slice(-marker.length);
       });
       res.on('end', () => {
-        resolve(isPortlessNotFound(404, res.headers, body) ? 'not-routed' : 'routed');
+        const body = sawMarker ? marker : head;
+        resolve(isPortlessNotFound(404, res.headers, body, hostname) ? 'not-routed' : 'routed');
       });
       res.on('error', () => {
         resolve('unknown');
@@ -564,11 +593,33 @@ async function portlessRouteStateOn(
 let routeProbe: (hostname: string, mode: PortlessMode) => Promise<PortlessRouteState> = (h, m) =>
   portlessRouteStateOn(h, m);
 
-/** Tests only: replace the route probe (null restores the real one). */
+/**
+ * "Routed" answers, reused for the probe TTL so a client resolving the same URL
+ * repeatedly (the hub, the tray) asks the proxy once. Only positives are kept:
+ * a not-routed answer must be re-checked after a re-alias.
+ */
+const routedAt = new Map<string, number>();
+
+function routeKey(hostname: string, mode: PortlessMode): string {
+  return `${hostname}@${String(mode.port)}`;
+}
+
+async function probeRoute(hostname: string, mode: PortlessMode): Promise<PortlessRouteState> {
+  const key = routeKey(hostname, mode);
+  const at = routedAt.get(key);
+  if (at !== undefined && Date.now() - at < PORTLESS_PROBE_TTL_MS) return 'routed';
+  const state = await routeProbe(hostname, mode);
+  if (state === 'routed') routedAt.set(key, Date.now());
+  else routedAt.delete(key);
+  return state;
+}
+
+/** Tests only: replace the route probe (null restores the real one). Clears the cache. */
 export function setPortlessRouteProbeForTests(
   fn: ((hostname: string, mode: PortlessMode) => Promise<PortlessRouteState>) | null,
 ): void {
   routeProbe = fn ?? ((h, m) => portlessRouteStateOn(h, m));
+  routedAt.clear();
 }
 
 /**
@@ -585,12 +636,21 @@ export function portlessRestartHint(platform: NodeJS.Platform = process.platform
 
 const warnedUnrouted = new Set<string>();
 
+let reAliasFn: (name: string, port: number) => Promise<boolean> = (n, p) => portlessAlias(n, p);
+
+/** Tests only: replace the re-registration `routedPortlessUrl` does (null restores it). */
+export function setPortlessReAliasForTests(
+  fn: ((name: string, port: number) => Promise<boolean>) | null,
+): void {
+  reAliasFn = fn ?? ((n, p) => portlessAlias(n, p));
+}
+
 /**
  * The URL to hand out for `alias` when a caller is about to OPEN it: the live
  * URL only when the proxy actually routes `<alias>.localhost`. A proxy that
  * answers is not enough — one that stopped reloading `routes.json` answers every
  * new alias with its 404 page. On a Portless 404 the alias is re-registered once
- * (`reAlias`, the caller knows the target port) and checked again; still not
+ * (onto `port`, or by the caller's own `reAlias`) and checked again; still not
  * routed means `undefined` (the caller falls back to loopback) and a warning
  * naming the restart. An unknown answer (timeout) keeps the alias URL: the
  * proxy answered a moment ago, and this check must not make URLs flaky.
@@ -600,19 +660,24 @@ export async function routedPortlessUrl(
   alias: string | undefined,
   mode: PortlessMode | null | undefined,
   opts: {
+    /** The loopback port the alias points at; re-registered there on a 404. */
+    port?: number;
+    /** A re-registration the caller does itself (a cloud box's fresh forward). */
     reAlias?: () => Promise<boolean>;
     onWarn?: (msg: string) => void;
   } = {},
 ): Promise<string | undefined> {
   if (alias === undefined || !mode) return undefined;
   const hostname = `${alias}.localhost`;
+  const port = opts.port;
+  const reAlias = opts.reAlias ?? (port !== undefined ? () => reAliasFn(alias, port) : undefined);
   try {
-    if ((await routeProbe(hostname, mode)) !== 'not-routed') {
+    if ((await probeRoute(hostname, mode)) !== 'not-routed') {
       warnedUnrouted.delete(alias);
       return composePortlessUrl(alias, mode);
     }
-    if (opts.reAlias && (await opts.reAlias().catch(() => false))) {
-      if ((await routeProbe(hostname, mode)) !== 'not-routed') {
+    if (reAlias && (await reAlias().catch(() => false))) {
+      if ((await probeRoute(hostname, mode)) !== 'not-routed') {
         warnedUnrouted.delete(alias);
         return composePortlessUrl(alias, mode);
       }
@@ -635,19 +700,26 @@ export async function routedPortlessUrl(
 }
 
 /**
- * Hostnames in the live proxy's `routes.json` that the proxy answers with its
- * own 404: a proxy that stopped reloading routes. Checks at most `limit`
- * routes; `[]` when it cannot tell. For `agentbox doctor`. Never throws.
+ * Static aliases (`portless alias`, the kind AgentBox registers) in the live
+ * proxy's `routes.json` that the proxy answers with its own 404: a proxy that
+ * stopped reloading routes. Only `pid: 0` routes count — Portless never prunes
+ * those, while a `portless run` app's route legitimately disappears with its
+ * process. Checks at most `limit`; `[]` when it cannot tell. For
+ * `agentbox doctor`. Never throws.
  */
-export async function portlessUnroutedRoutes(mode: PortlessMode, limit = 8): Promise<string[]> {
+export async function portlessUnroutedRoutes(
+  mode: PortlessMode,
+  opts: { stateDir?: string; limit?: number } = {},
+): Promise<string[]> {
   try {
-    const dir = await resolvePortlessHostStateDir();
+    const dir = await resolvePortlessHostStateDir(opts.stateDir);
     const raw = JSON.parse(await readFile(join(dir, 'routes.json'), 'utf8')) as unknown;
     if (!Array.isArray(raw)) return [];
-    const hosts = raw
-      .map((r) => (r as { hostname?: unknown }).hostname)
+    const hosts = (raw as Array<{ hostname?: unknown; pid?: unknown }>)
+      .filter((r) => r.pid === 0)
+      .map((r) => r.hostname)
       .filter((h): h is string => typeof h === 'string' && h.length > 0)
-      .slice(0, limit);
+      .slice(0, opts.limit ?? 8);
     const states = await Promise.all(hosts.map((h) => routeProbe(h, mode).catch(() => 'unknown')));
     return hosts.filter((_, i) => states[i] === 'not-routed');
   } catch {
@@ -739,12 +811,33 @@ export function portlessDoctorRow(
   return { label: 'portless', status: 'ok', detail: running };
 }
 
-/** The `doctor` row from a live probe: state, boot service, and route reloading. */
-export async function portlessDoctorCheck(): Promise<CheckResult> {
-  const state = await detectPortless();
-  const service = state.installed ? await portlessServiceStatus() : undefined;
-  const unrouted = state.proxyRunning && state.mode ? await portlessUnroutedRoutes(state.mode) : [];
-  return portlessDoctorRow(state, service, unrouted);
+let doctorCheck: { at: number; row: Promise<CheckResult> } | null = null;
+
+/**
+ * The `doctor` row from a live probe: state, boot service, and route reloading.
+ * Several providers' doctor groups show this same row, so one doctor run
+ * computes it once (reused for the probe TTL).
+ */
+export async function portlessDoctorCheck(stateDir?: string): Promise<CheckResult> {
+  if (doctorCheck !== null && Date.now() - doctorCheck.at < PORTLESS_PROBE_TTL_MS) {
+    return doctorCheck.row;
+  }
+  const row = (async () => {
+    // The `portless.stateDir` key names where the routes live when it is set.
+    const dir =
+      stateDir ??
+      ((await loadEffectiveConfig(process.cwd()).catch(() => null))?.effective.portless.stateDir ||
+        undefined);
+    const state = await detectPortless();
+    const service = state.installed ? await portlessServiceStatus() : undefined;
+    const unrouted =
+      state.proxyRunning && state.mode
+        ? await portlessUnroutedRoutes(state.mode, { ...(dir ? { stateDir: dir } : {}) })
+        : [];
+    return portlessDoctorRow(state, service, unrouted);
+  })();
+  doctorCheck = { at: Date.now(), row };
+  return row;
 }
 
 export interface PortlessBrowserEnvOptions {
@@ -1188,21 +1281,19 @@ async function findLivePortlessStateDir(): Promise<string | null> {
   return null;
 }
 
-/** Where a docker box sees the host's Portless CA (read-only bind of the one file). */
+/** Where a docker box keeps its copy of the host's Portless CA. */
 export const BOX_PORTLESS_CA_PATH = '/etc/agentbox/portless-host-ca.pem';
 
 /**
- * The `docker run -v` spec that shares the host Portless CA with a box:
- * `<hostStateDir>/ca.pem` read-only at `BOX_PORTLESS_CA_PATH`. Only the public
- * certificate — never the state dir, which holds the CA's private key and the
- * route registry the host proxy watches. `null` when the host has no CA (a
- * no-TLS proxy never makes one), so there is nothing to trust. Never throws.
+ * The host Portless CA certificate (`<stateDir>/ca.pem`) a box should trust, or
+ * `null` when the host has none (a no-TLS proxy never makes one). Boxes get a
+ * copy of this one public file, never a mount of the state dir: that holds the
+ * CA's private key and the `routes.json` the host proxy watches. Never throws.
  */
-export async function portlessCaMount(stateDirOverride?: string): Promise<string | null> {
+export async function hostPortlessCaPath(stateDirOverride?: string): Promise<string | null> {
   try {
     const ca = join(await resolvePortlessHostStateDir(stateDirOverride), 'ca.pem');
-    if (!(await stat(ca)).isFile()) return null;
-    return `${ca}:${BOX_PORTLESS_CA_PATH}:ro`;
+    return (await stat(ca)).isFile() ? ca : null;
   } catch {
     return null;
   }

@@ -266,8 +266,8 @@ RUN if [ "$(dpkg --print-architecture)" = amd64 ]; then \
 RUN npm install -g agent-browser playwright
 
 # Portless CLI (https://portless.sh). Only the client — the box's web URL is
-# routed by the host's proxy. With `portless.enabled`, createBox shares only the
-# host's CA (read-only) for trust; the in-box CLI keeps its own box-local state
+# routed by the host's proxy. With `portless.enabled`, createBox copies in only
+# the host's CA for trust; the in-box CLI keeps its own box-local state
 # and never touches the host's route registry.
 # Requires Node 24+ — hence the setup_24.x bump above.
 RUN npm install -g portless

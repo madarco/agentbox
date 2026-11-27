@@ -12,7 +12,6 @@ import {
   ensurePortlessForUrl,
   getBoxHostPaths,
   inspectBox,
-  portlessAlias,
   routedPortlessUrl,
   startBox,
   unpauseBox,
@@ -87,14 +86,12 @@ async function resolveViaProvider(box: BoxRecord, opts: UrlOptions): Promise<str
     if (record.portlessAlias && !opts.loopback) {
       // At the URL the live proxy serves now. The notice goes to stderr so
       // `--print` stays pipeable.
-      const alias = record.portlessAlias;
-      const webHostPort = record.webHostPort;
       const url = await routedPortlessUrl(
-        alias,
+        record.portlessAlias,
         await ensurePortlessForUrl((m) => {
           process.stderr.write(`${m}\n`);
         }),
-        webHostPort !== undefined ? { reAlias: () => portlessAlias(alias, webHostPort) } : {},
+        record.webHostPort !== undefined ? { port: record.webHostPort } : {},
       );
       if (url !== undefined) return url;
     }

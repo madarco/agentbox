@@ -68,7 +68,7 @@ A proxy that answers is not enough on its own: before `agentbox url`, the hub's 
 
 ### What a Docker box sees of your Portless setup
 
-A Docker box gets only your Portless CA certificate (`ca.pem`), mounted read-only, so the browser inside the box trusts the HTTPS proxy. It does not see the rest of your Portless state directory: not the CA's private key, not `routes.json`, not the proxy's pid and port files. Aliases are registered by AgentBox on your host, and a `portless` command run inside a box keeps its own state inside that box, so it can't change what your host proxy serves. Boxes created before this change still mount the whole directory read-write; recreate them. Cloud boxes (Hetzner, DigitalOcean) run their own mirror proxy with its own CA on the VPS, and nothing from it is copied back to your host.
+A Docker box mounts nothing from your Portless state directory. When your proxy serves HTTPS, AgentBox copies just the CA certificate (`ca.pem`) into the box at create time so the browser inside the box trusts it. The CA's private key, `routes.json` and the proxy's pid and port files stay on your host. Aliases are registered by AgentBox on your host, and a `portless` command run inside a box keeps its own state inside that box, so it can't change what your host proxy serves. Boxes created before this change still mount the whole directory read-write; recreate them. Cloud boxes (Hetzner, DigitalOcean) run their own mirror proxy with its own CA on the VPS, and nothing from it is copied back to your host.
 
 ```bash
 agentbox url my-box

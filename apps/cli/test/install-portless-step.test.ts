@@ -35,6 +35,7 @@ import {
 } from '../src/install-portless-step.js';
 
 const fresh: PortlessStepInput = {
+  dockerOffered: true,
   platform: 'darwin',
   engine: 'docker-desktop',
   enabled: undefined,
@@ -74,6 +75,27 @@ describe('decidePortlessStep', () => {
     );
   });
 
+  it('narrows to a named --provider', () => {
+    const linux = { ...fresh, platform: 'linux' as const, engine: 'other' as const };
+    // The alias clouds want it outright, so -y still sets it up on Linux.
+    for (const provider of ['hetzner', 'digitalocean', 'remote-docker']) {
+      expect(decidePortlessStep({ ...linux, provider })).toBe('ask');
+      expect(decidePortlessStep({ ...linux, provider, yes: true })).toBe('setup');
+    }
+    // The public-URL clouds never need it, even on Docker Desktop.
+    for (const provider of ['daytona', 'vercel', 'e2b']) {
+      expect(decidePortlessStep({ ...fresh, provider })).toBe('skip');
+      expect(decidePortlessStep({ ...fresh, provider, yes: true })).toBe('skip');
+    }
+    expect(decidePortlessStep({ ...fresh, provider: 'docker' })).toBe('ask');
+    expect(decidePortlessStep({ ...fresh, provider: 'docker', engine: 'orbstack' })).toBe('skip');
+  });
+
+  it('does not count Docker Desktop while local docker is not offered', () => {
+    expect(decidePortlessStep({ ...fresh, dockerOffered: false })).toBe('ask-optional');
+    expect(decidePortlessStep({ ...fresh, dockerOffered: false, yes: true })).toBe('skip');
+  });
+
   it('skips Windows', () => {
     expect(decidePortlessStep({ ...fresh, platform: 'win32' })).toBe('skip');
     expect(decidePortlessStep({ ...fresh, platform: 'win32', enabled: true })).toBe('skip');
@@ -109,15 +131,15 @@ describe('runPortlessInstallStep', () => {
 
   it('never asks for a password under -y', async () => {
     h.portless = { installed: true, proxyRunning: false };
-    await runPortlessInstallStep({ enabled: undefined, yes: true });
-    await runPortlessInstallStep({ enabled: true, yes: true });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: true });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: true, yes: true });
     expect(setupOpts().length).toBe(2);
     expect(setupOpts().every((o) => o['allowRootPrompt'] === false)).toBe(true);
   });
 
   it('offers default-no on a host without Docker Desktop, and -y leaves it alone', async () => {
     h.confirm.mockResolvedValue(false);
-    await runPortlessInstallStep({ enabled: undefined, yes: false });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: false });
     expect(h.confirm).toHaveBeenCalledWith(expect.objectContaining({ initialValue: false }));
     expect(h.setConfig).toHaveBeenCalledWith(
       'global',
@@ -127,21 +149,21 @@ describe('runPortlessInstallStep', () => {
       { raw: false },
     );
     h.setConfig.mockClear();
-    await runPortlessInstallStep({ enabled: undefined, yes: true });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: true });
     expect(h.setConfig).not.toHaveBeenCalled();
     expect(h.setup).not.toHaveBeenCalled();
   });
 
   it('does not save a cancelled prompt as a "no"', async () => {
     h.confirm.mockResolvedValue(h.cancel);
-    await runPortlessInstallStep({ enabled: undefined, yes: false });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: false });
     expect(h.setConfig).not.toHaveBeenCalled();
     expect(h.setup).not.toHaveBeenCalled();
   });
 
   it('saves a "yes" and sets up with the password prompt allowed', async () => {
     h.confirm.mockResolvedValue(true);
-    await runPortlessInstallStep({ enabled: undefined, yes: false });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: undefined, yes: false });
     expect(h.setConfig).toHaveBeenCalledWith(
       'global',
       'portless.enabled',
@@ -155,7 +177,7 @@ describe('runPortlessInstallStep', () => {
   });
 
   it('repairs an opted-in host without asking, and never changes the proxy mode', async () => {
-    await runPortlessInstallStep({ enabled: true, yes: false });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: true, yes: false });
     expect(h.confirm).not.toHaveBeenCalled();
     expect(setupOpts()[0]).toEqual({ allowRootPrompt: true, allowModeChange: false });
   });
@@ -163,11 +185,11 @@ describe('runPortlessInstallStep', () => {
   it('treats a crash-looping boot service as needing repair', async () => {
     h.portless = { installed: true, proxyRunning: true };
     h.service = { installed: true, failing: true };
-    await runPortlessInstallStep({ enabled: true, yes: false });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: true, yes: false });
     expect(h.setup).toHaveBeenCalledTimes(1);
     h.setup.mockClear();
     h.service = { installed: true };
-    await runPortlessInstallStep({ enabled: true, yes: false });
+    await runPortlessInstallStep({ dockerOffered: true, enabled: true, yes: false });
     expect(h.setup).not.toHaveBeenCalled();
   });
 });

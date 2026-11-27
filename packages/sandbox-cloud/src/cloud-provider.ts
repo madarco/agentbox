@@ -1972,28 +1972,24 @@ export function createCloudProvider(
       // Only while a host proxy serves the alias — it outlives the proxy, and
       // the loopback forward / preview URL below works without one.
       const alias = kind === 'web' ? box.portlessAlias : box.portlessVncAlias;
+      // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).
+      const port =
+        kind === 'vnc'
+          ? CLOUD_VNC_PORT
+          : (box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT);
       // Asked of the live proxy rather than read off the record, whose URL names
       // the proxy mode at the time it was written.
       if (!opts?.loopback && alias !== undefined) {
         // Re-alias onto the current forward: an SSH `-L` port is fresh per start.
-        const aliasPort =
-          kind === 'vnc'
-            ? CLOUD_VNC_PORT
-            : (box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT);
         const url = await routedPortlessUrl(alias, await ensurePortlessForUrl(), {
           reAlias: async () => {
-            const preview = await backend.previewUrl(h, aliasPort);
+            const preview = await backend.previewUrl(h, port);
             const localPort = parseLoopbackPort(preview.url);
             return localPort !== undefined && (await portlessAlias(alias, localPort));
           },
         });
         if (url !== undefined) return url;
       }
-      // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).
-      const port =
-        kind === 'vnc'
-          ? CLOUD_VNC_PORT
-          : (box.cloud?.webPort ?? backend.webProxyPort ?? CLOUD_WEB_PROXY_PORT);
       // Always re-resolve through the SDK — cached URLs on the record may be
       // from a previous start whose token has rotated. Prefer signed URLs
       // because the user is about to hand the URL to a browser (no way to

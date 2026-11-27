@@ -21,6 +21,7 @@ import { setupPortlessHost } from './portless-prompt.js';
  * box web URL is an SSH-forwarded loopback port. Named in the optional prompt.
  */
 const ALIAS_CLOUDS = 'hetzner, DigitalOcean or remote-docker';
+const ALIAS_CLOUD_PROVIDERS = new Set(['hetzner', 'digitalocean', 'remote-docker']);
 
 /**
  * `ask`: default-yes prompt. `ask-optional`: default-no prompt, because this
@@ -29,6 +30,10 @@ const ALIAS_CLOUDS = 'hetzner, DigitalOcean or remote-docker';
 export type PortlessStepDecision = 'skip' | 'ask' | 'ask-optional' | 'setup';
 
 export interface PortlessStepInput {
+  /** `--provider`, when the user named one: then only that provider matters. */
+  provider?: string;
+  /** Local docker is offered on this host (false under a control box / `hub.mode=thin`). */
+  dockerOffered: boolean;
   platform: NodeJS.Platform;
   engine: DockerEngine;
   /** Effective `portless.enabled`; `undefined` = never decided. */
@@ -53,12 +58,26 @@ export interface PortlessStepInput {
  * prompt naming the clouds that would use it; `-y` skips that one. An explicit
  * `false` is a past "no" and is never re-asked; a `true` on a host that lost
  * part of the setup is repaired without a question.
+ *
+ * A named `--provider` narrows it: an alias cloud is wanted outright, docker
+ * only on Docker Desktop, and the public-URL clouds (daytona, vercel, e2b) never
+ * need it. Docker Desktop counts only while local docker is offered at all.
  */
 export function decidePortlessStep(i: PortlessStepInput): PortlessStepDecision {
   if (i.platform !== 'darwin' && i.platform !== 'linux') return 'skip';
   if (i.enabled === false) return 'skip';
   if (i.enabled === true) return i.fullySetUp ? 'skip' : 'setup';
-  const wanted = (i.platform === 'darwin' && i.engine === 'docker-desktop') || i.installed;
+  const dockerDesktop = i.dockerOffered && i.platform === 'darwin' && i.engine === 'docker-desktop';
+  if (i.provider !== undefined) {
+    const providerWants = ALIAS_CLOUD_PROVIDERS.has(i.provider)
+      ? true
+      : i.provider === 'docker'
+        ? dockerDesktop
+        : false;
+    if (!providerWants && !(i.provider === 'docker' && i.installed)) return 'skip';
+    return i.yes ? 'setup' : 'ask';
+  }
+  const wanted = dockerDesktop || i.installed;
   if (i.yes) return wanted ? 'setup' : 'skip';
   return wanted ? 'ask' : 'ask-optional';
 }
@@ -83,6 +102,8 @@ async function persistEnabled(value: boolean): Promise<void> {
  * Never throws: a Portless failure leaves box URLs on loopback ports.
  */
 export async function runPortlessInstallStep(args: {
+  provider?: string;
+  dockerOffered: boolean;
   enabled: boolean | undefined;
   yes: boolean;
 }): Promise<void> {
@@ -96,6 +117,8 @@ export async function runPortlessInstallStep(args: {
       fullySetUp = state.proxyRunning && service.installed && service.failing !== true;
     }
     const decision = decidePortlessStep({
+      ...(args.provider !== undefined ? { provider: args.provider } : {}),
+      dockerOffered: args.dockerOffered,
       platform: process.platform,
       engine,
       enabled: args.enabled,

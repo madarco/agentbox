@@ -14,11 +14,6 @@ vi.mock('../src/portless.js', async (importOriginal) => {
     ...actual,
     ensurePortlessForUrl: vi.fn(async () => mode.value),
     livePortlessMode: vi.fn(async () => mode.value),
-    // Never the real CLI: it would write the route registry of whoever runs the tests.
-    portlessAlias: vi.fn(async (name: string, port: number) => {
-      aliasCalls.push([name, port]);
-      return true;
-    }),
   };
 });
 vi.mock('../src/sync/host-export.js', async (importOriginal) => ({
@@ -32,7 +27,11 @@ vi.mock('../src/state.js', async (importOriginal) => ({
 }));
 
 import { dockerProvider } from '../src/docker-provider.js';
-import { setPortlessRouteProbeForTests, type PortlessRouteState } from '../src/portless.js';
+import {
+  setPortlessReAliasForTests,
+  setPortlessRouteProbeForTests,
+  type PortlessRouteState,
+} from '../src/portless.js';
 import { listBoxes } from '../src/lifecycle.js';
 import { resolveVncViewerUrl } from '../src/vnc.js';
 
@@ -84,6 +83,11 @@ beforeEach(() => {
   records.value = [];
   aliasCalls.length = 0;
   routeAnswers = {};
+  // Never the real CLI: it would write the route registry of whoever runs the tests.
+  setPortlessReAliasForTests(async (name, port) => {
+    aliasCalls.push([name, port]);
+    return true;
+  });
   setPortlessRouteProbeForTests(async (hostname) => {
     const queue = routeAnswers[hostname];
     if (!queue || queue.length === 0) return 'routed';

@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  BOX_PORTLESS_CA_PATH,
   isPortlessNotFound,
-  portlessCaMount,
+  hostPortlessCaPath,
   portlessDoctorRow,
   portlessRestartHint,
+  portlessUnroutedRoutes,
   routedPortlessUrl,
+  setPortlessReAliasForTests,
   setPortlessRouteProbeForTests,
   type PortlessRouteState,
 } from '../src/portless.js';
@@ -27,18 +28,34 @@ function probe(...answers: PortlessRouteState[]): ReturnType<typeof vi.fn> {
 }
 
 describe('isPortlessNotFound', () => {
-  it("recognises Portless's own 404 (0.18 JSON, 0.15 HTML)", () => {
-    const h = { 'x-portless': '1' };
-    expect(isPortlessNotFound(404, h, '{"error":"not_found","upstream":"a.localhost"}')).toBe(true);
+  const h = { 'x-portless': '1' };
+  it("recognises Portless's own 404 for this host (0.18 JSON, 0.15 HTML)", () => {
     expect(
-      isPortlessNotFound(404, h, '<p>No app registered for <strong>a.localhost</strong>'),
+      isPortlessNotFound(404, h, '{"error":"not_found","upstream":"a.localhost"}', 'a.localhost'),
+    ).toBe(true);
+    expect(
+      isPortlessNotFound(
+        404,
+        h,
+        '<p>No app registered for <strong>a.localhost</strong>',
+        'a.localhost',
+      ),
     ).toBe(true);
   });
 
   it("does not take the app's own 404 behind a route for a missing route", () => {
-    expect(isPortlessNotFound(404, { 'x-portless': '1' }, 'Cannot GET /')).toBe(false);
-    expect(isPortlessNotFound(404, {}, '{"error":"not_found"}')).toBe(false);
-    expect(isPortlessNotFound(502, { 'x-portless': '1' }, '{"error":"not_found"}')).toBe(false);
+    // An API app's common 404 body: same error code, no upstream naming this host.
+    expect(isPortlessNotFound(404, h, '{"error":"not_found"}', 'a.localhost')).toBe(false);
+    expect(
+      isPortlessNotFound(404, h, '{"error":"not_found","upstream":"b.localhost"}', 'a.localhost'),
+    ).toBe(false);
+    expect(isPortlessNotFound(404, h, 'Cannot GET /', 'a.localhost')).toBe(false);
+    expect(
+      isPortlessNotFound(404, {}, '{"error":"not_found","upstream":"a.localhost"}', 'a.localhost'),
+    ).toBe(false);
+    expect(
+      isPortlessNotFound(502, h, '{"error":"not_found","upstream":"a.localhost"}', 'a.localhost'),
+    ).toBe(false);
   });
 });
 
@@ -47,6 +64,28 @@ describe('routedPortlessUrl', () => {
     const fn = probe('routed');
     expect(await routedPortlessUrl('a', HTTPS)).toBe('https://a.localhost');
     expect(fn).toHaveBeenCalledWith('a.localhost', HTTPS);
+  });
+
+  it('re-registers onto `port` itself when the caller passes one', async () => {
+    probe('not-routed', 'routed');
+    const calls: Array<[string, number]> = [];
+    setPortlessReAliasForTests(async (n, p) => {
+      calls.push([n, p]);
+      return true;
+    });
+    try {
+      expect(await routedPortlessUrl('p', HTTPS, { port: 50080 })).toBe('https://p.localhost');
+    } finally {
+      setPortlessReAliasForTests(null);
+    }
+    expect(calls).toEqual([['p', 50080]]);
+  });
+
+  it('asks the proxy once per TTL for a routed hostname', async () => {
+    const fn = probe('routed');
+    await routedPortlessUrl('cached', HTTPS);
+    await routedPortlessUrl('cached', HTTPS);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it('re-aliases once on a Portless 404 and uses the URL when that took', async () => {
@@ -85,19 +124,34 @@ describe('routedPortlessUrl', () => {
   });
 });
 
-describe('portlessCaMount', () => {
-  it('shares only ca.pem, read-only, never the state dir', async () => {
+describe('hostPortlessCaPath', () => {
+  it('names only ca.pem, never the state dir', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'portless-ca-'));
     await writeFile(join(dir, 'ca.pem'), 'cert');
     await writeFile(join(dir, 'ca-key.pem'), 'key');
-    const spec = await portlessCaMount(dir);
-    expect(spec).toBe(`${join(dir, 'ca.pem')}:${BOX_PORTLESS_CA_PATH}:ro`);
-    expect(spec?.startsWith(`${dir}:`)).toBe(false);
+    expect(await hostPortlessCaPath(dir)).toBe(join(dir, 'ca.pem'));
   });
 
-  it('mounts nothing when the host has no CA (a no-TLS proxy)', async () => {
+  it('is null when the host has no CA (a no-TLS proxy)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'portless-noca-'));
-    expect(await portlessCaMount(dir)).toBeNull();
+    expect(await hostPortlessCaPath(dir)).toBeNull();
+  });
+});
+
+describe('portlessUnroutedRoutes', () => {
+  it('checks only static aliases (pid 0) from the given state dir', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'portless-routes-'));
+    await writeFile(
+      join(dir, 'routes.json'),
+      JSON.stringify([
+        { hostname: 'box1.localhost', port: 50080, pid: 0 },
+        { hostname: 'dev.localhost', port: 4000, pid: 4242 },
+        { hostname: 'box2.localhost', port: 50081, pid: 0 },
+      ]),
+    );
+    const fn = probe('not-routed', 'routed');
+    expect(await portlessUnroutedRoutes(HTTPS, { stateDir: dir })).toEqual(['box1.localhost']);
+    expect(fn.mock.calls.map((c) => c[0])).toEqual(['box1.localhost', 'box2.localhost']);
   });
 });
 
@@ -121,5 +175,40 @@ describe('portlessDoctorRow, routes not reloading', () => {
       [],
     );
     expect(row.status).toBe('ok');
+  });
+});
+
+describe('the real route probe, against a local stand-in proxy', () => {
+  it('reads both Portless 404 shapes, including 0.15 with ~150KB before the marker', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((req, res) => {
+      const host = String(req.headers.host);
+      res.setHeader('X-Portless', '1');
+      if (host === 'routed.localhost') {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end('{"error":"not_found"}'); // the app's own 404 behind a route
+      } else if (host === 'old.localhost') {
+        res.writeHead(404, { 'content-type': 'text/html' });
+        res.end(
+          `<style>${'x'.repeat(150_000)}</style><p>No app registered for <strong>${host}</strong>`,
+        );
+      } else {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not_found', upstream: host, message: 'x' }));
+      }
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    const mode = { port, tls: false };
+    const onWarn = vi.fn();
+    try {
+      expect(await routedPortlessUrl('routed', mode, { onWarn })).toBe(
+        `http://routed.localhost:${String(port)}`,
+      );
+      expect(await routedPortlessUrl('old', mode, { onWarn })).toBeUndefined();
+      expect(await routedPortlessUrl('new', mode, { onWarn })).toBeUndefined();
+    } finally {
+      server.close();
+    }
   });
 });

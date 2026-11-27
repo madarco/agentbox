@@ -639,6 +639,8 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   // 1b) Portless (`https://<box>.localhost`), asked from the host alone, before
   // the provider picker. A separate step — see install-portless-step.ts.
   await runPortlessInstallStep({
+    ...(opts.provider ? { provider: opts.provider.trim() } : {}),
+    dockerOffered: cfg ? !dockerProvidersHidden(cfg.effective) : true,
     enabled: cfg?.effective.portless.enabled,
     yes: opts.yes ?? false,
   });

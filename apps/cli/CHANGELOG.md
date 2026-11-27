@@ -66,8 +66,8 @@ CLI, not the raw commits.
 - **Box URLs never point at a dead `<box>.localhost`.** The Portless alias is
   handed out only while a proxy serves it, otherwise the loopback URL, and
   `agentbox install` now sets Portless up as its own step.
-- **Docker boxes no longer break the host's Portless proxy.** A box mounts only
-  the Portless CA, read-only, and opening a `<box>.localhost` the proxy doesn't
+- **Docker boxes no longer break the host's Portless proxy.** A box mounts
+  nothing from `~/.portless` (the CA is copied in), and opening a `<box>.localhost` the proxy doesn't
   route re-registers it or falls back to loopback with the restart command.
   `agentbox install` asks about Portless right after the system check.
 - **The setup guide reads well in the default macOS Terminal.** The "Next steps"

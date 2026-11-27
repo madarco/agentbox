@@ -2,7 +2,7 @@ import type { BoxRecord, Provider } from '@agentbox/core';
 import { withServiceSignIn } from '@agentbox/sandbox-core';
 import { execInBox } from './docker.js';
 import { readBoxStatus } from './sync/host-export.js';
-import { livePortlessMode, portlessAlias, routedPortlessUrl } from './portless.js';
+import { livePortlessMode, routedPortlessUrl } from './portless.js';
 
 export interface BoxBrowserResult {
   up: boolean;
@@ -133,9 +133,7 @@ export async function ensureBoxBrowserShowingApp(
       ? ((await routedPortlessUrl(
           box.portlessAlias,
           box.portlessAlias !== undefined ? await livePortlessMode() : null,
-          box.portlessAlias !== undefined && box.webHostPort !== undefined
-            ? { reAlias: () => portlessAlias(box.portlessAlias!, box.webHostPort!) }
-            : {},
+          box.webHostPort !== undefined ? { port: box.webHostPort } : {},
         )) ?? `http://localhost:${String(exposePort)}`)
       : 'about:blank';
   // A service agent's UI wants its token in the fragment, and the in-box

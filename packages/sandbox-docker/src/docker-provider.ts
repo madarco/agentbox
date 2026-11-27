@@ -29,7 +29,7 @@ import { destroyBox, inspectBox, pauseBox, startBox, stopBox, unpauseBox } from 
 import { execInBox, inspectContainerStatus } from './docker.js';
 import { boxResourceStats } from './stats.js';
 import { detectEngine } from './sync/host-export.js';
-import { ensurePortlessForUrl, portlessAlias, routedPortlessUrl } from './portless.js';
+import { ensurePortlessForUrl, routedPortlessUrl } from './portless.js';
 import { DEFAULT_BOX_IMAGE, imageExists, pullOrBuild } from './image.js';
 import {
   computeDockerContextFingerprint,
@@ -247,10 +247,8 @@ export const dockerProvider: Provider = {
     // At the URL the live proxy serves now, not the record's: a URL recorded
     // at create names the proxy mode of that moment.
     if (box.portlessAlias && !opts?.loopback) {
-      const alias = box.portlessAlias;
-      const webHostPort = box.webHostPort;
-      const url = await routedPortlessUrl(alias, await ensurePortlessForUrl(), {
-        ...(webHostPort !== undefined ? { reAlias: () => portlessAlias(alias, webHostPort) } : {}),
+      const url = await routedPortlessUrl(box.portlessAlias, await ensurePortlessForUrl(), {
+        ...(box.webHostPort !== undefined ? { port: box.webHostPort } : {}),
       });
       if (url !== undefined) return url;
     }
