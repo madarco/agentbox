@@ -63,6 +63,9 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Box URLs never point at a dead `<box>.localhost`.** The Portless alias is
+  handed out only while a proxy serves it, otherwise the loopback URL, and
+  `agentbox install` now sets Portless up as its own step.
 - **The setup guide reads well in the default macOS Terminal.** The "Next steps"
   box after `agentbox install` uses normal-weight text instead of gray and fits
   in 80 columns. The provider picker's hints no longer wrap.

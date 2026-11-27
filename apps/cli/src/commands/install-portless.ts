@@ -16,6 +16,7 @@
  */
 
 import { confirm, intro, log, note, outro, spinner } from '@agentbox/cli-kit';
+import { setConfigValue } from '@agentbox/config';
 import { Command } from 'commander';
 import {
   detectPortless,
@@ -25,6 +26,7 @@ import {
   portlessGetUrl,
   portlessInstallHint,
   portlessServiceStatus,
+  rememberPortlessBin,
   resetPortlessCache,
   uninstallPortlessService,
 } from '@agentbox/sandbox-docker';
@@ -136,6 +138,19 @@ export const installPortlessCommand = new Command('portless')
         return;
       }
       state = await detectPortless();
+    }
+
+    // For the hub, whose PATH (launchd, the tray) may not include this one.
+    await rememberPortlessBin();
+
+    // Running this command is the opt-in: without it a box created from the
+    // tray or the hub (no prompt there) would not register its alias.
+    try {
+      await setConfigValue('global', 'portless.enabled', true, process.cwd(), { raw: false });
+    } catch (err) {
+      log.warn(
+        `Could not save portless.enabled: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     const service = await portlessServiceStatus();

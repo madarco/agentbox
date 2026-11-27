@@ -42,6 +42,29 @@ export function autostartUnitPath(home: string = homedir()): string | null {
  */
 export interface AutostartInvocation {
   argv: string[];
+  /**
+   * PATH for the unit. launchd and systemd start it with a bare system PATH, so
+   * tools the hub shells out to from an nvm or Homebrew prefix (`portless`,
+   * `cloudflared`) are not found. Defaults to `autostartPath()`.
+   */
+  path?: string;
+}
+
+/**
+ * The running Node's bin dir (where `npm i -g` puts tools under nvm), the usual
+ * Homebrew prefixes, then the system dirs. Deduplicated, order kept.
+ */
+export function autostartPath(execPath: string = process.execPath): string {
+  const dirs = [
+    dirname(execPath),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ];
+  return [...new Set(dirs)].join(':');
 }
 
 /** launchd LaunchAgent plist. `RunAtLoad` + `KeepAlive` = start on login, restart on crash. */
@@ -59,6 +82,11 @@ export function launchdPlist(inv: AutostartInvocation, logFile: string): string 
     '  <array>',
     argXml,
     '  </array>',
+    '  <key>EnvironmentVariables</key>',
+    '  <dict>',
+    '    <key>PATH</key>',
+    `    <string>${escapeXml(inv.path ?? autostartPath())}</string>`,
+    '  </dict>',
     '  <key>RunAtLoad</key>',
     '  <true/>',
     '  <key>KeepAlive</key>',
@@ -86,6 +114,7 @@ export function systemdUnit(inv: AutostartInvocation): string {
     '',
     '[Service]',
     'Type=simple',
+    `Environment=${JSON.stringify(`PATH=${inv.path ?? autostartPath()}`)}`,
     `ExecStart=${exec}`,
     'Restart=on-failure',
     'RestartSec=5',

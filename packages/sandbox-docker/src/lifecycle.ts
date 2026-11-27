@@ -57,7 +57,14 @@ import { setUpBoxSshd } from './ssh.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 import { AGENT_SYNC_SPECS, syncAgentboxSshConfig } from '@agentbox/sandbox-core';
 import { agentSyncModule, type AgentSessionInfo } from './sync/agents/module.js';
-import { detectPortless, portlessAlias, portlessGetUrl, portlessUnalias } from './portless.js';
+import {
+  detectPortless,
+  portlessAlias,
+  portlessGetUrl,
+  livePortlessMode,
+  livePortlessUrl,
+  portlessUnalias,
+} from './portless.js';
 import { getBoxEndpoints, type BoxEndpoint, type BoxEndpoints } from './endpoints.js';
 import {
   ensureRelay,
@@ -227,20 +234,16 @@ export async function listBoxes(): Promise<ListedBox[]> {
       if (b.provider && b.provider !== 'docker') {
         const persisted = await readBoxStatus(b);
         const webPort = b.cloud?.webPort ?? 0;
-        // Prefer the stable Portless URL when one was registered (Hetzner
-        // gets it by default; Daytona naturally skips because its URL isn't
-        // loopback). Falls back to the ephemeral `127.0.0.1:<random>`
-        // preview URL when Portless isn't in play.
-        const portlessWebUrl =
-          b.portlessAlias !== undefined
-            ? (b.portlessUrl ?? `https://${b.portlessAlias}.localhost`)
-            : undefined;
+        // The Portless alias (Hetzner/DO get one; Daytona's URL isn't loopback)
+        // only while a proxy serves it, at the URL it serves now; otherwise the
+        // `127.0.0.1:<random>` preview URL. Probe, never start: this is a list.
+        const mode =
+          b.portlessAlias !== undefined || b.portlessVncAlias !== undefined
+            ? await livePortlessMode()
+            : null;
         const cachedWebUrl = webPort > 0 ? b.cloud?.previewUrls?.[webPort] : undefined;
-        const webUrl = portlessWebUrl ?? cachedWebUrl;
-        const portlessVncBase =
-          b.portlessVncAlias !== undefined
-            ? (b.portlessVncUrl ?? `https://${b.portlessVncAlias}.localhost`)
-            : undefined;
+        const webUrl = livePortlessUrl(b.portlessAlias, mode) ?? cachedWebUrl;
+        const portlessVncBase = livePortlessUrl(b.portlessVncAlias, mode);
         // Only Portless yields a URL stable enough to persist in a listing. A
         // cloud provider's own preview URL is either header-authed or a signed
         // URL that expires within the hour, so daytona/vercel/e2b report the

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,35 +7,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
 vi.mock('execa', () => ({ execa: execaMock }));
 
-// The proxy-liveness probe opens a TCP socket. Stub it: a real connect would
-// make the result depend on whatever is listening on the developer's machine.
-const { connectMock, portAccepts } = vi.hoisted(() => ({
-  connectMock: vi.fn(),
-  portAccepts: { value: false },
-}));
-vi.mock('node:net', () => ({
-  connect: (...args: unknown[]) => {
-    connectMock(...args);
-    const handlers = new Map<string, () => void>();
-    const socket = {
-      setTimeout: () => socket,
-      destroy: () => socket,
-      once: (event: string, fn: () => void) => {
-        handlers.set(event, fn);
-        // Resolve on the next tick so both listeners are registered first.
-        if (event === (portAccepts.value ? 'connect' : 'error')) queueMicrotask(fn);
-        return socket;
-      },
-    };
-    return socket;
-  },
-}));
+// Liveness asks candidate ports whether a Portless proxy answers; that probe is
+// replaced per test so the result never depends on the developer's machine.
+const liveModes = new Set<number>();
 
 import { existsSync } from 'node:fs';
 
 import {
   detectPortless,
+  ensurePortlessForUrl,
   ensurePortlessProxy,
+  livePortlessUrl,
+  portlessCmd,
+  resetPortlessCmdForTests,
+  setPortlessAnswerProbeForTests,
   installPortless,
   installPortlessServiceDetailed,
   sudoIdentityEnvPrefix,
@@ -70,14 +55,21 @@ let portlessResult: ExecaResult | Error;
 let pgrepResult: ExecaResult;
 
 let stateDir: string;
+let binDir: string;
 const originalStateDir = process.env['PORTLESS_STATE_DIR'];
+const originalPath = process.env['PATH'];
 
 beforeEach(async () => {
   resetPortlessCache();
   portlessResult = ok('0.13.0'); // installed by default
   pgrepResult = fail(); // no proxy process by default
-  portAccepts.value = false; // nothing listening on the configured port
-  connectMock.mockReset();
+  liveModes.clear(); // no proxy answering by default
+  setPortlessAnswerProbeForTests(async (m) => liveModes.has(m.port));
+  // A `portless` on PATH, so the command stays the bare name the assertions use.
+  binDir = await mkdtemp(join(tmpdir(), 'agentbox-portless-bin-'));
+  await writeFile(join(binDir, 'portless'), '#!/bin/sh\n', { mode: 0o755 });
+  process.env['PATH'] = `${binDir}:${originalPath ?? ''}`;
+  resetPortlessCmdForTests();
   execaMock.mockReset();
   execaMock.mockImplementation(async (cmd: string) => {
     if (cmd === 'pgrep') return pgrepResult;
@@ -92,13 +84,17 @@ beforeEach(async () => {
 
 afterEach(async () => {
   resetPortlessCache();
+  setPortlessAnswerProbeForTests(null);
+  process.env['PATH'] = originalPath;
+  resetPortlessCmdForTests();
+  await rm(binDir, { recursive: true, force: true });
   if (originalStateDir === undefined) delete process.env['PORTLESS_STATE_DIR'];
   else process.env['PORTLESS_STATE_DIR'] = originalStateDir;
   await rm(stateDir, { recursive: true, force: true });
 });
 
 describe('detectPortless', () => {
-  it('reports not-installed when `portless --version` fails', async () => {
+  it('reports not-installed when `portless --version` fails and no proxy answers', async () => {
     portlessResult = fail();
     expect(await detectPortless()).toEqual({ installed: false, proxyRunning: false });
   });
@@ -111,43 +107,31 @@ describe('detectPortless', () => {
     expect(r.proxyRunning).toBe(false);
   });
 
-  it('detects a running proxy from a live proxy.pid', async () => {
-    await writeFile(join(stateDir, 'proxy.pid'), String(process.pid), 'utf8');
-    expect((await detectPortless()).proxyRunning).toBe(true);
+  it('sees a live proxy and its mode even when the CLI is unreachable', async () => {
+    // The hub under launchd / the tray: no nvm on PATH, the :443 proxy up.
+    portlessResult = new Error('spawn portless ENOENT');
+    liveModes.add(443);
+    expect(await detectPortless()).toEqual({
+      installed: true,
+      proxyRunning: true,
+      mode: { port: 443, tls: true },
+    });
   });
 
-  it('treats a stale proxy.pid as not running', async () => {
-    // PID 2^31-1 is effectively never a live process.
-    await writeFile(join(stateDir, 'proxy.pid'), '2147483647', 'utf8');
-    expect((await detectPortless()).proxyRunning).toBe(false);
+  it('prefers the mode the CLI says is configured', async () => {
+    execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
+      if (Array.isArray(args) && args[0] === 'get') return ok('http://x.localhost:8099');
+      return portlessResult as ExecaResult;
+    });
+    liveModes.add(8099);
+    liveModes.add(1355);
+    expect((await detectPortless()).mode).toEqual({ port: 8099, tls: false });
   });
 
-  it('treats a foreign (root-owned) proxy.pid as running', async () => {
-    // PID 1 always exists; the sudo/:443 proxy runs as root, so a non-root
-    // probe gets EPERM — which still means the process is alive.
+  it('does not take a pid file alone for a live proxy', async () => {
+    // launchd's foreground proxy writes no pid, so ~/.portless/proxy.pid can hold
+    // a dead (or reused, EPERM) pid while nothing listens.
     await writeFile(join(stateDir, 'proxy.pid'), '1', 'utf8');
-    expect((await detectPortless()).proxyRunning).toBe(true);
-  });
-
-  it('detects a proxy that writes no pid file by probing the configured port', async () => {
-    // A --foreground proxy leaves no proxy.pid, so liveness comes from the port
-    // Portless says it serves on. Deliberately NOT a process-table scan: `pgrep
-    // -f "portless proxy"` matches any command line quoting that phrase.
-    execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
-      if (Array.isArray(args) && args[0] === 'get') return ok('http://x.localhost:1355');
-      return portlessResult as ExecaResult;
-    });
-    portAccepts.value = true;
-    expect((await detectPortless()).proxyRunning).toBe(true);
-    expect(connectMock).toHaveBeenCalledWith({ host: '127.0.0.1', port: 1355 });
-  });
-
-  it('reports not-running when nothing accepts on the configured port', async () => {
-    execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
-      if (Array.isArray(args) && args[0] === 'get') return ok('http://x.localhost:1355');
-      return portlessResult as ExecaResult;
-    });
-    portAccepts.value = false;
     expect((await detectPortless()).proxyRunning).toBe(false);
   });
 
@@ -363,12 +347,74 @@ describe('resolvePortlessHostStateDir', () => {
   });
 });
 
+describe('detectPortless probe sharing', () => {
+  it('runs one probe for concurrent callers', async () => {
+    execaMock.mockImplementation(async () => ok('0.13.0'));
+    resetPortlessCache();
+    await Promise.all([detectPortless(), detectPortless(), detectPortless()]);
+    const versionCalls = execaMock.mock.calls.filter(
+      (c) => Array.isArray(c[1]) && c[1][0] === '--version',
+    );
+    expect(versionCalls).toHaveLength(1);
+  });
+});
+
+describe('portlessCmd', () => {
+  it('finds the CLI next to the running Node when it is not on PATH', async () => {
+    // The hub's PATH (launchd, the tray) lacks nvm; `npm i -g` put portless
+    // beside the node binary that runs the hub.
+    process.env['PATH'] = '/nonexistent';
+    resetPortlessCmdForTests();
+    const realHome = process.env['HOME'];
+    process.env['HOME'] = stateDir; // nothing remembered there
+    const realExecPath = process.execPath;
+    process.execPath = join(binDir, 'node'); // binDir holds an executable `portless`
+    try {
+      expect(await portlessCmd()).toBe(join(binDir, 'portless'));
+    } finally {
+      process.execPath = realExecPath;
+      process.env['HOME'] = realHome;
+    }
+  });
+
+  it('prefers the path a shell remembered over the Node bin dir', async () => {
+    process.env['PATH'] = '/nonexistent';
+    resetPortlessCmdForTests();
+    const realHome = process.env['HOME'];
+    process.env['HOME'] = stateDir;
+    try {
+      await mkdir(join(stateDir, '.agentbox'), { recursive: true });
+      await writeFile(join(stateDir, '.agentbox', 'portless-bin'), `${join(binDir, 'portless')}\n`);
+      expect(await portlessCmd()).toBe(join(binDir, 'portless'));
+    } finally {
+      process.env['HOME'] = realHome;
+    }
+  });
+
+  it('uses the bare name when portless is on PATH', async () => {
+    expect(await portlessCmd()).toBe('portless');
+  });
+});
+
+describe('livePortlessUrl', () => {
+  it('composes the alias from the live mode, not a recorded URL', () => {
+    expect(livePortlessUrl('b', { port: 443, tls: true })).toBe('https://b.localhost');
+    expect(livePortlessUrl('b', { port: 1355, tls: false })).toBe('http://b.localhost:1355');
+  });
+
+  it('is undefined with no live proxy or no alias', () => {
+    expect(livePortlessUrl('b', null)).toBeUndefined();
+    expect(livePortlessUrl(undefined, { port: 443, tls: true })).toBeUndefined();
+  });
+});
+
 describe('portlessDoctorRow', () => {
   it('warns with the install hint when Portless is not installed', () => {
     const row = portlessDoctorRow({ installed: false, proxyRunning: false });
     expect(row.status).toBe('warn');
     expect(row.detail).toContain('not installed');
-    expect(row.hint).toContain(portlessInstallHint());
+    // The whole setup (CLI + boot service + portless.enabled), not just the npm install.
+    expect(row.hint).toContain('agentbox install portless');
   });
 
   it('warns with the start hint when installed but the proxy is down', () => {
@@ -522,7 +568,7 @@ describe('ensurePortlessProxy', () => {
   });
 
   it('does nothing when a proxy is already running', async () => {
-    await writeFile(join(stateDir, 'proxy.pid'), String(process.pid), 'utf8');
+    liveModes.add(1355);
     const state = await ensurePortlessProxy();
     expect(state.proxyRunning).toBe(true);
     expect(execaMock.mock.calls.some((c) => Array.isArray(c[1]) && c[1][0] === 'proxy')).toBe(
@@ -564,6 +610,35 @@ describe('ensurePortlessProxy', () => {
     expect(execaMock.mock.calls.some((c) => c[0] === 'osascript')).toBe(false);
   });
 
+  it('ensurePortlessForUrl: no proxy without a password means loopback, said once', async () => {
+    configuredMode('https://x.localhost');
+    const warn = vi.fn();
+    expect(await ensurePortlessForUrl(warn)).toBeNull();
+    resetPortlessCache();
+    expect(await ensurePortlessForUrl(warn)).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('agentbox install portless');
+    expect(execaMock.mock.calls.some((c) => c[0] === 'osascript')).toBe(false);
+  });
+
+  it('ensurePortlessForUrl: restarts a no-root proxy and reports the alias usable', async () => {
+    configuredMode('http://x.localhost:1355');
+    execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
+      if (Array.isArray(args) && args[0] === 'get') return ok('http://x.localhost:1355');
+      if (Array.isArray(args) && args[0] === 'proxy') {
+        liveModes.add(1355); // the started proxy now answers on its port
+        return ok('');
+      }
+      return portlessResult as ExecaResult;
+    });
+    expect(await ensurePortlessForUrl()).toEqual({ port: 1355, tls: false });
+    expect(execaMock).toHaveBeenCalledWith(
+      'portless',
+      ['proxy', 'start', '--no-tls', '-p', String(PORTLESS_PROXY_PORT)],
+      { reject: false },
+    );
+  });
+
   it('starts nothing unasked on a host that has never run a proxy', async () => {
     execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
       if (cmd === 'pgrep') return pgrepResult;
@@ -577,6 +652,20 @@ describe('ensurePortlessProxy', () => {
     );
   });
 
+  it('with allowModeChange:false, a refused :443 start does not fall back to :1355', async () => {
+    execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
+      if (Array.isArray(args) && args[0] === 'get') return ok('https://x.localhost');
+      if (cmd === 'osascript') return { exitCode: 1, stdout: '', stderr: 'User canceled. (-128)' };
+      if (Array.isArray(args) && args[0] === 'proxy') return fail('refused');
+      return portlessResult as ExecaResult;
+    });
+    const state = await ensurePortlessProxy({ allowRootPrompt: true, allowModeChange: false });
+    expect(state.proxyRunning).toBe(false);
+    expect(execaMock.mock.calls.some((c) => Array.isArray(c[1]) && c[1].includes('--no-tls'))).toBe(
+      false,
+    );
+  });
+
   it('never asks for a password unless allowRootPrompt is set', async () => {
     await ensurePortlessProxy();
     expect(execaMock.mock.calls.some((c) => c[0] === 'osascript')).toBe(false);
@@ -584,12 +673,12 @@ describe('ensurePortlessProxy', () => {
 
   it('reports the proxy as running once the start succeeds', async () => {
     // The post-start re-probe is what tells the caller it worked, so simulate a
-    // proxy that writes its pid file the way a real daemon start does.
+    // proxy that starts answering on its port.
     execaMock.mockImplementation(async (cmd: string, args?: readonly string[]) => {
       if (cmd === 'pgrep') return pgrepResult;
       if (Array.isArray(args) && args[0] === 'get') return ok('http://x.localhost:1355');
       if (Array.isArray(args) && args[0] === 'proxy' && args[1] === 'start') {
-        await writeFile(join(stateDir, 'proxy.pid'), String(process.pid), 'utf8');
+        liveModes.add(1355);
         return ok();
       }
       return portlessResult as ExecaResult;

@@ -74,6 +74,9 @@ import {
   stopBoxPollerOnRelay,
   generateRelayToken,
   generateVncPassword,
+  ensurePortlessForUrl,
+  livePortlessMode,
+  livePortlessUrl,
   portlessAlias,
   portlessGetUrl,
   portlessUnalias,
@@ -1814,12 +1817,12 @@ export function createCloudProvider(
       // endpoints.ts:108-117) so `<name>.localhost` shows up uniformly in
       // `agentbox list` / `inspect`. Falls back to the ephemeral preview URL
       // when Portless wasn't enabled or didn't take.
-      const portlessWebUrl =
-        box.portlessAlias !== undefined
-          ? (box.portlessUrl ?? `https://${box.portlessAlias}.localhost`)
-          : undefined;
       const cachedWebUrl = box.cloud?.previewUrls?.[webPort];
-      const webUrl = portlessWebUrl ?? cachedWebUrl;
+      const webUrl =
+        livePortlessUrl(
+          box.portlessAlias,
+          box.portlessAlias !== undefined ? await livePortlessMode() : null,
+        ) ?? cachedWebUrl;
       // Surface each per-service preview URL alongside the main WebProxy.
       // Naming is `service-<port>` because we don't track the YAML name
       // -> port map on the record (avoids extra wire shape just for
@@ -1965,13 +1968,14 @@ export function createCloudProvider(
       // Prefer the stable Portless URL when one was registered (Hetzner gets
       // both; Daytona naturally skips since previewUrl is non-loopback). The
       // `--loopback` flag forces the raw signed/loopback path instead.
-      if (!opts?.loopback) {
-        if (kind === 'web' && box.portlessAlias) {
-          return box.portlessUrl ?? `https://${box.portlessAlias}.localhost`;
-        }
-        if (kind === 'vnc' && box.portlessVncAlias) {
-          return box.portlessVncUrl ?? `https://${box.portlessVncAlias}.localhost`;
-        }
+      // Only while a host proxy serves the alias — it outlives the proxy, and
+      // the loopback forward / preview URL below works without one.
+      const alias = kind === 'web' ? box.portlessAlias : box.portlessVncAlias;
+      // Asked of the live proxy rather than read off the record, whose URL names
+      // the proxy mode at the time it was written.
+      if (!opts?.loopback && alias !== undefined) {
+        const url = livePortlessUrl(alias, await ensurePortlessForUrl());
+        if (url !== undefined) return url;
       }
       // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).
       const port =

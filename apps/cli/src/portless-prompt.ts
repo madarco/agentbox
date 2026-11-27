@@ -8,6 +8,8 @@ import {
   portlessInstallHint,
   portlessServiceHint,
   portlessStartHint,
+  readState,
+  rememberPortlessBin,
   resetPortlessCache,
 } from '@agentbox/sandbox-docker';
 import { offerPortlessService } from './commands/install-portless.js';
@@ -41,8 +43,19 @@ export interface PortlessPromptArgs {
  * `{{AGENTBOX_BOX_HOST}}`, so host and box only agree while the host proxy
  * serves that exact scheme and port.
  */
-export async function setupPortlessHost(opts: { allowRootPrompt?: boolean } = {}): Promise<void> {
+export async function setupPortlessHost(
+  opts: {
+    allowRootPrompt?: boolean;
+    /**
+     * May a dismissed password prompt fall back to the no-root :1355 proxy?
+     * Defaults to "only when no box carries an alias yet": anywhere else that
+     * silently rewrites every live `<box>.localhost` URL.
+     */
+    allowModeChange?: boolean;
+  } = {},
+): Promise<void> {
   const allowRootPrompt = opts.allowRootPrompt ?? true;
+  const allowModeChange = opts.allowModeChange ?? !(await anyBoxHasPortlessAlias());
   let state = await detectPortless();
 
   if (!state.installed) {
@@ -57,6 +70,10 @@ export async function setupPortlessHost(opts: { allowRootPrompt?: boolean } = {}
     }
     state = await detectPortless();
   }
+
+  // This runs in the user's shell, which finds `portless`; the hub (launchd, the
+  // tray) may not, so leave it the absolute path.
+  await rememberPortlessBin();
 
   if (state.proxyRunning) {
     log.info('Portless proxy already running — boxes will use it.');
@@ -73,11 +90,11 @@ export async function setupPortlessHost(opts: { allowRootPrompt?: boolean } = {}
     log.info(
       'Starting the Portless proxy on https://<box>.localhost — you may be asked for your password.',
     );
-    state = await ensurePortlessProxy({ allowRootPrompt: true });
+    state = await ensurePortlessProxy({ allowRootPrompt: true, allowModeChange });
   } else {
     const s = spinner();
     s.start('starting portless proxy');
-    state = await ensurePortlessProxy({ allowRootPrompt: false });
+    state = await ensurePortlessProxy({ allowRootPrompt: false, allowModeChange });
     // No port asserted here: which port comes back is whichever one this host is
     // already configured for. The real URL is resolved via `portless get`.
     s.stop(state.proxyRunning ? 'portless proxy started' : 'portless proxy did not start');
@@ -93,6 +110,22 @@ export async function setupPortlessHost(opts: { allowRootPrompt?: boolean } = {}
   if (allowRootPrompt) {
     log.success('Portless proxy started');
     await offerPortlessService();
+  }
+}
+
+/**
+ * Whether any recorded box carries a Portless alias, i.e. whether this host has
+ * live `<box>.localhost` URLs a proxy mode change would rewrite. A read failure
+ * answers yes: the safe side is not switching modes.
+ */
+export async function anyBoxHasPortlessAlias(): Promise<boolean> {
+  try {
+    const state = await readState();
+    return state.boxes.some(
+      (b) => b.portlessAlias !== undefined || b.portlessVncAlias !== undefined,
+    );
+  } catch {
+    return true;
   }
 }
 
@@ -124,7 +157,8 @@ export async function resolvePortlessEnabled(): Promise<boolean | undefined> {
  * rather than a silently different URL. Warns once, at most.
  */
 export async function ensurePortlessProxyQuietly(): Promise<void> {
-  const state = await ensurePortlessProxy({ allowRootPrompt: false });
+  await rememberPortlessBin();
+  const state = await ensurePortlessProxy({ allowRootPrompt: false, allowModeChange: false });
   if (!state.installed || state.proxyRunning) return;
   log.warn(
     `Portless proxy is not running — box URLs fall back to loopback ports. ` +

@@ -29,7 +29,7 @@ import { destroyBox, inspectBox, pauseBox, startBox, stopBox, unpauseBox } from 
 import { execInBox, inspectContainerStatus } from './docker.js';
 import { boxResourceStats } from './stats.js';
 import { detectEngine } from './sync/host-export.js';
-import { portlessGetUrl } from './portless.js';
+import { ensurePortlessForUrl, livePortlessUrl } from './portless.js';
 import { DEFAULT_BOX_IMAGE, imageExists, pullOrBuild } from './image.js';
 import {
   computeDockerContextFingerprint,
@@ -242,8 +242,13 @@ export const dockerProvider: Provider = {
       // declared (EXPOSE 80) so no port suffix is needed.
       return `http://${box.container}.orb.local`;
     }
+    // Only while a proxy actually serves it: the alias outlives the proxy, and
+    // a dead `<box>.localhost` is worse than the loopback port.
+    // At the URL the live proxy serves now, not the record's: a URL recorded
+    // at create names the proxy mode of that moment.
     if (box.portlessAlias && !opts?.loopback) {
-      return box.portlessUrl ?? (await portlessGetUrl(box.portlessAlias));
+      const url = livePortlessUrl(box.portlessAlias, await ensurePortlessForUrl());
+      if (url !== undefined) return url;
     }
     if (box.webHostPort === undefined) {
       throw new Error(`web port not resolved for box ${box.name}; is the container running?`);

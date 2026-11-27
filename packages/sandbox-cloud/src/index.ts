@@ -188,6 +188,10 @@ export {
 // gateway per provider (`host.docker.internal` for docker, `127.0.0.1` for
 // hetzner where the box is the VPS).
 export {
+  ensurePortlessForUrl,
+  livePortlessMode,
+  livePortlessUrl,
+  type PortlessMode,
   detectPortless,
   ensurePortlessProxy,
   installPortless,

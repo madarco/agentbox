@@ -298,6 +298,12 @@ export {
   type RefreshResult,
 } from './sync/host-export.js';
 export {
+  ensurePortlessForUrl,
+  livePortlessMode,
+  livePortlessUrl,
+  portlessCmd,
+  rememberPortlessBin,
+  type PortlessMode,
   detectPortless,
   ensurePortlessProxy,
   installPortless,
