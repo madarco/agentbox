@@ -36,15 +36,17 @@ export function autostartUnitPath(home: string = homedir()): string | null {
   return null;
 }
 
-/** The command the unit runs: `<node> <cliEntry> hub start --no-open`. Pure. */
+/**
+ * How the unit runs agentbox: `argv` is the prefix before `hub start --no-open`
+ * — the launcher alone (`[~/.agentbox/bin/agentbox]`), or `[node, cliEntry]`.
+ */
 export interface AutostartInvocation {
-  execPath: string;
-  cliEntry: string;
+  argv: string[];
 }
 
 /** launchd LaunchAgent plist. `RunAtLoad` + `KeepAlive` = start on login, restart on crash. */
 export function launchdPlist(inv: AutostartInvocation, logFile: string): string {
-  const args = [inv.execPath, inv.cliEntry, 'hub', 'start', '--no-open'];
+  const args = [...inv.argv, 'hub', 'start', '--no-open'];
   const argXml = args.map((a) => `    <string>${escapeXml(a)}</string>`).join('\n');
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -73,7 +75,7 @@ export function launchdPlist(inv: AutostartInvocation, logFile: string): string 
 
 /** systemd user unit. `WantedBy=default.target` = start on (lingering) login. */
 export function systemdUnit(inv: AutostartInvocation): string {
-  const exec = [inv.execPath, inv.cliEntry, 'hub', 'start', '--no-open']
+  const exec = [...inv.argv, 'hub', 'start', '--no-open']
     .map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))
     .join(' ');
   return [

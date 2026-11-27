@@ -12,6 +12,7 @@
  * `ensureImage` rebuilds it on the next create iff the build context changed).
  */
 
+import { ensureLauncher, launcherPath } from './launcher.js';
 import {
   DEFAULT_BOX_IMAGE,
   ensureRelay,
@@ -137,6 +138,14 @@ export async function runPostUpdateRefresh(opts: PostUpdateRefreshOptions = {}):
   const warn = (step: string, err: unknown) => {
     log.warn(`${step} failed (${err instanceof Error ? err.message : String(err)}) — continuing`);
   };
+
+  // This is the new build: point ~/.agentbox/bin/agentbox at it (the startup
+  // hook already did, unless the old build's layout differed).
+  try {
+    if (ensureLauncher()) say(`re-pointed the launcher (${launcherPath()})`);
+  } catch (err) {
+    warn('launcher refresh', err);
+  }
 
   if (!opts.skipSkills) {
     try {

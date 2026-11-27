@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { launcherTarget, spawnEnvFor } from '../lib/launcher.js';
 import { confirm, intro, log, outro } from '@agentbox/cli-kit';
 import { DEFAULT_BOX_IMAGE } from '@agentbox/sandbox-docker';
 import { Command } from 'commander';
@@ -53,6 +54,17 @@ function selfUpdateCommand(
   if (method === 'npm') return { cmd: 'npm', args: ['install', '-g', `${PKG}@${spec}`] };
   if (method === 'pnpm') return { cmd: 'pnpm', args: ['add', '-g', `${PKG}@${spec}`] };
   return null;
+}
+
+/**
+ * How to run the freshly installed CLI. An npm global updates in place, so the
+ * same path (run by the same Node) is the new build — no PATH lookup that could
+ * find another Node's install. pnpm's global store path is per version, so
+ * there `agentbox` from PATH is the way to the new one.
+ */
+function freshCli(method: ExecMethod, args: string[]): [string, string[]] {
+  const target = method === 'npm' ? launcherTarget() : null;
+  return target ? [process.execPath, [target.script, ...args]] : ['agentbox', args];
 }
 
 function describeSelfUpdate(method: ExecMethod, spec: string): string {
@@ -145,7 +157,10 @@ async function resolveHubUpdate(args: {
 
 function runInherit(cmd: string, args: string[]): Promise<number> {
   return new Promise<number>((resolveP, rejectP) => {
-    const child = spawn(cmd, args, { stdio: 'inherit' });
+    // npm only: under ~/.agentbox/bin/agentbox, PATH's node/npm may be another
+    // version, whose `npm i -g` would update a different install than the one
+    // this process (and the launcher) runs. pnpm and `agentbox` keep PATH as is.
+    const child = spawn(cmd, args, { stdio: 'inherit', env: spawnEnvFor(cmd) });
     child.on('error', rejectP);
     child.on('close', (code) => resolveP(code ?? 0));
   });
@@ -333,7 +348,7 @@ export const updateCommand = new Command('self-update')
           // unknown option, which would fail the whole refresh.
           ...(opts.skipPlugins ? ['--skip-plugins'] : []),
         ];
-        const code = await runInherit('agentbox', args);
+        const code = await runInherit(...freshCli(method, args));
         if (code !== 0) {
           // Leave the stamp on the old version: the next run of the new
           // binary detects the mismatch and offers the refresh again.
@@ -360,7 +375,7 @@ export const updateCommand = new Command('self-update')
             initialValue: true,
           }));
         if (go) {
-          const code = await runInherit('agentbox', ['hub', 'update', '-y']);
+          const code = await runInherit(...freshCli(method, ['hub', 'update', '-y']));
           if (code !== 0) {
             log.warn(
               `hub update exited ${String(code)} — the control box is still on its old build; retry with \`agentbox hub update\``,

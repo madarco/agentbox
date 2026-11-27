@@ -11,7 +11,7 @@
 #
 # Subcommands:
 #   up        create the VM if absent (cx23 / nbg1 / ubuntu-24.04), install
-#             node 20 + docker + git + tmux, create a non-root `dev` user
+#             node 24 + docker + git + tmux, create a non-root `dev` user
 #             (docker + passwordless sudo). Idempotent: reuses a live VM.
 #   deploy    build the monorepo, npm pack apps/cli, scp + `npm install -g` it
 #             on the VM. Re-run after local changes. Use --no-build to skip build.
@@ -75,13 +75,13 @@ require_vm() {
 ssh_dev() { ssh -i "$KEY" "${SSH_OPTS[@]}" "dev@$IP" "$@"; }
 ssh_root() { ssh -i "$KEY" "${SSH_OPTS[@]}" "root@$IP" "$@"; }
 
-# --- cloud-init: node 20 + docker + git + tmux, non-root `dev` user ----------
+# --- cloud-init: node 24 + docker + git + tmux, non-root `dev` user ----------
 cloud_init() {
 cat <<'EOF'
 #cloud-config
 package_update: true
 runcmd:
-  - curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  - curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   - apt-get install -y nodejs docker.io git tmux ca-certificates
   - systemctl enable --now docker
   - id dev >/dev/null 2>&1 || useradd -m -s /bin/bash dev
