@@ -726,7 +726,7 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   }
 
   // 4b) Pin it as the default backend for new boxes (`box.provider`).
-  const isDefaultProvider = await maybeSetDefaultProvider(providerName, opts.yes ?? false);
+  await maybeSetDefaultProvider(providerName, opts.yes ?? false);
 
   // 4c) Portless: `https://<box>.localhost` for providers whose box URL is a
   // host loopback port. A separate step — see install-portless-step.ts.
@@ -853,7 +853,6 @@ export async function runInstallWizard(opts: RunInstallWizardOptions = {}): Prom
   process.stdout.write(
     renderNextSteps({
       provider: providerName,
-      isDefault: isDefaultProvider,
       columns: process.stdout.columns,
       color: process.stdout.isTTY === true && !process.env.NO_COLOR,
     }),

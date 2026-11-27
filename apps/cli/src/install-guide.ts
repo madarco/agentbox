@@ -17,10 +17,8 @@ export function visibleWidth(s: string): number {
 }
 
 export interface GuideOptions {
-  /** Provider the wizard set up. */
+  /** Provider the wizard set up; the guide always names it, default or not. */
   provider: string;
-  /** Whether new boxes default to it (then the `agentbox <provider>` prefix is dropped). */
-  isDefault: boolean;
   /** Terminal width; undefined (not a TTY) falls back to 80. */
   columns?: number | undefined;
   /** Emit ANSI bold/colour. */
@@ -34,10 +32,10 @@ interface Row {
   desc: string;
 }
 
-function rows(provider: string, isDefault: boolean): Row[] {
-  const start = isDefault ? 'agentbox claude' : `agentbox ${provider} claude`;
+function rows(provider: string): Row[] {
   return [
-    { cmd: start, depth: 0, desc: 'start a box (or codex, opencode)' },
+    { cmd: 'cd your-project/', depth: 0, desc: '' },
+    { cmd: `agentbox ${provider} claude`, depth: 0, desc: 'start a box (or codex, opencode)' },
     { cmd: 'Setup wizard? Yes', depth: 1, desc: 'installs deps, writes agentbox.yaml' },
     { cmd: 'Ctrl+a d', depth: 1, desc: 'detach; claude keeps running' },
     { cmd: 'agentbox attach', depth: 0, desc: 'go back to it later' },
@@ -48,7 +46,7 @@ function rows(provider: string, isDefault: boolean): Row[] {
 /** The guide's content lines, without any frame. */
 function contentLines(o: GuideOptions): string[] {
   const bold = (s: string): string => (o.color ? `${ESC}1m${s}${ESC}22m` : s);
-  const rs = rows(o.provider, o.isDefault);
+  const rs = rows(o.provider);
   const left = (r: Row): string => '  '.repeat(r.depth) + r.cmd;
   const colW = Math.max(...rs.map((r) => left(r).length)) + 3;
   return [
@@ -57,8 +55,12 @@ function contentLines(o: GuideOptions): string[] {
       const l = left(r);
       // Commands in bold; the descriptions stay in the default foreground.
       const shown = r.depth === 0 ? bold(r.cmd) : l;
-      return `  ${shown}${' '.repeat(colW - l.length)}${r.desc}`;
+      return r.desc ? `  ${shown}${' '.repeat(colW - l.length)}${r.desc}` : `  ${shown}`;
     }),
+    '',
+    // Two lines so the longest provider name still fits the 80-column box.
+    `Or ask your agent to launch an agentbox in ${o.provider}`,
+    `using the ${bold('/agentbox')} skill.`,
   ];
 }
 
