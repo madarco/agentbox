@@ -21,6 +21,8 @@
  *   --dark             dark theme (the hub follows the OS scheme when no theme is saved)
  *   --storage <k>=<v>  a localStorage entry set before the page loads, e.g.
  *                      hub-sidebar=collapsed for the collapsed rail (repeatable)
+ *   --scenario <name>  the demo data set (fixtures/scenarios.mjs; default full), sent
+ *                      as the fixture-scenario cookie
  *   --base <url>       the fixture hub (default $HUB_FIXTURE_URL or http://127.0.0.1:3126)
  *
  * Steps run in the order given, after the page loads. Selectors are Playwright's.
@@ -32,6 +34,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { NOW } from "../fixtures/acme.mjs";
+import { SCENARIOS } from "../fixtures/scenarios.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -60,7 +63,7 @@ for (let i = 0; i < args.length; i++) {
   } else if (a === "--full") opts.full = true;
   else if (a === "--dark") opts.dark = true;
   else if (a === "--storage") (opts.storage ??= []).push(args[++i]);
-  else if (["--size", "--scale", "--el", "--base"].includes(a)) opts[a.slice(2)] = args[++i];
+  else if (["--size", "--scale", "--el", "--base", "--scenario"].includes(a)) opts[a.slice(2)] = args[++i];
   else if (a.startsWith("--")) throw new Error(`Unknown option ${a}`);
   else rest.push(a);
 }
@@ -84,6 +87,7 @@ async function run(page, step) {
   return page.waitForTimeout(step.ms);
 }
 
+if (opts.scenario && !SCENARIOS[opts.scenario]) throw new Error(`unknown scenario "${opts.scenario}": ${Object.keys(SCENARIOS).join(", ")}`);
 const [width, height] = opts.size.split("x").map(Number);
 const url = opts.base.replace(/\/$/, "") + path;
 
@@ -98,6 +102,7 @@ try {
     timezoneId: "UTC",
   });
   await context.clock.setFixedTime(new Date(NOW));
+  if (opts.scenario) await context.addCookies([{ name: "fixture-scenario", value: opts.scenario, url: opts.base }]);
   if (opts.storage) {
     const entries = opts.storage.map((kv) => {
       const at = kv.indexOf("=");
@@ -147,7 +152,7 @@ try {
   const shot = { path: out, animations: "disabled", caret: "hide" };
   if (opts.el) await page.locator(opts.el).first().screenshot(shot);
   else await page.screenshot(shot);
-  console.log(`shots/${file}  ←  ${url}`);
+  console.log(`shots/${file}  ←  ${url}${opts.scenario ? `  [${opts.scenario}]` : ""}`);
   for (const p of new Set(missing)) console.warn(`  ! ${p} answered 404: add a fixture in fixtures/api.mjs`);
 } finally {
   await browser.close();

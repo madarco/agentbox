@@ -28,6 +28,8 @@
  *   --no-prompt             no prompt line (a full-screen TUI)
  *   --first-run             no ~/.agentbox/setup-complete.json in the scratch HOME, so any
  *                           command opens the first-run setup wizard (`agentbox install`)
+ *   --scenario <name>       the demo data set (fixtures/scenarios.mjs; default full): the
+ *                           scratch HOME's hub token names it, and its PC skills are written
  *   --title <text>          the window title (default "agentbox")
  *   --scale <n>             pixel density (default 2)
  */
@@ -36,7 +38,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { MACHINES, skillCompare, skillMd } from "../fixtures/acme.mjs";
+import { MACHINES } from "../fixtures/acme.mjs";
+import { SCENARIOS, dataFor } from "../fixtures/scenarios.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = resolve(root, "..");
@@ -50,7 +53,7 @@ if (dash === -1) {
   process.exit(1);
 }
 const cmd = argv.slice(dash + 1);
-const opts = { cols: 110, rows: 28, cwd: home, shownCwd: "~/Projects/commerce", send: [], settle: 800, title: "agentbox", scale: 2, prompt: true };
+const opts = { scenario: "full", cols: 110, rows: 28, cwd: home, shownCwd: "~/Projects/commerce", send: [], settle: 800, title: "agentbox", scale: 2, prompt: true };
 const rest = [];
 const own = argv.slice(0, dash);
 for (let i = 0; i < own.length; i++) {
@@ -64,6 +67,7 @@ for (let i = 0; i < own.length; i++) {
   else if (a === "--send") opts.send.push(v());
   else if (a === "--settle") opts.settle = Number(v());
   else if (a === "--title") opts.title = v();
+  else if (a === "--scenario") opts.scenario = v();
   else if (a === "--scale") opts.scale = Number(v());
   else if (a === "--no-prompt") opts.prompt = false;
   else if (a === "--first-run") opts.firstRun = true;
@@ -72,20 +76,27 @@ for (let i = 0; i < own.length; i++) {
 }
 const [file] = rest;
 if (!file || !cmd.length) throw new Error("need a file and a command after --");
+if (!SCENARIOS[opts.scenario]) throw new Error(`unknown scenario "${opts.scenario}": ${Object.keys(SCENARIOS).join(", ")}`);
+const data = dataFor(opts.scenario);
 
-/* The scratch HOME: the CLI's local hub is the fixture hub. The token is a
-   placeholder the fixture hub never checks. */
+/* The scratch HOME: the CLI's local hub is the fixture hub. The fixture hub
+   never checks the token; it reads the scenario from it. */
 mkdirSync(join(home, ".agentbox/hub"), { recursive: true });
 writeFileSync(join(home, ".agentbox/config.yaml"), "relay:\n  port: 3126\n");
-writeFileSync(join(home, ".agentbox/hub/token"), "fixture-not-a-secret\n");
-/* This PC's own skills, as the hub's comparison of studio-mac lists them
-   (acme.mjs), so `agentbox skills` has a local side to compare. */
+writeFileSync(join(home, ".agentbox/hub/token"), `fixture-scenario-${opts.scenario}\n`);
+/* This PC's own skills, as the hub's comparison of studio-mac lists them, so
+   `agentbox skills` has a local side to compare. A simple scenario carries the
+   exact files (pcSkills), so the CLI finds the in-sync ones the same. */
 for (const dir of [".claude/skills", ".agents/skills"]) rmSync(join(home, dir), { recursive: true, force: true });
-for (const r of skillCompare[MACHINES.studio].rows) {
-  if (!r.pc) continue;
-  const dir = join(home, r.pc.dirs[0], r.name);
+const pcSkills =
+  data.pcSkills ??
+  data.skillCompare[MACHINES.studio].rows
+    .filter((r) => r.pc)
+    .map((r) => ({ name: r.name, dir: r.pc.dirs[0], content: data.skillMd[r.name] ?? `---\nname: ${r.name}\ndescription: ${r.description}\n---\n\n# ${r.name}\n` }));
+for (const s of pcSkills) {
+  const dir = join(home, s.dir, s.name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "SKILL.md"), skillMd[r.name] ?? `---\nname: ${r.name}\ndescription: ${r.description}\n---\n\n# ${r.name}\n`);
+  writeFileSync(join(dir, "SKILL.md"), s.content);
 }
 const marker = join(home, ".agentbox/setup-complete.json");
 if (opts.firstRun) rmSync(marker, { force: true });
@@ -207,4 +218,4 @@ try {
 } finally {
   await browser.close();
 }
-console.log(`shots/${file}  ←  ${shown}  (${opts.cols}x${opts.rows})`);
+console.log(`shots/${file}  ←  ${shown}  (${opts.cols}x${opts.rows})  [${opts.scenario}]`);

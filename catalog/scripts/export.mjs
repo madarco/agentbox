@@ -4,12 +4,17 @@
  * AgentBox-branded canvas (scripts/frame.mjs, the same layout the gallery
  * previews), written to out/social/.
  *
- *   pnpm export hub/skills                      # every format: 16x9, 1x1, 4x5, 9x16
+ *   pnpm export hub/skills                      # every format: 16x9, 1x1, 4x5, 9x16 (the simple picture, if any)
+ *   pnpm export hub/skills --scenario full      # the entry's first picture of that scenario
  *   pnpm export hub/skills --format 16x9,1x1
  *   pnpm export tray/menu --title "Every box, one click away"
  *   pnpm export cli/install --file 1            # the entry's second picture
  *   pnpm export hub/usage --crop 0,0,2880,1800  # a part of a tall page, in image pixels
  *   pnpm export cli/ls --no-title
+ *
+ * Without --file or --scenario it exports the entry's first `simple` picture
+ * (the calm demo data, made for posts), else its cover. The file name carries
+ * a scenario other than full: out/social/hub-skills.simple-16x9.png.
  *
  * The headline, crop and kind default to the entry's `social` in
  * screens/catalog.mjs. Set MARKETING_ASSETS to also copy each file there
@@ -35,7 +40,8 @@ const bool = (name) => {
   return i === -1 ? false : (argv.splice(i, 1), true);
 };
 const formats = (flag("--format") ?? Object.keys(FORMATS).join(",")).split(",");
-const fileIndex = Number(flag("--file") ?? 0);
+const fileFlag = flag("--file");
+const scenario = flag("--scenario");
 const title = flag("--title");
 const crop = flag("--crop");
 const noTitle = bool("--no-title");
@@ -47,6 +53,14 @@ if (!s) {
   process.exit(1);
 }
 for (const f of formats) if (!FORMATS[f]) throw new Error(`unknown format ${f}: ${Object.keys(FORMATS).join(", ")}`);
+const scenarioOf = (x) => x.scenario ?? "full";
+const pick = (sc) => s.files.findIndex((x) => scenarioOf(x) === sc && existsSync(pathOf(x.file)));
+let fileIndex;
+if (fileFlag !== null) fileIndex = Number(fileFlag);
+else if (scenario) {
+  fileIndex = pick(scenario);
+  if (fileIndex === -1) throw new Error(`${id}: no ${scenario} picture`);
+} else fileIndex = pick("simple") === -1 ? (s.cover ?? 0) : pick("simple");
 const f = s.files[fileIndex];
 if (!f || !existsSync(pathOf(f.file))) throw new Error(`${id}: no picture ${fileIndex} (run pnpm screens check)`);
 
@@ -61,7 +75,7 @@ const src = `data:image/png;base64,${png.toString("base64")}`;
 const outDir = join(root, "out/social");
 mkdirSync(outDir, { recursive: true });
 const assets = process.env.MARKETING_ASSETS ? resolve(process.env.MARKETING_ASSETS) : null;
-const base = id.replace(/\//g, "-") + (fileIndex ? `-${fileIndex}` : "");
+const base = id.replace(/\//g, "-") + (scenarioOf(f) === "full" ? "" : `.${scenarioOf(f)}`) + (s.files.filter((x) => scenarioOf(x) === scenarioOf(f)).indexOf(f) > 0 ? `-${fileIndex}` : "");
 
 const browser = await chromium.launch();
 try {

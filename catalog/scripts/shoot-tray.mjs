@@ -34,12 +34,16 @@
  *   --manager <ws>    capture the Manager window on that fixture workspace instead of the menu
  *   --idle <s>        seconds of no input to wait for first (default 3)
  *   --restart         quit and relaunch the fixture app first (resets its demo state)
+ *   --scenario <name> the tray's fixture data set, passed to the app as
+ *                     --fixtures-scenario <name> (the names in fixtures/scenarios.mjs).
+ *                     The app is relaunched when the scenario changes.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { SCENARIOS } from "../fixtures/scenarios.mjs";
 import { addBackdrop } from "./backdrop.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -56,6 +60,7 @@ for (let i = 0; i < args.length; i++) {
   if (a === "--press") opts.press.push(args[++i]);
   else if (a === "--manager") opts.manager = args[++i];
   else if (a === "--idle") opts.idle = Number(args[++i]);
+  else if (a === "--scenario") opts.scenario = args[++i];
   else if (["--alert", "--restart"].includes(a)) opts[a.slice(2)] = true;
   else if (a.startsWith("--")) throw new Error(`Unknown option ${a}`);
   else rest.push(a);
@@ -65,6 +70,7 @@ if (!file) {
   console.error("Usage: pnpm shoot:tray <file under shots/> [--press <ax id>]... (the header of scripts/shoot-tray.mjs lists the options)");
   process.exit(1);
 }
+if (opts.scenario && !SCENARIOS[opts.scenario]) throw new Error(`unknown scenario "${opts.scenario}": ${Object.keys(SCENARIOS).join(", ")}`);
 for (const [path, how] of [[APP, "cd ../agentbox-tray && make e2e-app"], [DRIVER, "cd e2e/tray-driver && swift build -c release"]])
   if (!existsSync(path)) throw new Error(`${path} is missing: ${how}`);
 
@@ -106,8 +112,13 @@ const capture = (id, out) => {
   if (r.status !== 0 || !existsSync(out)) throw new Error(`screencapture -l ${id} failed (Screen Recording permission?)`);
 };
 
+/* The running fixture app's scenario: an instance from another --scenario run
+   would answer with the wrong data, so it is relaunched. */
+const STAMP = join(tmpdir(), "agentbox-shoot-tray-scenario");
+const scenarioArgs = opts.scenario ? ["--fixtures-scenario", opts.scenario] : [];
 async function launch(extra = []) {
-  spawnSync("open", ["-n", APP, "--args", "--fixtures", ...extra]);
+  spawnSync("open", ["-n", APP, "--args", "--fixtures", ...scenarioArgs, ...extra]);
+  writeFileSync(STAMP, opts.scenario ?? "full");
   for (let i = 0; i < 50; i++) {
     await sleep(200);
     const pid = pidOf();
@@ -133,7 +144,8 @@ async function waitIdle() {
 const out = join(root, "shots", file);
 mkdirSync(dirname(out), { recursive: true });
 
-if (opts.restart || opts.manager) await quit();
+const running = existsSync(STAMP) ? readFileSync(STAMP, "utf8") : "full";
+if (opts.restart || opts.manager || (pidOf() && running !== (opts.scenario ?? "full"))) await quit();
 let pid = pidOf() ?? (await launch(opts.manager ? ["--open-manager", opts.manager] : []));
 
 try {
@@ -176,7 +188,7 @@ try {
       addBackdrop(out);
     }
   }
-  console.log(`shots/${file}  ←  ${PROC} --fixtures${opts.press.length ? " · " + opts.press.join(" → ") : ""}`);
+  console.log(`shots/${file}  ←  ${PROC} --fixtures${opts.scenario ? ` --fixtures-scenario ${opts.scenario}` : ""}${opts.press.length ? " · " + opts.press.join(" → ") : ""}`);
 } finally {
   if (opts.alert) await quit();
   else if (!opts.manager && pidOf()) {

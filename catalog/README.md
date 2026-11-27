@@ -26,6 +26,7 @@ export command to copy.
 | `screens/setups.mjs` | The environments the screens are taken in, and the commands that start them. |
 | `screens/template.html` | The gallery page. `pnpm screens` writes `screens/index.html` from it. |
 | `fixtures/acme.mjs` | The demo data: projects, workspaces, boxes, approvals, accounts, skills. |
+| `fixtures/scenarios.mjs` | The scenarios (`full`, `simple` and its variants), each a function of acme.mjs's tables. |
 | `fixtures/api.mjs` | Answers every `/api/v1` route the hub pages ask for, from that data. |
 | `scripts/fixture-hub.mjs` | The real hub UI (`apps/hub`'s production build) on the fixtures, at 127.0.0.1:3126. |
 | `scripts/shoot.mjs` | A hub page screenshot (Playwright, 1440x900 at 2x, clock pinned). |
@@ -65,15 +66,60 @@ tray runs as a second app with its own bundle id.
    been idle for 3 seconds, so leave the mouse alone while it runs.
 3. Add an entry to `screens/catalog.mjs` with the `hub()`, `tray()` or `cli()`
    helper. Put the exact shoot command in `files[].shoot`, so
-   `pnpm screens retake <id>` can take it again.
-4. Run `pnpm screens check`. It fails on a missing file, a picture under
-   `shots/` that no entry lists, a duplicate id or an unknown topic.
+   `pnpm screens retake <id>` can take it again. A picture in another
+   scenario is another file of the same entry (see Scenarios).
+4. Run `pnpm screens check`. It fails on a missing file (unless the file's
+   `check` starts "Not taken yet"), a picture under `shots/` that no entry
+   lists, a duplicate id, an unknown topic, or a name that doesn't match its
+   scenario.
 
 If a hub page shows an error or an empty state, the fixture hub's log has an
 `unhandled GET /api/v1/...` line and `shoot` warns "answered 404". Add that
 route to `fixtures/api.mjs`. The tray's demo data lives in the tray repo
 (`Sources/AgentBox/Source/FixtureBoxSource.swift`); keep `fixtures/acme.mjs`
 telling the same story.
+
+## Scenarios
+
+The demo data comes in scenarios (`fixtures/scenarios.mjs`), and every
+picture names the one it was taken on:
+
+| Scenario | For |
+| --- | --- |
+| `full` | Every state at once (errors, limits, revoked logins, skills in every sync state): planning and QA, "what does the UI do with X". |
+| `simple` | A calm day at Acme: Commerce, two projects, three healthy boxes, two comfortable plans, four skills in sync. Social posts and demos. |
+| `simple-approval` | `simple`, and fix-webhooks asks to run `gh pr create`. |
+| `simple-skill-behind` | `simple`, and e2e-playwright is newer on studio-mac than on the Hub. |
+| `simple-skill-new` | `simple`, and release-notes is new on the Hub, not on studio-mac yet. |
+
+The tray tells the same story in its own fixture mode: same names, numbers
+and titles.
+
+- **Browser:** one running `pnpm fixture-hub` serves them all, chosen per
+  request. Open any page with `?scenario=simple` (it sets a
+  `fixture-scenario` cookie, so the rest of the session stays there), or pick
+  one at http://127.0.0.1:3126/scenarios. No cookie means `full`.
+- **Shoot:** `pnpm shoot hub/skills.simple.png /settings/skills --full --scenario simple`.
+- **CLI:** `pnpm shoot:cli cli/ls.simple.png --scenario simple -- ls --global`.
+  The scratch HOME's hub token names the scenario, and its PC skills are that
+  scenario's files.
+- **Tray:** `pnpm shoot:tray tray/menu.simple.png --restart --scenario simple`
+  launches the app with `--fixtures-scenario simple`.
+- **Gallery:** the scenario menu at the top filters the pictures; a screen's
+  detail lists all of them, each with its badge.
+- **Retake one scenario:** `pnpm screens retake hub/ --scenario simple`.
+- **Export:** `pnpm export <id>` takes the entry's `simple` picture when it has
+  one (`--scenario full`, or `--file n`, for another).
+
+**File names.** A picture's name ends with its scenario, next to the `full`
+one: `shots/hub/skills.png` is `full`, `shots/hub/skills.simple.png` is
+`simple`. The two versions of a screen sit side by side in a folder listing,
+the old paths stay put, and `pnpm screens check` reads the scenario from the
+name and fails when it disagrees with the shoot command's `--scenario`.
+
+**Add a variant.** In `fixtures/scenarios.mjs`, write a function that takes
+`simpleSpec()` and changes one thing (see `approvalSpec`), and add it to
+`SCENARIOS` with a one-line `about`. Keep `full` as it is: it is the QA set.
 
 ## Export for social
 

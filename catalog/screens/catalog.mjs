@@ -12,7 +12,11 @@
      what      one line on what it shows
      files     the pictures, under shots/ (or `docs:` + a path under
                apps/web/public/screenshots/), each with its `state` and the
-               `shoot` command that takes it again
+               `shoot` command that takes it again. A file's scenario
+               (fixtures/scenarios.mjs) is its shoot's `--scenario`, default
+               full, and its name carries it: hub/skills.png is full,
+               hub/skills.simple.png is simple. A file may have its own
+               `check`; one starting "Not taken yet" may be missing.
      cover     which of `files` the gallery shows first (default 0)
      social    defaults for `pnpm export`: { title, crop: [x, y, w, h] in image pixels, kind }
 
@@ -30,13 +34,16 @@
    All data is the made-up Acme company in fixtures/acme.mjs (and, for the
    tray, the same story in the tray's own fixture mode). */
 
+/* The scenario a shoot command takes its picture in. */
+const scenarioOf = (shoot) => / --scenario (\S+)/.exec(shoot)?.[1] ?? "full";
+
 /* A hub page: the fixture hub, 1440x900 @2x, light theme. */
 const hub = ({ files, ...entry }) => ({
   topic: "Web hub",
   setup: "fixture-hub",
   url: files[0].shoot.split(" ")[3],
   ...entry,
-  files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2], shoot: f.shoot })),
+  files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2], scenario: scenarioOf(f.shoot) })),
 });
 
 /* A tray screen: AgentBoxE2E.app --fixtures, captured window by window. */
@@ -45,8 +52,10 @@ const tray = ({ files, ...entry }) => ({
   setup: "fixture-tray",
   ...entry,
   social: { kind: "cutout", ...entry.social },
-  files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2] })),
+  files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2], scenario: scenarioOf(f.shoot) })),
 });
+/* A tray picture of a scenario the tray repo has to add first. */
+const TRAY_PENDING = "Not taken yet: tray scenarios land in agentbox-tray; take on the Mac.";
 
 /* A CLI screen: the real CLI in a PTY, drawn into a terminal window. */
 const cli = ({ files, ...entry }) => ({
@@ -55,7 +64,7 @@ const cli = ({ files, ...entry }) => ({
   url: "agentbox " + files[0].shoot.split(" -- ")[1],
   ...entry,
   social: { kind: "cutout", ...entry.social },
-  files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2] })),
+  files: files.map((f) => ({ ...f, file: f.shoot.split(" ")[2], scenario: scenarioOf(f.shoot) })),
 });
 
 export const TOPICS = ["Web hub", "Web hub: skills and accounts", "Public site", "macOS tray", "CLI", "From the docs"];
@@ -70,6 +79,9 @@ export const SCREENS = [
     files: [
       { state: "light", shoot: "pnpm shoot hub/dashboard.png / --full" },
       { state: "dark", shoot: "pnpm shoot hub/dashboard-dark.png / --full --dark" },
+      { state: "light", shoot: "pnpm shoot hub/dashboard.simple.png / --full --scenario simple" },
+      { state: "dark", shoot: "pnpm shoot hub/dashboard-dark.simple.png / --full --dark --scenario simple" },
+      { state: "an approval waiting", shoot: "pnpm shoot hub/dashboard.simple-approval.png / --full --scenario simple-approval" },
     ],
     notes: ["The KPIs, lanes and Shipped this week come from GET /api/v1/usage/stats and /api/v1/activity, generated in fixtures/activity.mjs: six weeks of Acme sprints run through the real buildUsageStats."],
     social: { title: "Every coding agent in its own box", crop: [0, 0, 2880, 1800] },
@@ -88,7 +100,10 @@ export const SCREENS = [
     what: "The dashboard with the sidebar folded to its icon rail.",
     from: "hub/dashboard",
     via: "The sidebar button left of the breadcrumbs (remembered per browser)",
-    files: [{ shoot: "pnpm shoot hub/sidebar-collapsed.png / --storage hub-sidebar=collapsed" }],
+    files: [
+      { shoot: "pnpm shoot hub/sidebar-collapsed.png / --storage hub-sidebar=collapsed" },
+      { shoot: "pnpm shoot hub/sidebar-collapsed.simple.png / --storage hub-sidebar=collapsed --scenario simple" },
+    ],
     edits: ["The collapsed state is set in localStorage (hub-sidebar=collapsed) before the page loads, as the toggle would."],
   }),
   hub({
@@ -98,7 +113,10 @@ export const SCREENS = [
     what: "One box: status, git, services, the skills it holds, access links and its approvals.",
     from: "hub/dashboard",
     via: "Click a box row",
-    files: [{ shoot: "pnpm shoot hub/box-detail.png /boxes/7f3a9c21b8d4 --full" }],
+    files: [
+      { shoot: "pnpm shoot hub/box-detail.png /boxes/7f3a9c21b8d4 --full" },
+      { state: "checkout-copy, working", shoot: "pnpm shoot hub/box-detail.simple.png /boxes/c41e07a95b2f --full --scenario simple" },
+    ],
     social: { crop: [0, 0, 2880, 1800] },
   }),
   hub({
@@ -138,13 +156,19 @@ export const SCREENS = [
     what: "Host actions boxes asked for, waiting on a yes: a shell command on the host and a git push.",
     from: "hub/dashboard",
     via: "Approvals in the sidebar, or View all on the banner",
-    files: [{ shoot: "pnpm shoot hub/approvals.png /approvals" }],
+    files: [
+      { shoot: "pnpm shoot hub/approvals.png /approvals" },
+      { state: "one gh pr create", shoot: "pnpm shoot hub/approvals.simple-approval.png /approvals --scenario simple-approval" },
+    ],
   }),
   hub({
     id: "hub/usage",
     title: "Usage: work, side by side",
     what: "The Work view of the last 30 days: the hero sentence, KPIs, the busiest day's Gantt, boxes at once, tokens per day, the 30-day activity grid, providers, lines changed, Recently merged and the leaderboard.",
-    files: [{ shoot: "pnpm shoot hub/usage.png /usage --full" }],
+    files: [
+      { shoot: "pnpm shoot hub/usage.png /usage --full" },
+      { shoot: "pnpm shoot hub/usage.simple.png /usage --full --scenario simple" },
+    ],
     notes: ["Generated by fixtures/activity.mjs through the real buildUsageStats; the session lanes named session:… are the host sessions, as the hub names them."],
     social: { title: "What your agents did side by side, and what they shipped", crop: [0, 0, 2880, 1800] },
   }),
@@ -154,7 +178,10 @@ export const SCREENS = [
     what: "The AI usage view: tokens by day, agent, subscription, box and model, with the Subscription filter.",
     from: "hub/usage",
     via: "AI usage, in the page header",
-    files: [{ shoot: "pnpm shoot hub/usage-ai.png /usage --click 'text=AI usage' --full" }],
+    files: [
+      { shoot: "pnpm shoot hub/usage-ai.png /usage --click 'text=AI usage' --full" },
+      { shoot: "pnpm shoot hub/usage-ai.simple.png /usage --click 'text=AI usage' --full --scenario simple" },
+    ],
     social: { title: "Where the tokens went, per box and per account", crop: [0, 0, 2880, 1800] },
   }),
   hub({
@@ -177,6 +204,7 @@ export const SCREENS = [
     files: [
       { state: "Page preview", shoot: "pnpm shoot hub/share-dialog.png /usage --size 1440x1100 --click 'button:text-is(\"Share\")' --wait 500" },
       { state: "JSON preview", shoot: "pnpm shoot hub/share-json.png /usage --size 1440x1100 --click 'button:text-is(\"Share\")' --click 'text=JSON' --wait 500" },
+      { state: "Page preview", shoot: "pnpm shoot hub/share-dialog.simple.png /usage --size 1440x1100 --click 'button:text-is(\"Share\")' --wait 500 --scenario simple" },
     ],
     edits: ["The fixture hub answers POST /api/v1/usage/share itself: the preview comes from the real toShare(), and nothing is ever posted to agent-box.sh."],
     social: { title: "Share what your agents shipped, without the code" },
@@ -213,7 +241,12 @@ export const SCREENS = [
     topic: "Web hub: skills and accounts",
     title: "Skills library",
     what: "The hub-owned skills library next to this machine's skills: git, marketplace, linked-folder and uploaded skills, every sync state (same, only on Hub, only on the PC, differs), two updates waiting for approval, and sql-style skipped.",
-    files: [{ shoot: "pnpm shoot hub/skills.png /settings/skills --full" }],
+    files: [
+      { shoot: "pnpm shoot hub/skills.png /settings/skills --full" },
+      { state: "all in sync", shoot: "pnpm shoot hub/skills.simple.png /settings/skills --full --scenario simple" },
+      { state: "the Mac is newer", shoot: "pnpm shoot hub/skills.simple-skill-behind.png /settings/skills --full --scenario simple-skill-behind" },
+      { state: "new on the Hub", shoot: "pnpm shoot hub/skills.simple-skill-new.png /settings/skills --full --scenario simple-skill-new" },
+    ],
     social: { title: "One skills library for every box" },
   }),
   hub({
@@ -231,7 +264,10 @@ export const SCREENS = [
     topic: "Web hub: skills and accounts",
     title: "Subscriptions: plans and keys",
     what: "Logins and setup tokens grouped by Anthropic and OpenAI Codex, plus API keys: each card with its Name, tier, the Default badge, boxes, one meter per limit window the plan reports, and an amber note at the limit.",
-    files: [{ shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions --full" }],
+    files: [
+      { shoot: "pnpm shoot hub/subscriptions.png /settings/subscriptions --full" },
+      { shoot: "pnpm shoot hub/subscriptions.simple.png /settings/subscriptions --full --scenario simple" },
+    ],
     social: { title: "Several Claude and Codex accounts, with their plan limits", crop: [0, 0, 2880, 1800] },
   }),
   hub({
@@ -240,7 +276,10 @@ export const SCREENS = [
     title: "Quota meter in the top bar",
     what: "The two subscriptions in use closest to a limit, one bar per window; the card lists every in-use subscription's windows and resets.",
     via: "Hover or click the meter at the right of the top bar.",
-    files: [{ shoot: "pnpm shoot hub/quota-meter.png / --click button[aria-haspopup=dialog] --wait 300" }],
+    files: [
+      { shoot: "pnpm shoot hub/quota-meter.png / --click button[aria-haspopup=dialog] --wait 300" },
+      { shoot: "pnpm shoot hub/quota-meter.simple.png / --click button[aria-haspopup=dialog] --wait 300 --scenario simple" },
+    ],
     social: { title: "Every plan limit, one glance from any page" },
   }),
 
@@ -266,7 +305,11 @@ export const SCREENS = [
     id: "tray/menu",
     title: "Tray menu",
     what: "Approval cards with Approve/Deny, then boxes grouped under their manager session and project, with tickets, PRs and limit states.",
-    files: [{ shoot: "pnpm shoot:tray tray/menu.png --restart" }],
+    files: [
+      { shoot: "pnpm shoot:tray tray/menu.png --restart" },
+      { shoot: "pnpm shoot:tray tray/menu.simple.png --restart --scenario simple", check: TRAY_PENDING },
+      { state: "an approval waiting", shoot: "pnpm shoot:tray tray/menu.simple-approval.png --restart --scenario simple-approval", check: TRAY_PENDING },
+    ],
     social: { title: "Every box, one click from the menu bar" },
   }),
   tray({
@@ -275,7 +318,10 @@ export const SCREENS = [
     what: "The bottom of the menu: the Subscriptions band (each account with its limit meters, the default per agent, revoked and expiring logins), then the Environment row with \"3 not in sync\" and its submenu of skill updates waiting for approval.",
     from: "tray/menu",
     via: "The Environment row at the bottom",
-    files: [{ shoot: "pnpm shoot:tray tray/skill-updates.png --press agentbox.environment" }],
+    files: [
+      { shoot: "pnpm shoot:tray tray/skill-updates.png --press agentbox.environment" },
+      { state: "1 not in sync", shoot: "pnpm shoot:tray tray/skill-updates.simple-skill-behind.png --restart --press agentbox.environment --scenario simple-skill-behind", check: TRAY_PENDING },
+    ],
   }),
   tray({
     id: "tray/skill-approve",
@@ -300,7 +346,10 @@ export const SCREENS = [
     what: "Every login, setup token and API key per agent, with plan meters, the Default badge and Make default, revoked and expiring states, and what to do when a box hits its limit (pause and ask, or switch to the next available).",
     from: "tray/menu",
     via: "Manage… on the Subscriptions band",
-    files: [{ shoot: "pnpm shoot:tray tray/subscriptions.png --restart --press agentbox.subscriptions.manage" }],
+    files: [
+      { shoot: "pnpm shoot:tray tray/subscriptions.png --restart --press agentbox.subscriptions.manage" },
+      { shoot: "pnpm shoot:tray tray/subscriptions.simple.png --restart --press agentbox.subscriptions.manage --scenario simple", check: TRAY_PENDING },
+    ],
   }),
   tray({
     id: "tray/settings-skills",
@@ -308,7 +357,11 @@ export const SCREENS = [
     what: "This Mac's skills next to the Hub library: updates waiting for approval, a drift summary with Sync Global, and per skill its sync state (only on this Mac, on both, Mac or Hub newer, skipped) with Upload, Update, Skip and Sync again.",
     from: "tray/skill-updates",
     via: "Open Skills Settings… under the Environment row",
-    files: [{ shoot: "pnpm shoot:tray tray/settings-skills.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings" }],
+    files: [
+      { shoot: "pnpm shoot:tray tray/settings-skills.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings" },
+      { state: "Mac is newer", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-behind.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings --scenario simple-skill-behind", check: TRAY_PENDING },
+      { state: "new on the Hub", shoot: "pnpm shoot:tray tray/settings-skills.simple-skill-new.png --restart --press agentbox.environment --press agentbox.skillUpdates.openSettings --scenario simple-skill-new", check: TRAY_PENDING },
+    ],
   }),
   tray({
     id: "tray/manager",
@@ -316,7 +369,10 @@ export const SCREENS = [
     what: "Tasks grouped by box with progress, the latest activity (a PR ready to merge with Approve), and the manager session pane.",
     from: "tray/menu",
     via: "Open Manager (⌘M)",
-    files: [{ shoot: "pnpm shoot:tray tray/manager.png --manager fx-commerce" }],
+    files: [
+      { shoot: "pnpm shoot:tray tray/manager.png --manager fx-commerce" },
+      { shoot: "pnpm shoot:tray tray/manager.simple.png --manager fx-commerce --scenario simple", check: TRAY_PENDING },
+    ],
     social: { kind: "cutout", title: "Plan the work, watch every box, approve the merge" },
   }),
 
@@ -337,13 +393,19 @@ export const SCREENS = [
     id: "cli/ls",
     title: "agentbox ls",
     what: "Every box on the hub: state, agent activity (and its account), provider, URL and project.",
-    files: [{ shoot: "pnpm shoot:cli cli/ls.png --cols 150 --rows 20 -- ls --global" }],
+    files: [
+      { shoot: "pnpm shoot:cli cli/ls.png --cols 150 --rows 20 -- ls --global" },
+      { shoot: "pnpm shoot:cli cli/ls.simple.png --cols 150 --rows 12 --scenario simple -- ls --global" },
+    ],
   }),
   cli({
     id: "cli/credentials",
     title: "agentbox credentials",
     what: "The subscriptions table TUI: each account's Name, kind, identity, status (ok, expiring, at limit), plan limits, whether it is the default for new boxes, and the boxes on it.",
-    files: [{ shoot: "pnpm shoot:cli cli/credentials.png --cols 172 --rows 22 --settle 2500 -- credentials" }],
+    files: [
+      { shoot: "pnpm shoot:cli cli/credentials.png --cols 172 --rows 22 --settle 2500 -- credentials" },
+      { shoot: "pnpm shoot:cli cli/credentials.simple.png --cols 150 --rows 16 --settle 2500 --scenario simple -- credentials" },
+    ],
     notes: ["The BOXES column runs to the terminal's edge: the TUI does not wrap it."],
     social: { title: "Every Claude and Codex login, one table" },
   }),
@@ -351,8 +413,13 @@ export const SCREENS = [
     id: "cli/skills",
     title: "agentbox skills",
     what: "The skills table TUI: this PC's skills next to the hub's library (differs, hub only, local only, an update pending, sql-style skipped), and the upload, download, choose and discard actions.",
-    files: [{ shoot: "pnpm shoot:cli cli/skills.png --cols 140 --rows 26 --settle 3000 -- skills" }],
-    edits: ["shoot-cli writes Acme's PC skills (fixtures/acme.mjs, the studio-mac comparison) into the scratch HOME first. They are short stand-ins, so the TUI counts each as differing from the hub's copy and none as the same."],
+    files: [
+      { shoot: "pnpm shoot:cli cli/skills.png --cols 140 --rows 26 --settle 3000 -- skills" },
+      { state: "all in sync", shoot: "pnpm shoot:cli cli/skills.simple.png --cols 140 --rows 20 --settle 3000 --scenario simple -- skills" },
+      { state: "the Mac is newer", shoot: "pnpm shoot:cli cli/skills.simple-skill-behind.png --cols 140 --rows 20 --settle 3000 --scenario simple-skill-behind -- skills" },
+      { state: "new on the Hub", shoot: "pnpm shoot:cli cli/skills.simple-skill-new.png --cols 140 --rows 20 --settle 3000 --scenario simple-skill-new -- skills" },
+    ],
+    edits: ["shoot-cli writes Acme's PC skills (the scenario's studio-mac comparison) into the scratch HOME first. In full they are short stand-ins, so the TUI counts each as differing from the hub's copy and none as the same; the simple scenarios write the exact files, so the in-sync ones read same."],
   }),
   cli({
     id: "cli/help",

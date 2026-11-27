@@ -13,7 +13,7 @@ export const NOW = Date.parse("2026-11-24T15:20:00Z");
 const min = (m) => NOW - m * 60_000;
 const iso = (m) => new Date(min(m)).toISOString();
 /* Stable made-up hex (hashes, ids) from a seed string. */
-const hex = (seed, len = 64) => {
+export const hex = (seed, len = 64) => {
   let out = "";
   for (let i = 0; out.length < len; i++) out += createHash("sha256").update(`${seed}:${i}`).digest("hex");
   return out.slice(0, len);
@@ -25,7 +25,7 @@ const docsRoot = `${HOME}/Projects/docs-site`;
 const mobile = `${HOME}/Projects/mobile`;
 const HOST = "studio-mac.local";
 
-export const projects = [
+export const PROJECTS = [
   { id: "fx-storefront-web", name: "storefront-web", repo: "acme/storefront-web", root: `${commerce}/storefront-web`, workspaceId: "fx-commerce", lastProvider: "vercel", lastAgent: "claude", currentBranch: "main" },
   { id: "fx-checkout-api", name: "checkout-api", repo: "acme/checkout-api", root: `${commerce}/checkout-api`, workspaceId: "fx-commerce", lastProvider: "hetzner", lastAgent: "codex", currentBranch: "main" },
   { id: "fx-payments-worker", name: "payments-worker", repo: "acme/payments-worker", root: `${commerce}/payments-worker`, workspaceId: "fx-commerce", lastProvider: "docker", lastAgent: "claude", currentBranch: "feat/charge-backoff" },
@@ -33,7 +33,9 @@ export const projects = [
   { id: "fx-ios-app", name: "ios-app", repo: "acme/ios-app", root: `${mobile}/ios-app`, workspaceId: "fx-mobile", lastProvider: "docker", lastAgent: "claude", currentBranch: "main" },
   { id: "fx-android-app", name: "android-app", repo: "acme/android-app", root: `${mobile}/android-app`, workspaceId: "fx-mobile", lastProvider: "hetzner", lastAgent: "codex", currentBranch: "main" },
   { id: "fx-sandbox", name: "sandbox", repo: "sandbox", root: `${HOME}/Scratch/sandbox`, workspaceId: null, currentBranch: null, noGit: true },
-].map((p, i) => ({
+];
+/* A project row as GET /projects lists it (plus `_root`, the folder on studio-mac). */
+export const makeProjects = (list) => list.map((p, i) => ({
   id: p.id,
   name: p.name,
   repo: p.repo,
@@ -50,13 +52,15 @@ export const projects = [
   lastUsedAt: p.lastProvider ? min(30 + i * 40) : null,
   _root: p.root,
 }));
-const projectById = Object.fromEntries(projects.map((p) => [p.id, p]));
+export const projects = makeProjects(PROJECTS);
+const byIdOf = (list) => Object.fromEntries(list.map((p) => [p.id, p]));
+const projectById = byIdOf(projects);
 
 const PLAN = "mgr-fx-commerce-claude";
 const COPY = "mgr-fx-commerce-codex";
 
 /* name, project, agent, status/state, provider, host, created minutes ago, ... */
-const raw = [
+export const RAW_BOXES = [
   { id: "7f3a9c21b8d4", projectId: "fx-payments-worker", name: "payment-retries", agent: "codex", status: "running", provider: "docker", host: "local · docker", age: 145, webUrl: "https://payment-retries.localhost", branch: "agentbox/payment-retries", activity: "working", title: "Retry failed charges with backoff", managerId: PLAN, accounts: { codex: "team" }, pr: { repo: "acme/payments-worker", number: 412, url: "https://github.com/acme/payments-worker/pull/412", state: "open" }, commits: 4, files: 9, tasks: { total: 2, done: 0, current: { id: "T-16", title: "Integration tests for retry flow" } } },
   { id: "c41e07a95b2f", projectId: "fx-storefront-web", name: "checkout-copy", agent: "claude", status: "running", provider: "vercel", host: "vercel · iad1", age: 130, webUrl: "https://sb-4kq2x9.vercel.run", branch: "feat/checkout-copy", activity: "idle", title: "Tighten checkout copy for EU locales", managerId: PLAN, pr: { repo: "acme/storefront-web", number: 409, url: "https://github.com/acme/storefront-web/pull/409", state: "ready" }, accounts: { claude: "work" }, commits: 3, files: 6, vnc: true, tasks: { total: 2, done: 2, current: null } },
   { id: "2b98d6f1e0a7", projectId: "fx-checkout-api", name: "fix-webhooks", agent: "codex", status: "running", provider: "hetzner", host: "hetzner · nbg1 · cx23", age: 60 * 26, webUrl: "https://fix-webhooks.localhost", persistent: true, branch: "agentbox/fix-webhooks", activity: "thinking", title: "Make Stripe webhook handlers idempotent", managerId: PLAN, commits: 7, files: 14, accounts: { codex: "personal" }, tasks: { total: 3, done: 1, current: { id: "T-2", title: "Make webhook handlers idempotent" } } },
@@ -72,7 +76,7 @@ const raw = [
 // Live status (docs/agent-live-status-plan.md): the working-on line and the
 // current session's tokens, by box name. `doing` shows only while the agent is
 // working, waiting or asking; an idle box keeps its usage.
-const LIVE = {
+export const LIVE = {
   "payment-retries": { doing: "bash: pnpm test -- retry.spec.ts", usage: { input: 18_400, output: 9_200, cacheRead: 0, cacheWrite: 0, reasoning: 4_100, contextTokens: 61_000, contextWindow: 272_000 } },
   "checkout-copy": { usage: { input: 2_100, output: 14_300, cacheRead: 1_840_000, cacheWrite: 96_000, contextTokens: 118_000, contextWindow: 200_000 } },
   "fix-webhooks": { usage: { input: 240_000, output: 41_000, cacheRead: 0, cacheWrite: 0, reasoning: 22_000, contextTokens: 188_000, contextWindow: 272_000 } },
@@ -88,8 +92,11 @@ const ACCOUNT_INFO = {
   "codex:team": { kind: "login" },
 };
 
-export const boxes = raw.map((b) => {
-  const p = projectById[b.projectId];
+/* A box row as GET /boxes lists it, from a RAW_BOXES-shaped entry. `lastActive`
+   (minutes ago) overrides the derived last activity. */
+export const makeBoxes = (raw, live, projectList) => raw.map((b) => {
+  const LIVE = live;
+  const p = byIdOf(projectList)[b.projectId];
   const job = b.id.startsWith("job:");
   const running = b.status === "running";
   const box = {
@@ -102,7 +109,7 @@ export const boxes = raw.map((b) => {
     agent: b.agent,
     status: b.status,
     createdAt: min(b.age),
-    lastActivity: min(Math.min(b.age, b.activity === "idle" ? 12 : 1)),
+    lastActivity: min(b.lastActive ?? Math.min(b.age, b.activity === "idle" ? 12 : 1)),
     host: b.host,
     provider: b.provider,
     commits: job ? null : b.commits ?? null,
@@ -155,6 +162,7 @@ export const boxes = raw.map((b) => {
   }
   return box;
 });
+export const boxes = makeBoxes(RAW_BOXES, LIVE, projects);
 
 export const approvals = [
   {
@@ -183,7 +191,9 @@ export const approvals = [
   },
 ];
 
-const ws = (id, name, root, projectIds, ageDays, counts, managers) => ({
+export const ws = (id, name, root, projectIds, ageDays, counts, managers, projectList = projects) => {
+  const projectById = byIdOf(projectList);
+  return {
   id,
   name,
   projects: projectIds.map((pid) => ({ id: pid, name: projectById[pid].name, repoUrl: projectById[pid].originUrl })),
@@ -194,7 +204,8 @@ const ws = (id, name, root, projectIds, ageDays, counts, managers) => ({
   updatedAt: iso(3),
   taskCounts: counts,
   managers,
-});
+  };
+};
 
 export const workspaces = [
   ws("fx-commerce", "Commerce", commerce, ["fx-storefront-web", "fx-checkout-api", "fx-payments-worker"], 12, { open: 7, done: 9 }, { running: 1, total: 2 }),
@@ -227,7 +238,8 @@ export const providers = [
   prov("digitalocean", "DigitalOcean", "cloud", false, { envKeys: ["DIGITALOCEAN_TOKEN"], reason: "No API token on this machine" }),
 ];
 
-export const hubState = {
+/* What the dashboard layout reads from the backend's getData(). */
+export const makeHubState = ({ projects, workspaces, boxes, approvals }) => ({
   user: { login: "maya", name: "Maya" },
   github: { available: false, installed: false, appName: "GitHub App", account: "", installedAt: 0, repos: [] },
   projects: projects.map(({ _root, ...p }) => p),
@@ -237,7 +249,8 @@ export const hubState = {
   providers,
   authMode: "off",
   controlPlane: null,
-};
+});
+export const hubState = makeHubState({ projects, workspaces, boxes, approvals });
 
 /* ---- LLM accounts (GET /api/v1/accounts) ---- */
 export const accounts = {
@@ -260,7 +273,7 @@ export const accounts = {
 
 /* ---- Skills (GET /api/v1/skills, /api/v1/skill-status) ---- */
 /* A 40-hex sha that starts with the readable prefix given. */
-const sha = (s) => (s + hex(s, 40)).slice(0, 40);
+export const sha = (s) => (s + hex(s, 40)).slice(0, 40);
 /* sql-style is skipped ("never sync"): it stays on the PC and never reaches a box. */
 export const skillSkips = [{ name: "sql-style", at: iso(60 * 24 * 2) }];
 export const skills = {
@@ -364,7 +377,7 @@ export const skillBindings = {
 };
 
 /* Most specific wins: box > project > workspace > global; bound nowhere = included. */
-export function resolveSkills({ boxId, projectKey, workspaceId }) {
+export const makeResolveSkills = (skills, skillBindings) => ({ boxId, projectKey, workspaceId }) => {
   return skills.skills.map(({ name, description }) => {
     const layers = [
       ["box", boxId && skillBindings.box[boxId]],
@@ -375,11 +388,12 @@ export function resolveSkills({ boxId, projectKey, workspaceId }) {
     for (const [from, map] of layers) if (map && map[name]) return { name, description, included: map[name] === "include", from };
     return { name, description, included: true, from: "default" };
   });
-}
+};
+export const resolveSkills = makeResolveSkills(skills, skillBindings);
 
 const OLD_VERSION = { "review-pr": sha("8a7b6c5d4e3f2a1b"), "db-migrations": sha("c2b1a0f9e8d7") };
-export function boxSkills(b) {
-  const p = projectById[b.projectId];
+export const makeBoxSkills = ({ skills, skillStatus, resolveSkills, projects: projectList }) => (b) => {
+  const p = byIdOf(projectList)[b.projectId];
   const behind = new Set(skillStatus.boxes.find((x) => x.boxId === b.id)?.behind ?? []);
   const held = resolveSkills({ boxId: b.id, projectKey: p && repoKeyOf(p), workspaceId: p?.workspaceId }).filter((s) => s.included);
   return {
@@ -391,7 +405,8 @@ export function boxSkills(b) {
       return { name, version: lag ? OLD_VERSION[name] : lib.current, ...(lag ? { current: lib.current } : {}), ...(lib.pending ? { pending: lib.pending.version } : {}), behind: lag };
     }),
   };
-}
+};
+export const boxSkills = makeBoxSkills({ skills, skillStatus, resolveSkills, projects });
 
 /* ---- Project seeds + bot backups (GET /api/v1/projects/{id}/seed|bots) ---- */
 const seedEntry = (slug, name, size, ageMin) => ({ name, size, sha256: hex(`${slug}/${name}`), updatedAt: iso(ageMin) });
@@ -443,7 +458,7 @@ export const bots = {
 
 /* ---- Custody (GET /api/v1/custody): metadata only, never a value ---- */
 const entry = (path, size, ageMin, mode = 0o600) => ({ path, size, sha256: hex(path), mode, updatedAt: iso(ageMin) });
-export const custody = {
+export const makeCustody = ({ skills, seeds }) => ({
   enabled: true,
   entries: [
     entry("agents/claude/.claude.json", 4_812, 60 * 3),
@@ -467,7 +482,8 @@ export const custody = {
     entry("boxes/2b98d6f1e0a7/ssh/id_ed25519.pub", 97, 60 * 26, 0o644),
     entry("boxes/2b98d6f1e0a7/skills.json", 612, 60 * 26, 0o644),
   ],
-};
+});
+export const custody = makeCustody({ skills, seeds });
 
 /* ---- System & Build (GET /api/v1/system) ---- */
 const FINGERPRINT = hex("box-context", 12);
@@ -523,10 +539,10 @@ const PER_RESPONSE = {
   opencode: { input: 1_900, output: 520, cacheRead: 27_000, cacheWrite: 1_700 },
 };
 const DAY = 86_400_000;
-const DESTROYED = { "refund-api": "d41b7e09c3a2", "stripe-sdk-v17": "e7c20f5a91d8", "sitemap-split": "1a9e4c7b2f60", "eu-vat-rules": "f03d8b6e2c19", "ios-push-tokens": "6b2e9f1d7c48", "anr-crash": "93c5a0e8b7f1" };
-const S = (agent, account, box, project, host, model, title, days) => ({ agent, account, box, project, host, model, title, days });
+export const DESTROYED = { "refund-api": "d41b7e09c3a2", "stripe-sdk-v17": "e7c20f5a91d8", "sitemap-split": "1a9e4c7b2f60", "eu-vat-rules": "f03d8b6e2c19", "ios-push-tokens": "6b2e9f1d7c48", "anr-crash": "93c5a0e8b7f1" };
+export const S = (agent, account, box, project, host, model, title, days) => ({ agent, account, box, project, host, model, title, days });
 /* days: [days ago, responses]; today (0) is cut off at NOW. */
-const SESSIONS = [
+export const SESSIONS = [
   S("claude", "work", "checkout-copy", "acme/storefront-web", "studio", "claude-sonnet-4-5", "Tighten checkout copy for EU locales", [[0, 96]]),
   S("codex", "team", "payment-retries", "acme/payments-worker", "studio", "gpt-5.1-codex", "Retry failed charges with backoff", [[0, 132]]),
   S("codex", "personal", "fix-webhooks", "acme/checkout-api", "studio", "gpt-5.1-codex", "Make Stripe webhook handlers idempotent", [[1, 214], [0, 88]]),
@@ -548,14 +564,18 @@ const SESSIONS = [
   S("codex", "team", "ledger-backfill", "acme/payments-worker", "laptop", "gpt-5.1-codex", "Backfill ledger entries for March", [[19, 160], [18, 88]]),
   S("claude", "work", "a11y-pass", "acme/storefront-web", "studio", "claude-opus-4-5", "Accessibility pass on checkout", [[25, 130]]),
 ];
-const boxIdByName = { ...Object.fromEntries(boxes.filter((b) => b.name).map((b) => [b.name, b.id])), ...DESTROYED, "release-1-14": "2c7d91e4a0b3", "ledger-backfill": "84f0b6d2e9a1", "a11y-pass": "5e1a3c8f7b02" };
+const OLDER = { "release-1-14": "2c7d91e4a0b3", "ledger-backfill": "84f0b6d2e9a1", "a11y-pass": "5e1a3c8f7b02" };
+/* Recorded sessions (SESSIONS-shaped) as GET /usage rows, and as the usage
+   stats read them (activity.mjs). `destroyed` names the gone boxes' ids. */
+export const makeUsage = (SESSIONS, boxes, destroyed = { ...DESTROYED, ...OLDER }) => {
+const boxIdByName = { ...Object.fromEntries(boxes.filter((b) => b.name).map((b) => [b.name, b.id])), ...destroyed };
 const startOfDay = (ms) => ms - (ms % DAY);
 
 const sessionKeyOf = (s, si) => `${s.agent}:${hex(`session-${si}`, 8)}-${hex(`s${si}a`, 4)}-4${hex(`s${si}b`, 3)}-a${hex(`s${si}c`, 3)}-${hex(`s${si}d`, 12)}`;
 /* The same sessions for the usage stats (activity.mjs), with their keys and box ids. */
-export const sessions = SESSIONS.map((s, si) => ({ ...s, session: sessionKeyOf(s, si), account: `${s.agent}/${s.account}`, boxId: s.box ? boxIdByName[s.box] : null }));
+const sessions = SESSIONS.map((s, si) => ({ ...s, session: sessionKeyOf(s, si), account: `${s.agent}/${s.account}`, boxId: s.box ? boxIdByName[s.box] : null }));
 
-export const usageRows = SESSIONS.flatMap((s, si) => {
+const usageRows = SESSIONS.flatMap((s, si) => {
   const sessionKey = sessionKeyOf(s, si);
   const avg = PER_RESPONSE[s.agent];
   return s.days.map(([ago, messages], di) => {
@@ -584,6 +604,9 @@ export const usageRows = SESSIONS.flatMap((s, si) => {
     };
   });
 });
+return { sessions, usageRows };
+};
+export const { sessions, usageRows } = makeUsage(SESSIONS, boxes);
 
 /* ---- Skill update diffs (GET /api/v1/skills/{name}/diff) ---- */
 const REVIEW_PR_BEFORE = `---
@@ -686,11 +709,11 @@ export const skillMachines = {
   defaultId: MACHINES.studio,
 };
 
-const pcSkill = (name, dir, extra = {}) => ({
+export const pcSkill = (name, dir, extra = {}) => ({
   treeSha: sha(name), dirs: [dir], path: `${HOME}/${dir}/${name}`, size: 6_000, files: 2, problems: [], findings: [], ...extra,
 });
-const hubOf = (name) => {
-  const s = skills.skills.find((x) => x.name === name);
+const hubOf = (name, skills_ = skills) => {
+  const s = skills_.skills.find((x) => x.name === name);
   return { current: s.current, updatedAt: s.updatedAt, pending: Boolean(s.pending) };
 };
 const EVERY = ["codex", "opencode", "pi", "openclaw"];
