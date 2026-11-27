@@ -77,6 +77,12 @@ export interface CloudProvisionRequest {
    */
   location?: string;
   /**
+   * True when `location` was asked for on this create (`--location`), not taken
+   * from config or a default. A backend that fails over to another location on
+   * a capacity refusal (hetzner) must not move a pinned box; it fails instead.
+   */
+  locationPinned?: boolean;
+  /**
    * Backend-interpreted sandbox class. Only Daytona reads it: `linux-vm` (real
    * pause/resume, one region, no volume mounts) or `container` (archivable,
    * Dockerfile-buildable). The class is a property of the *snapshot* the box
@@ -180,6 +186,12 @@ export interface CloudHandle {
    * SDK-reached backends (e2b/vercel/daytona).
    */
   publicHost?: string;
+  /**
+   * Where the box actually landed, when the backend can place it somewhere
+   * other than the requested `location` (hetzner's capacity failover). The
+   * record stores this rather than the request.
+   */
+  location?: string;
 }
 
 export type CloudState = 'running' | 'paused' | 'stopped' | 'missing';

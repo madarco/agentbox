@@ -722,6 +722,9 @@ async function runCloudJob(
     providerOptions: cloudSizingProviderOptions(providerName, cfg.effective, {
       size: opts.size,
       location: opts.location,
+      // Explicit, never derived from `location`: a clone's or a web create's
+      // location is not a pin.
+      locationPinned: opts.locationPinned === true,
       inbound: opts.inbound,
       remoteHost: opts.remoteHost ?? remoteHost,
     }),

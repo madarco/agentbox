@@ -138,9 +138,9 @@ const UNPORTABLE: UnportableRow[] = [
 /**
  * The options to send, plus what could not be sent.
  *
- * Config is the primary source and a flag is the override — the agent commands
- * declare no `--size`/`--location` at all, so for them this is purely the
- * project's own config, which is the whole point.
+ * Config is the primary source and a flag is the override. A typed
+ * `--location` also rides as `providerOptions.locationPinned`, so the worker
+ * never fails over a pinned box while a configured location still can.
  */
 export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
   const { cfg, flags, providerName, remoteHost } = input;

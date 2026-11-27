@@ -26,6 +26,7 @@
  * halves reading the same field is what makes the override work.
  */
 
+import { LOCATION_OPTION, SIZE_OPTION } from '../../lib/cloud-sizing.js';
 import { Command } from 'commander';
 import { log } from '@agentbox/cli-kit';
 import type { AgentSyncSpec } from '@agentbox/core';
@@ -90,6 +91,8 @@ export function buildServiceAgentCommand(spec: AgentSyncSpec): Command {
     .option('-p, --provider <name>', 'sandbox backend (default: box.provider)')
     .option('--image <ref>', 'override the box image')
     .option('--snapshot <ref>', 'start from a project checkpoint (see `agentbox checkpoint`)')
+    .option(SIZE_OPTION.flags, SIZE_OPTION.description)
+    .option(LOCATION_OPTION.flags, LOCATION_OPTION.description)
     .option('-y, --yes', 'skip prompts, accept defaults')
     .option('--carry-yes', 'auto-approve the agentbox.yaml carry: block')
     .option(

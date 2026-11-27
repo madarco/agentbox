@@ -217,6 +217,8 @@ export interface CreateBoxOpts {
   providerOptions?: Record<string, string | number | boolean>;
   /** Datacenter / region (hetzner / digitalocean). */
   location?: string;
+  /** `location` came from a typed `--location`: a pin, never failed over. */
+  locationPinned?: boolean;
   /** VPS firewall access policy (locked | open | CIDR list). */
   inbound?: string;
   /** `-b`: reuse an existing branch instead of forking agentbox/<name>. */

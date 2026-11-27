@@ -826,6 +826,9 @@ export function createCloudProvider(
         typeof locationOpt === 'string' && locationOpt.trim() !== ''
           ? locationOpt.trim()
           : undefined;
+      // Set only when `--location` was typed for this create (see cloud-sizing).
+      const locationPinned =
+        location !== undefined && req.providerOptions?.['locationPinned'] === true;
       // Inbound-access policy for VPS firewalls (`--inbound` / `box.inbound`).
       const inboundOpt = req.providerOptions?.['inbound'];
       const inbound =
@@ -961,6 +964,7 @@ export function createCloudProvider(
           resources,
           size,
           location,
+          ...(locationPinned ? { locationPinned } : {}),
           project,
           swap,
           host,
@@ -1618,10 +1622,11 @@ export function createCloudProvider(
             // box actually booted from (not from config, which can disagree).
             // pause() branches on it: a VM pauses, a container archives.
             sandboxClass: handle.sandboxClass,
-            // The size / location this box was ASKED for, so a clone gets the
-            // same box rather than the provider default.
+            // The size this box was ASKED for and the location it LANDED in
+            // (a capacity failover can move it), so a clone gets the same box
+            // rather than the provider default.
             ...(size ? { size } : {}),
-            ...(location ? { location } : {}),
+            ...((handle.location ?? location) ? { location: handle.location ?? location } : {}),
             // Only host-seeded boxes share a fork base with the host, so only
             // they can be resynced back to the host tip on session start (7.5).
             // inBoxClone / plane boxes clone from a leased URL — left unset.
