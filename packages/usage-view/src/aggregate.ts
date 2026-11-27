@@ -167,17 +167,25 @@ export function activeIntervals(rows: readonly TurnRow[], opts: IntervalOptions 
   const close = (): void => {
     if (last) out.push({ start, end: last.at + tail });
   };
-  for (const turn of turns) {
+  for (let turn of turns) {
     const head = turn[0]!;
     const continues = last !== null && last.kind === 'tool' && head.at - last.at <= gap;
     if (!continues) {
       if (head.kind === 'auto') {
+        // Judged on the stretch before any cut: a stray row much later is not this wakeup's work.
+        let cut = 1;
+        while (cut < turn.length && turn[cut]!.at - turn[cut - 1]!.at <= gap) cut++;
+        const stretch = turn.slice(0, cut);
         const worked =
-          turn.some((r) => r.kind === 'tool') || turn[turn.length - 1]!.at - head.at >= autoMin;
-        if (!worked) continue;
+          stretch.some((r) => r.kind === 'tool') ||
+          stretch[stretch.length - 1]!.at - head.at >= autoMin;
+        if (!worked) {
+          turn = turn.slice(cut);
+          if (turn.length === 0) continue;
+        }
       }
       close();
-      start = head.at;
+      start = turn[0]!.at;
       last = null;
     }
     for (const r of turn) {

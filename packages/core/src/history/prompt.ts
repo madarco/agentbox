@@ -9,5 +9,8 @@ const REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 export function isInjectedPrompt(text: string): boolean {
   const t = text.trim();
   if (t.startsWith('<task-notification>')) return true;
-  return t.startsWith('<system-reminder>') && t.replace(REMINDER, '').trim() === '';
+  if (!t.startsWith('<system-reminder>')) return false;
+  // A stored text is clipped, so the last block may have lost its closing tag.
+  const rest = t.replace(REMINDER, '').trim();
+  return rest === '' || rest.startsWith('<system-reminder>');
 }

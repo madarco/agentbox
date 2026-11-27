@@ -101,10 +101,13 @@ now measures busy time inside turns:
   so the hub and anything that sends raw turns cut spans the same way.
 
 **Classification per agent.**
-- claude: the line's `origin.kind` (`human`, `task-notification`, …) or, without
-  it, `promptSource` (`system` is automated); for transcripts older than both,
-  the text: it starts with `<task-notification>`, or it is nothing but
-  `<system-reminder>` blocks (`isInjectedPrompt` in `@agentbox/core`).
+- claude: the line's `origin.kind` (`human`, `task-notification`, …), anything
+  but `human` being automated unless `promptSource` is `typed`; without an
+  origin, `promptSource` alone (`system` is automated); for transcripts older
+  than both, the text: it starts with `<task-notification>`, or it is nothing
+  but `<system-reminder>` blocks, the last one possibly clipped
+  (`isInjectedPrompt` in `@agentbox/core`). A prompt with only an image or a
+  file is stored as `[attachment]`, so it starts its turn too.
 - codex already drops its injected user messages (`environment_context`,
   `user_instructions`, …) at parse time, so every user row it stores is typed.
 - opencode and pi have no injected prompts: every user row is typed.

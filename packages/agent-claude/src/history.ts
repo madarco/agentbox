@@ -55,15 +55,25 @@ function textBlocks(content: unknown): string {
     .join('\n');
 }
 
+/** Content blocks that are all images or documents: a prompt with nothing typed. */
+function attachmentOnly(content: unknown): boolean {
+  if (!Array.isArray(content) || content.length === 0) return false;
+  return content.every((b) => {
+    const t = asObj(b)?.type;
+    return t === 'image' || t === 'document';
+  });
+}
+
 /**
  * Whether claude, not a person, wrote this prompt: the line's `origin.kind`
- * (`human`, `task-notification`, …), else its `promptSource` (`typed`, `sdk`,
- * `system`), else the text, for transcripts older than both.
+ * (`human`, `task-notification`, …) unless `promptSource` says it was typed,
+ * else `promptSource` alone (`system` is automated), else the text, for
+ * transcripts older than both.
  */
 function promptIsAutomated(line: Json, text: string): boolean {
   const kind = str(asObj(line.origin)?.kind);
-  if (kind) return kind !== 'human';
   const source = str(line.promptSource);
+  if (kind) return kind !== 'human' && source !== 'typed';
   if (source) return source === 'system';
   return isInjectedPrompt(text);
 }
@@ -110,7 +120,9 @@ export function claudeLineRecords(
   if (!message) return out;
   if (type === 'user') {
     if (line.isMeta === true) return out;
-    const text = textBlocks(message.content).trim();
+    // A prompt with no text (an image, a file) still starts a turn; a tool result does not.
+    const text =
+      textBlocks(message.content).trim() || (attachmentOnly(message.content) ? '[attachment]' : '');
     if (text) {
       const auto = promptIsAutomated(line, text);
       out.push({ kind: 'turn', role: 'user', text: clip(text), ...(ts ? { ts } : {}), at, auto });

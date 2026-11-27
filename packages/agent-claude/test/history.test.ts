@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isInjectedPrompt } from '@agentbox/core';
 import { claudeHistoryModule as m, claudeLineRecords } from '../src/history.js';
 
 const S = 'aaaaaaaa-1111-2222-3333-444444444444';
@@ -157,6 +158,27 @@ describe('claude automated prompts (usage busy spans)', () => {
     expect(autoOf(userLine({ origin: { kind: 'task-notification' } }, 'done'))).toBe(true);
   });
 
+  it('a typed prompt is human whatever its origin kind', () => {
+    expect(
+      autoOf(userLine({ origin: { kind: 'queued' }, promptSource: 'typed' }, 'and this')),
+    ).toBe(false);
+  });
+
+  it('an image-only prompt starts a turn; a tool result does not', () => {
+    const img = {
+      type: 'user',
+      timestamp: 't',
+      message: { role: 'user', content: [{ type: 'image', source: {} }] },
+    };
+    expect(claudeLineRecords(img, 0)).toMatchObject([{ kind: 'turn', role: 'user', auto: false }]);
+    const res = {
+      type: 'user',
+      timestamp: 't',
+      message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] },
+    };
+    expect(claudeLineRecords(res, 0)).toEqual([]);
+  });
+
   it('then promptSource', () => {
     expect(autoOf(userLine({ promptSource: 'system' }, 'done'))).toBe(true);
     expect(autoOf(userLine({ promptSource: 'typed' }, 'done'))).toBe(false);
@@ -171,6 +193,10 @@ describe('claude automated prompts (usage busy spans)', () => {
     ).toBe(true);
     expect(autoOf(userLine({}, 'fix it\n<system-reminder>a</system-reminder>'))).toBe(false);
     expect(autoOf(userLine({}, 'fix the <task-notification> parser'))).toBe(false);
+    // Clipped mid-block, as stored text is.
+    expect(isInjectedPrompt('<system-reminder>a</system-reminder><system-reminder>very lo…')).toBe(
+      true,
+    );
   });
 });
 

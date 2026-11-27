@@ -402,9 +402,6 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
        WHERE ts IS NOT NULL`,
     );
   }
-  db.exec(
-    'CREATE INDEX IF NOT EXISTS history_turns_session_ts ON history_turns(session_key, ts_ms) WHERE ts_ms IS NOT NULL',
-  );
   if (!columns(db, 'history_sessions').has('spans_dirty')) {
     db.exec('ALTER TABLE history_sessions ADD COLUMN spans_dirty INTEGER NOT NULL DEFAULT 1');
     // A session purged before this column has no turns left to cut intervals from.
@@ -430,6 +427,11 @@ function migrateSpansRule(db: Db): void {
   if (!columns(db, 'history_turns').has('auto')) {
     db.exec('ALTER TABLE history_turns ADD COLUMN auto INTEGER');
   }
+  // Covers the span refresh's read (it needs the row's kind, not just its time).
+  db.exec('DROP INDEX IF EXISTS history_turns_session_ts');
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS history_turns_session_span ON history_turns(session_key, ts_ms, kind, role, auto) WHERE ts_ms IS NOT NULL',
+  );
   const r = db.prepare("SELECT value FROM history_meta WHERE key = 'spans_rule'").get() as
     | Row
     | undefined;
@@ -437,13 +439,16 @@ function migrateSpansRule(db: Db): void {
   db.exec('BEGIN');
   try {
     // The stored text is the only origin rows parsed before the column have.
+    // Paged, so a large db never holds every prompt in memory at once.
     const set = db.prepare('UPDATE history_turns SET auto = ? WHERE id = ?');
-    for (const t of db
-      .prepare(
-        "SELECT id, text FROM history_turns WHERE kind = 'turn' AND role = 'user' AND auto IS NULL",
-      )
-      .all() as Row[]) {
-      set.run(isInjectedPrompt(String(t.text ?? '')) ? 1 : 0, n(t.id));
+    const page = db.prepare(
+      "SELECT id, text FROM history_turns WHERE kind = 'turn' AND role = 'user' AND auto IS NULL AND id > ? ORDER BY id LIMIT 1000",
+    );
+    for (let after = 0; ; ) {
+      const rows = page.all(after) as Row[];
+      for (const t of rows) set.run(isInjectedPrompt(String(t.text ?? '')) ? 1 : 0, n(t.id));
+      if (rows.length < 1000) break;
+      after = n(rows[rows.length - 1]!.id);
     }
     // A purged session's turns are gone: it keeps the spans it has.
     db.exec('UPDATE history_sessions SET spans_dirty = 1 WHERE purged_at IS NULL');

@@ -137,6 +137,11 @@ describe('activeIntervals', () => {
     expect(activeIntervals(rows, { autoMinBusyMs: 60_000 })).toEqual([]);
   });
 
+  it('a stray row long after a no-op wakeup does not make the wakeup count', () => {
+    const rows = [row(at(3), 'auto'), row(at(3) + 3_000, 'reply'), row(at(3) + 20 * MIN, 'reply')];
+    expect(activeIntervals(rows)).toEqual([{ start: at(3) + 20 * MIN, end: at(3) + 21 * MIN }]);
+  });
+
   it('a long turn with tool rows every few minutes is one span', () => {
     const rows: TurnRow[] = [row(at(9), 'prompt')];
     for (let t = at(9) + 3 * MIN; t <= at(12); t += 4 * MIN) rows.push(row(t, 'tool'));
