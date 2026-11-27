@@ -3,7 +3,8 @@ import { loadConfig } from '@agentbox/ctl';
 import type { BoxStatus } from '@agentbox/ctl';
 import type { BoxEndpoint, BoxEndpoints, BoxRecord } from '@agentbox/core';
 import type { DockerEngine } from './sync/host-export.js';
-import { chooseBoxUrl, portlessProxyLive, recordedPortlessUrl } from './portless.js';
+import { buildNoVncUrl } from '@agentbox/core';
+import { livePortlessMode, livePortlessUrl, type PortlessMode } from './portless.js';
 import { buildVncUrls, VNC_CONTAINER_PORT } from './vnc.js';
 import { WEB_CONTAINER_PORT } from './web.js';
 
@@ -31,15 +32,20 @@ export async function getBoxEndpoints(
   record: BoxRecord,
   engine: DockerEngine,
   persisted?: BoxStatus | null,
-  /** Override the proxy probe (tests). Probed only when the box has an alias. */
-  portlessLive?: boolean,
+  /** Override the proxy probe (tests): the live mode, or null for none. */
+  portlessMode?: PortlessMode | null,
 ): Promise<BoxEndpoints> {
   const domainIsOrb = engine === 'orbstack';
-  // A recorded alias is advertised only while a proxy serves it. Probe, never
-  // start: this runs for every box in a listing.
+  // An alias is advertised only while a proxy serves it, at the URL that proxy
+  // serves now (not the one recorded at create). Probe, never start: this runs
+  // for every box in a listing, and one probe serves them all.
   const hasAlias = record.portlessAlias !== undefined || record.portlessVncAlias !== undefined;
-  const proxyLive =
-    !domainIsOrb && hasAlias ? (portlessLive ?? (await portlessProxyLive())) : false;
+  const mode =
+    !domainIsOrb && hasAlias
+      ? portlessMode !== undefined
+        ? portlessMode
+        : await livePortlessMode()
+      : null;
   const domain = domainIsOrb ? `${record.container}.orb.local` : '127.0.0.1';
 
   const endpoints: BoxEndpoint[] = [];
@@ -51,11 +57,8 @@ export async function getBoxEndpoints(
     const url =
       engine === 'orbstack'
         ? (vncUrls.orbUrl ?? vncUrls.loopbackUrl)
-        : chooseBoxUrl({
-            portlessUrl: vncUrls.portlessUrl,
-            fallbackUrl: vncUrls.loopbackUrl,
-            proxyLive,
-          });
+        : (portlessVncViewer(record.portlessVncAlias, mode, record.vncPassword) ??
+          vncUrls.loopbackUrl);
     endpoints.push({
       kind: 'vnc',
       name: 'vnc',
@@ -118,15 +121,10 @@ export async function getBoxEndpoints(
   if (record.webContainerPort !== undefined) {
     const hasTarget = webServiceName !== null && record.webHostPort !== undefined;
     // A registered Portless alias gives the box a stable <name>.localhost URL
-    // on non-OrbStack engines, while a proxy serves it. `portlessUrl` is the
-    // real URL resolved from the proxy at create/start (scheme + port vary).
-    const webUrl = chooseBoxUrl({
-      portlessUrl: domainIsOrb
-        ? undefined
-        : recordedPortlessUrl(record.portlessAlias, record.portlessUrl),
-      fallbackUrl: `http://127.0.0.1:${String(record.webHostPort)}`,
-      proxyLive,
-    });
+    // on non-OrbStack engines, while a proxy serves it.
+    const webUrl =
+      livePortlessUrl(record.portlessAlias, mode) ??
+      `http://127.0.0.1:${String(record.webHostPort)}`;
     endpoints.push({
       kind: 'web',
       name: webServiceName ?? 'web',
@@ -136,4 +134,14 @@ export async function getBoxEndpoints(
   }
 
   return { domain, domainIsOrb, endpoints };
+}
+
+/** The noVNC viewer URL on a box's live VNC alias, or undefined. */
+export function portlessVncViewer(
+  alias: string | undefined,
+  mode: PortlessMode | null,
+  password: string,
+): string | undefined {
+  const base = livePortlessUrl(alias, mode);
+  return base !== undefined ? buildNoVncUrl(base, password) : undefined;
 }

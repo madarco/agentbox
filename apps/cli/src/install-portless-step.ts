@@ -10,6 +10,7 @@ import {
   detectEngine,
   detectPortless,
   type DockerEngine,
+  type PortlessServiceState,
   portlessServiceHint,
   portlessServiceStatus,
 } from '@agentbox/sandbox-docker';
@@ -39,13 +40,15 @@ export interface PortlessStepInput {
  * Whether the install wizard should ask about Portless, set it up without
  * asking, or leave it alone. Pure, for tests.
  *
- * Docker: macOS only, and not on OrbStack (it serves `<container>.orb.local`).
+ * Docker: macOS with Docker Desktop only. OrbStack serves `<container>.orb.local`,
+ * and `'other'` (Colima, Rancher, Podman, or a `docker info` that failed —
+ * OrbStack stopped, no docker at all) is not a reason to install anything.
  * An explicit `false` is a past "no" and is never re-asked; a `true` on a host
  * that lost part of the setup is repaired without a question.
  */
 export function decidePortlessStep(i: PortlessStepInput): PortlessStepDecision {
   if (!LOOPBACK_URL_PROVIDERS.has(i.provider)) return 'skip';
-  if (i.provider === 'docker' && (i.platform !== 'darwin' || i.engine === 'orbstack')) {
+  if (i.provider === 'docker' && (i.platform !== 'darwin' || i.engine !== 'docker-desktop')) {
     return 'skip';
   }
   if (i.platform === 'win32') return 'skip';
@@ -83,8 +86,12 @@ export async function runPortlessInstallStep(args: {
     let fullySetUp = false;
     if (args.enabled === true) {
       const state = await detectPortless();
-      const service = state.installed ? await portlessServiceStatus() : { installed: false };
-      fullySetUp = state.installed && state.proxyRunning && service.installed;
+      const service: PortlessServiceState = state.installed
+        ? await portlessServiceStatus()
+        : { installed: false };
+      // A crash-looping service brings nothing back after a reboot.
+      fullySetUp =
+        state.installed && state.proxyRunning && service.installed && service.failing !== true;
     }
     const decision = decidePortlessStep({
       provider: args.provider,
@@ -118,14 +125,16 @@ export async function runPortlessInstallStep(args: {
       return;
     }
 
-    if (args.enabled !== true) await persistEnabled(true);
-    // Repairing an opted-in host from a terminal may ask for the password (the
-    // :443 proxy, the boot service); `-y` never does.
-    if (!args.yes) {
-      await setupPortlessHost({ allowRootPrompt: true });
-      return;
+    if (args.enabled === true) {
+      // Repair of an opted-in host. From a terminal it may ask for the password
+      // (the :443 proxy, the boot service); `-y` never does. Never a mode change:
+      // a dismissed prompt must not quietly move live https URLs to :1355.
+      await setupPortlessHost({ allowRootPrompt: !args.yes, allowModeChange: false });
+      if (!args.yes) return;
+    } else {
+      await persistEnabled(true);
+      await setupPortlessHost({ allowRootPrompt: false });
     }
-    await setupPortlessHost({ allowRootPrompt: false });
     // setupPortlessHost already pointed at the fix when no proxy came up.
     const live = (await detectPortless()).proxyRunning;
     if (live && !(await portlessServiceStatus()).installed) {

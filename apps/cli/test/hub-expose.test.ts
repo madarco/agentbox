@@ -7,7 +7,7 @@ import { buildExposedHubEnv, parseEnvFileBody } from '@agentbox/sandbox-core';
 import { assertTunnelOptions, detectLanIp, resolvePublicUrl } from '../src/control-plane/expose.js';
 import { setControlPlaneEnvKey } from '../src/control-plane/env-file.js';
 import { parseTrycloudflareUrl, cloudflaredAsset } from '../src/control-plane/tunnel.js';
-import { launchdPlist, systemdUnit } from '../src/lib/autostart.js';
+import { autostartPath, launchdPlist, systemdUnit } from '../src/lib/autostart.js';
 
 const CREDS = {
   AGENTBOX_RELAY_ADMIN_TOKEN: 'admin-tok',
@@ -118,6 +118,17 @@ describe('autostart unit bodies', () => {
     expect(plist).toContain('<string>start</string>');
     expect(plist).toContain('<key>RunAtLoad</key>');
     expect(launchdPlist({ argv: ['a&b', 'x'] }, 'log')).toContain('a&amp;b');
+  });
+
+  it('gives the unit a PATH with the running Node bin dir first', () => {
+    expect(autostartPath('/home/me/.nvm/versions/node/v22/bin/node')).toMatch(
+      /^\/home\/me\/\.nvm\/versions\/node\/v22\/bin:.*\/usr\/bin/,
+    );
+    const withPath = { ...inv, path: '/n/bin:/usr/bin' };
+    expect(launchdPlist(withPath, 'log')).toContain(
+      '<key>PATH</key>\n    <string>/n/bin:/usr/bin</string>',
+    );
+    expect(systemdUnit(withPath)).toContain('Environment="PATH=/n/bin:/usr/bin"');
   });
 
   it('systemd unit runs `hub start` and starts on default.target', () => {

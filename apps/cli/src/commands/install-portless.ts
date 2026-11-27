@@ -26,6 +26,7 @@ import {
   portlessGetUrl,
   portlessInstallHint,
   portlessServiceStatus,
+  rememberPortlessBin,
   resetPortlessCache,
   uninstallPortlessService,
 } from '@agentbox/sandbox-docker';
@@ -138,6 +139,9 @@ export const installPortlessCommand = new Command('portless')
       }
       state = await detectPortless();
     }
+
+    // For the hub, whose PATH (launchd, the tray) may not include this one.
+    await rememberPortlessBin();
 
     // Running this command is the opt-in: without it a box created from the
     // tray or the hub (no prompt there) would not register its alias.

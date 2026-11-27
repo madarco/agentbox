@@ -28,6 +28,9 @@ const webStatus: BoxStatus = {
   claude: { state: 'unknown', updatedAt: null, sessionRunning: false },
 };
 
+const NO_TLS = { port: 1355, tls: false };
+const HTTPS = { port: 443, tls: true };
+
 function webEndpoint(eps: Awaited<ReturnType<typeof getBoxEndpoints>>) {
   return eps.endpoints.find((e) => e.kind === 'web');
 }
@@ -43,14 +46,19 @@ describe('getBoxEndpoints — Portless web URL', () => {
       portlessAlias: 'mybox',
       portlessUrl: 'http://mybox.localhost:1355',
     };
-    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, true);
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, NO_TLS);
     expect(webEndpoint(eps)?.url).toBe('http://mybox.localhost:1355');
     expect(webEndpoint(eps)?.reachable).toBe(true);
   });
 
-  it('falls back to https://<alias>.localhost when portlessUrl is absent', async () => {
-    const record = { ...baseRecord, portlessAlias: 'mybox' };
-    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, true);
+  it('follows the live proxy mode, not the URL recorded at create', async () => {
+    // Created on the no-root :1355 proxy; the host has since moved to :443.
+    const record = {
+      ...baseRecord,
+      portlessAlias: 'mybox',
+      portlessUrl: 'http://mybox.localhost:1355',
+    };
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, HTTPS);
     expect(webEndpoint(eps)?.url).toBe('https://mybox.localhost');
   });
 
@@ -60,7 +68,7 @@ describe('getBoxEndpoints — Portless web URL', () => {
       portlessAlias: 'mybox',
       portlessUrl: 'https://mybox.localhost',
     };
-    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, false);
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, null);
     expect(webEndpoint(eps)?.url).toBe('http://127.0.0.1:54321');
     expect(webEndpoint(eps)?.reachable).toBe(true);
   });
@@ -96,16 +104,20 @@ describe('getBoxEndpoints — Portless VNC URL', () => {
       portlessVncAlias: 'vnc-mybox',
       portlessVncUrl: 'http://vnc-mybox.localhost:1355',
     };
-    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, true);
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, NO_TLS);
     expect(vncEndpoint(eps)?.url).toBe(
       'http://vnc-mybox.localhost:1355/vnc.html?autoconnect=1&password=pw12345A',
     );
     expect(vncEndpoint(eps)?.reachable).toBe(true);
   });
 
-  it('falls back to https://vnc-<name>.localhost when portlessVncUrl is absent', async () => {
-    const record = { ...vncBase, portlessVncAlias: 'vnc-mybox' };
-    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, true);
+  it('follows the live proxy mode for the VNC alias too', async () => {
+    const record = {
+      ...vncBase,
+      portlessVncAlias: 'vnc-mybox',
+      portlessVncUrl: 'http://vnc-mybox.localhost:1355',
+    };
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, HTTPS);
     expect(vncEndpoint(eps)?.url).toBe(
       'https://vnc-mybox.localhost/vnc.html?autoconnect=1&password=pw12345A',
     );
@@ -117,7 +129,7 @@ describe('getBoxEndpoints — Portless VNC URL', () => {
       portlessVncAlias: 'vnc-mybox',
       portlessVncUrl: 'https://vnc-mybox.localhost',
     };
-    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, false);
+    const eps = await getBoxEndpoints(record, 'docker-desktop', webStatus, null);
     expect(vncEndpoint(eps)?.url).toBe(
       'http://127.0.0.1:64080/vnc.html?autoconnect=1&password=pw12345A',
     );

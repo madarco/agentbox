@@ -15,9 +15,8 @@ vi.mock('@agentbox/sandbox-docker', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@agentbox/sandbox-docker')>();
   return {
     ...actual,
-    ensurePortlessForUrl: vi.fn(async () => live.value),
-    portlessProxyLive: vi.fn(async () => live.value),
-    portlessGetUrl: vi.fn(async (name: string) => `https://${name}.localhost`),
+    ensurePortlessForUrl: vi.fn(async () => (live.value ? { port: 443, tls: true } : null)),
+    livePortlessMode: vi.fn(async () => (live.value ? { port: 443, tls: true } : null)),
   };
 });
 
@@ -56,7 +55,8 @@ const box: BoxRecord = {
   workspacePath: '/tmp',
   createdAt: new Date().toISOString(),
   portlessAlias: 'b1',
-  portlessUrl: 'https://b1.localhost',
+  // Recorded on the no-root proxy; the live :443 one wins.
+  portlessUrl: 'http://b1.localhost:1355',
   cloud: {
     backend: 'hetzner-like',
     sandboxId: 'sb-1',

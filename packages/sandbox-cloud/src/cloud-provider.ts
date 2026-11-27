@@ -74,13 +74,12 @@ import {
   stopBoxPollerOnRelay,
   generateRelayToken,
   generateVncPassword,
-  chooseBoxUrl,
   ensurePortlessForUrl,
+  livePortlessMode,
+  livePortlessUrl,
   portlessAlias,
   portlessGetUrl,
-  portlessProxyLive,
   portlessUnalias,
-  recordedPortlessUrl,
   registerBoxWithRelay,
   TERM_FALLBACK_SNIPPET,
 } from '@agentbox/sandbox-docker';
@@ -1819,11 +1818,11 @@ export function createCloudProvider(
       // `agentbox list` / `inspect`. Falls back to the ephemeral preview URL
       // when Portless wasn't enabled or didn't take.
       const cachedWebUrl = box.cloud?.previewUrls?.[webPort];
-      const webUrl = chooseBoxUrl({
-        portlessUrl: recordedPortlessUrl(box.portlessAlias, box.portlessUrl),
-        fallbackUrl: cachedWebUrl,
-        proxyLive: box.portlessAlias !== undefined && (await portlessProxyLive()),
-      });
+      const webUrl =
+        livePortlessUrl(
+          box.portlessAlias,
+          box.portlessAlias !== undefined ? await livePortlessMode() : null,
+        ) ?? cachedWebUrl;
       // Surface each per-service preview URL alongside the main WebProxy.
       // Naming is `service-<port>` because we don't track the YAML name
       // -> port map on the record (avoids extra wire shape just for
@@ -1974,8 +1973,9 @@ export function createCloudProvider(
       const alias = kind === 'web' ? box.portlessAlias : box.portlessVncAlias;
       // Asked of the live proxy rather than read off the record, whose URL names
       // the proxy mode at the time it was written.
-      if (!opts?.loopback && alias !== undefined && (await ensurePortlessForUrl())) {
-        return portlessGetUrl(alias);
+      if (!opts?.loopback && alias !== undefined) {
+        const url = livePortlessUrl(alias, await ensurePortlessForUrl());
+        if (url !== undefined) return url;
       }
       // VNC port is fixed by Dockerfile.box (websockify serves noVNC on :6080).
       const port =

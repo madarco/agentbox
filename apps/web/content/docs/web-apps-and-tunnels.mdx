@@ -62,7 +62,7 @@ That installs the Portless CLI if it is missing, turns `portless.enabled` on, an
 
 ### Without Portless, URLs fall back to loopback
 
-A box only gets its `<box-name>.localhost` URL while a Portless proxy is actually serving it. When Portless is not installed, or the proxy is down and can't be started without your password, every URL AgentBox hands out — `agentbox url`, the hub's Open Web, the menu-bar app — is the box's loopback address instead (`http://127.0.0.1:<port>` for Docker, the SSH-forwarded port for Hetzner and DigitalOcean), and AgentBox says why once. Start the proxy (or run `agentbox install portless`) and the alias comes back without recreating the box.
+A box only gets its `<box-name>.localhost` URL while a Portless proxy is actually serving it. When Portless is not installed, or the proxy is down and can't be started without your password, every URL AgentBox hands out — `agentbox url`, the hub's Open Web, the menu-bar app — is the box's loopback address instead (`http://127.0.0.1:<port>` for Docker, the SSH-forwarded port for Hetzner and DigitalOcean), and AgentBox says why: on the terminal for `agentbox url`, in the hub log for the hub and the menu-bar app. Start the proxy (or run `agentbox install portless`) and the alias comes back without recreating the box.
 
 ```bash
 agentbox url my-box

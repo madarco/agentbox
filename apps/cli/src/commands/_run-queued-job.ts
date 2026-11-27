@@ -719,15 +719,21 @@ async function runCloudJob(
     // Size / location / inbound: prefer the values the foreground `create`
     // resolved (createOpts) over config, so a `create --size/--location/--inbound`
     // routed through the queue isn't silently re-sized from config.
-    providerOptions: cloudSizingProviderOptions(providerName, cfg.effective, {
-      size: opts.size,
-      location: opts.location,
-      // Explicit, never derived from `location`: a clone's or a web create's
-      // location is not a pin.
-      locationPinned: opts.locationPinned === true,
-      inbound: opts.inbound,
-      remoteHost: opts.remoteHost ?? remoteHost,
-    }),
+    providerOptions: {
+      ...cloudSizingProviderOptions(providerName, cfg.effective, {
+        size: opts.size,
+        location: opts.location,
+        // Explicit, never derived from `location`: a clone's or a web create's
+        // location is not a pin.
+        locationPinned: opts.locationPinned === true,
+        inbound: opts.inbound,
+        remoteHost: opts.remoteHost ?? remoteHost,
+      }),
+      // The host alias for a loopback-forward cloud: on unless the user said no
+      // (--no-portless, or "no" at install). The provider defaults it to on, so
+      // without this a "no" never reached a box created through the hub.
+      portless: opts.portless ?? cfg.effective.portless.enabled !== false,
+    },
   });
   log.write(`box created: ${result.record.id}`);
 

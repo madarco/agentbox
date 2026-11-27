@@ -12,7 +12,7 @@ import {
   ensurePortlessForUrl,
   getBoxHostPaths,
   inspectBox,
-  portlessGetUrl,
+  livePortlessUrl,
   startBox,
   unpauseBox,
 } from '@agentbox/sandbox-docker';
@@ -83,16 +83,16 @@ async function resolveViaProvider(box: BoxRecord, opts: UrlOptions): Promise<str
       // declared (EXPOSE 80) so no port suffix is needed.
       return `http://${record.container}.orb.local`;
     }
-    if (
-      record.portlessAlias &&
-      !opts.loopback &&
-      (await ensurePortlessForUrl((m) => {
-        log.warn(m);
-      }))
-    ) {
-      // A Portless route was registered and a proxy serves it — ask the proxy,
-      // since a recorded URL names the mode it had when the box was created.
-      return portlessGetUrl(record.portlessAlias);
+    if (record.portlessAlias && !opts.loopback) {
+      // At the URL the live proxy serves now. The notice goes to stderr so
+      // `--print` stays pipeable.
+      const url = livePortlessUrl(
+        record.portlessAlias,
+        await ensurePortlessForUrl((m) => {
+          process.stderr.write(`${m}\n`);
+        }),
+      );
+      if (url !== undefined) return url;
     }
     if (record.webHostPort === undefined) {
       throw new Error(
