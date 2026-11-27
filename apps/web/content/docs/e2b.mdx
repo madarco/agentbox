@@ -28,6 +28,23 @@ agentbox prepare --provider e2b    # bake the base template
 
 See [environment](/docs/environment) for where the `E2B_API_KEY` and `~/.agentbox/secrets.env` live.
 
+### Self-hosted and E2B-compatible hosts
+
+The provider talks to E2B only through the official SDK, so it also runs against a self-hosted E2B deployment or any E2B-compatible service. Set `E2B_DOMAIN` to that host's domain, next to an API key issued by that host:
+
+```bash
+# ~/.agentbox/secrets.env, or exported in your shell
+E2B_DOMAIN=e2b.example.com
+E2B_API_KEY=<api-key-from-that-host>
+```
+
+`agentbox e2b login` stores only the key, so add `E2B_DOMAIN` yourself. The SDK then sends both the API calls and the sandbox traffic to that domain, and preview URLs become `https://{port}-{sandboxId}.e2b.example.com`. Setting only `E2B_API_URL` is not enough: it moves the API calls but not the traffic to the sandboxes. Everything else on this page works unchanged, with two requirements on the host:
+
+- It must build templates from a Dockerfile (`Template.build()`), since `agentbox prepare --provider e2b` bakes the base there.
+- The size you bake with `--size` must be within the host's limits for one sandbox.
+
+For example, [LumiCloud](https://lumicloud.ai) serves the E2B API with `E2B_DOMAIN=lumicloud.dev` and a LumiCloud API key; `prepare` (base and `--agents claude`), `create`, preview URLs, pause/resume, checkpoints and `prune` were checked there with AgentBox 0.34.0-nightly.
+
 ## Use it
 
 ```bash
