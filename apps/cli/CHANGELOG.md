@@ -87,6 +87,9 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **A remote hub no longer lists "Docker (local)"**, which it has no engine for;
+  its own engine is the Remote Docker host `hub`, now listed first. A PC pointed
+  at a remote hub hides local docker the same way.
 - **`hub setup`, `hub deploy` and `hub update` enroll the deploying computer
   as a device** on the control box, so the hub's Skills page can compare with
   it. Once enrolled, it still approves, revokes and renames devices with

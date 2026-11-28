@@ -90,7 +90,7 @@ import {
 } from '@agentbox/relay';
 import { collectAsker, answerMapAsker } from './prompts/askers.js';
 import { runCreateGates } from './prompts/create-gates.js';
-import { mergeRemoteProviders } from './boxes/provider-origin.js';
+import { mergeRemoteProviders, withoutLocalDocker } from './boxes/provider-origin.js';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { fetchRemoteProviders, resolveRemoteHub } from './remote-hub.js';
 import { isRuntimeProviderName, loadProviderModuleByName } from './provider-importers.js';
@@ -155,6 +155,7 @@ import {
   recordAccountSwitch,
   revertAccountSwitch,
   resolveAgentSpec,
+  controlPlaneDeployPath,
   type FileManifest,
 } from '@agentbox/sandbox-core';
 import { renderCloneIdentity } from './boxes/clone-render.js';
@@ -1111,10 +1112,41 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
  * is pure and lives in `boxes/provider-origin`; this is the IO half.
  */
 async function withRemoteProviders(local: ProviderOption[]): Promise<ProviderOption[]> {
+  const arranged = (await localDockerHidden()) ? withoutLocalDocker(local) : local;
   const remote = await fetchRemoteProviders();
-  if (remote === undefined) return local; // no control box — everything is local
+  if (remote === undefined) return arranged; // no control box — everything is local
   const target = await resolveRemoteHub();
-  return mergeRemoteProviders({ local, remote, hubUrl: target?.url });
+  return mergeRemoteProviders({ local: arranged, remote, hubUrl: target?.url });
+}
+
+/**
+ * Whether plain docker is off on this hub — the same rule the CLI applies to
+ * `create` and its provider lists (`dockerProvidersHidden`), plus the case the
+ * CLI never sees: a hub with no docker engine at all, which is every deployed
+ * control box (the hub runs in a container; its engine is the `hub` host).
+ * A control box that is THIS machine (`hub expose`) keeps docker: its engine is
+ * this engine.
+ */
+async function localDockerHidden(): Promise<boolean> {
+  if (!(await binOnPath('docker'))) return true;
+  try {
+    const { effective } = await loadEffectiveConfig(os.homedir());
+    if (effective.hub.mode === 'local') return false;
+    if (effective.hub.mode === 'thin') return true;
+    if (!effective.relay.controlPlaneUrl) return false;
+    return !(await controlBoxIsThisMachine());
+  } catch {
+    return false;
+  }
+}
+
+async function controlBoxIsThisMachine(): Promise<boolean> {
+  try {
+    const raw = readFileSync(controlPlaneDeployPath(), 'utf8');
+    return (JSON.parse(raw) as { provider?: string }).provider === 'local';
+  } catch {
+    return false;
+  }
 }
 
 // ── base-image freshness (opt-in; kept OFF the getData() hot path) ──
