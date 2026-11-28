@@ -868,10 +868,10 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
         await repo.recordAuth({
           account,
           box: e.boxName ?? e.boxId,
-          kind: 'fail',
+          ...(e.alive
+            ? { kind: 'ok' as const }
+            : { kind: 'fail' as const, error: 'credentials-dead', source: 'box' as const }),
           ts: e.ts,
-          error: 'credentials-dead',
-          source: 'box',
         });
       }),
 

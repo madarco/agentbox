@@ -14,6 +14,7 @@
  *   state.json    worker → hub     where it is ({@link AccountLoginWorkerState})
  *   code          hub → worker     the pasted code, consumed on read
  *   renew.json    hub only         the fan-out's outcome after the sign-in
+ *   cancel        hub → worker     stop (before the worker has a pid to signal)
  *
  * Every writer writes a temp file and renames it over the target; readers
  * tolerate a transient miss. The code is a secret in transit: 0600, deleted on
@@ -152,19 +153,45 @@ export function writeAccountLoginCode(id: string, code: string, stateDir?: strin
   atomicWrite(sessionFile(id, 'code', stateDir), code.trim());
 }
 
-/** Read and consume the pasted code (null when none is waiting). */
+/**
+ * Read and consume the pasted code (null when none is waiting). Claimed by a
+ * rename first, so a code written while this one is read is never deleted
+ * unread.
+ */
 export function takeAccountLoginCode(id: string, stateDir?: string): string | null {
   const path = sessionFile(id, 'code', stateDir);
+  const claim = `${path}.taking.${String(process.pid)}`;
   try {
-    const code = readFileSync(path, 'utf8').trim();
-    try {
-      unlinkSync(path);
-    } catch {
-      /* already gone */
-    }
+    renameSync(path, claim);
+  } catch {
+    return null;
+  }
+  try {
+    const code = readFileSync(claim, 'utf8').trim();
     return code.length > 0 ? code : null;
   } catch {
     return null;
+  } finally {
+    try {
+      unlinkSync(claim);
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** Ask the worker to stop: works before it has published a pid to signal. */
+export function writeAccountLoginCancel(id: string, stateDir?: string): void {
+  ensureDir(id, stateDir);
+  atomicWrite(sessionFile(id, 'cancel', stateDir), new Date().toISOString());
+}
+
+export function isAccountLoginCancelled(id: string, stateDir?: string): boolean {
+  try {
+    readFileSync(sessionFile(id, 'cancel', stateDir));
+    return true;
+  } catch {
+    return false;
   }
 }
 

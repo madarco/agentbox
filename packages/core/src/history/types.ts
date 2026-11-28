@@ -166,6 +166,8 @@ export interface CredentialsDeadEvent {
   agent: string;
   /** When the file was wiped (its mtime in the box), ISO. */
   ts: string;
+  /** A real login is back in the file after a reported wipe: evidence it works. */
+  alive?: true;
 }
 
 /** What the relay tells an in-box shipper (`history.config`). */

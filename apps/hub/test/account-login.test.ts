@@ -19,6 +19,8 @@ afterAll(() => rmSync(HOME, { recursive: true, force: true }));
 import {
   AGENT_SYNC_SPECS,
   accountLoginRootDir,
+  isAccountLoginCancelled,
+  writeAccountLoginCode,
   readAccountLoginState,
   takeAccountLoginCode,
   upsertAccount,
@@ -239,6 +241,58 @@ describe('hub-driven sign-in (POST/GET …/login, …/login/code)', () => {
       error: expect.stringMatching(/AGENTBOX_CLI_ENTRY/),
     });
     expect(await b.getAccountLogin('claude', 'work')).toMatchObject({ ok: false });
+  });
+});
+
+describe('hub-driven sign-in: lookups, boot and cancel', () => {
+  it('get/code/cancel find the session by the typed name, as start stored it', async () => {
+    const b = backend();
+    const start = await b.startAccountLogin('claude', 'Work Max', {});
+    expect(start.ok && start.value.account).toBe('work_max');
+    const g = await b.getAccountLogin('claude', 'Work Max');
+    expect(g.ok && g.value.account).toBe('work_max');
+    const sent = await b.submitAccountLoginCode('claude', 'Work Max', { code: 'bad' });
+    expect(sent.ok && sent.value.lastError).toBeTruthy();
+  });
+
+  it('a worker that never writes its state reads starting, then an error', async () => {
+    let clock = Date.parse('2026-11-28T10:00:00Z');
+    const b = createAccountLoginBackend({
+      renew: () => Promise.resolve({ ok: true, value: { pushed: 0, failed: 0, output: [] } }),
+      spawnWorker: () => undefined,
+      store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
+      stateDir: dir,
+      startWaitMs: 0,
+      pollMs: 5,
+      now: () => clock,
+    });
+    const r = await b.startAccountLogin('claude', 'work', {});
+    expect(r.ok && r.value.state).toBe('starting');
+    // Live while booting: a second start joins it.
+    const again = await b.startAccountLogin('claude', 'work', {});
+    expect(again.ok && again.ok && r.ok && again.value.session).toBe(r.ok ? r.value.session : '');
+    clock += 61_000;
+    const g = await b.getAccountLogin('claude', 'work');
+    expect(g.ok && g.value).toMatchObject({
+      state: 'error',
+      error: expect.stringMatching(/never started/),
+    });
+  });
+
+  it('cancel before the worker has a pid leaves a marker it reads', async () => {
+    const b = backend(() => undefined);
+    const r = await b.startAccountLogin('claude', 'work', {});
+    expect(r.ok && r.value.state).toBe('starting');
+    await b.cancelAccountLogin('claude', 'work');
+    expect(isAccountLoginCancelled(r.ok ? r.value.session : '', dir)).toBe(true);
+  }, 15_000);
+});
+
+describe('takeAccountLoginCode', () => {
+  it('consumes the code once', () => {
+    writeAccountLoginCode('abcdef0123456789', 'c1', dir);
+    expect(takeAccountLoginCode('abcdef0123456789', dir)).toBe('c1');
+    expect(takeAccountLoginCode('abcdef0123456789', dir)).toBeNull();
   });
 });
 

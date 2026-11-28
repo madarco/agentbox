@@ -360,6 +360,22 @@ describe('usage (Phase 7)', () => {
     });
   });
 
+  it('a real login back in the file after a wipe counts as working (no turn)', async () => {
+    const { svc, repo } = await setup({ b1: 'work' });
+    await svc.recordCredentialsDead!({ boxId: 'b1', boxName: 'one', agent: 'claude', ts: day1 });
+    await svc.recordCredentialsDead!({
+      boxId: 'b1',
+      boxName: 'one',
+      agent: 'claude',
+      ts: day2,
+      alive: true,
+    });
+    expect((await repo.accountAuth('claude/work')).boxes[0]).toMatchObject({
+      failedAt: day1,
+      okAt: day2,
+    });
+  });
+
   it('adds the refusal source to a store from before Phase 4', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'auth-mig-'));
     const path = join(dir, 'history.db');

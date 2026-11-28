@@ -193,7 +193,10 @@ the contract below (also in the PR body).
   mtime; never its contents) once per transition: it reports again only
   after a real login came back in between. A post the relay did not take is
   retried next tick. A ctl restart re-reports the same `wipedAt`, which is
-  idempotent.
+  idempotent. When a real login comes back after a reported wipe (the
+  fan-out repaired the box), it posts the same event with `alive: true`,
+  recorded as that box's newest working reply, so an idle repaired box does
+  not keep the account `revoked`.
 - **Relay** (`packages/relay/src/credentials-dead.ts`): a host relay hands it
   to the hub's history sink (`HistoryIngestSink.recordCredentialsDead`, direct
   POST for docker boxes, the cloud poller for cloud boxes); a box-mode relay

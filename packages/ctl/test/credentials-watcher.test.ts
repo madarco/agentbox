@@ -351,7 +351,10 @@ describe('CredentialsWatcher credentials-dead', () => {
     await writeFile(path, WIPED_BLOB);
     await utimes(path, 1_700_000_200, 1_700_000_200);
     await w.scan();
-    expect(deadPosts(post)).toHaveLength(2);
+    // wipe, back alive, wipe again
+    expect(deadPosts(post)).toHaveLength(3);
+    expect((deadPosts(post)[1]![1] as Record<string, unknown>).alive).toBe(true);
+    expect(deadPosts(post)[2]![1]).not.toHaveProperty('alive');
     expect(post.mock.calls.filter((c) => c[0] === CREDENTIALS_UPDATED_EVENT)).toHaveLength(1);
   });
 

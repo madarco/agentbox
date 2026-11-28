@@ -494,6 +494,7 @@ export {
 export {
   accountLoginDir,
   accountLoginRootDir,
+  isAccountLoginCancelled,
   isAccountLoginId,
   isTerminalLoginPhase,
   listAccountLoginSessions,
@@ -503,6 +504,7 @@ export {
   readAccountLoginState,
   removeAccountLoginSession,
   takeAccountLoginCode,
+  writeAccountLoginCancel,
   writeAccountLoginCode,
   writeAccountLoginRenew,
   writeAccountLoginRequest,

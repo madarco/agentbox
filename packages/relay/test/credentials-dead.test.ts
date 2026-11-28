@@ -16,7 +16,9 @@ describe('parseCredentialsDead', () => {
     expect(parseCredentialsDead(PAYLOAD)).toEqual({
       agent: 'claude',
       wipedAt: '2026-11-28T10:00:00.000Z',
+      alive: false,
     });
+    expect(parseCredentialsDead({ ...PAYLOAD, alive: true })?.alive).toBe(true);
     expect(parseCredentialsDead({ ...PAYLOAD, schema: 2 })).toBeNull();
     expect(parseCredentialsDead({ ...PAYLOAD, agent: '../x' })).toBeNull();
     expect(parseCredentialsDead({ ...PAYLOAD, wipedAt: 'yesterday' })).toBeNull();

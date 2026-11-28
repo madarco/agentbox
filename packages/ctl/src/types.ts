@@ -213,7 +213,8 @@ export const CREDENTIALS_UPDATED_EVENT = 'credentials-updated';
 
 /**
  * Relay event type: a watched agent login turned into its signed-out shape
- * (claude's wiped tokens). Payload `{ schema: 1, agent, wipedAt }`, never the
+ * (claude's wiped tokens). Payload `{ schema: 1, agent, wipedAt, alive? }`
+ * (`alive: true`: a real login is back after a reported wipe), never the
  * file's contents. Mirrored in `packages/relay/src/credentials-fanout.ts`.
  */
 export const CREDENTIALS_DEAD_EVENT = 'credentials-dead';

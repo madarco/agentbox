@@ -16,6 +16,7 @@ import { loadEffectiveConfig } from '@agentbox/config';
 import { accountConfigVolume, findAccount, isDefaultAccount } from '@agentbox/core';
 import { openCommandLog, runAgentLogin, type AgentCliSpec } from '@agentbox/cli-kit';
 import {
+  isAccountLoginCancelled,
   readAccountLoginRequest,
   readAccounts,
   resolveAgentSpec,
@@ -66,7 +67,9 @@ async function signInAndStore(
     { volume },
     { syncFromHost: true, image, ...(named ? { account } : {}) },
   );
-  if (named && existing) await a.runtime.resetAccountVolume?.(volume, image);
+  // Always, as the CLI's sign-in does: a volume left by an earlier account of
+  // this name (its `rm` could not drop a mounted volume) must not lend its profile.
+  if (named) await a.runtime.resetAccountVolume?.(volume, image);
   const before = named ? null : await readDefaultVolumeLogin(a.id, image);
 
   const binding = a.runtime.loginBinding({
@@ -177,12 +180,26 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
     setState({ phase: 'starting' });
 
     const abort = new AbortController();
+    const cancel = (why: string): void => {
+      if (abort.signal.aborted) return;
+      log.write(`${why}; cancelling`);
+      abort.abort();
+      // The login itself ends on the abort at once. The image build and the
+      // volume prep before it do not see it: end the process instead.
+      setTimeout(() => {
+        setState({ phase: 'error', error: 'cancelled' });
+        log.close();
+        process.exit(1);
+      }, 3_000).unref();
+    };
     for (const sig of ['SIGTERM', 'SIGINT'] as const) {
-      process.on(sig, () => {
-        log.write(`received ${sig}; cancelling`);
-        abort.abort();
-      });
+      process.on(sig, () => cancel(`received ${sig}`));
     }
+    // The hub's cancel before this worker had a pid to signal.
+    const cancelPoll = setInterval(() => {
+      if (isAccountLoginCancelled(id)) cancel('cancel requested');
+    }, 1_000);
+    cancelPoll.unref();
 
     const req = readAccountLoginRequest(id);
     const a = req ? agentLoginSpec(req.agent) : undefined;

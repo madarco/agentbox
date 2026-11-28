@@ -30,6 +30,7 @@ import {
   readAccountLoginState,
   readAccounts,
   removeAccountLoginSession,
+  writeAccountLoginCancel,
   writeAccountLoginCode,
   writeAccountLoginRenew,
   writeAccountLoginRequest,
@@ -67,6 +68,8 @@ const KEEP_FINISHED_MS = 30 * 60_000;
 /** A session nobody finished in this long is cancelled (the worker's own wait is 10 min). */
 const STUCK_MS = 20 * 60_000;
 const MAX_LIVE_SESSIONS = 4;
+/** A worker that has not written its first state in this long never started. */
+const WORKER_BOOT_MS = 60_000;
 
 function defaultSpawnWorker(session: string): number | undefined {
   const entry = process.env['AGENTBOX_CLI_ENTRY'];
@@ -137,7 +140,20 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
    */
   function stateOf(session: string): AccountLoginWorkerState | null {
     const st = readAccountLoginState(session, stateDir);
-    if (!st || isTerminalLoginPhase(st.phase) || loginWorkerAlive(st.pid)) return st;
+    if (!st) {
+      // Only the worker writes its state; until its first write the session
+      // reads `starting`, and one that never writes is a worker that never ran.
+      const req = readAccountLoginRequest(session, stateDir);
+      const age = now() - Date.parse(req?.createdAt ?? '');
+      if (!req || !(age > WORKER_BOOT_MS)) return null;
+      writeAccountLoginState(
+        session,
+        { phase: 'error', error: 'the sign-in worker never started', pid: 0 },
+        stateDir,
+      );
+      return readAccountLoginState(session, stateDir);
+    }
+    if (isTerminalLoginPhase(st.phase) || loginWorkerAlive(st.pid)) return st;
     const error = 'the sign-in stopped before it finished';
     writeAccountLoginState(session, { ...st, phase: 'error', error }, stateDir);
     return readAccountLoginState(session, stateDir);
@@ -165,8 +181,22 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
 
   const isLive = (session: string): boolean => {
     const st = stateOf(session);
-    return st !== null && !isTerminalLoginPhase(st.phase);
+    if (st === null) return readAccountLoginRequest(session, stateDir) !== null;
+    return !isTerminalLoginPhase(st.phase);
   };
+
+  /**
+   * The (agent, account) a client's path names, as `start` stored it: the
+   * agent's canonical id, and the account as typed or, failing that, its
+   * normalized name ("Work Max" -> work_max).
+   */
+  function keyOf(agent: string, id: string): { agent: string; id: string } {
+    const a = findAgentSpec(agent)?.id ?? agent;
+    const raw = id.trim();
+    if (sessionsOf(a, raw).length > 0) return { agent: a, id: raw };
+    const n = normalizeAccountName(raw);
+    return { agent: a, id: n.problem === undefined ? n.name : raw };
+  }
 
   /** Cancel the stuck, drop the long finished. */
   function reap(): void {
@@ -177,9 +207,12 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       if (!req || !Number.isFinite(age)) {
         removeAccountLoginSession(s, stateDir);
       } else if (st && !isTerminalLoginPhase(st.phase)) {
-        if (now() - Date.parse(req.createdAt) > STUCK_MS) {
+        const stuckFor = now() - Date.parse(req.createdAt) - STUCK_MS;
+        if (stuckFor > 0) {
+          // Asked first; a worker that ignored it for two more minutes is killed.
+          writeAccountLoginCancel(s, stateDir);
           try {
-            process.kill(st.pid, 'SIGTERM');
+            process.kill(st.pid, stuckFor > 2 * 60_000 ? 'SIGKILL' : 'SIGTERM');
           } catch {
             /* already gone */
           }
@@ -308,9 +341,8 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       const session = randomBytes(8).toString('hex');
       const createdAt = new Date(now()).toISOString();
       writeAccountLoginRequest(session, { agent: spec.id, account: id, mode, createdAt }, stateDir);
-      let pid: number | undefined;
       try {
-        pid = spawnWorker(session);
+        spawnWorker(session);
       } catch (err) {
         removeAccountLoginSession(session, stateDir);
         return {
@@ -319,16 +351,13 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
           error: err instanceof Error ? err.message : String(err),
         };
       }
-      // Published at once, so a concurrent start sees a live session.
-      if (typeof pid === 'number' && !readAccountLoginState(session, stateDir)) {
-        writeAccountLoginState(session, { phase: 'starting', pid }, stateDir);
-      }
       watch(session);
       const v = await waitFor(session, (x) => x.state !== 'starting', startWaitMs);
       return { ok: true, value: v ?? viewOf(session)! };
     },
 
-    async getAccountLogin(agent, id, session) {
+    async getAccountLogin(rawAgent, rawId, session) {
+      const { agent, id } = keyOf(rawAgent, rawId);
       if (session !== undefined && !isAccountLoginId(session)) {
         return { ok: false, code: 'invalid_request', error: 'bad session id' };
       }
@@ -341,7 +370,8 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       return { ok: true, value: v };
     },
 
-    async submitAccountLoginCode(agent, id, input) {
+    async submitAccountLoginCode(rawAgent, rawId, input) {
+      const { agent, id } = keyOf(rawAgent, rawId);
       const b = (input ?? {}) as { code?: unknown; session?: unknown };
       const code = typeof b.code === 'string' ? b.code.trim() : '';
       if (!code) return { ok: false, code: 'invalid_request', error: 'code is required' };
@@ -382,13 +412,15 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       return { ok: true, value: out ?? v };
     },
 
-    async cancelAccountLogin(agent, id) {
+    async cancelAccountLogin(rawAgent, rawId) {
+      const { agent, id } = keyOf(rawAgent, rawId);
       const s = sessionsOf(agent, id).find(isLive);
       if (!s)
         return { ok: false, code: 'not_found', error: `no sign-in in flight for ${agent}/${id}` };
+      writeAccountLoginCancel(s, stateDir);
       const st = readAccountLoginState(s, stateDir);
       try {
-        if (st) process.kill(st.pid, 'SIGTERM');
+        if (st && st.pid > 0) process.kill(st.pid, 'SIGTERM');
       } catch {
         /* already gone */
       }

@@ -74,7 +74,16 @@ export function SignInDialog({
     setView(null);
     setFailure(null);
     call(base, { method: 'POST', body: JSON.stringify({ mode }) })
-      .then((v) => !gone && setView(v))
+      .then((v) => {
+        // Closed while the start was still answering: cancel what it started.
+        if (gone) {
+          if (v.state === 'starting' || v.state.startsWith('awaiting')) {
+            void call(base, { method: 'DELETE' }).catch(() => undefined);
+          }
+          return;
+        }
+        setView(v);
+      })
       .catch(
         (err: unknown) => !gone && setFailure(err instanceof Error ? err.message : String(err)),
       );
@@ -83,16 +92,25 @@ export function SignInDialog({
     };
   }, [base, mode, attempt]);
 
-  // Follow it while it runs.
+  // Follow it while it runs. A failed poll (a blip, a hub restart) is shown
+  // and retried: the sign-in itself goes on regardless.
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [pollTick, setPollTick] = useState(0);
   useEffect(() => {
     if (!view || !LIVE.has(view.state)) return;
     const t = setTimeout(() => {
       call(`${base}?session=${encodeURIComponent(view.session)}`)
-        .then(setView)
-        .catch((err: unknown) => setFailure(err instanceof Error ? err.message : String(err)));
+        .then((v) => {
+          setPollError(null);
+          setView(v);
+        })
+        .catch((err: unknown) => {
+          setPollError(err instanceof Error ? err.message : String(err));
+          setPollTick((n) => n + 1);
+        });
     }, POLL_MS);
     return () => clearTimeout(t);
-  }, [base, view]);
+  }, [base, view, pollTick]);
 
   useEffect(() => {
     if (finished.current) return;
@@ -103,7 +121,8 @@ export function SignInDialog({
   }, [view, onFinished]);
 
   const close = useCallback(() => {
-    // Leaving mid-way cancels the login container rather than leaving it waiting.
+    // Leaving mid-way cancels the login container rather than leaving it waiting
+    // (with no view yet, the start's own answer cancels it; see above).
     if (view && (view.state === 'starting' || view.state.startsWith('awaiting'))) {
       void call(base, { method: 'DELETE' }).catch(() => undefined);
     }
@@ -227,6 +246,11 @@ export function SignInDialog({
         ) : (
           <div className="font-mono text-xs text-red-400">{view.error ?? 'the sign-in failed'}</div>
         )}
+        {pollError ? (
+          <div className="font-mono text-[11px] text-muted-foreground">
+            Lost touch with the hub ({pollError}); retrying.
+          </div>
+        ) : null}
       </DialogBody>
       <DialogFooter>
         {!live && view?.state !== 'done' ? (

@@ -211,7 +211,22 @@ export class CredentialsWatcher {
           this.lastMtime.set(file.agent, st.mtimeMs);
           continue;
         }
-        this.deadReported.delete(file.agent);
+        if (this.deadReported.has(file.agent)) {
+          // The box holds a real login again (a fan-out repaired it): clear the
+          // dead evidence, or the account reads revoked until this box's next turn.
+          const back = await this.relay.post(
+            CREDENTIALS_DEAD_EVENT,
+            {
+              schema: 1,
+              agent: file.agent,
+              wipedAt: new Date(st.mtimeMs).toISOString(),
+              alive: true,
+            },
+            { timeoutMs: this.postTimeoutMs },
+          );
+          if (isRetryablePostFailure(back)) continue;
+          this.deadReported.delete(file.agent);
+        }
         const hash = createHash('sha256').update(text).digest('hex');
         if (this.lastPosted.get(file.agent) === hash) {
           this.lastMtime.set(file.agent, st.mtimeMs);
