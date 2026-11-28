@@ -19,7 +19,7 @@
 
 import { execa } from 'execa';
 import { chmod, mkdir } from 'node:fs/promises';
-import { tryGetMachineId } from '@agentbox/config';
+import { tryGetMachineId, withFileLock } from '@agentbox/config';
 import { dirname } from 'node:path';
 import {
   accountCustodyPath,
@@ -103,11 +103,12 @@ export interface CredentialsFanoutDeps {
   /** Run under the accounts lock. Override for tests; default: the store's lock. */
   accountsLock?: <T>(fn: () => Promise<T>) => Promise<T>;
   /**
-   * The machine a box was built for (its registration `originMachineId`): a
-   * named account belongs to that machine's store, so its custody copy is keyed
-   * by it. Default: this relay's own machine.
+   * This relay's own machine id, the `<machine>` a named account's custody copy
+   * is filed under. The account came from THIS machine's store (on a remote
+   * hub, a PC's account imported into it), never from the box's origin PC
+   * (#444 (b)). Default: the machine-id file.
    */
-  originMachineFor?: (boxId: string) => Promise<string | undefined>;
+  machineId?: () => string | undefined;
 }
 
 /**
@@ -183,7 +184,7 @@ export class CredentialsFanout {
   ) => Promise<void>;
   private readonly backupPathFor?: (agent: CredentialAgentKind) => string;
   private readonly accountBackupPathFor: (agent: CredentialAgentKind, account: string) => string;
-  private readonly originMachineFor: (boxId: string) => Promise<string | undefined>;
+  private readonly machineId: () => string | undefined;
   private readonly accountKindFor: (
     agent: CredentialAgentKind,
     account: string,
@@ -229,7 +230,7 @@ export class CredentialsFanout {
     this.custody = deps.custody ?? null;
     this.accountsLock = deps.accountsLock ?? ((fn) => withAccountsLock(fn));
     this.boxAccountFor = deps.boxAccountFor ?? stateBoxAccount;
-    this.originMachineFor = deps.originMachineFor ?? (() => Promise.resolve(undefined));
+    this.machineId = deps.machineId ?? tryGetMachineId;
   }
 
   /**
@@ -269,15 +270,24 @@ export class CredentialsFanout {
     sourceBoxId: string,
   ): Promise<CredentialsHandleResult> {
     const isDefault = isDefaultAccount(account);
-    // A named account's row check and its write are one step under the
+    // Read, gate and write under the credential's own lock, the one a hub's
+    // account import takes too (llm-accounts Phase 9): neither may land an
+    // older token over one the other wrote between its read and its write. A
+    // named account's row check and its write are also one step under the
     // accounts lock, so an `accounts rm` cannot land between them and leave a
-    // secret with no row (the store's own writer takes the same lock).
-    const stored = await (isDefault
-      ? this.storeLogin(agent, account, content, sourceBoxId)
-      : this.accountsLock(() => this.storeLogin(agent, account, content, sourceBoxId)));
+    // secret with no row. The credential lock is the outer one, the order the
+    // import takes them in.
+    const lockPath =
+      (isDefault ? this.backupPathFor?.(agent) : this.accountBackupPathFor(agent, account)) ??
+      resolveAgentSpec(agent).credential?.hostBackup;
+    const store = () =>
+      isDefault
+        ? this.storeLogin(agent, account, content, sourceBoxId)
+        : this.accountsLock(() => this.storeLogin(agent, account, content, sourceBoxId));
+    const stored = lockPath ? await withFileLock(lockPath, store) : await store();
     if (!stored.accepted) return stored;
     const verdict = stored;
-    await this.recordInCustody(agent, account, content, sourceBoxId);
+    await this.recordInCustody(agent, account, content);
     const label = isDefault ? agent : `${agent} account '${account}'`;
     this.log(
       `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
@@ -341,7 +351,6 @@ export class CredentialsFanout {
     agent: CredentialAgentKind,
     account: string,
     content: string,
-    sourceBoxId: string,
   ): Promise<void> {
     if (!this.custody) return;
     try {
@@ -351,9 +360,7 @@ export class CredentialsFanout {
       // is the write to custody -- the copy every later create seeds from -- so
       // it checks rather than trusting its caller.
       if (!spec.credential) return;
-      const machine = isDefaultAccount(account)
-        ? undefined
-        : ((await this.originMachineFor(sourceBoxId).catch(() => undefined)) ?? tryGetMachineId());
+      const machine = isDefaultAccount(account) ? undefined : this.machineId();
       await this.custody.put(
         accountCustodyPath(agent, account, spec.credential.boxRelPath, machine),
         Buffer.from(content, 'utf8'),

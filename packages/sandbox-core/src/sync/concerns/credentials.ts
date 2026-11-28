@@ -343,11 +343,21 @@ export function shouldAcceptCredentialUpdate(
   if (existing !== null && credentialIdentityMismatch(agent, incoming, existing)) {
     return { accept: false, reason: IDENTITY_MISMATCH };
   }
-  return shouldAcceptCredentialBlob(
-    resolveAgentSpec(agent).credential?.freshness?.jsonPath,
-    incoming,
-    existing,
-  );
+  const path = resolveAgentSpec(agent).credential?.freshness?.jsonPath;
+  // No freshness field (codex's auth.json): order by the access token's JWT
+  // `exp` when both carry one. A refresh rotates the refresh token, so an
+  // older copy that merely differs is dead: content-changed would take it
+  // over the live one (the custody seed, a stale box's post).
+  if (!path && existing !== null && existing !== incoming) {
+    const mine = credentialExpiry(agent, incoming);
+    const theirs = credentialExpiry(agent, existing);
+    if (mine !== null && theirs !== null) {
+      return mine > theirs
+        ? { accept: true, reason: 'newer access token' }
+        : { accept: false, reason: 'not newer than backup' };
+    }
+  }
+  return shouldAcceptCredentialBlob(path, incoming, existing);
 }
 
 /**
