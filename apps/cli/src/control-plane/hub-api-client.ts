@@ -41,6 +41,10 @@ export interface HubApiBox {
   /** The hub's computed primary label (displayName || session title || name). */
   task: string;
   provider: string;
+  /** Size the box was created with, in the provider's grammar (hetzner server type, …). */
+  size?: string;
+  /** Where the box runs (hetzner location, DigitalOcean region, daytona region). */
+  location?: string;
   /** Raw provider runtime state; absent on synthetic in-flight `job:` boxes. */
   state?: 'running' | 'paused' | 'stopped' | 'missing' | 'destroyed';
   /** Normalized lifecycle status (running | paused | stopped | creating | error). */

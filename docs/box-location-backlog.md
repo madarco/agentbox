@@ -21,3 +21,19 @@ fixed there. Newest last.
   refuses is still open). Phase 1 makes the backend refuse up front with a pointer when an explicit
   region is not in the snapshot's `regionIds` (or is not us-east-1 for a linux-vm base). Still open:
   one prepared base per provider, so baking in a second region replaces the first.
+- **Size is recorded only when one was asked for.** `cloud.size` is written from `--size` /
+  `box.size<P>`; a box made with the provider default records none, so `status` says
+  "(provider default)" and the Box payload omits `size`. Backends that report `resources` (hetzner,
+  DigitalOcean) could also return the effective size slug in the handle.
+  (`packages/sandbox-cloud/src/cloud-provider.ts` ~1631)
+- **Registered boxes carry no size or location.** A box known to a hub only through its
+  registration (`mapRegistrationToBox`, `apps/hub/lib/hub-backend.ts` ~639) has neither field: the
+  registration wire (`BoxRegistration`, `packages/relay/src/types.ts`) does not carry them.
+- **Daytona `target` vocabulary is unmeasured.** Phase 2 records a Daytona box's
+  `cloud.landedLocation` from the sandbox's `target` (the SDK documents it as the runner's target
+  location). No sandbox existed to compare it with the `us` / `eu` / `us-east-1` region names. It is
+  display-only (clones replay `location`, never `landedLocation`), so a mismatch shows an odd label
+  and changes nothing else.
+- **The CLI shows size/location only from a local record.** `agentbox status` renders the local
+  `BoxRecord`; a box that lives only on a remote hub shows them through `ls --json` / the Box
+  payload, not `status`.

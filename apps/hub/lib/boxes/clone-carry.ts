@@ -123,6 +123,7 @@ export const CLONE_CLOUD_POLICY = {
   sandboxClass: 'carry',
   size: 'carry',
   location: 'carry',
+  landedLocation: 'n/a', // display only: replaying a default placement would pin the clone
   hostSeeded: 'n/a',
   workspaceBranch: 'n/a',
   sanctionedBranch: 'n/a',

@@ -541,9 +541,16 @@ export const daytonaBackend: CloudBackend = {
         // `box.daytonaClass` disagrees with the snapshot would otherwise have us
         // persist a lie, and `pause()` would then pick the wrong call.
         const bootedClass = sandboxClass;
+        // The region it runs in, for display: the sandbox's own `target`, else
+        // the client's region. An empty `region` (container, account default) is
+        // resolved only by the sandbox. `landedLocation`, not `location`: a clone
+        // must not replay a derived region through the explicit-region checks.
+        const target = (sandbox as { target?: unknown }).target;
+        const landed = typeof target === 'string' && target.length > 0 ? target : region;
         return {
           sandboxId: sandbox.id,
           ...(bootedClass ? { sandboxClass: bootedClass } : {}),
+          ...(landed ? { landedLocation: landed } : {}),
         };
       },
       { retryOnAmbiguous: false, attemptTimeoutMs: 900_000 },

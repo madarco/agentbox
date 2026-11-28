@@ -684,9 +684,14 @@ export const digitaloceanBackend: CloudBackend = {
       // the cloud scaffold's `provisioned …` log line + the box record read
       // these). `plan` is present whenever the size validated against the
       // catalog above.
+      // Where it actually is, for display: the droplet's own region, else the
+      // one asked for with the default applied. Not `location`, which a clone
+      // replays: a default placement must not pin the clone to this region.
+      const landed = droplet.region?.slug || region;
       return plan
         ? {
             sandboxId,
+            landedLocation: landed,
             inbound: inboundPolicy,
             publicHost: vpsIp,
             resources: {
@@ -695,7 +700,7 @@ export const digitaloceanBackend: CloudBackend = {
               disk: plan.disk,
             },
           }
-        : { sandboxId, inbound: inboundPolicy, publicHost: vpsIp };
+        : { sandboxId, landedLocation: landed, inbound: inboundPolicy, publicHost: vpsIp };
     } catch (err) {
       // Cleanup on failure: droplet + firewall + temp ssh dir.
       if (dropletId !== null) {

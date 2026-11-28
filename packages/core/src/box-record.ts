@@ -192,6 +192,12 @@ export interface CloudBoxFields {
   /** The `--location` this box was created in. Absent → the provider default. */
   location?: string;
   /**
+   * Where the provider reported the box runs, recorded for display (status, the
+   * Box payload). Unlike `location` it is set on a default placement too, and a
+   * clone never replays it.
+   */
+  landedLocation?: string;
+  /**
    * True when this box's `/workspace` was seeded from the host checkout (the
    * laptop `create` path), i.e. it has a real fork base shared with the host.
    * Left unset for `inBoxClone` / plane boxes (they clone in-box from a leased
