@@ -49,3 +49,20 @@ describe('controlPlanePlacementWarnings', () => {
     ]);
   });
 });
+
+describe('serverChoiceFor (what a box create asks Hetzner for)', () => {
+  it('defaults the size by location, so ash/hil/sin do not get cx23', async () => {
+    const { serverChoiceFor } = await import('../src/backend.js');
+    expect(serverChoiceFor({})).toEqual({ serverType: 'cx23', location: 'nbg1' });
+    expect(serverChoiceFor({ location: 'ash' })).toEqual({ serverType: 'cpx21', location: 'ash' });
+    expect(serverChoiceFor({ location: ' SIN ' })).toEqual({
+      serverType: 'cpx22',
+      location: 'sin',
+    });
+    // An explicit size is the user's, even where the preflight will refuse it.
+    expect(serverChoiceFor({ size: 'cx33', location: 'ash' })).toEqual({
+      serverType: 'cx33',
+      location: 'ash',
+    });
+  });
+});

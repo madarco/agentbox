@@ -39,10 +39,10 @@ describe('hetznerPlacementVerdict', () => {
     });
   });
 
-  it('checks the default type when no size is given', () => {
-    const v = hetznerPlacementVerdict({ location: 'ash' }, TYPES, LOCATIONS);
-    expect(v.offered).toBe(false);
-    expect(v.reason).toMatch(/"cx23" is not offered in location "ash"/);
+  it('checks the EU default type when no size is given in the EU', () => {
+    expect(hetznerPlacementVerdict({ location: 'hel1' }, TYPES, LOCATIONS)).toEqual({
+      offered: true,
+    });
   });
 
   it('names x86 alternatives at the location, smallest first', () => {
@@ -70,5 +70,13 @@ describe('hetznerPlacementVerdict', () => {
     } as never);
     expect(v.offered).toBe(false);
     expect(v.reason).toMatch(/needs at least 80 GB/);
+  });
+});
+
+describe('hetznerPlacementVerdict default size follows the location', () => {
+  it('an empty size in ash is checked as cpx21, which is offered there', () => {
+    expect(hetznerPlacementVerdict({ location: 'ASH' }, TYPES, LOCATIONS)).toEqual({
+      offered: true,
+    });
   });
 });

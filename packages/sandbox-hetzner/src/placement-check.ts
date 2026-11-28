@@ -1,6 +1,5 @@
 import { UserFacingError } from '@agentbox/core';
 import { agentSetArg, normalizeAgentSet, type PlacementCheck } from '@agentbox/sandbox-core';
-import { HETZNER_DEFAULT_SERVER_TYPE } from './backend.js';
 import { readHetznerCredStatus } from './credentials.js';
 import {
   makeHetznerClient,
@@ -9,6 +8,7 @@ import {
   type HetznerServerType,
 } from './client.js';
 import { offeredLocations, validateServerChoice } from './preflight.js';
+import { defaultServerTypeFor } from './placement-rules.js';
 import { preparedEntryFor, readPreparedState } from './prepared-state.js';
 
 /** At most this many alternatives are named in a "not offered" sentence. */
@@ -27,8 +27,9 @@ export function hetznerPlacementVerdict(
   locations: string[],
   image: HetznerImage | null = null,
 ): PlacementCheck {
-  const serverType = q.size?.trim() || HETZNER_DEFAULT_SERVER_TYPE;
-  const location = q.location.trim();
+  const location = q.location.trim().toLowerCase();
+  // The size a create with none would get there (backend.ts does the same).
+  const serverType = q.size?.trim() || defaultServerTypeFor(location);
   if (locations.length > 0 && !locations.includes(location)) {
     return {
       offered: false,

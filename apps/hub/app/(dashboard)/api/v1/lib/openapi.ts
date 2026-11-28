@@ -5084,6 +5084,16 @@ export function buildOpenApi(): Record<string, unknown> {
                       description:
                         'A literal --location value for this provider (e.g. hel1, fra1, eu). One of size / location is required.',
                     },
+                    agent: {
+                      type: 'string',
+                      description:
+                        "The create's agent (e.g. claude). With a location, picks the snapshot the create would boot (the agent's baked variant, else the base), whose regions and disk are checked. Absent or `none` = the base.",
+                    },
+                    projectId: {
+                      type: 'string',
+                      description:
+                        "The create's project (GET /projects id). With an empty size, the project's configured size is the one checked, as the create would use it. Absent = this hub's global config.",
+                    },
                   },
                 },
               },
@@ -8465,6 +8475,21 @@ export function buildOpenApi(): Record<string, unknown> {
                   enum: ['off', 'forward'],
                   description:
                     "The API twin of `--llm-proxy`: route the box's LLM traffic through this hub's egress proxy. Absent = the project's / hub's `llm.proxy`. The upstream is this hub's own (`host.docker.internal:<llm.proxyPort>` for docker, `llm.proxyUrl` otherwise); a cloud create without `llm.proxyUrl` is refused.",
+                },
+                size: {
+                  type: 'string',
+                  description:
+                    "The API twin of `--size`: a literal size for THIS provider (a key of GET /providers `sizes`, or of the chosen region's `regions[].sizes`, or a custom value where `sizeHint` exists). Absent = the project's configured size, else the provider default, which on hetzner follows the location (cx23 in the EU, cpx21 in ash/hil, cpx22 in sin).",
+                },
+                location: {
+                  type: 'string',
+                  description:
+                    'The API twin of `--location`: a literal location for THIS provider (a key of GET /providers `regions`, or a custom value where `regionHint` exists). Absent = the configured or provider-default placement.',
+                },
+                locationPinned: {
+                  type: 'boolean',
+                  description:
+                    'With `location`: the user chose it, so the box goes there or the create fails. Hetzner otherwise fails over to another location in the same network zone when one has no capacity. Ignored without `location`. On the control-plane route it travels as `providerOptions.locationPinned`.',
                 },
               },
             },

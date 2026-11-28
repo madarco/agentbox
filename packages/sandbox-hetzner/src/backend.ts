@@ -64,6 +64,7 @@ import {
 import { hetznerLabelValue, hetznerResourceName } from './naming.js';
 import { pollUntil } from './poll.js';
 import { mapHetznerProvisionError, validateServerChoice } from './preflight.js';
+import { defaultServerTypeFor } from './placement-rules.js';
 import { createWithLocationFailover, fetchLocations, planLocations } from './failover.js';
 import { preparedEntryFor, readPreparedState } from './prepared-state.js';
 import { ensureHetznerBaseSnapshot } from './prepare.js';
@@ -196,6 +197,20 @@ async function findImageByDescription(
  *   - any other string → treated as a snapshot description (checkpoint name)
  *     and looked up via the API.
  */
+/**
+ * The server type + location a create asks Hetzner for. The location is
+ * lowercased (Hetzner names are; `ASH` would match no rule). With no size, the
+ * location's own default: cx23 is EU-only, so a box in ash/hil/sin with the
+ * flat default failed the preflight below.
+ */
+export function serverChoiceFor(req: { size?: string; location?: string }): {
+  serverType: string;
+  location: string;
+} {
+  const location = req.location?.trim().toLowerCase() || HETZNER_DEFAULT_LOCATION;
+  return { serverType: req.size?.trim() || defaultServerTypeFor(location), location };
+}
+
 async function resolveImageId(
   c: HetznerClient,
   req: CloudProvisionRequest,
@@ -486,9 +501,8 @@ export const hetznerBackend: CloudBackend = {
     // a clear message instead of a late, opaque API error after cleanup churn.
     // Validate `box.swap` before any billable resource exists.
     const swap = parseSwapSpec(req.swap);
-    const serverType = (req.size && req.size.trim()) || HETZNER_DEFAULT_SERVER_TYPE;
-    const location = (req.location && req.location.trim()) || HETZNER_DEFAULT_LOCATION;
-    const choice = { serverType, location };
+    const choice = serverChoiceFor(req);
+    const { serverType, location } = choice;
     // The base image's disk_size gates the min server disk. We only have it for
     // numeric snapshot refs; stock string refs (e.g. `ubuntu-24.04`) skip the
     // disk check (image null).

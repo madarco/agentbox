@@ -37,8 +37,18 @@ fixed there. Newest last.
 - **The CLI shows size/location only from a local record.** `agentbox status` renders the local
   `BoxRecord`; a box that lives only on a remote hub shows them through `ls --json` / the Box
   payload, not `status`.
-- **The tray create panel has no Location row yet.** The tray lives in `../agentbox-tray`; the
-  contract is in the phase 3 PR body.
+- **Tray parity: the create panel's Advanced section needs a Location row** (the web dialog's
+  Advanced says to keep the two in step; the tray lives in `../agentbox-tray`, done from the Mac).
+  Contract: show it when `GET /api/v1/providers` → `ProviderOption.regions` is non-empty; default
+  "Automatic" sends nothing (never preselect `regions[0]`); "Custom…" only when `regionHint` is
+  set (it is the placeholder). A pick sends `opts.location: <key>` + `opts.locationPinned: true` on
+  `POST /api/v1/boxes`. When the picked region has `regions[].sizes`, the Size list shows those
+  instead of `sizes` (first = that region's default; label the empty choice "Default here (<key>)")
+  and a picked size missing from the new list resets to default. After a pick, call
+  `POST /api/v1/providers/{id}/size-check` with `{ size, location, agent, projectId }` (`size` = ""
+  for default, and "" when `sizeAppliesAt` is `bake`), debounced; show `offeredReason` when
+  `offered === false`, nothing when `offered` is absent; never block the create on it. The box
+  details page shows `Box.size` / `Box.location` when present.
 - **No CLI pre-create placement check.** `agentbox create --location ash` (no `--size`) on hetzner
   still fails at the backend preflight with the default cx23. The CLI could call
   `checkPlacement` before queueing, like the size advisory does.

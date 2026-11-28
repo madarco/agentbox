@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
 import { defaultAgentFor, defaultProviderFor, usableProvider } from '@/lib/boxes/project-defaults';
+import { sizeAfterLocationChange, sizeChoicesFor } from '@/lib/boxes/region-sizes';
 import { Icons, type Icon } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -448,6 +449,10 @@ function CreateBoxModal({
   const persistent = (persistentChoice ?? persistentByDefault) && !persistentCapped;
   const chosenSize = (size === CUSTOM_SIZE ? customSize : size).trim();
   const chosenLocation = (location === CUSTOM_LOCATION ? customLocation : location).trim();
+  // A region that does not offer the provider's sizes (hetzner's cx line is
+  // EU-only) declares its own list; its first entry is what a create there
+  // with no size gets, so "default" names it.
+  const { choices: sizeChoices, regionDefault } = sizeChoicesFor(providerOption, chosenLocation);
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
   // Never for a restore: the restore route enqueues its own create job, and this
   // form runs no bake phase for it — so promising a rebuild would be a claim the
@@ -470,6 +475,13 @@ function CreateBoxModal({
     setCustomLocation('');
     setPlacement(null);
   }, [providerId]);
+
+  // A picked size the new location's list does not carry would only fail the
+  // create: go back to that location's default. A custom value is the user's.
+  // Keyed on the location only: a size change must not undo itself.
+  useEffect(() => {
+    setSize((prev) => sizeAfterLocationChange(prev, sizeChoices, CUSTOM_SIZE));
+  }, [chosenLocation]);
 
   // Not every size exists in every location (hetzner's cx line is EU-only), so
   // once a location is chosen ask the hub, which asks the provider's live
@@ -1177,7 +1189,7 @@ function CreateBoxModal({
                       the provider, so a community plugin gets the same picker
                       by declaring `sizes`. Absent for docker, whose knobs are
                       box.memory / box.cpus. */}
-                  {providerOption?.sizes?.length ? (
+                  {providerOption && sizeChoices.length ? (
                     <div className="flex flex-col gap-1.5">
                       <Field label="Size">
                         <Select
@@ -1187,8 +1199,10 @@ function CreateBoxModal({
                             if (e.target.value !== CUSTOM_SIZE) setCustomSize('');
                           }}
                         >
-                          <option value="">Provider default</option>
-                          {providerOption.sizes.map((s) => (
+                          <option value="">
+                            {regionDefault ? `Default here (${regionDefault})` : 'Provider default'}
+                          </option>
+                          {sizeChoices.map((s) => (
                             <option key={s.key} value={s.key}>
                               {s.label}
                             </option>

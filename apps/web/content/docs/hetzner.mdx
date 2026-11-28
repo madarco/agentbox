@@ -117,6 +117,8 @@ agentbox create -y --provider hetzner --size cx33 --location fsn1
 
 Locations are `nbg1` (Nuremberg), `fsn1` (Falkenstein), `hel1` (Helsinki), `ash` (Ashburn, US), `hil` (Hillsboro, US) and `sin` (Singapore). `--size` and `--location` work on `agentbox create` and on every agent command (`agentbox claude --provider hetzner --size cx33 --location hel1`). `--location` on a provider without locations is ignored with a warning. The bake VPS location can be set the same way: `agentbox prepare --provider hetzner --location fsn1` (or pin `box.hetznerLocation`).
 
+The `cx` server types exist only in the EU locations, so with no `--size` a box gets its location's default: `cx23` in `nbg1`/`fsn1`/`hel1`, `cpx21` (3 vCPU / 4 GB) in `ash`/`hil` and `cpx22` (2 vCPU / 4 GB) in `sin`. The web create dialog lists that location's sizes once you pick it. An explicit `cx*` size outside the EU is refused before anything is created, with the types offered there.
+
 ### When a location has no capacity
 
 Hetzner's EU locations regularly run out of the small shared types (`cx23`, `cx33`), and the create comes back `resource_unavailable: error during placement`. When that happens AgentBox retries the same server type in the other locations of the same network zone (for the EU: `nbg1`, `fsn1`, `hel1`), starting from the configured one, and logs each move:
