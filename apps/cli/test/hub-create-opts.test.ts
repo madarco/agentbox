@@ -168,6 +168,8 @@ describe("the requester's committer identity", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain('no complete git identity (no user.email)');
     expect(warnings[0]).toContain("hub's default identity");
+    // The provider's order after the hub default: the hub machine's own config, then generic.
+    expect(warnings[0]).toContain("else the hub machine's own git identity, else the generic");
   });
 
   it('names the missing half and refuses a value the hub would reject', async () => {

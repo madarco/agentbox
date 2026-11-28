@@ -94,14 +94,26 @@ function hostSourceLabel(spec: AgentSyncSpec): string {
   return paths.length > 0 ? paths.join(' + ') : `~/.${spec.id}`;
 }
 
-/** How much of a committer identity a host git config file sets itself. */
+/**
+ * How much of a committer identity a host git config file sets itself. Without
+ * `--includes` on purpose: an included file is a host path the box does not
+ * have, so an identity only it holds is absent inside the box.
+ */
 async function hostFileIdentity(file: string): Promise<'full' | 'partial' | 'none'> {
-  let set = 0;
-  for (const key of ['user.name', 'user.email']) {
-    const r = await execa('git', ['config', '--file', file, key], { reject: false });
-    if (r.exitCode === 0 && (r.stdout ?? '').trim().length > 0) set++;
-  }
-  return set === 2 ? 'full' : set === 1 ? 'partial' : 'none';
+  const r = await execa(
+    'git',
+    ['config', '--file', file, '--get-regexp', '^user\\.(name|email)$'],
+    {
+      reject: false,
+    },
+  );
+  const keys = new Set(
+    (r.exitCode === 0 ? (r.stdout ?? '') : '')
+      .split('\n')
+      .map((l) => /^(user\.(?:name|email)) +\S/.exec(l)?.[1])
+      .filter(Boolean),
+  );
+  return keys.size === 2 ? 'full' : keys.size === 1 ? 'partial' : 'none';
 }
 
 function requireCreateHandle(handle: DockerSyncHandle, op: string): { image: string } {

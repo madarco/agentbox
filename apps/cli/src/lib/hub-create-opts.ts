@@ -125,7 +125,7 @@ export function readProjectGitIdentity(
 export function missingGitIdentityWarning(problem: string): string {
   return (
     `This project has no complete git identity (${problem}), so the box will commit as the hub's ` +
-    'default identity (Settings > General on the hub), or as the generic agentbox one if the hub has none. ' +
+    "default identity (Settings > General on the hub), else the hub machine's own git identity, else the generic agentbox one. " +
     'Set user.name and user.email (`git config --global`, or in this repo) to commit as yourself.'
   );
 }
