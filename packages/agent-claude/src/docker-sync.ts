@@ -284,27 +284,26 @@ export function usesSharedProjects(volume: string): boolean {
 }
 
 /**
- * One-time per source volume: copy the sessions a config volume already holds
- * in its own `projects/` into {@link CLAUDE_PROJECTS_VOLUME}, never over a file
- * already there. Mounting the shared volume hides the old dir, so without this
- * every existing session would vanish from `--resume`. The old dir is left in
- * place (a rollback finds it), and a marker file per source volume makes a
- * later create skip the copy. Best-effort: a failure leaves no marker and is
- * retried next time.
+ * Copy the sessions a config volume holds in its own `projects/` into
+ * {@link CLAUDE_PROJECTS_VOLUME}, on EVERY create rather than once: a box
+ * created before the shared volume existed still mounts only the config volume
+ * and keeps writing (and appending to) its own `projects/` until it is
+ * recreated, and those sessions must keep reaching `--resume`.
+ *
+ * `rsync --update`: a missing file is copied, a file newer at the source (an
+ * appended transcript) replaces the shared copy, and a shared copy that is
+ * newer (a session continued in a new box) is never overwritten. rsync writes
+ * each file to a temp name and renames it, so an interrupted copy leaves no
+ * partial transcript behind. The old dir is left in place (a rollback finds
+ * it). The volume is handed to the box user every time, since docker creates a
+ * missing one root-owned. A failure throws: the box would mount a volume claude
+ * cannot write.
  */
-const migratedProjects = new Set<string>();
-
-export async function migrateProjectsToShared(volume: string, image: string): Promise<boolean> {
-  // Once per process too: a long-lived hub creates many boxes.
-  if (migratedProjects.has(volume)) return false;
+export async function migrateProjectsToShared(volume: string, image: string): Promise<void> {
   const script =
-    // The shared volume is created here, so it must be the box user's even
-    // when there is nothing to copy (docker creates it root-owned).
-    'm="/dst/.agentbox-migrated-$1"; [ -e "$m" ] && { chown 1000:1000 /dst; echo MIGRATED=skip; exit 0; }; ' +
-    'if [ -d /src/projects ]; then cp -a -n /src/projects/. /dst/ || exit 1; fi; ' +
-    // Once per source volume, so the recursive chown is paid once: claude in
-    // the box (uid 1000) must be able to append to every copied session.
-    'chown -R 1000:1000 /dst && touch "$m" && echo MIGRATED=yes';
+    'if [ -d /src/projects ]; then ' +
+    'rsync -a --update --chown=1000:1000 /src/projects/ /dst/ || exit 1; fi; ' +
+    'chown 1000:1000 /dst';
   const res = await execa(
     'docker',
     [
@@ -320,13 +319,10 @@ export async function migrateProjectsToShared(volume: string, image: string): Pr
       'sh',
       '-c',
       script,
-      'sh',
-      volume,
     ],
     { reject: false },
   );
   if (res.exitCode !== 0) {
-    // Fail the create: the box would mount a volume claude cannot write.
     throw new Error(
       `preparing ${CLAUDE_PROJECTS_VOLUME} from ${volume} failed: ${
         String(res.stderr ?? '')
@@ -335,8 +331,6 @@ export async function migrateProjectsToShared(volume: string, image: string): Pr
       }`,
     );
   }
-  migratedProjects.add(volume);
-  return /MIGRATED=yes/.test(res.stdout ?? '');
 }
 
 async function ensureClaudeVolumeSeeded(
@@ -529,7 +523,13 @@ async function ensureClaudeVolumeSeeded(
     // The key is [A-Za-z0-9-] only (encodeClaudeProjectsKey), so it's shell-safe
     // to interpolate. Empty snippet when no workspace or the helper finds no
     // host memory dir (the `[ -d ... ]` guard).
-    const memoryKey = opts.hostWorkspace ? encodeClaudeProjectsKey(opts.hostWorkspace) : null;
+    // Not into a volume whose `projects/` the shared projects volume hides: the
+    // write would never reach a box (and those boxes' images read memory from
+    // `autoMemoryDirectory` anyway).
+    const memoryKey =
+      opts.hostWorkspace && !usesSharedProjects(spec.volume)
+        ? encodeClaudeProjectsKey(opts.hostWorkspace)
+        : null;
     const memoryRekeyStep = memoryKey
       ? ` && { [ -d "/src-claude/projects/${memoryKey}/memory" ] && ` +
         `mkdir -p /dst/projects/-workspace && ` +

@@ -572,3 +572,16 @@ describe('purgeAgentAccounts', () => {
     await expect(purgeAgentAccounts(['../x'], opts)).rejects.toThrow(/agent id/);
   });
 });
+
+describe('credentialIdentityMatch', () => {
+  it('true on agreeing ids, false on another owner, undefined when nothing compares', async () => {
+    const { credentialIdentityMatch } = await import('../src/sync/concerns/credentials.js');
+    const spec = {
+      credential: { identity: { jsonPaths: [['claudeAiOauth', 'accountUuid']] } },
+    } as unknown as AgentSyncSpec;
+    const blob = (u?: string) => JSON.stringify({ claudeAiOauth: u ? { accountUuid: u } : {} });
+    expect(credentialIdentityMatch(spec, blob('a'), blob('a'))).toBe(true);
+    expect(credentialIdentityMatch(spec, blob('a'), blob('b'))).toBe(false);
+    expect(credentialIdentityMatch(spec, blob('a'), blob())).toBeUndefined();
+  });
+});

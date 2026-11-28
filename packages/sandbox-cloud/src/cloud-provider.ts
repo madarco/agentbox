@@ -314,6 +314,37 @@ async function bootstrapPortlessForCloudBox(
   return { alias: args.boxName, url };
 }
 
+/**
+ * Write a waking box's agent env file: one retry, then a warning, or (when the
+ * file holds a pasted account's token, `required`) an error that fails the
+ * wake. The message names the step and the exec's exit, never the values.
+ */
+export async function writeWakeAgentEnv(
+  boxName: string,
+  write: () => Promise<void>,
+  required: boolean,
+): Promise<void> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await write();
+      return;
+    } catch (err) {
+      last = err;
+    }
+  }
+  const why = last instanceof Error ? last.message : String(last);
+  if (required) {
+    throw new Error(
+      `${boxName}: could not write the agent env holding the box's account token (${why}); start it again`,
+    );
+  }
+  process.stderr.write(
+    `agentbox: WARN: ${boxName}: agent env not rewritten on wake (${why}); ` +
+      'forwarded API keys may be missing on a VPS box\n',
+  );
+}
+
 export function createCloudProvider(
   backend: CloudBackend,
   opts: CreateCloudProviderOptions = {},
@@ -643,26 +674,20 @@ export function createCloudProvider(
     // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
     // on every wake. Built from the waking process's env, but each line only
     // fills a key the sandbox env lacks, so an SDK box keeps its create-time
-    // auth. Best-effort, like the reconcile below: a box that comes up without
-    // it still runs, its agent just lacks the forwarded keys.
-    try {
-      const agentEnv = await buildCloudAgentEnv(box.agents, box.accounts ?? {});
-      await writeCloudAgentEnvFile(
-        backend,
-        h,
-        agentEnv,
-        await cloudAccountAuthority(box.agents, box.accounts ?? {}, {
-          switched: (box.accountSwitches ?? []).map((x) => x.agent),
-          forwarded: agentEnv,
-        }),
-      );
-    } catch (err) {
-      // The message names the step and the exec's exit, never the values.
-      process.stderr.write(
-        `agentbox: WARN: ${box.name}: agent env not rewritten on wake (${err instanceof Error ? err.message : String(err)}); ` +
-          'forwarded API keys and a named account token may be missing on a VPS box\n',
-      );
-    }
+    // forwarded keys. Best-effort for those: a box that comes up without them
+    // still runs. NOT for a pasted account's token, which lives only in this
+    // file (never the sandbox env): one retry, then the wake fails, rather than
+    // a box whose agent has no auth at all.
+    const agentEnv = await buildCloudAgentEnv(box.agents, box.accounts ?? {});
+    const authority = await cloudAccountAuthority(box.agents, box.accounts ?? {}, {
+      switched: (box.accountSwitches ?? []).map((x) => x.agent),
+      forwarded: agentEnv,
+    });
+    await writeWakeAgentEnv(
+      box.name,
+      () => writeCloudAgentEnvFile(backend, h, agentEnv, authority),
+      Object.keys(authority.set).length > 0,
+    );
     // Re-register on resume. A control-plane box registers on the plane (with
     // its origin URL, needed for lease minting); a classic-cloud box registers
     // on the host relay so its CloudBoxPoller picks up the fresh preview

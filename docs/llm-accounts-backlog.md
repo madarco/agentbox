@@ -308,13 +308,15 @@ Fixed (`fix/accounts-backlog-docker`):
 - **Shared `projects/` volume.** `sharedProjectsVolume` (core) names
   `agentbox-claude-projects`. It is mounted over `~/.claude/projects` on the
   default and every `-acct-` volume (not on `--isolate-claude-config`), so
-  `--resume` works across accounts. Migration happens once per source volume:
-  `ensureClaudeVolume` copies the volume's `projects/` in with `cp -a -n` (never
-  over a file already there), hands it to uid 1000 and drops a
-  `.agentbox-migrated-<volume>` marker. The old dir is left in place for a
-  rollback. `prune --all` keeps the volume. A box still running from before
-  keeps writing its own `projects/` until it is recreated; those later writes
-  are not copied again.
+  `--resume` works across accounts. Every create copies the volume's own
+  `projects/` in with `rsync -a --update` (uid 1000). A box created before the
+  upgrade keeps writing that dir until it is recreated, and its appended
+  transcripts keep arriving. A shared copy that is newer (a session continued in
+  a new box) is never overwritten, and rsync's temp-and-rename leaves no partial
+  file. A failed copy fails the create. The old dir stays in place for a
+  rollback; `prune --all` keeps the volume. Since the overlay hides the config
+  volume's `projects/`, the legacy host-memory rekey (pre-Phase-4 images only)
+  is skipped on those volumes.
 - **An orphan `-acct-` volume after a failed first login** is removed
   (`dropOrphanAccountVolume`, only when the store has no row, retrying a few seconds while the aborted
   login container still holds it) on cancel,
@@ -324,7 +326,9 @@ Fixed (`fix/accounts-backlog-docker`):
   and the login re-seeds it, instead of failing every re-login. A failed write
   (full disk) still fails the reset and keeps the file.
 - **A re-login keeps the email and org** when the new identity lacks them
-  (`mergeAccountIdentity`).
+  (`mergeAccountIdentity`), only for the same login: the credentials' account /
+  org uuids agree (`credentialIdentityMatch`), or, when they can't tell, the
+  plan matches. Another subscription signed in under the name gets its own.
 - **`dockerVolumeFileReader` reads every file in one container** (a base64
   line protocol), and a docker failure is its own error ("could not read the
   docker volume …"), not "the login did not leave a credential".
@@ -337,7 +341,8 @@ Fixed (`fix/accounts-backlog-docker`):
 - **A cloud box's pasted token is out of the sandbox create env.** It goes only
   to the 0600 agent env file that every launcher sources
   (`cloudAccountAuthority`). A create whose env file cannot be written then
-  fails (and tears the sandbox down) instead of handing over a box with no auth. Not fixed on docker: the token stays in the
+  fails (and tears the sandbox down) instead of handing over a box with no auth,
+  and a wake retries once, then fails (`writeWakeAgentEnv`). Not fixed on docker: the token stays in the
   container env, because whoever can `docker inspect` the container can also
   `docker exec` into it and read the agent's env, so it is no tighter boundary.
 - **Named docker mirror.** One generic `syncNamedAccountCredential` for every

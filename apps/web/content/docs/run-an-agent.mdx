@@ -231,8 +231,9 @@ A box on a named account gets exactly that account's auth:
   On docker, Claude's conversations are kept apart from the login: every
   account's boxes share one `agentbox-claude-projects` volume, so
   `claude --resume` in a box on `claude/work` finds a session started on
-  `default`. The first box after upgrading copies each volume's existing
-  sessions in once; `--isolate-claude-config` boxes keep their own.
+  `default`. Each new box copies in the sessions that boxes created before the
+  upgrade still write to their own volume; `--isolate-claude-config` boxes keep
+  their own.
 - A **setup token** or **API key** account reaches the agent as
   `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` (codex: `OPENAI_API_KEY`), and
   an API-key account is pre-approved so Claude never asks whether to use it.

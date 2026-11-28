@@ -89,8 +89,8 @@ CLI, not the raw commits.
 
 - **Accounts on docker and cloud:**
   - `claude --resume` finds a session started on another account: docker boxes
-    share one `agentbox-claude-projects` volume, and existing sessions are
-    copied in once.
+    share one `agentbox-claude-projects` volume, which each new box keeps up to
+    date with the sessions older boxes wrote.
   - A first sign-in that fails no longer leaves an orphan volume behind.
   - A damaged `_claude.json` no longer blocks a re-login.
   - A re-login no longer loses the account's email.

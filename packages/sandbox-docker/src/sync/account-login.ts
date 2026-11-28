@@ -17,6 +17,9 @@ import {
 } from '@agentbox/core';
 import {
   readAccounts,
+  credentialIdentityMatch,
+  readAccountsChecked,
+  readAccountSecret,
   removeAccount,
   upsertAccount,
   writeAccountSecret,
@@ -115,14 +118,20 @@ export function dockerVolumeFileReader(volume: string, image: string): VolumeFil
  * The identity to store after a re-login: the new one, with the stored email
  * and org kept where the new one lacks them. A re-login whose warm-up turn
  * failed reads a plan-only identity (the reset removed `oauthAccount`), which
- * must not wipe the label. Display only. Pure.
+ * must not wipe the label. Only for the SAME login: `sameLogin` is what the
+ * two credentials' identity fields say (false: another subscription signed in
+ * under this name, so its identity is taken as it is; undefined: they cannot
+ * tell, so the plan must match). Display only. Pure.
  */
 export function mergeAccountIdentity(
   stored: LlmAccountIdentity | undefined,
   fresh: LlmAccountIdentity | undefined,
+  sameLogin?: boolean,
 ): LlmAccountIdentity | undefined {
-  if (!fresh) return stored;
+  if (!fresh) return sameLogin === false ? undefined : stored;
   if (!stored) return fresh;
+  if (sameLogin === false) return fresh;
+  if (sameLogin === undefined && (!fresh.plan || fresh.plan !== stored.plan)) return fresh;
   const out: LlmAccountIdentity = { ...fresh };
   if (!out.email && stored.email) out.email = stored.email;
   if (!out.org && stored.org) out.org = stored.org;
@@ -141,16 +150,21 @@ export async function dropOrphanAccountVolume(
   id: string,
   volume: string,
   store?: AccountStoreOptions,
+  removeVolume: (volume: string) => Promise<{ exitCode?: number; stderr?: unknown }> = (v) =>
+    execa('docker', ['volume', 'rm', v], { reject: false }),
 ): Promise<boolean> {
   try {
-    if (findAccount(await readAccounts(store), agent, id)) return false;
+    // A store that cannot be trusted (corrupt, unsupported version) reads as
+    // no named rows, which would make a live account's volume look orphaned.
+    const { file, problem } = await readAccountsChecked(store);
+    if (problem || findAccount(file, agent, id)) return false;
   } catch {
     return false; // cannot tell: keep it
   }
   // The aborted login container may still be going away and hold the volume
   // for a moment: retry "in use" for a few seconds.
   for (let attempt = 0; ; attempt++) {
-    const r = await execa('docker', ['volume', 'rm', volume], { reject: false });
+    const r = await removeVolume(volume);
     if (r.exitCode === 0) return true;
     if (!/in use/i.test(String(r.stderr ?? '')) || attempt >= 10) return false;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -213,7 +227,14 @@ export async function captureVolumeLogin(
   // The row must exist before its secret, but it must not describe a login the
   // store then refuses: an existing account keeps its old identity until the
   // new secret is actually written.
-  const newIdentity = mergeAccountIdentity(existing?.identity, identity);
+  // Whether the stored login and the new one are one subscription, by the
+  // agent's declared identity fields (account / org uuid).
+  const storedSecret = existing
+    ? await readAccountSecret(o.spec.id, o.account.id, o.store).catch(() => null)
+    : null;
+  const sameLogin =
+    storedSecret === null ? undefined : credentialIdentityMatch(o.spec, text, storedSecret);
+  const newIdentity = mergeAccountIdentity(existing?.identity, identity, sameLogin);
   const before = existing ? existing.identity : newIdentity;
   if (before) row.identity = before;
   await upsertAccount(row, o.store);

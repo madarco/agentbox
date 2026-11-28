@@ -144,7 +144,7 @@ describe('captureVolumeLogin re-login identity', () => {
         id: 'work',
         kind: 'login',
         createdAt: 't',
-        identity: { email: 'w@x.io', plan: 'pro' },
+        identity: { email: 'w@x.io', plan: 'max' },
       },
       store,
     );

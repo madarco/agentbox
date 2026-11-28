@@ -67,7 +67,7 @@ beforeEach(() => {
     if (sh !== -1 && argv[sh - 1] === 'sh') {
       const script = argv[sh + 1] ?? '';
       // The shared-projects migration runs after the seed; keep the seed's.
-      if (script.includes('.agentbox-migrated-')) migrations.push(argv);
+      if (script.includes('/src/projects/ /dst/')) migrations.push(argv);
       else seedScript = script;
     }
     return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
@@ -107,24 +107,52 @@ describe('seeding a named account volume (llm-accounts Phase 2)', () => {
 });
 
 describe('the shared projects volume (--resume across accounts)', () => {
-  it('migrates a shared or named volume once into agentbox-claude-projects, never an isolated one', async () => {
-    await ensureClaudeVolume(
-      { volume: 'agentbox-claude-config-acct-other' },
-      { syncFromHost: false, image: 'img' },
+  it('copies a shared or named volume on every create (rsync --update), never an isolated one', async () => {
+    migrations = [];
+    for (const volume of [
+      'agentbox-claude-config-acct-other',
+      'agentbox-claude-config-acct-other',
+      'agentbox-claude-config-b1234abcd',
+    ]) {
+      await ensureClaudeVolume({ volume }, { syncFromHost: false, image: 'img' });
+    }
+    // Twice: a pre-upgrade box keeps appending to the config volume's own dir.
+    expect(migrations).toHaveLength(2);
+    const argv = migrations[0]!;
+    expect(argv).toContain('agentbox-claude-projects:/dst');
+    expect(argv).toContain('agentbox-claude-config-acct-other:/src:ro');
+    // A newer source (an appended transcript) wins; a newer shared copy stays.
+    expect(argv.join(' ')).toContain('rsync -a --update --chown=1000:1000');
+    expect(argv.join(' ')).toContain('chown 1000:1000 /dst');
+  });
+
+  it('a failed copy fails the create', async () => {
+    execaMock.mockImplementation((_cmd: string, argv: string[]) =>
+      Promise.resolve(
+        argv.join(' ').includes('/src/projects/ /dst/')
+          ? { exitCode: 1, stdout: '', stderr: 'rsync: boom' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      ),
     );
+    await expect(
+      ensureClaudeVolume(
+        { volume: 'agentbox-claude-config' },
+        { syncFromHost: false, image: 'img' },
+      ),
+    ).rejects.toThrow(/agentbox-claude-projects.*rsync: boom/);
+  });
+
+  it('skips the legacy memory rekey into a volume whose projects/ is hidden', async () => {
     await ensureClaudeVolume(
       { volume: 'agentbox-claude-config' },
-      { syncFromHost: false, image: 'img' },
+      { syncFromHost: true, image: 'img', hostWorkspace: '/w/proj' },
     );
+    expect(seedScript).not.toContain('/dst/projects/-workspace/memory');
     await ensureClaudeVolume(
       { volume: 'agentbox-claude-config-b1234abcd' },
-      { syncFromHost: false, image: 'img' },
+      { syncFromHost: true, image: 'img', hostWorkspace: '/w/proj' },
     );
-    expect(migrations.map((a) => a[a.length - 1])).toEqual(['agentbox-claude-config-acct-other']);
-    expect(migrations[0]).toContain('agentbox-claude-projects:/dst');
-    expect(migrations[0]).toContain('agentbox-claude-config-acct-other:/src:ro');
-    // Never over a session already in the shared volume.
-    expect(migrations[0]!.join(' ')).toContain('cp -a -n');
+    expect(seedScript).toContain('/dst/projects/-workspace/memory');
   });
 
   it('mounts it over ~/.claude/projects for the default and named volumes only', () => {
