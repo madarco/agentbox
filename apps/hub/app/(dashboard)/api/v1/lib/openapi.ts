@@ -1066,6 +1066,11 @@ export function buildOpenApi(): Record<string, unknown> {
                       description:
                         "Always-on clone. OMIT to inherit the source box's persistence (a clone of a service box is always-on too); `false` is an explicit opt-out. `true` against e2b/vercel is refused with `conflict` — their platform session cap makes an always-on box impossible.",
                     },
+                    gitIdentity: {
+                      $ref: '#/components/schemas/GitIdentity',
+                      description:
+                        "Who the clone commits as: the requester's `user.name` / `user.email` (the CLI sends its project's effective identity). Same rules as `opts.gitIdentity` on POST /boxes. Absent = this hub's default (GET /settings/git-identity), then the clone folder's git config. Never the source box's identity.",
+                    },
                   },
                 },
               },
@@ -1182,6 +1187,58 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '401': errorResponse,
+          },
+        },
+      },
+      '/settings/git-identity': {
+        get: {
+          tags: ['Accounts'],
+          summary: 'The committer identity for boxes built with no PC behind them',
+          description:
+            "`git.identity.name` / `git.identity.email` from this machine's global config: the identity a box gets when its create carries no `opts.gitIdentity` (a web-UI or tray create). `identity` is null when unset (or only half set); such a box then takes the hub machine's own git config, else a generic agentbox identity.",
+          responses: {
+            '200': {
+              description: 'The default identity',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/GitIdentitySetting' } },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+        put: {
+          tags: ['Accounts'],
+          summary: 'Set the committer identity for boxes built with no PC behind them',
+          description:
+            'Writes both keys, or clears both with `identity: null`. With `ifUnset: true` an identity already set is kept and the answer carries `unchanged: true` (the CLI offers its identity this way when it logs in to a hub). Existing boxes are not touched.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['identity'],
+                  properties: {
+                    identity: {
+                      oneOf: [{ $ref: '#/components/schemas/GitIdentity' }, { type: 'null' }],
+                    },
+                    ifUnset: { type: 'boolean' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'The identity now in force',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/GitIdentitySetting' } },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '503': errorResponse,
           },
         },
       },
@@ -8111,6 +8168,24 @@ export function buildOpenApi(): Record<string, unknown> {
           },
           required: ['id', 'status'],
         },
+        GitIdentity: {
+          type: 'object',
+          required: ['name', 'email'],
+          properties: {
+            name: { type: 'string', maxLength: 256 },
+            email: { type: 'string', maxLength: 256 },
+          },
+        },
+        GitIdentitySetting: {
+          type: 'object',
+          required: ['identity'],
+          properties: {
+            identity: {
+              oneOf: [{ $ref: '#/components/schemas/GitIdentity' }, { type: 'null' }],
+            },
+            unchanged: { type: 'boolean', enum: [true] },
+          },
+        },
         AccountPolicy: {
           type: 'object',
           required: ['onLimit'],
@@ -8350,6 +8425,16 @@ export function buildOpenApi(): Record<string, unknown> {
                   additionalProperties: { type: 'string' },
                   description:
                     'Named LLM account per agent (`{ "claude": "work" }`), the API twin of `--account`. Resolved against THIS hub machine\'s account store; an agent left out uses its `<agent>.account` config, else its default login. A borrowed model-auth lender\'s account must be a login.',
+                },
+                gitIdentity: {
+                  type: 'object',
+                  required: ['name', 'email'],
+                  properties: {
+                    name: { type: 'string', maxLength: 256 },
+                    email: { type: 'string', maxLength: 256 },
+                  },
+                  description:
+                    "The committer identity the box gets (`user.name` / `user.email`), normally the requesting project's effective `git config` (the CLI fills it on every hub-routed create). Both strings, non-empty, at most 256 characters, no newlines or control characters. Absent = this hub's default (GET /settings/git-identity), then the hub machine's own git config, then a generic agentbox identity. Docker boxes keep a bind-mounted `~/.gitconfig` identity when the building machine has one.",
                 },
                 llmProxy: {
                   type: 'string',

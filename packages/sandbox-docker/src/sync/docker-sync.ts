@@ -25,8 +25,16 @@ import type {
   ResyncResult,
   SyncContext,
 } from '@agentbox/core';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { execa } from 'execa';
-import { dryRunProviderSync, findAccount, SYNC_DRYRUN_ENV } from '@agentbox/core';
+import {
+  dryRunProviderSync,
+  findAccount,
+  GIT_IDENTITY_FALLBACK,
+  gitIdentitySourceLabel,
+  SYNC_DRYRUN_ENV,
+} from '@agentbox/core';
 import {
   AGENT_SYNC_SPECS,
   isRealAgentCredential,
@@ -45,6 +53,7 @@ import { requireAgentSyncModule, type AgentVolumeChoice } from './agents/module.
 import { syncClaudeCredentials } from './claude-credentials.js';
 import type { AgentsConfigSpec } from './agents/skills.js';
 import { ensureAgentsVolume } from './agents/skills.js';
+import { boxGitConfigScript } from './box-gitconfig.js';
 import { copyCarryPathsToBox, copyHostEnvFilesToBox } from './host-export.js';
 import { resyncWorkspaceFromHost } from './in-box-git.js';
 
@@ -88,6 +97,28 @@ export interface DockerSyncHandle {
 function hostSourceLabel(spec: AgentSyncSpec): string {
   const paths = spec.staticPaths.map((sp) => `~/${sp.hostHomeRel.join('/')}`);
   return paths.length > 0 ? paths.join(' + ') : `~/.${spec.id}`;
+}
+
+/**
+ * How much of a committer identity a host git config file sets itself. Without
+ * `--includes` on purpose: an included file is a host path the box does not
+ * have, so an identity only it holds is absent inside the box.
+ */
+async function hostFileIdentity(file: string): Promise<'full' | 'partial' | 'none'> {
+  const r = await execa(
+    'git',
+    ['config', '--file', file, '--get-regexp', '^user\\.(name|email)$'],
+    {
+      reject: false,
+    },
+  );
+  const keys = new Set(
+    (r.exitCode === 0 ? (r.stdout ?? '') : '')
+      .split('\n')
+      .map((l) => /^(user\.(?:name|email)) +\S/.exec(l)?.[1])
+      .filter(Boolean),
+  );
+  return keys.size === 2 ? 'full' : keys.size === 1 ? 'partial' : 'none';
 }
 
 function requireCreateHandle(handle: DockerSyncHandle, op: string): { image: string } {
@@ -225,10 +256,40 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       return Promise.resolve([]);
     },
 
-    // Docker bind-mounts the host's ~/.gitconfig straight into the box, so there
-    // is nothing to seed. Documented no-op (the cloud body copies it in).
-    seedGitIdentity(): Promise<void> {
-      return Promise.resolve();
+    // Precedence, highest first: the requester's resolved identity (requester,
+    // then hub default); else the building machine's bind-mounted ~/.gitconfig
+    // when it holds a complete one; else the generic agentbox one. All of it is
+    // written into the box-owned global file (box-gitconfig.ts), which is what
+    // lets a request outrank the read-only mount, and is rewritten on every
+    // create so a checkpoint's previous owner never survives. A repo-local
+    // override in the shared .git/config still wins, as on the host.
+    async seedGitIdentity(ctx: SyncContext): Promise<void> {
+      const mountedFile = join(ctx.hostHome, '.gitconfig');
+      const fromMount = existsSync(mountedFile) ? await hostFileIdentity(mountedFile) : 'none';
+      const want =
+        ctx.gitIdentity ??
+        (fromMount === 'full'
+          ? undefined
+          : { ...GIT_IDENTITY_FALLBACK, source: 'fallback' as const });
+      const { script, args } = boxGitConfigScript(want);
+      const r = await execa(
+        'docker',
+        ['exec', '--user', 'vscode', handle.container, 'sh', '-c', script, 'sh', ...args],
+        { reject: false },
+      );
+      if (r.exitCode !== 0) {
+        ctx.onLog(
+          `git: identity config failed (exit ${String(r.exitCode)}): ${(r.stderr || r.stdout).trim()}`,
+        );
+        return;
+      }
+      if (!want) {
+        ctx.onLog("git: committer identity from this machine's bind-mounted ~/.gitconfig");
+        return;
+      }
+      ctx.onLog(
+        `git: configured committer identity ${want.name} <${want.email}> (from ${gitIdentitySourceLabel(want.source)})`,
+      );
     },
 
     async seedEnvFiles(ctx: SyncContext, patterns: string[]): Promise<{ copied: number }> {

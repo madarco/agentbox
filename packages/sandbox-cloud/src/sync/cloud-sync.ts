@@ -152,9 +152,11 @@ export function makeCloudSync(
 
     async seedGitIdentity(ctx: SyncContext): Promise<void> {
       // Cloud boxes have no bind-mounted ~/.gitconfig, so configure a committer
-      // identity (host user when resolvable, else a generic agentbox identity).
+      // identity: the caller's resolved one (hub create), else the host user's,
+      // else a generic agentbox identity.
       await seedCloudGitIdentity(backend, handle, {
         hostRepo: ctx.hostWorkspace,
+        ...(ctx.gitIdentity ? { identity: ctx.gitIdentity } : {}),
         onLog: ctx.onLog,
       });
     },

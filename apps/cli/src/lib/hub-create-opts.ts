@@ -12,8 +12,9 @@
  * So the resolution happens HERE, on the machine that has the config, and the
  * options that cannot travel are named out loud instead of vanishing.
  */
+import { execFileSync } from 'node:child_process';
 import { resolveBoxImage, resolveDefaultCheckpoint, type EffectiveConfig } from '@agentbox/config';
-import type { SkillSelection } from '@agentbox/core';
+import { parseGitIdentity, type GitIdentity, type SkillSelection } from '@agentbox/core';
 import type { CreateJobRequestOpts } from '@agentbox/relay';
 import { cloudSizingProviderOptions } from './cloud-sizing.js';
 
@@ -49,6 +50,14 @@ export interface HubCreateOptsInput {
   remoteHost?: string;
   /** Resolved on THIS machine: the control box has no config for this project. */
   cfg: EffectiveConfig;
+  /**
+   * The project folder whose EFFECTIVE `user.name`/`user.email` the box commits
+   * as (repo-local override honoured). Every sender passes it: the control box
+   * reads its own git config otherwise, which is the hub's and nobody's.
+   */
+  projectRoot?: string;
+  /** Test seam for reading the identity; defaults to `git -C <projectRoot> config`. */
+  readGitIdentity?: (projectRoot: string) => { identity: GitIdentity } | { problem: string };
   flags: HubCreateFlags;
   /** Values the caller already resolved through its own gates. */
   resolved?: {
@@ -77,6 +86,48 @@ export interface HubCreateOpts {
   opts: HubWireCreateOpts;
   /** House-style "ignored" lines; the caller `log.warn`s each. Never throws. */
   warnings: string[];
+}
+
+function gitConfigValue(dir: string, key: string): string | undefined {
+  try {
+    const v = execFileSync('git', ['-C', dir, 'config', key], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    }).trim();
+    return v.length > 0 ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The project's effective committer identity, or why there is none: a half is
+ * missing, or a value the hub would refuse (a newline, say). Never throws: a
+ * create must not fail over the identity, it warns and the box takes the
+ * hub's default instead.
+ */
+export function readProjectGitIdentity(
+  projectRoot: string,
+): { identity: GitIdentity } | { problem: string } {
+  const name = gitConfigValue(projectRoot, 'user.name');
+  const email = gitConfigValue(projectRoot, 'user.email');
+  if (!name || !email) {
+    return {
+      problem: `no ${!name && !email ? 'user.name or user.email' : !name ? 'user.name' : 'user.email'}`,
+    };
+  }
+  const parsed = parseGitIdentity({ name, email }, 'git identity');
+  return parsed.ok ? { identity: parsed.value } : { problem: parsed.error };
+}
+
+/** Said when a hub-routed create carries no identity, so nobody commits as someone else unawares. */
+export function missingGitIdentityWarning(problem: string): string {
+  return (
+    `This project has no complete git identity (${problem}), so the box will commit as the hub's ` +
+    "default identity (Settings > General on the hub), else the hub machine's own git identity, else the generic agentbox one. " +
+    'Set user.name and user.email (`git config --global`, or in this repo) to commit as yourself.'
+  );
 }
 
 interface UnportableRow {
@@ -176,6 +227,12 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
   const location = typeof sizing.location === 'string' ? sizing.location : undefined;
   const inbound = typeof sizing.inbound === 'string' ? sizing.inbound : undefined;
 
+  const identityRead = input.projectRoot
+    ? (input.readGitIdentity ?? readProjectGitIdentity)(input.projectRoot)
+    : undefined;
+  const gitIdentity =
+    identityRead && 'identity' in identityRead ? identityRead.identity : undefined;
+
   const opts: HubWireCreateOpts = {
     // Absent means "the control box decides", so only what was actually asked
     // for is sent — sending `false` everywhere would override its own config.
@@ -204,11 +261,15 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
     // Docker-family only, and only when the control box builds one.
     ...(remoteHost && flags.build === true ? { build: true } : {}),
     ...(remoteHost && cfg.box.imageRegistry ? { imageRegistry: cfg.box.imageRegistry } : {}),
+    ...(gitIdentity ? { gitIdentity } : {}),
   };
 
   const warnings = UNPORTABLE.filter(
     (row) => row.asked(flags) && (row.applies?.(target) ?? true),
   ).map((row) => `${row.why(target)} Ignored for a control-box create.`);
+  if (identityRead && 'problem' in identityRead) {
+    warnings.push(missingGitIdentityWarning(identityRead.problem));
+  }
 
   return { opts, warnings };
 }

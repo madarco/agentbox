@@ -59,7 +59,11 @@ export interface ProviderSync {
   seedCredentials(ctx: SyncContext): Promise<void>;
   /** Capture the box's agent logins back to the host backups. Returns updated agents. */
   extractCredentials(ctx: SyncContext): Promise<string[]>;
-  /** Seed the host git identity (`~/.gitconfig`) into the box. Docker no-op (bind-mounted). */
+  /**
+   * Give the box a committer identity: the caller's resolved one (requester,
+   * then hub default), else the building machine's, else a generic one. Docker
+   * keeps a bind-mounted `~/.gitconfig` that holds a complete identity.
+   */
   seedGitIdentity(ctx: SyncContext): Promise<void>;
   /** Copy gitignore-bypassing host env files matching `patterns` into /workspace. */
   seedEnvFiles(ctx: SyncContext, patterns: string[]): Promise<{ copied: number }>;

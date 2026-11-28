@@ -99,6 +99,16 @@ CLI, not the raw commits.
 
 - The `agentbox credentials` menu comes back after a cancelled or failed sign-in
   instead of exiting.
+
+- **A box created through a remote hub commits as you**, not as the generic
+  `agentbox` identity. Every hub-routed create sends the project's
+  `user.name`/`user.email`. Creates from the hub's web UI or the tray use the
+  hub's default commit identity, set on Settings → General
+  (`git.identity.name`/`git.identity.email`). `hub login` and `hub setup` fill
+  it from your PC when it is empty, and never replace one already set. A
+  project with no complete identity gets a warning saying the box will commit
+  as the hub default.
+
 - **Accounts on docker and cloud:**
   - `claude --resume` finds a session started on another account: docker boxes
     share one `agentbox-claude-projects` volume, which each new box keeps up to

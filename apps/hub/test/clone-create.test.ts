@@ -63,3 +63,26 @@ describe('cloneCreateInput', () => {
     expect(opts).toMatchObject({ skills: { none: true }, llmProxy: 'forward', persistent: false });
   });
 });
+
+describe('a clone commits as the person who cloned it', () => {
+  const ada = { name: 'Ada Lovelace', email: 'ada@example.com' };
+
+  it("passes the requester's identity to the create", () => {
+    // On a hub several people use, the hub default is the first PC enrolled:
+    // without this, user B's clone commits as user A.
+    expect(cloneCreateInput(staged, ada).opts?.gitIdentity).toEqual(ada);
+  });
+
+  it('sends none when the caller sent none (web, tray), so the hub default applies', () => {
+    expect(cloneCreateInput(staged).opts).not.toHaveProperty('gitIdentity');
+  });
+
+  it('validates the identity at the route boundary', async () => {
+    const { parseCloneBox } = await import('../app/(dashboard)/api/v1/lib/validate');
+    expect(parseCloneBox({ gitIdentity: ada })).toEqual({ ok: true, value: { gitIdentity: ada } });
+    const bad = parseCloneBox({ gitIdentity: { name: 'Ada\nLovelace', email: ada.email } });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.message).toMatch(/gitIdentity\.name.*newlines/);
+    expect(parseCloneBox({ gitIdentity: { name: 'Ada' } }).ok).toBe(false);
+  });
+});

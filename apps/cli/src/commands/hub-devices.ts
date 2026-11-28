@@ -78,6 +78,18 @@ async function adoptHub(url: string): Promise<void> {
   else await applyControlPlaneUrl(url);
 }
 
+/** Best-effort: an enrolled PC never fails over the hub's default identity. */
+async function offerGitIdentity(url: string, token: string): Promise<void> {
+  try {
+    const { offerHubGitIdentity, describeHubGitIdentityOffer } =
+      await import('../control-plane/hub-git-identity.js');
+    const line = describeHubGitIdentityOffer(await offerHubGitIdentity({ url, bearer: token }));
+    if (line) log.info(line);
+  } catch {
+    /* the hub's default identity is a convenience; the login already succeeded */
+  }
+}
+
 interface LoginOpts {
   browser?: boolean;
 }
@@ -159,6 +171,7 @@ const loginSub = new Command('login')
           log.success(
             `This computer is enrolled on ${url} as ${polled.body.device.label}. Token saved to ${path}.`,
           );
+          await offerGitIdentity(url, polled.body.token);
           return;
         }
         if (code === 'authorization_pending') continue;

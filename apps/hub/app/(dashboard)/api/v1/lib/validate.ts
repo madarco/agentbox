@@ -325,6 +325,19 @@ function parseCreateBoxOpts(v: unknown): Parsed<CreateBoxOpts | undefined> {
     }
     out.llmProxy = v.llmProxy;
   }
+  // The requester's committer identity. It lands in `git config` inside the
+  // box, so a newline is refused here rather than trusted to quoting there.
+  if (v.gitIdentity !== undefined) {
+    const gi = v.gitIdentity;
+    if (!isObject(gi)) {
+      return { ok: false, message: 'opts.gitIdentity must be an object of { name, email }' };
+    }
+    const problem =
+      gitIdentityFieldProblem(gi.name, 'opts.gitIdentity.name') ??
+      gitIdentityFieldProblem(gi.email, 'opts.gitIdentity.email');
+    if (problem) return { ok: false, message: problem };
+    out.gitIdentity = { name: (gi.name as string).trim(), email: (gi.email as string).trim() };
+  }
   // promptAnswers: PromptAnswer[] — the client's answers to create-preflight.
   // Only the shape is checked here; the backend matches each id against the
   // question it actually asks, and refuses a stale one.
@@ -524,6 +537,18 @@ export function parseCloneBox(body: unknown): Parsed<CloneBoxInput> {
     return { ok: false, message: 'persistent must be a boolean' };
   }
   if (typeof persistent === 'boolean') out.persistent = persistent;
+
+  if (body.gitIdentity !== undefined) {
+    const gi = body.gitIdentity;
+    if (!isObject(gi)) {
+      return { ok: false, message: 'gitIdentity must be an object of { name, email }' };
+    }
+    const problem =
+      gitIdentityFieldProblem(gi.name, 'gitIdentity.name') ??
+      gitIdentityFieldProblem(gi.email, 'gitIdentity.email');
+    if (problem) return { ok: false, message: problem };
+    out.gitIdentity = { name: (gi.name as string).trim(), email: (gi.email as string).trim() };
+  }
 
   return { ok: true, value: out };
 }
@@ -2307,6 +2332,21 @@ function parseManagerPtyAttach(
 export function isForce(req: Request): boolean {
   const v = new URL(req.url).searchParams.get('force');
   return v === '1' || v === 'true';
+}
+
+/**
+ * The committer-identity field rule (`gitIdentityFieldProblem` in
+ * `@agentbox/core`), restated for the browser like {@link ACCOUNT_ID_RE};
+ * `git-identity.test.ts` pins the two together.
+ */
+export function gitIdentityFieldProblem(value: unknown, field: string): string | null {
+  if (typeof value !== 'string') return `${field} must be a string`;
+  if (value.trim().length === 0) return `${field} must not be empty`;
+  if (value.length > 256) return `${field} is too long (max 256 characters)`;
+  if (/[\u0000-\u001f\u007f]/.test(value)) {
+    return `${field} must not contain newlines or control characters`;
+  }
+  return null;
 }
 
 /**

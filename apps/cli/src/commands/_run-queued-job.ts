@@ -398,6 +398,8 @@ async function runDockerJob(
       : {}),
     // The hub egress proxy, resolved at enqueue (llm-accounts Phase 7).
     ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
+    // Committer identity resolved at enqueue (the requester's, else the hub default).
+    ...(opts.gitIdentity ? { gitIdentity: opts.gitIdentity } : {}),
     // The agent's own `box.isolate<Agent>Config` accessor, through its CLI
     // module — the same one `create-action` uses — instead of a switch over
     // three named options. An agent this build has no module for (a service
@@ -692,6 +694,8 @@ async function runCloudJob(
       : {}),
     // The hub egress proxy, resolved at enqueue (llm-accounts Phase 7).
     ...(opts.llmProxy ? { llmProxy: opts.llmProxy } : {}),
+    // Committer identity resolved at enqueue (the requester's, else the hub default).
+    ...(opts.gitIdentity ? { gitIdentity: opts.gitIdentity } : {}),
     // `--build` (allowPull:false) + registry, credential-sync, bundle depth, and
     // the push mode: the foreground `create` conversion routes cloud creates
     // through this worker, so each must ride the job to match the old inline path.

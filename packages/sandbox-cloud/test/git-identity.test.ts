@@ -63,6 +63,45 @@ describe('seedGitIdentity', () => {
     }
   });
 
+  it("a caller-resolved identity wins over the host repo's, and the log names its source", async () => {
+    // On a hub the host repo is a throwaway clone on the hub machine: its
+    // config is the hub's, not the user's.
+    await execa('git', ['-C', repo, 'config', 'user.name', 'hub-machine']);
+    await execa('git', ['-C', repo, 'config', 'user.email', 'root@hub.local']);
+    const lines: string[] = [];
+    const backend = makeMockCloudBackend({ preloaded: [{ id: 'box1' }] });
+    await seedGitIdentity(backend, HANDLE, {
+      hostRepo: repo,
+      identity: { name: 'Ada Lovelace', email: 'ada@example.com', source: 'request' },
+      onLog: (l) => lines.push(l),
+    });
+    const cmd = lastExecCmd(backend);
+    expect(cmd).toContain('Ada Lovelace');
+    expect(cmd).toContain('git config --global user.email ada@example.com');
+    expect(cmd).not.toContain('hub-machine');
+    expect(lines.join('\n')).toContain('(from the requesting machine)');
+  });
+
+  it('logs the hub default as the source when that is what the caller resolved', async () => {
+    const lines: string[] = [];
+    const backend = makeMockCloudBackend({ preloaded: [{ id: 'box1' }] });
+    await seedGitIdentity(backend, HANDLE, {
+      hostRepo: repo,
+      identity: { name: 'Team Bot', email: 'bot@example.com', source: 'hub-default' },
+      onLog: (l) => lines.push(l),
+    });
+    expect(lines.join('\n')).toContain('(from the hub default');
+  });
+
+  it("logs this machine's git config as the source when nothing was resolved", async () => {
+    await execa('git', ['-C', repo, 'config', 'user.name', 'test-user']);
+    await execa('git', ['-C', repo, 'config', 'user.email', 'test@example.com']);
+    const lines: string[] = [];
+    const backend = makeMockCloudBackend({ preloaded: [{ id: 'box1' }] });
+    await seedGitIdentity(backend, HANDLE, { hostRepo: repo, onLog: (l) => lines.push(l) });
+    expect(lines.join('\n')).toContain("(from this machine's git config)");
+  });
+
   it('issues exactly one identity exec (both keys in one command)', async () => {
     const backend = makeMockCloudBackend({ preloaded: [{ id: 'box1' }] });
     await seedGitIdentity(backend, HANDLE, { hostRepo: repo });
