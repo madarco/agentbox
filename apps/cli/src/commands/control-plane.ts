@@ -2837,6 +2837,48 @@ async function finalizeControlBoxState(url: string | undefined): Promise<void> {
       `could not set up the control box's docker engine as a target: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  if (hubUrl) await enrollThisMachine(hubUrl);
+}
+
+/**
+ * Enroll this (the operator's) machine as a device on the control box, so the
+ * hub can reach it over host-reach like any other PC (the skills comparison
+ * needs that). Best-effort: a failure prints the manual command.
+ */
+async function enrollThisMachine(hubUrl: string): Promise<void> {
+  const url = hubUrl.replace(/\/+$/, '');
+  try {
+    const [{ enrollOperatorDevice }, { readOwnerCredentials }, { controlBoxIsThisMachine }] =
+      await Promise.all([
+        import('../control-plane/enroll-operator.js'),
+        import('../control-plane/owner-credentials.js'),
+        import('../control-plane/remote-hub.js'),
+      ]);
+    const res = await enrollOperatorDevice({
+      url,
+      owner: readOwnerCredentials(),
+      controlBoxIsThisMachine: await controlBoxIsThisMachine(),
+    });
+    const d = res.decision;
+    if (res.enrolled) {
+      log.success(`Enrolled this computer on the control box as ${res.enrolled.label}.`);
+    } else if (d.action === 'revoked') {
+      log.warn(
+        `This computer (${d.label}) is revoked on ${url}, so setup leaves it revoked. ` +
+          `Run \`agentbox hub login ${url}\` to enroll it again.`,
+      );
+    } else if (d.action === 'skip' && d.reason === 'no-owner-credentials') {
+      log.warn(
+        `Could not enroll this computer on the control box: ${ENV_PATH} lacks the API key or ` +
+          `admin token. Run \`agentbox hub login ${url}\`.`,
+      );
+    }
+  } catch (err) {
+    log.warn(
+      `Could not enroll this computer on the control box (${err instanceof Error ? err.message : String(err)}). ` +
+        `Run \`agentbox hub login ${url}\` and approve it on ${url}/settings/devices.`,
+    );
+  }
 }
 
 const deployCmd = new Command('deploy')

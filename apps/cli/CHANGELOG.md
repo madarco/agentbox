@@ -87,6 +87,10 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **`hub setup`, `hub deploy` and `hub update` enroll the deploying computer
+  as a device** on the control box, so the hub's Skills page can compare with
+  it. Once enrolled, it still approves, revokes and renames devices with
+  `hub devices` instead of getting a 403.
 - **Hetzner and DigitalOcean boxes and control boxes get swap**, so a cx23 no
   longer runs out of memory during a build (`box.swap` sets the size).
 - **`hub setup` names what it copies** ("Copy your credentials to the hub?")

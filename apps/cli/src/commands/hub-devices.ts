@@ -224,14 +224,21 @@ async function target(): Promise<{ url: string; token: string; mode: 'local' | '
 let lastTarget: { url: string; mode: 'local' | 'remote' } | undefined;
 
 /**
- * The admin token the owner actions (approve, deny, revoke or rename another
- * device) need on top of the API key. The machine that ran `agentbox hub setup` /
- * `hub expose` has it in its control-plane env file.
+ * The credentials for an owner action (approve, deny, revoke or rename another
+ * device): the API key plus the admin token, which the machine that ran
+ * `agentbox hub setup` / `hub expose` holds in its control-plane env file.
+ * That machine may also be enrolled itself, and its device token (the target's
+ * Bearer then) is refused on these routes, so the shared API key replaces it.
+ * Any other machine sends its usual Bearer and gets the owner hint on a 403.
  */
-async function ownerAdminToken(): Promise<string | undefined> {
-  const { loadControlPlaneEnv } = await import('../control-plane/env-file.js');
-  loadControlPlaneEnv();
-  return process.env.AGENTBOX_RELAY_ADMIN_TOKEN || undefined;
+async function ownerTarget(): Promise<{ url: string; token: string; adminToken?: string }> {
+  const t = await target();
+  if (t.mode !== 'remote') return { url: t.url, token: t.token };
+  const { readOwnerCredentials } = await import('../control-plane/owner-credentials.js');
+  const owner = readOwnerCredentials();
+  return owner
+    ? { url: t.url, token: owner.apiKey, adminToken: owner.adminToken }
+    : { url: t.url, token: t.token };
 }
 
 /** A 403 on an owner action: say where it can be done instead. */
@@ -291,13 +298,12 @@ const devicesApproveSub = new Command('approve')
   .argument('<code>', 'the XXXX-XXXX code `hub login` printed')
   .action(async (code: string) => {
     try {
-      const t = await target();
-      const adminToken = await ownerAdminToken();
+      const t = await ownerTarget();
       const res = await call<{ device: WireDevice }>(`${t.url}/api/v1/devices/approve`, {
         method: 'POST',
         token: t.token,
         body: { userCode: code },
-        ...(adminToken ? { adminToken } : {}),
+        ...(t.adminToken ? { adminToken: t.adminToken } : {}),
       });
       if (res.status !== 200) return failOwner(res.status, res.body, `approve ${code}`);
       log.success(`Approved ${res.body.device.label} (${res.body.device.id}).`);
@@ -311,12 +317,11 @@ const devicesRevokeSub = new Command('revoke')
   .argument('<id>', 'the device id (`agentbox hub devices list`)')
   .action(async (id: string) => {
     try {
-      const t = await target();
-      const adminToken = await ownerAdminToken();
+      const t = await ownerTarget();
       const res = await call(`${t.url}/api/v1/devices/${encodeURIComponent(id)}/revoke`, {
         method: 'POST',
         token: t.token,
-        ...(adminToken ? { adminToken } : {}),
+        ...(t.adminToken ? { adminToken: t.adminToken } : {}),
       });
       if (res.status !== 200) return failOwner(res.status, res.body, `revoke ${id}`);
       log.success(`Revoked ${id}.`);
@@ -331,13 +336,12 @@ const devicesRenameSub = new Command('rename')
   .argument('<label>', 'the new name')
   .action(async (id: string, label: string) => {
     try {
-      const t = await target();
-      const adminToken = await ownerAdminToken();
+      const t = await ownerTarget();
       const res = await call(`${t.url}/api/v1/devices/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         token: t.token,
         body: { label },
-        ...(adminToken ? { adminToken } : {}),
+        ...(t.adminToken ? { adminToken: t.adminToken } : {}),
       });
       if (res.status !== 200) return failOwner(res.status, res.body, `rename ${id}`);
       log.success(`Renamed ${id} to ${label}.`);
