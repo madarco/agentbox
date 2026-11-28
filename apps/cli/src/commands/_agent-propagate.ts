@@ -6,6 +6,7 @@ import {
   boxAccount,
   makeStagingDir,
   planPropagateTargets,
+  stagedItemsAreAccountBound,
   propagateStagedSettings,
   readState,
   removeStagingDir,
@@ -97,9 +98,12 @@ export async function runPropagateStep(opts: {
     scope,
     projectRoot: sourceBox.projectRoot,
     excludeVolume,
-    // Within the source box's account: a pulled item set can carry the
-    // agent's login (codex's `auth.json`), which must never cross accounts.
-    account: boxAccount(sourceBox, agent),
+    // A set that can carry per-account state (codex's `auth.json` or
+    // `config.toml`) stays within the source box's account; skills, prompts and
+    // plugins reach boxes on every account.
+    ...(stagedItemsAreAccountBound(agent, opts.items)
+      ? { account: boxAccount(sourceBox, agent) }
+      : {}),
   });
   if (plan.dockerVolumes.length === 0 && plan.cloudBoxes.length === 0) {
     log.info('no other target boxes in scope');

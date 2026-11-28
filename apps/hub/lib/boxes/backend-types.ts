@@ -1586,6 +1586,11 @@ export interface AccountBackend {
     defaults?: Record<string, AccountDefaultView>;
     /** Set instead of `defaults` when the config can't be read. */
     defaultsError?: string;
+    /**
+     * `accounts.json` exists but cannot be trusted (the message names the file).
+     * Only the `default`s are listed then, and every change is refused.
+     */
+    storeError?: string;
     /** The machine id these accounts belong to (custody keys named accounts by it). */
     machine?: string;
   }>;

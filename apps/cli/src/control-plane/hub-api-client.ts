@@ -602,6 +602,8 @@ export interface HubApiAccountList {
   /** Absent from an older hub, or when the config can't be read (`defaultsError`). */
   defaults?: Record<string, HubApiAccountDefault>;
   defaultsError?: string;
+  /** `accounts.json` cannot be trusted (the message names the file); only the `default`s are listed. */
+  storeError?: string;
 }
 
 export interface HubApiCheckoutReport {

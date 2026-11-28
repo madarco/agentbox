@@ -188,6 +188,11 @@ export interface AccountEnvPolicy {
 
 export const NO_ACCOUNT_ENV: AccountEnvPolicy = { inject: {}, suppress: [] };
 
+/** Every env key `spec` authenticates by (`accountEnv`): what a named account suppresses. */
+export function accountSuppressKeys(spec: Pick<AgentSyncSpec, 'accountEnv'>): string[] {
+  return Object.values(spec.accountEnv ?? {}).filter((v): v is string => typeof v === 'string');
+}
+
 /**
  * The env policy for `spec` on `account`. `default` changes nothing (today's
  * spray). A named account suppresses every `accountEnv` key — so a host API
@@ -202,7 +207,7 @@ export async function accountEnvPolicy(
 ): Promise<AccountEnvPolicy> {
   if (isDefaultAccount(account)) return NO_ACCOUNT_ENV;
   const envMap = spec.accountEnv ?? {};
-  const suppress = Object.values(envMap).filter((v): v is string => typeof v === 'string');
+  const suppress = accountSuppressKeys(spec);
   const row = findAccount(await readAccounts(store), spec.id, account);
   if (!row || row.kind === 'login') return { inject: {}, suppress };
   const key = envMap[row.kind];

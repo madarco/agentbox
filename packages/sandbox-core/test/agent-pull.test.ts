@@ -207,6 +207,19 @@ describe('pullFlatConfigViaTransport — codex (one root)', () => {
     expect(t.ops.filter((o) => o.op === 'pullTree')).toHaveLength(1);
     expect(await readFile(join(home, '.codex', 'config.toml'), 'utf8')).toBe('host');
   });
+
+  it('leaves the login behind for a box on a named account (excludeCredential)', async () => {
+    const stdout = 'data FILE config.toml\ndata FILE auth.json\ndata DIR prompts';
+    const t = makeRecordingTransport({ execResult: () => ({ exitCode: 0, stdout, stderr: '' }) });
+    materializePullFile(t);
+    const result = await pullFlatConfigViaTransport('codex', t, {
+      hostHome: home,
+      excludeCredential: true,
+    });
+    expect(result.newItems).toEqual(['config.toml', 'prompts']);
+    const exec = t.ops.find((o) => o.op === 'exec');
+    expect((exec?.args.cmd as string[]).join(' ')).not.toContain('auth.json');
+  });
 });
 
 /**

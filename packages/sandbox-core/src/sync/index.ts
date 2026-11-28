@@ -74,6 +74,7 @@ export {
   transportSettingsTarget,
   propagateStagedSettings,
   planPropagateTargets,
+  stagedItemsAreAccountBound,
   type StagedItem,
   type StagedSettings,
   type SettingsTarget,

@@ -70,6 +70,7 @@ async function loadList(project?: string): Promise<HubApiAccountList | undefined
     client.listAccounts(project ? { project } : {}),
   );
   if (list?.defaultsError) log.warn(`${list.defaultsError}; defaults are not shown`);
+  if (list?.storeError) log.warn(`${list.storeError}. Only the default logins are listed.`);
   return list;
 }
 
@@ -84,6 +85,7 @@ export async function listCommand(opts: { json?: boolean }): Promise<void> {
         {
           accounts: list.accounts,
           ...(list.defaults ? { defaults: list.defaults } : { defaultsError: list.defaultsError }),
+          ...(list.storeError ? { storeError: list.storeError } : {}),
         },
         null,
         2,
@@ -190,6 +192,18 @@ export function accountNameFor(typed: string, existing: readonly string[]): stri
   return n.name;
 }
 
+/**
+ * `default` is the agent's own login file, so a pasted token cannot live
+ * there: it goes under a name, which can then be made the default.
+ */
+export function defaultPastedMessage(agent: string, flag: '--setup-token' | '--api-key'): string {
+  return (
+    `the default account is ${agent}'s own login, so a ${flag === '--api-key' ? 'API key' : 'setup token'} needs a name: ` +
+    `\`agentbox credentials add ${agent}/<name> ${flag}\`, then make it the default for new boxes with ` +
+    `\`agentbox credentials use ${agent}/<name> --global\``
+  );
+}
+
 export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
   const { agent: name, id: typed } = parseAccountRef(ref);
   const agent = agentId(name);
@@ -207,8 +221,11 @@ export async function addCommand(ref: string, opts: AddOpts): Promise<void> {
     known.map((a) => a.id),
   );
   if (isDefaultAccount(id)) {
+    const pasted = opts.setupToken ? '--setup-token' : opts.apiKey ? '--api-key' : undefined;
     throw new Error(
-      `the default account is the agent's own login: \`agentbox ${agent} login\` signs it in`,
+      pasted
+        ? defaultPastedMessage(agent, pasted)
+        : `the default account is the agent's own login: \`agentbox ${agent} login\` signs it in`,
     );
   }
   if (id !== typed.trim()) {
