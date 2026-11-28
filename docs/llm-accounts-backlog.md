@@ -358,3 +358,8 @@ on a remote hub a subscription belongs to the hub. These items are done:
   gets a suffix.
 - **The tray** shows nothing of `importedFrom` (optional; Swift `Codable`
   ignores unknown keys, so nothing breaks).
+- **An import batch re-reads the store per item** (the rows, each row's secret,
+  the default backup) inside the importer's lock (Phase 9 review). The flat
+  custody sweep runs once per batch now; reading the rows and owner keys once
+  per batch and updating them as items land would make a 64-item push cheaper.
+  Small today (a PC has a handful of logins).

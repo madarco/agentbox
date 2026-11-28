@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -21,6 +21,7 @@ const {
   credentialOwnerKey,
   freeAccountId,
   planAccountImport,
+  tombstoneAccount,
   resolveHubAccountName,
   resolveHubCreateAccounts,
   EMPTY_IMPORTS,
@@ -192,6 +193,18 @@ describe('planAccountImport (pure)', () => {
   });
 });
 
+describe('tombstoneAccount (review: one agent never clears another)', () => {
+  it("keeps claude's tombstone when codex's account of the same PC name is removed", () => {
+    const start = {
+      version: 1 as const,
+      imports: [{ agent: 'codex', machine: PC_A, localId: 'work', hubId: 'work', at: 't' }],
+      removed: [{ agent: 'claude', machine: PC_A, localId: 'work', at: 't' }],
+    };
+    const { file } = tombstoneAccount(start, 'codex', 'work', 't2');
+    expect(file.removed.map((t) => t.agent).sort()).toEqual(['claude', 'codex']);
+  });
+});
+
 describe('freeAccountId / credentialOwnerKey / resolveHubAccountName (pure)', () => {
   it('cuts the base to fit 32 characters', () => {
     const long = 'a'.repeat(32);
@@ -333,8 +346,9 @@ describe('the importer (store + custody effects)', () => {
 
   it('forgetAccount tombstones the mapping and removes every custody copy', async () => {
     await importer.importItems([item(PC_A, 'second', login('u1', 100))]);
-    await core.removeAccount('claude', 'second', store());
-    await importer.forgetAccount('claude', 'second');
+    await importer.forgetAccount('claude', 'second', async () => {
+      await core.removeAccount('claude', 'second', store());
+    });
     expect(custody.objects.size).toBe(0);
     const [again] = await importer.importItems([item(PC_A, 'second', login('u1', 400))]);
     expect(again!.action).toBe('removed');
@@ -363,6 +377,27 @@ describe('the importer (store + custody effects)', () => {
       item(PC_A, 'good', login('u5', 1)),
     ]);
     expect(results.map((r) => r.action)).toEqual(['refused', 'created']);
+  });
+
+  it('refuses to import over a corrupt imports file instead of wiping it', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, 'account-imports.json'), '{ truncated');
+    await expect(importer.importItems([item(PC_A, 'second', login('u1', 1))])).rejects.toThrow(
+      /not valid JSON/,
+    );
+    expect(await readFile(join(stateDir, 'account-imports.json'), 'utf8')).toBe('{ truncated');
+  });
+
+  it('a re-push that changes nothing does not rewrite the imports file', async () => {
+    await importer.importItems([item(PC_A, 'second', login('u1', 100))]);
+    const path = join(stateDir, 'account-imports.json');
+    const before = (await stat(path)).mtimeMs;
+    const text = await readFile(path, 'utf8');
+    await new Promise((r) => setTimeout(r, 20));
+    const [r] = await importer.importItems([item(PC_A, 'second', login('u1', 100))]);
+    expect(r!.action).toBe('kept');
+    expect((await stat(path)).mtimeMs).toBe(before);
+    expect(await readFile(path, 'utf8')).toBe(text);
   });
 
   it('a create never starts on an account the hub cannot seed', async () => {

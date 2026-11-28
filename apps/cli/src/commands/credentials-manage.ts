@@ -76,10 +76,12 @@ async function onRemoteHub(): Promise<boolean> {
  * This PC's logins and keys into the remote hub (after a sign-in here), one
  * line per change. A no-op without a remote hub.
  */
-async function pushToRemoteHub(agent: string): Promise<void> {
+async function pushToRemoteHub(
+  agent: string,
+): Promise<import('../control-plane/hub-api-client.js').HubApiAccountImportResult[] | null> {
   const { resolveCustodyApiTarget } = await import('./control-plane.js');
   const target = await resolveCustodyApiTarget(undefined, { quiet: true, remoteOnly: true });
-  if (!target?.apiKey) return;
+  if (!target?.apiKey) return null;
   const { collectAccountImportItems, importAccountsToHub, describeImportResult } =
     await import('../control-plane/credential-import.js');
   const results = await importAccountsToHub(
@@ -88,12 +90,13 @@ async function pushToRemoteHub(agent: string): Promise<void> {
   );
   if (!results) {
     // An older hub: the custody push the login flow already ran is all it takes.
-    return;
+    return null;
   }
   for (const r of results) {
     const line = describeImportResult(r);
     if (line) log.info(`hub: ${line}`);
   }
+  return results;
 }
 
 export function fail(err: unknown): never {
@@ -392,7 +395,20 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
     if (startsOnly) return;
   }
   // The new login into the hub (newer, so it wins), then the hub fans it out.
-  if (remote) await pushToRemoteHub(agent);
+  if (remote) {
+    const results = await pushToRemoteHub(agent);
+    const mine = results?.find((r) => r.agent === agent && r.id === localId);
+    if (mine?.hubId && mine.hubId !== id) {
+      // The sign-in was another subscription: it went to the hub on its own,
+      // and fanning out `id` would push its old login, not a renewed one.
+      throw new Error(
+        `this sign-in is another subscription than ${agent}/${id}; the hub filed it as ${agent}/${mine.hubId}, so ${agent}/${id} was not renewed. Sign in to ${agent}/${id}'s account, or renew it from the computer it came from.`,
+      );
+    }
+    if (mine && (mine.action === 'refused' || mine.action === 'removed')) {
+      throw new Error(`the hub did not take the new login: ${mine.reason}`);
+    }
+  }
   await fanOutLogin(agent, id, hubOpts());
 }
 
@@ -451,7 +467,16 @@ export async function removeCommand(ref: string, opts: { yes?: boolean }): Promi
 export async function switchCommand(box: string, ref: string): Promise<void> {
   const { agent: name, id } = parseAccountRef(ref);
   const agent = agentId(name);
-  await withHubClient(hubOpts(), async (client) => {
+  // A box the remote hub does not know is this PC's own (a docker box): its
+  // switch goes to the local hub, which holds this PC's accounts.
+  const remote = await onRemoteHub();
+  let local = !remote;
+  if (remote) {
+    const { resolveHubApiClient } = await import('./control-plane.js');
+    const client = await resolveHubApiClient(undefined, { quiet: true });
+    if (client && (await client.resolveBox(box)).length === 0) local = true;
+  }
+  await withHubClient({ preferLocal: local }, async (client) => {
     const r = await client.switchBoxAccount(box, { agent, account: id });
     const how = r.restarted ? ' (agent restarted)' : r.how === 'file' ? ' (no restart)' : '';
     log.success(`${r.agent} in ${box} moved from '${r.from}' to '${r.to}'${how}`);
@@ -526,8 +551,19 @@ async function setDefault(
       if (!isDefaultAccount(account)) {
         const list = await loadList();
         if (!list) return;
-        if (!list.accounts.some((a) => a.agent === agent && a.id === account)) {
+        const { tryGetMachineId } = await import('@agentbox/config');
+        const me = tryGetMachineId();
+        // This PC's own name first, as the hub resolves it at create time.
+        const mapped = list.accounts.find(
+          (a) =>
+            a.agent === agent &&
+            (a.importedFrom ?? []).some((f) => f.machine === me && f.id === account),
+        );
+        if (!mapped && !list.accounts.some((a) => a.agent === agent && a.id === account)) {
           throw new Error(`no ${agent}/${account} on the hub (see \`agentbox credentials\`)`);
+        }
+        if (mapped && mapped.id !== account) {
+          log.info(`the hub holds this PC's ${agent}/${account} as ${agent}/${mapped.id}`);
         }
       }
       await setConfigValue(scope, key, account, cwd);

@@ -696,11 +696,13 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
           error: `${spec.id} account '${id}' is still used by ${inUse.map((b) => b.name).join(', ')}`,
         };
       }
-      await removeStoredAccount(spec.id, id, store);
+      // With its custody copies (the hub's and every PC's it was imported
+      // from) and its import mappings, so a PC's next automatic push does not
+      // bring it back. One chain with the importer: no import lands mid-removal.
+      await importer.forgetAccount(spec.id, id, async () => {
+        await removeStoredAccount(spec.id, id, store);
+      });
       deps.limits?.forget(spec.id, id);
-      // Its custody copies (the hub's and every PC's it was imported from) and
-      // the import mappings, so a PC's next automatic push does not bring it back.
-      await importer.forgetAccount(spec.id, id).catch(() => {});
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);
       const { cleared: defaultsCleared, errors } = await clearDefaultsNaming(spec.id, id);

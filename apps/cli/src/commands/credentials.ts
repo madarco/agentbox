@@ -279,9 +279,8 @@ async function pushCredentialToCustody(
     if (target.apiKey) {
       const { collectAccountImportItems, importAccountsToHub, describeImportResult } =
         await import('../control-plane/credential-import.js');
-      const items = (await collectAccountImportItems({ only: agent })).filter(
-        (i) => i.id === account,
-      );
+      const all = await collectAccountImportItems({ only: agent });
+      const items = all ? all.filter((i) => i.id === account) : null;
       const results = await importAccountsToHub({ url: target.url, apiKey: target.apiKey }, items);
       if (results) {
         for (const r of results) {

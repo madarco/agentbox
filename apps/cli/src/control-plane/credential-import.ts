@@ -29,14 +29,15 @@ import {
 /**
  * Every login and key of this PC as import items: each agent's own (`default`)
  * login from its host backup, and every named account from the store. Only
- * real logins and well-formed pasted secrets. Empty when this machine has no
- * id (nothing can be mapped back to it).
+ * real logins and well-formed pasted secrets. Null when this machine has no
+ * id: the import route needs one, so the caller falls back to the custody
+ * push, which still carries the default logins (#444 (f)).
  */
 export async function collectAccountImportItems(
   opts: { only?: string; force?: boolean } = {},
-): Promise<HubApiAccountImportItem[]> {
+): Promise<HubApiAccountImportItem[] | null> {
   const machine = tryGetMachineId();
-  if (!machine) return [];
+  if (!machine) return null;
   const machineLabel = safeLabel();
   const base = {
     machine,
@@ -86,13 +87,15 @@ function safeLabel(): string | undefined {
 }
 
 /**
- * Send `items` to the hub. Null when the hub predates the route (404), so the
- * caller pushes to custody the old way. Other failures throw.
+ * Send `items` to the hub. Null when they could not be built (no machine id)
+ * or the hub predates the route (404), so the caller pushes to custody the old
+ * way. Other failures throw.
  */
 export async function importAccountsToHub(
   target: { url: string; apiKey: string; fetchImpl?: typeof fetch },
-  items: HubApiAccountImportItem[],
+  items: HubApiAccountImportItem[] | null,
 ): Promise<HubApiAccountImportResult[] | null> {
+  if (items === null) return null;
   if (items.length === 0) return [];
   const client = new HubApiClient(target);
   const out: HubApiAccountImportResult[] = [];
@@ -170,11 +173,18 @@ export async function pullNamedLoginsFromHub(o: {
       if (from.machine !== machine || isDefaultAccount(from.id)) continue;
       const row = local.accounts.find((r) => r.agent === a.agent && r.id === from.id);
       if (row?.kind !== 'login') continue;
-      const data = await o.get(
-        isDefaultAccount(a.id)
-          ? accountCustodyPath(spec.id, a.id, spec.credential.boxRelPath)
-          : accountCustodyPath(spec.id, a.id, spec.credential.boxRelPath, hubMachine!),
-      );
+      // A path the hub's custody refuses (an agent its registry lacks: 400)
+      // skips that login, never the rest.
+      const data = await o
+        .get(
+          isDefaultAccount(a.id)
+            ? accountCustodyPath(spec.id, a.id, spec.credential.boxRelPath)
+            : accountCustodyPath(spec.id, a.id, spec.credential.boxRelPath, hubMachine!),
+        )
+        .catch((err: unknown) => {
+          if (err instanceof HubApiError && err.status === 400) return null;
+          throw err;
+        });
       if (!data) continue;
       const w = await writeAccountSecret(a.agent, from.id, data.toString('utf8'));
       (w.written ? pulled : kept).push(`${a.agent}/${from.id}`);

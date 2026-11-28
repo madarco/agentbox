@@ -293,9 +293,13 @@ export function withMapping(
 ): AccountImportsFile {
   const same = (x: { agent: string; machine: string; localId: string }) =>
     x.agent === m.agent && x.machine === m.machine && x.localId === m.localId;
+  const prev = file.imports.find(same);
+  // An unchanged mapping keeps its entry (and stamp), so a re-push writes nothing.
+  const entry =
+    prev && prev.hubId === m.hubId && prev.machineLabel === m.machineLabel ? prev : { ...m, at };
   return {
     version: 1,
-    imports: [...file.imports.filter((x) => !same(x)), { ...m, at }],
+    imports: [...file.imports.filter((x) => !same(x)), entry],
     removed: file.removed.filter((x) => !same(x)),
   };
 }
@@ -315,7 +319,11 @@ export function tombstoneAccount(
       imports: file.imports.filter((m) => !(m.agent === agent && m.hubId === hubId)),
       removed: [
         ...file.removed.filter(
-          (t) => !dropped.some((d) => d.machine === t.machine && d.localId === t.localId),
+          (t) =>
+            !(
+              t.agent === agent &&
+              dropped.some((d) => d.machine === t.machine && d.localId === t.localId)
+            ),
         ),
         ...dropped.map((d) => ({ agent, machine: d.machine, localId: d.localId, at })),
       ],
@@ -376,8 +384,11 @@ export interface AccountImporterDeps {
 export interface AccountImporter {
   readImports(): Promise<AccountImportsFile>;
   importItems(items: readonly AccountImportItem[]): Promise<ImportResult[]>;
-  /** After a hub `rm`: tombstone the mappings and drop every custody copy of the account. */
-  forgetAccount(agent: string, hubId: string): Promise<void>;
+  /**
+   * A hub `rm`: run `remove` (the store removal), then tombstone the mappings
+   * and drop every custody copy of the account, all in the importer's chain.
+   */
+  forgetAccount(agent: string, hubId: string, remove?: () => Promise<void>): Promise<void>;
 }
 
 /** One writer at a time in this process (the hub is one process). */
@@ -431,8 +442,27 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
   const specOf = (agent: string): AgentSyncSpec | undefined =>
     specs.find((s) => s.id === agent) ?? findAgentSpec(agent);
 
+  /**
+   * Absent reads as empty; anything else unreadable THROWS. Reading it as empty
+   * would let the next import write that back, losing every mapping (suffixed
+   * names stop resolving) and every tombstone (removed accounts come back).
+   */
   async function readImports(): Promise<AccountImportsFile> {
-    return parseImportsFile(await readFile(importsPath, 'utf8').catch(() => null));
+    let text: string;
+    try {
+      text = await readFile(importsPath, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return parseImportsFile(null);
+      throw err;
+    }
+    try {
+      JSON.parse(text);
+    } catch {
+      throw new Error(
+        `${importsPath} is not valid JSON; move it aside (imports then start over) or fix it`,
+      );
+    }
+    return parseImportsFile(text);
   }
 
   /** Delete the dead copies a PC pushed before Phase 9 (never read again). Best-effort. */
@@ -442,12 +472,16 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
     machine: string,
     localId: string,
     canonical: string | undefined,
+    swept: Set<string>,
   ): Promise<void> {
     const file = spec.credential!.boxRelPath;
     const base = `agents/${spec.id}/${ACCOUNTS_CUSTODY_SEGMENT}`;
     const perPc = `${base}/${machine}/${localId}/${file}`;
     if (perPc !== canonical) await c.delete(perPc).catch(() => false);
-    // Phase 4 flat objects: agents/<a>/accounts/<id>/<file> (five segments).
+    // Phase 4 flat objects: agents/<a>/accounts/<id>/<file> (five segments),
+    // swept once per agent per batch.
+    if (swept.has(spec.id)) return;
+    swept.add(spec.id);
     for (const e of await c.list(`${base}/`).catch(() => [])) {
       const parts = e.path.split('/');
       if (parts.length === 5 && parts[4] === file) await c.delete(e.path).catch(() => false);
@@ -489,6 +523,7 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
     item: AccountImportItem,
     spec: AgentSyncSpec,
     imports: AccountImportsFile,
+    swept: Set<string>,
   ): Promise<{ result: ImportResult; imports: AccountImportsFile }> {
     const file = await readAccounts(store);
     const rows = file.accounts.filter((a) => a.agent === spec.id);
@@ -606,7 +641,7 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
         const live = await readAccountSecret(spec.id, target.hubId, store);
         if (live) await c.put(canonical, Buffer.from(live, 'utf8')).catch(() => undefined);
       }
-      await dropLegacyCopies(c, spec, item.machine, item.id, canonical);
+      await dropLegacyCopies(c, spec, item.machine, item.id, canonical, swept);
     }
     return {
       imports: next,
@@ -618,7 +653,9 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
     readImports,
     importItems: (items) =>
       serialized(async () => {
-        let imports = await readImports();
+        const before = await readImports();
+        let imports = before;
+        const swept = new Set<string>();
         const results: ImportResult[] = [];
         for (const raw of items) {
           const problem = importItemProblem(raw, specs);
@@ -638,7 +675,7 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
               results.push(await importDefault(item, spec));
               continue;
             }
-            const r = await importNamed(item, spec, imports);
+            const r = await importNamed(item, spec, imports, swept);
             imports = r.imports;
             results.push(r.result);
           } catch (err) {
@@ -650,11 +687,16 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
             });
           }
         }
-        await writeJsonAtomic(importsPath, imports);
+        if (JSON.stringify(imports) !== JSON.stringify(before)) {
+          await writeJsonAtomic(importsPath, imports);
+        }
         return results;
       }),
-    forgetAccount: (agent, hubId) =>
+    forgetAccount: (agent, hubId, remove) =>
       serialized(async () => {
+        // The store removal runs in the same chain as imports, so an import
+        // cannot write the secret or a mapping of an account being removed.
+        if (remove) await remove();
         const { file, dropped } = tombstoneAccount(
           await readImports(),
           agent,

@@ -34,15 +34,15 @@ afterAll(() => {
 
 describe('collectAccountImportItems (llm-accounts Phase 9)', () => {
   it('sends the default login, every named login and every pasted key, keyed by this machine', async () => {
-    const items = await collectAccountImportItems({ only: 'claude' });
     const machine = getMachineId();
+    const items = (await collectAccountImportItems({ only: 'claude' }))!;
     expect(items.map((i) => `${i.id}:${i.kind}`)).toEqual([
       'default:login',
       'second:login',
       'ci:setup-token',
     ]);
     expect(items.every((i) => i.machine === machine)).toBe(true);
-    expect((await collectAccountImportItems({ only: 'codex' })).length).toBe(0);
+    expect((await collectAccountImportItems({ only: 'codex' }))!.length).toBe(0);
   });
 
   it('describes a rename with the name that still works here', () => {
