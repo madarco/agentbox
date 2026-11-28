@@ -166,6 +166,7 @@ export function accountAuthState(
       since: dead.failedAt!,
       box: dead.box,
       ...(dead.error ? { detail: dead.error } : {}),
+      ...(dead.source ? { source: dead.source } : {}),
     };
   }
   if (account.kind === 'setup-token') {

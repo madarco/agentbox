@@ -247,6 +247,50 @@ describe('account auth state (credentials-tui Phase 1)', () => {
     );
     expect(r).toMatchObject({ state: 'revoked', box: 'b', since: '2026-11-26T10:00:00Z' });
   });
+  it("names the signal: a box's signed-out login file (Phase 4)", () => {
+    const r = accountAuthState(
+      login,
+      {
+        boxes: [
+          {
+            box: 'web',
+            failedAt: '2026-11-26T10:00:00Z',
+            error: 'credentials-dead',
+            source: 'box' as const,
+            okAt: null,
+          },
+        ],
+      },
+      null,
+      NOW,
+    );
+    expect(r).toEqual({
+      state: 'revoked',
+      since: '2026-11-26T10:00:00Z',
+      box: 'web',
+      detail: 'credentials-dead',
+      source: 'box',
+    });
+    // A renew (newer secret) clears it like any refusal.
+    expect(
+      accountAuthState(
+        login,
+        {
+          boxes: [
+            {
+              box: 'web',
+              failedAt: '2026-11-26T10:00:00Z',
+              error: 'credentials-dead',
+              source: 'box' as const,
+              okAt: null,
+            },
+          ],
+        },
+        Date.parse('2026-11-26T11:00:00Z'),
+        NOW,
+      ).state,
+    ).toBe('ok');
+  });
   it('a setup token is expiring in the last 30 days of its year', () => {
     const tok = (createdAt: string) =>
       accountAuthState({ kind: 'setup-token', createdAt }, null, null, NOW);

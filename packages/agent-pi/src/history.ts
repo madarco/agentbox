@@ -45,6 +45,24 @@ function text(content: unknown): string {
     .join('\n');
 }
 
+/**
+ * An assistant message that ended on a refused credential (measured
+ * 2026-11-28, a bogus Anthropic key): `stopReason: "error"` and an
+ * `errorMessage` that starts with the provider's 401. Only the shape is kept,
+ * never the message.
+ */
+function piRefused(m: JsonObject): boolean {
+  if (m.stopReason !== 'error' || typeof m.errorMessage !== 'string') return false;
+  return /^\s*401\b/.test(m.errorMessage) || m.errorMessage.includes('"authentication_error"');
+}
+
+/** A line older than its session's header: carried over from a parent by `/fork`. */
+function copiedLine(ts: string | undefined, state: ParseState): boolean {
+  const start = typeof state.startedAt === 'string' ? Date.parse(state.startedAt) : NaN;
+  const t = ts ? Date.parse(ts) : NaN;
+  return Number.isFinite(start) && Number.isFinite(t) && t < start;
+}
+
 /** Records for one session line at byte offset `at`. */
 export function piLineRecords(line: JsonObject, at: number, state: ParseState): HistoryRecord[] {
   const ts = nonEmptyString(line.timestamp);
@@ -83,6 +101,7 @@ function entryRecords(
   tsPart: { ts?: string },
 ): HistoryRecord[] {
   if (line.type === 'session') {
+    if (tsPart.ts && typeof state.startedAt !== 'string') state.startedAt = tsPart.ts;
     const cwd = nonEmptyString(line.cwd);
     return cwd ? [{ kind: 'meta', cwd, ...tsPart, at }] : [];
   }
@@ -105,6 +124,9 @@ function entryRecords(
   }
   if (m.role !== 'assistant') return [];
   const out: HistoryRecord[] = [];
+  if (piRefused(m) && !copiedLine(tsPart.ts, state)) {
+    out.push({ kind: 'auth', error: 'unauthorized', ...tsPart, at });
+  }
   const t = text(m.content).trim();
   if (t) out.push({ kind: 'turn', role: 'assistant', text: clipText(t), ...tsPart, at });
   let activity = t ? activityLine(t) : '';

@@ -184,13 +184,46 @@ the contract below (also in the PR body).
   scope: 'global' }`.
 - Any shelled `agentbox accounts …` becomes `agentbox credentials …`.
 
-## Phase 4: detect a dead login without a turn
+## Phase 4 (done): detect a dead login without a turn
 
-- ctl credentials watcher: a credential that turns into claude's wiped shape
-  (`accessToken: ""`) reports `credentials-dead` to the relay, which records
-  it on the account (same `auth` evidence, `source: 'box'`).
-- Codex/opencode/pi: measure their dead-login transcript lines and emit the
-  same `auth` record from their parsers.
+- **ctl credentials watcher** (`packages/ctl/src/credentials-watcher.ts`): a
+  claude credential file in the wiped shape (`claudeAiOauth.accessToken: ""`
+  and no refresh token, `isWipedCredentialText`) posts
+  `credentials-dead` `{ schema: 1, agent, wipedAt }` (`wipedAt` = the file's
+  mtime; never its contents) once per transition: it reports again only
+  after a real login came back in between. A post the relay did not take is
+  retried next tick. A ctl restart re-reports the same `wipedAt`, which is
+  idempotent.
+- **Relay** (`packages/relay/src/credentials-dead.ts`): a host relay hands it
+  to the hub's history sink (`HistoryIngestSink.recordCredentialsDead`, direct
+  POST for docker boxes, the cloud poller for cloud boxes); a box-mode relay
+  lets it ride the ring to the host poller like `credentials-updated`. A
+  relay with no hub sink (an HTTP forwarder) drops it with a log line.
+- **Hub**: recorded in `history_auth` as a refusal keyed (account, box), the
+  account from the box record (`subscriptionOf`), `error: 'credentials-dead'`,
+  new column `fail_source = 'box'` (transcript refusals are `transcript`).
+  `accountAuthState` treats it like any refusal, so a renew (newer secret) or
+  a later real reply in that box clears it, and the account view carries
+  `auth.source: 'transcript' | 'box'`.
+- **Codex / opencode / pi: measured 2026-11-28** with fake credentials in a
+  scratch `HOME` (codex-cli 0.172.0, opencode 1.19.6, pi via
+  `@mariozechner/pi-coding-agent`). None of them rewrites its credential file
+  on a refusal (`auth.json` is left byte-identical), so **there is no
+  file-side signal for them**, only the transcript. Each now emits the same
+  `auth` record (`error: 'unauthorized'`, never the provider's message, which
+  can quote part of the key):
+  - codex: `event_msg` / `task_complete` with
+    `error.codex_error_info: "unauthorized"` (a ChatGPT login whose refresh
+    failed: "Your access token could not be refreshed") or
+    `{ http_connection_failed: { http_status_code: 401 } }` (a bogus API key).
+  - opencode: the completed assistant message row carries
+    `error: { name: 'APIError', data: { statusCode: 401 } }`.
+  - pi: the assistant message has `stopReason: "error"` and an
+    `errorMessage` starting with the provider's `401`.
+  Codex and pi skip a refusal line older than the session's own start (a fork
+  replaying its parent's lines). Not measured: a real codex ChatGPT refresh
+  token rotated away (it would need the owner's login); the fake-token run
+  hits the same refresh-failed path.
 
 ## Known gaps (from the Phase 1 review)
 

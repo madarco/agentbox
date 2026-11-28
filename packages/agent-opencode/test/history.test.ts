@@ -107,3 +107,34 @@ describe('opencode history module', () => {
     expect(again.records).toEqual([]);
   });
 });
+
+describe('opencode refused credential (measured 2026-11-28, opencode 1.19.6)', () => {
+  const refused = (statusCode: number): string =>
+    L('message', 'msg_err', 3, {
+      id: 'msg_err',
+      data: d({
+        role: 'assistant',
+        modelID: 'claude-haiku-4-5',
+        time: { created: 1795860108618, completed: 1795860109497 },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        error: { name: 'APIError', data: { message: 'invalid x-api-key', statusCode } },
+      }),
+    });
+  const parse = (bytes: string, state = {}) =>
+    opencodeHistoryModule.parse({ path: PATH, offset: 0, bytes: Buffer.from(bytes) }, state);
+  const auths = (bytes: string) => parse(bytes).records.filter((r) => r.kind === 'auth');
+
+  it('emits one auth record for a 401 APIError message, once', () => {
+    const first = parse(refused(401));
+    expect(first.records.filter((r) => r.kind === 'auth')).toEqual([
+      { kind: 'auth', error: 'unauthorized', ts: new Date(1795860109497).toISOString(), at: 0 },
+    ]);
+    // The row cursor copies a changed row again: no second record.
+    const again = parse(refused(401), first.state);
+    expect(again.records.filter((r) => r.kind === 'auth')).toEqual([]);
+  });
+
+  it('ignores another status', () => {
+    expect(auths(refused(500))).toEqual([]);
+  });
+});

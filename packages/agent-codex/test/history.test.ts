@@ -112,3 +112,51 @@ describe('codex history module', () => {
     expect(parts).toEqual(whole.records);
   });
 });
+
+describe('codex refused credential (measured 2026-11-28, codex-cli 0.172.0)', () => {
+  const meta = L({
+    timestamp: '2026-11-28T10:00:27.000Z',
+    type: 'session_meta',
+    payload: { id: SID, cwd: '/workspace' },
+  });
+  const complete = (ts: string, info: unknown): string =>
+    L({
+      timestamp: ts,
+      type: 'event_msg',
+      payload: {
+        type: 'task_complete',
+        last_agent_message: null,
+        error: { message: 'Your access token could not be refreshed.', codex_error_info: info },
+      },
+    });
+  const auths = (bytes: string) =>
+    codexHistoryModule
+      .parse({ path: PATH, offset: 0, bytes: Buffer.from(bytes) }, {})
+      .records.filter((r) => r.kind === 'auth');
+
+  it('emits an auth record for a dead login and for a refused API key, never the message', () => {
+    expect(auths(meta + complete('2026-11-28T10:00:28.488Z', 'unauthorized'))).toEqual([
+      { kind: 'auth', error: 'unauthorized', ts: '2026-11-28T10:00:28.488Z', at: meta.length },
+    ]);
+    expect(
+      auths(
+        meta +
+          complete('2026-11-28T10:01:05.511Z', {
+            http_connection_failed: { http_status_code: 401 },
+          }),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('ignores other failures and a refusal replayed from before the session (fork)', () => {
+    expect(
+      auths(
+        meta +
+          complete('2026-11-28T10:00:28.000Z', {
+            http_connection_failed: { http_status_code: 500 },
+          }),
+      ),
+    ).toEqual([]);
+    expect(auths(meta + complete('2026-11-27T09:00:00.000Z', 'unauthorized'))).toEqual([]);
+  });
+});

@@ -87,3 +87,44 @@ describe('pi history module', () => {
     expect(records.at(-1)).toMatchObject({ kind: 'meta', title: 'Greeting' });
   });
 });
+
+describe('pi refused credential (measured 2026-11-28, a bogus Anthropic key)', () => {
+  const header = L({
+    type: 'session',
+    version: 3,
+    id: SID,
+    timestamp: '2026-11-28T10:01:26.344Z',
+    cwd: '/workspace',
+  });
+  const reply = (ts: string, errorMessage: string): string =>
+    L({
+      type: 'message',
+      id: '4d2e2ca0',
+      parentId: '72c2aef9',
+      timestamp: ts,
+      message: {
+        role: 'assistant',
+        content: [],
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+        stopReason: 'error',
+        errorMessage,
+      },
+    });
+  const auths = (bytes: string) =>
+    piHistoryModule
+      .parse({ path: PATH, offset: 0, bytes: Buffer.from(bytes) }, {})
+      .records.filter((r) => r.kind === 'auth');
+  const DEAD =
+    '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}';
+
+  it('emits an auth record for a 401 error reply, never the message', () => {
+    expect(auths(header + reply('2026-11-28T10:01:26.593Z', DEAD))).toEqual([
+      { kind: 'auth', error: 'unauthorized', ts: '2026-11-28T10:01:26.593Z', at: header.length },
+    ]);
+  });
+
+  it('ignores another error and a refusal carried over from before the session (/fork)', () => {
+    expect(auths(header + reply('2026-11-28T10:01:26.593Z', '529 overloaded'))).toEqual([]);
+    expect(auths(header + reply('2026-11-27T10:00:00.000Z', DEAD))).toEqual([]);
+  });
+});

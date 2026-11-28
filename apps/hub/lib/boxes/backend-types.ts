@@ -1533,8 +1533,13 @@ export interface AccountAuthView {
   since?: string;
   /** The box whose agent saw the refusal. */
   box?: string;
-  /** The agent's own error code (`authentication_failed`). */
+  /** The agent's own error code (`authentication_failed`), or `credentials-dead`. */
   detail?: string;
+  /**
+   * The signal: `transcript` (the agent's refusal on a turn) or `box` (ctl saw
+   * the box's login file signed out, no turn needed).
+   */
+  source?: 'transcript' | 'box';
 }
 
 /** Where a new box's account for one agent comes from (`credentials use`). */

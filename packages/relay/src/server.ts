@@ -106,6 +106,7 @@ import {
   CredentialsFanout,
   stateBoxAccount,
 } from './credentials-fanout.js';
+import { CREDENTIALS_DEAD_EVENT, handleCredentialsDead } from './credentials-dead.js';
 import type {
   HistoryIngestSink,
   HistoryMemorySink,
@@ -1296,6 +1297,16 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 202, { ok: true, accepted: verdict.accepted });
         return;
       }
+      // A signed-out login (no secret in it): auth evidence on the box's account.
+      // In box mode it rides the ring to the host poller, like the update above.
+      if (body.type === CREDENTIALS_DEAD_EVENT && mode !== 'box') {
+        const verdict = await handleCredentialsDead(opts.history, reg, body.payload);
+        log(
+          `credentials-dead box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
+        );
+        send(res, 202, { ok: true, recorded: verdict.recorded });
+        return;
+      }
       const ev = await store.appendEvent({
         boxId: reg.boxId,
         type: body.type,
@@ -2183,6 +2194,13 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                   const verdict = await credentialsFanout.handle(reg.boxId, ev.payload);
                   log(
                     `credentials-updated box=${reg.boxId} accepted=${String(verdict.accepted)} (${verdict.reason})`,
+                  );
+                  continue;
+                }
+                if (ev.type === CREDENTIALS_DEAD_EVENT) {
+                  const verdict = await handleCredentialsDead(opts.history, reg, ev.payload);
+                  log(
+                    `credentials-dead box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
                   );
                   continue;
                 }
