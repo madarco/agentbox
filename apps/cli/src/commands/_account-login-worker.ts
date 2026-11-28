@@ -94,8 +94,13 @@ async function signInAndStore(
     : a.runtime.sharedVolume;
   const volume = `${target}-signin-${sessionId}`;
   ctx.scratch.value = volume;
+  // `account` strips the host's login and account state from the seed.
   await a.runtime.ensureVolume({ volume }, { syncFromHost: true, image, account });
-  await a.runtime.resetAccountVolume?.(volume, image);
+  // An agent whose seed still carries the host's login (one that ignores
+  // `account`): a sign-in that changed nothing must not pass for a new one.
+  const credRel = resolveAgentSpec(a.id).credential?.boxRelPath;
+  const read = dockerVolumeFileReader(volume, image);
+  const seeded = credRel ? await read(credRel) : null;
   const stored = existing?.identity;
   const checked = stored !== undefined && req.replace !== true;
 
@@ -187,8 +192,19 @@ async function signInAndStore(
     for (const c of sent) error = error.split(c).join('[redacted]');
     throw new Error(error);
   }
+  const content = credRel ? await read(credRel) : null;
+  if (content === null || content === seeded) {
+    throw new Error('the sign-in left no new login; nothing was changed');
+  }
   if (checked) {
     // Fail closed: a renew stores only a login it can tell is the account's.
+    if (res.warmed === false) {
+      // Claude writes who signed in on the warm-up turn; without it there is
+      // nothing to check against.
+      throw new Error(
+        "could not check who signed in: the login's first request did not go through; nothing was changed (try again)",
+      );
+    }
     let signedIn: AccountLoginIdentity | undefined;
     try {
       signedIn = await readIdentity();
@@ -207,7 +223,6 @@ async function signInAndStore(
     }
   }
 
-  const read = dockerVolumeFileReader(volume, image);
   if (named) {
     const cap = await captureVolumeLogin({
       spec: resolveAgentSpec(a.id),
@@ -219,17 +234,16 @@ async function signInAndStore(
     if (!cap.written && cap.reason !== 'unchanged') {
       throw new Error(`the store kept its login (${cap.reason}); nothing was changed`);
     }
-    // Another identity replaced the account's: the volume's cached profile
-    // is the old one's (claude rewrites it on the next turn).
-    if (req.replace === true) await a.runtime.resetAccountVolume?.(target, image);
+    // The account volume's cached profile (claude's `oauthAccount`) is the
+    // previous login's; drop it so the next turn writes the new one's, as a
+    // sign-in straight into the volume used to.
+    await a.runtime.resetAccountVolume?.(target, image);
     return { ...(cap.identity ? { identity: cap.identity } : {}) };
   }
-  const credRel = resolveAgentSpec(a.id).credential?.boxRelPath;
-  const content = credRel ? await read(credRel) : null;
-  if (content === null || !(await storeDefaultLogin(a.id, image, content))) {
-    throw new Error('the sign-in left no new login');
+  if (!(await storeDefaultLogin(a.id, image, content))) {
+    throw new Error('the sign-in left no new login; nothing was changed');
   }
-  if (req.replace === true) await a.runtime.resetAccountVolume?.(target, image);
+  await a.runtime.resetAccountVolume?.(target, image);
   // A control box's custody copy is stale now (no-op without one).
   await syncAgentCredentialsIfChanged().catch((err: unknown) =>
     log.write(`custody sync failed: ${err instanceof Error ? err.message : String(err)}`),

@@ -10,7 +10,8 @@
 //
 // The code is a secret in transit: it travels only in a request body and the
 // session's 0600 `code` file, never in a URL, a log line or a response.
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
@@ -67,7 +68,27 @@ export interface AccountLoginDeps {
    * names `_account-login-worker <session>`, so a reused pid is never signalled.
    */
   isWorker?: (pid: number, session: string) => boolean;
+  /**
+   * The docker volumes a sign-in left (`<volume>-signin-<session>`), and their
+   * removal (tests); default: the docker CLI.
+   */
+  scratchVolumes?: {
+    list: () => Promise<string[]>;
+    remove: (name: string) => Promise<void>;
+  };
 }
+
+const execFileAsync = promisify(execFile);
+
+const dockerScratchVolumes = {
+  async list(): Promise<string[]> {
+    const r = await execFileAsync('docker', ['volume', 'ls', '-q', '--filter', 'name=-signin-']);
+    return r.stdout.split('\n').filter(Boolean);
+  },
+  async remove(name: string): Promise<void> {
+    await execFileAsync('docker', ['volume', 'rm', '-f', name]);
+  },
+};
 
 /** A finished session is kept this long for `GET` to report it, then reaped. */
 const KEEP_FINISHED_MS = 30 * 60_000;
@@ -232,8 +253,24 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
     return { agent: a, id: n.problem === undefined ? n.name : raw };
   }
 
-  /** Cancel the stuck, drop the long finished. */
+  /**
+   * Drop the scratch volumes of sign-ins that are over: a worker that was
+   * killed or crashed leaves one holding a live credential and a copy of the
+   * host config. A volume still in use is left for the next sweep.
+   */
+  const scratch = deps.scratchVolumes ?? dockerScratchVolumes;
+  async function sweepScratchVolumes(): Promise<void> {
+    const names = await scratch.list().catch(() => [] as string[]);
+    for (const name of names) {
+      const session = /-signin-([a-z0-9]{8,32})$/.exec(name)?.[1];
+      if (!session || isLive(session)) continue;
+      await scratch.remove(name).catch(() => undefined);
+    }
+  }
+
+  /** Cancel the stuck, drop the long finished and their scratch volumes. */
   function reap(): void {
+    void sweepScratchVolumes();
     for (const s of listAccountLoginSessions(stateDir)) {
       const req = readAccountLoginRequest(s, stateDir);
       const st = stateOf(s);
@@ -328,10 +365,14 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
   // A hub restart mid-sign-in: the detached worker kept going, but nothing
   // watched it. Resume every session still in flight or signed in without its
   // fan-out, so the login reaches the boxes with no client polling.
-  for (const s of listAccountLoginSessions(stateDir)) {
-    const v = viewOf(s);
-    if (v && v.state !== 'done' && v.state !== 'error') watch(s);
-  }
+  // Deferred: off the hub's boot path (a `ps` per session where there is no /proc).
+  setImmediate(() => {
+    for (const s of listAccountLoginSessions(stateDir)) {
+      const v = viewOf(s);
+      if (v && v.state !== 'done' && v.state !== 'error') watch(s);
+    }
+    void sweepScratchVolumes();
+  });
 
   return {
     async startAccountLogin(agent, rawId, input) {

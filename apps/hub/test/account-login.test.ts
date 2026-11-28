@@ -45,6 +45,8 @@ import { accountLoginView, createAccountLoginBackend } from '../lib/backend/acco
 let dir: string;
 let renews: string[];
 let stops: Array<() => void>;
+/** Unit tests never reach docker. */
+const NO_DOCKER = { list: () => Promise.resolve([] as string[]), remove: () => Promise.resolve() };
 const CODE = 'secret-code-123#abc';
 
 /**
@@ -86,6 +88,7 @@ function fakeWorker(session: string): number {
 
 function backend(spawnWorker: (s: string) => number | undefined = fakeWorker) {
   return createAccountLoginBackend({
+    scratchVolumes: NO_DOCKER,
     renew: (agent, id) => {
       renews.push(`${agent}/${id}`);
       return Promise.resolve({ ok: true, value: { pushed: 2, failed: 0, output: [] } });
@@ -236,6 +239,7 @@ describe('hub-driven sign-in (POST/GET …/login, …/login/code)', () => {
   it('cancel stops the worker (identified by its command line)', async () => {
     let child: ReturnType<typeof spawn> | undefined;
     const b = createAccountLoginBackend({
+      scratchVolumes: NO_DOCKER,
       renew: () => Promise.resolve({ ok: true, value: { pushed: 0, failed: 0, output: [] } }),
       spawnWorker: (s) => {
         child = spawn(
@@ -288,6 +292,7 @@ describe('hub-driven sign-in: lookups, boot and cancel', () => {
   it('a worker that never writes its state reads starting, then an error', async () => {
     let clock = Date.parse('2026-11-28T10:00:00Z');
     const b = createAccountLoginBackend({
+      scratchVolumes: NO_DOCKER,
       renew: () => Promise.resolve({ ok: true, value: { pushed: 0, failed: 0, output: [] } }),
       spawnWorker: () => undefined,
       store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
@@ -343,6 +348,7 @@ describe('review #529', () => {
     });
     stops.push(() => child.kill('SIGKILL'));
     const b = createAccountLoginBackend({
+      scratchVolumes: NO_DOCKER,
       renew: () => Promise.resolve({ ok: true, value: { pushed: 0, failed: 0, output: [] } }),
       spawnWorker: (s) => {
         // A stale state whose pid now belongs to an unrelated process.
@@ -434,6 +440,42 @@ describe('review #529', () => {
     backend(); // a fresh hub process: no start, no read
     await waitUntil(() => Promise.resolve(renews.length > 0));
     expect(renews).toEqual(['claude/work']);
+  });
+
+  it("sweeps the scratch volumes of sign-ins that are over, never a live one's", async () => {
+    const removed: string[] = [];
+    let liveSession = '';
+    const b = createAccountLoginBackend({
+      renew: () => Promise.resolve({ ok: true, value: { pushed: 0, failed: 0, output: [] } }),
+      spawnWorker: (s) => {
+        liveSession = s;
+        return fakeWorker(s);
+      },
+      store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
+      stateDir: dir,
+      startWaitMs: 2_000,
+      pollMs: 10,
+      isWorker: (pid) => loginWorkerAlive(pid),
+      scratchVolumes: {
+        list: () =>
+          Promise.resolve([
+            'agentbox-claude-config-acct-work-signin-0123456789abcdef',
+            `agentbox-claude-config-acct-work-signin-${liveSession}`,
+            'unrelated-volume',
+          ]),
+        remove: (name) => {
+          removed.push(name);
+          return Promise.resolve();
+        },
+      },
+    });
+    await b.startAccountLogin('claude', 'work', {});
+    // A second start (joining) reaps again, with the live session's volume listed.
+    await b.startAccountLogin('claude', 'work', {});
+    await waitUntil(() => Promise.resolve(removed.length > 0));
+    expect(removed).toContain('agentbox-claude-config-acct-work-signin-0123456789abcdef');
+    expect(removed).not.toContain(`agentbox-claude-config-acct-work-signin-${liveSession}`);
+    expect(removed).not.toContain('unrelated-volume');
   });
 
   it('sameLoginIdentity: email first, then org; unknown is not a mismatch', () => {

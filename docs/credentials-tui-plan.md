@@ -168,7 +168,12 @@ and a "Make default" action on every other account card (the `PUT` route).
   nothing when it is another identity (email, else org) than the account holds,
   or when no email or org can be read (fail closed): the session ends `error`
   with `mismatch: { stored, signedIn }` or a message. `replace: true` stores it
-  anyway (and drops the volume's cached profile of the old identity). A
+  anyway. After a store the target volume's cached profile (claude's
+  `oauthAccount`) is dropped so the next turn writes the new login's. A
+  login equal to what the scratch was seeded with is not a sign-in. A
+  warm-up that never went through fails a checked renew (there is nothing
+  to check against). The hub sweeps the scratch volumes of sessions that
+  are over (a killed worker leaves one) on start and on each new sign-in. A
   `replace` start refuses to join a sign-in in flight without it.
 - **Safety.** Only a pid whose command line names `_account-login-worker
   <session>` is ever signalled (a restarted control box can reuse an old pid).
