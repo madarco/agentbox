@@ -406,8 +406,10 @@ export {
   removeAccount,
   upsertAccount,
   writeAccountSecret,
+  withAccountsLock,
 } from './llm-accounts.js';
 export type {
+  AccountSecretGate,
   AccountStoreOptions,
   LoginAccountRequest,
   PastedAccountSecret,

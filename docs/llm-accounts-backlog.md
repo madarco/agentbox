@@ -71,8 +71,6 @@ Not fixed:
 
 ## From Phase 1 (account model + store)
 
-- **The shared `projects/` volume name** (`agentbox-claude-projects`) is not
-  derived in core yet; Phase 3 adds it next to `accountConfigVolume`.
 - **Phase 3: `prune --all` would reap per-account docker volumes.**
   `packages/sandbox-docker/src/lifecycle.ts` (~895-925) builds `expectedVolumes`
   from each spec's base `dockerVolume` plus surviving boxes' volumes, and
@@ -85,17 +83,11 @@ Not fixed:
 
 ## From Phase 2 (logins)
 
-- **Phase 3: mount the shared `projects/` volume** (`agentbox-claude-projects`)
-  over a named account volume's `~/.claude/projects`, so `--resume` works
-  across accounts. A named volume today has its own `projects/`.
 - **Renaming an account id** is not offered: the docker volume, Daytona subpath
   and custody path all derive from it. A rename would be a copy + remove.
 - **Not live-run in Phase 2:** a named OAuth login end to end (it needs a second
   real account) and a named-volume seed against a real image (the seed is
   covered by a docker-mocked test). Steps for the coordinator are in the PR.
-- **`dockerVolumeFileReader` runs one container per file** and reports any
-  docker failure as an absent file ("the login did not leave a credential").
-  One `tar` read and a distinct docker-error message would fix both.
 
 ## From the #433 review
 
@@ -117,16 +109,6 @@ Not fixed:
   box) run and bill on the owner's credential (Phase 0 (a′): the key wins in
   `-p`). Fix: when `account` is set, drop the auth-bearing `env.*` keys and
   `apiKeyHelper` in the `settings.json` `maybeFilterTo` pass.
-- **A failed or cancelled first login leaves an orphan volume** (`…-acct-<id>`
-  exists, no row, so `accounts rm` refuses it) until a `prune --all`. Remove
-  the volume when a brand-new account's login does not complete.
-- **`resetVolumeAccountState` fails hard on a corrupt `_claude.json`**: `jq`
-  fails, execa throws, and every re-login of that account aborts until
-  `accounts rm`. Fall back to removing the file (it is reseeded) or warn and
-  continue.
-- **A re-login whose warm-up turn fails loses the email/org label**: the reset
-  removed `oauthAccount`, so the identity is plan-only and replaces the stored
-  one. Keep the stored email/org when the new identity lacks them. Display only.
 
 ## From Phase 3 (selection + seeding)
 
@@ -135,11 +117,6 @@ The two Phase 3 must-fix items above are done: `prune --all` keeps every
 (`env.ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`,
 `apiKeyHelper`).
 
-- **No shared `projects/` volume yet.** A named account's volume keeps its own
-  `~/.claude/projects`, so `--resume` works within an account but not across
-  accounts (or between `default` and a named account). Mounting one shared
-  `agentbox-claude-projects` over every volume would hide the transcripts that
-  already live inside `agentbox-claude-config`; it needs a one-time migration.
 - ~~A named account's refresh does not travel until Phase 4~~ — done in Phase 4:
   the relay routes a refresh to its account's copy, custody path and boxes. The
   Phase 0 outage window (a refresh revokes the other holders until the fan-out
@@ -148,16 +125,6 @@ The two Phase 3 must-fix items above are done: `prune --all` keeps every
   REGISTRATION first now (#437-4), which also closes the cloud-create race
   (#437-5: the first credential post could beat `recordBox`), then state.json,
   failing closed when that is unreadable.
-- **A pasted account's token sits in the container env (docker) / sandbox env
-  (cloud)**, visible to `docker inspect` and the provider console — the same
-  exposure as today's host-key spray. A 0600 file read on demand would be
-  tighter (see the "box secrets" preference); not done here.
-- **Daytona: an account subpath is seeded once** (marker), like the default's.
-  A later re-login in the store reaches RUNNING boxes through the Phase 4
-  fan-out; a new box on that org volume still trusts the marker.
-- **Codex named volume → store** is not mirrored back at start (claude's is);
-  the Phase 4 relay route carries a codex refresh from the box's watcher to the
-  account's copy, so only a refresh while no relay was listening is missed.
 - ~~`agentbox create --account` on an agentless box~~ — now refused for any
   agent the box does not carry (only a borrowed lender can be named there);
   `agentbox <agent> --account` is the way.
@@ -173,10 +140,6 @@ the `_claude.json` + `settings.json` strip and API-key pre-approval; `accounts`
 rides the relay registration and the hub `Box` payload; `checkpoint
 --set-default` is refused from a box on a named account.
 
-- **Pasted secrets on the docker argv** (#437-6): `docker run -e KEY=VALUE` and
-  `docker exec -e` carry a pasted account's token, visible to `ps` while docker
-  runs — like today's host-key spray, but the login flow kept it off argv on
-  purpose. Pass `-e KEY` and the value through execa's `env`.
 - ~~Settings propagate skips named boxes too (#437-8)~~ — Phase 4 scopes it to
   the source box's account instead (a pulled set can carry codex's `auth.json`).
   Since the 2026-11-28 sweep a set of only skills, prompts or plugins goes to
@@ -185,9 +148,6 @@ rides the relay registration and the hub `Box` payload; `checkpoint
   inlined `createCloudProvider`) ignore `req.accounts` — the box comes up on the
   default login. Additive: `CreateBoxRequest.accounts`, `BoxRecord.accounts`,
   `AgentSyncSpec.accountEnv`.
-- **The named docker mirror writes the account secret from a root container**
-  (`SYNC_SCRIPT` `cp -a`), outside `writeAccountSecret`'s lock. Newest-wins like
-  the default path; cosmetic.
 
 ## From Phase 4 (fan-out per account)
 
@@ -196,10 +156,6 @@ rides the relay registration and the hub `Box` payload; `checkpoint
 - **A plugin credential whose `boxRelPath` contains `/`** is never seeded per
   account (the custody seed expects exactly `agents/<a>/accounts/<id>/<file>`).
   No built-in has one; compare `parts.slice(4).join('/')`.
-- **Three writers of `credentials/<agent>/<id>.json`** (the store's
-  `writeAccountSecret`, the relay, the custody seed); only the first takes the
-  accounts lock. The relay now checks the row and kind first, so the window is
-  an `accounts rm` landing between its check and its write.
 
 ## From the #442 review
 
@@ -297,6 +253,76 @@ the unencrypted hub leg).
   queued-create opts. Harmless (memoized, same value); drop one.
 - **L9 A project-level `llm.proxyPort` / `llm.proxyUrl` is silently ignored**
   (they are global-only by design). Warn when a project config sets them.
+
+## Closed in the 2026-11-28 sweep: docker and cloud
+
+Fixed (`fix/accounts-backlog-docker`):
+
+- **Shared `projects/` volume.** `sharedProjectsVolume` (core) names
+  `agentbox-claude-projects`. It is mounted over `~/.claude/projects` on the
+  default and every `-acct-` volume (not on `--isolate-claude-config`), so
+  `--resume` works across accounts. Every create copies the volume's own
+  `projects/` in with `rsync -a --update` (uid 1000). A box created before the
+  upgrade keeps writing that dir until it is recreated, and its appended
+  transcripts keep arriving. A shared copy that is newer (a session continued in
+  a new box) is never overwritten, and rsync's temp-and-rename leaves no partial
+  file. A failed copy fails the create. The old dir stays in place for a
+  rollback; `prune --all` keeps the volume. The legacy host-memory rekey
+  (pre-Phase-4 images) writes into the shared volume, and the copy skips
+  `*/memory/`, a stale other-repo copy in the config volume. Known limit: a
+  session that diverges between a pre-upgrade box and a new box keeps whichever
+  copy is newer.
+- **An orphan `-acct-` volume after a failed first login** is removed
+  (`dropOrphanAccountVolume`, only when the store has no row, retrying a few seconds while the aborted
+  login container still holds it) on cancel,
+  failure and capture error, in the generic login, claude's login and the
+  headless worker.
+- **`resetVolumeAccountState`** removes a `_claude.json` that `jq` cannot parse,
+  and the login re-seeds it, instead of failing every re-login. A failed write
+  (full disk) still fails the reset and keeps the file.
+- **A re-login keeps the email and org** when the new identity lacks them
+  (`mergeAccountIdentity`), only for the same login: the credentials' account /
+  org uuids agree (`credentialIdentityMatch`), or, when they can't tell, the
+  plan matches. Another subscription signed in under the name gets its own.
+- **`dockerVolumeFileReader` reads every file in one container** (a base64
+  line protocol), and a docker failure is its own error ("could not read the
+  docker volume …"), not "the login did not leave a credential".
+- **Pasted secrets off the docker argv (#437-6).** `dockerEnvByName` turns `-e
+  KEY=VALUE` into `-e KEY`, with the value in the docker CLI's env, for `docker
+  run` (create) and every agent's session `docker exec` (claude, codex,
+  opencode, pi). Only secret-named keys (`KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL`)
+  move, so a box's `DOCKER_HOST` or `PATH` never reconfigures the host's docker
+  client. The sync transport's `docker exec -e` (no secrets today) is unchanged.
+- **A cloud box's pasted token is out of the sandbox create env.** It goes only
+  to the 0600 agent env file that every launcher sources
+  (`cloudAccountAuthority`). A create whose env file cannot be written then
+  fails (and tears the sandbox down) instead of handing over a box with no auth,
+  and a wake retries once, then fails (`writeWakeAgentEnv`). Not fixed on docker: the token stays in the
+  container env, because whoever can `docker inspect` the container can also
+  `docker exec` into it and read the agent's env, so it is no tighter boundary.
+- **Named docker mirror.** One generic `syncNamedAccountCredential` for every
+  agent replaces claude's root `cp -a` into `~/.agentbox` and codex's one-way
+  seed. The volume's login goes to the store through `writeAccountSecret`
+  (shape, freshness and identity gate, under the accounts lock), and the store
+  seeds the volume over stdin when the volume is empty or older.
+- **Codex named volume → store** is now superseded: since the hot-switch work
+  (#502) every docker box has its own credential file, so a codex refresh
+  reaches the store through the relay route, and the account volume is no longer
+  the live copy. An agent with no freshness rule (codex) only fills a store that
+  has no login yet from its volume. Mirroring "newer" from the volume can't be
+  decided without a freshness field and would let a stale volume replace a
+  re-login.
+- **Three writers of `credentials/<agent>/<id>.json`.** The relay's named
+  write and the custody seed now run under `withAccountsLock` (the lock the
+  store's own writer and `accounts rm` take), inside the credential file's own
+  lock that Phase 9's import takes, in that order. The custody seed also checks the
+  account's row first, so it never brings back a removed account's secret.
+- **Daytona's account subpath seeded once.** With the marker present, a named
+  login is reconciled newest-wins with the account's stored copy
+  (`reconcileAgentCredentials`), as a wake does.
+
+Not fixed: the SDK republish (additive fields only, listed in the PR). The
+custody items and the remote control box message are done in Phase 9 below.
 
 ## Fixed in Phase 9 (hub-owned subscriptions, 2026-11-28)
 

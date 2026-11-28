@@ -39,6 +39,7 @@ import {
   writeCredentialBackup,
   type CredentialAgentKind,
   readAccounts,
+  withAccountsLock,
   readState,
 } from '@agentbox/sandbox-core';
 
@@ -99,6 +100,8 @@ export interface CredentialsFanoutDeps {
    * for `default`. Override for tests; default: `~/.agentbox/state.json`.
    */
   boxAccountFor?: (boxId: string, agent: CredentialAgentKind) => Promise<string | undefined>;
+  /** Run under the accounts lock. Override for tests; default: the store's lock. */
+  accountsLock?: <T>(fn: () => Promise<T>) => Promise<T>;
   /**
    * This relay's own machine id, the `<machine>` a named account's custody copy
    * is filed under. The account came from THIS machine's store (on a remote
@@ -202,6 +205,7 @@ export class CredentialsFanout {
     boxId: string,
     agent: CredentialAgentKind,
   ) => Promise<LastSwitch | undefined>;
+  private readonly accountsLock: <T>(fn: () => Promise<T>) => Promise<T>;
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly chains = new Map<string, Promise<void>>();
 
@@ -224,6 +228,7 @@ export class CredentialsFanout {
         return path;
       });
     this.custody = deps.custody ?? null;
+    this.accountsLock = deps.accountsLock ?? ((fn) => withAccountsLock(fn));
     this.boxAccountFor = deps.boxAccountFor ?? stateBoxAccount;
     this.machineId = deps.machineId ?? tryGetMachineId;
   }
@@ -265,10 +270,46 @@ export class CredentialsFanout {
     sourceBoxId: string,
   ): Promise<CredentialsHandleResult> {
     const isDefault = isDefaultAccount(account);
-    // Only a LOGIN account takes a login. A pasted-kind account's secret is
-    // its token (a login there would replace it and break every box on it),
-    // and an account the store no longer has must not be re-created by a
-    // late update (`credentials rm` already removed it).
+    // Read, gate and write under the credential's own lock, the one a hub's
+    // account import takes too (llm-accounts Phase 9): neither may land an
+    // older token over one the other wrote between its read and its write. A
+    // named account's row check and its write are also one step under the
+    // accounts lock, so an `accounts rm` cannot land between them and leave a
+    // secret with no row. The credential lock is the outer one, the order the
+    // import takes them in.
+    const lockPath =
+      (isDefault ? this.backupPathFor?.(agent) : this.accountBackupPathFor(agent, account)) ??
+      resolveAgentSpec(agent).credential?.hostBackup;
+    const store = () =>
+      isDefault
+        ? this.storeLogin(agent, account, content, sourceBoxId)
+        : this.accountsLock(() => this.storeLogin(agent, account, content, sourceBoxId));
+    const stored = lockPath ? await withFileLock(lockPath, store) : await store();
+    if (!stored.accepted) return stored;
+    const verdict = stored;
+    await this.recordInCustody(agent, account, content);
+    const label = isDefault ? agent : `${agent} account '${account}'`;
+    this.log(
+      `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
+    );
+    this.schedule(agent, account, sourceBoxId);
+    return { accepted: true, reason: verdict.reason };
+  }
+
+  /**
+   * Gate `content` against the account's stored copy and write it when it wins.
+   * Only a LOGIN account takes a login: a pasted-kind account's secret is its
+   * token (a login there would replace it and break every box on it), and an
+   * account the store no longer has must not be re-created by a late update
+   * (`credentials rm` already removed it).
+   */
+  private async storeLogin(
+    agent: CredentialAgentKind,
+    account: string,
+    content: string,
+    sourceBoxId: string,
+  ): Promise<CredentialsHandleResult> {
+    const isDefault = isDefaultAccount(account);
     if (!isDefault) {
       const kind = await this.accountKindFor(agent, account).catch(() => undefined);
       if (kind !== 'login') {
@@ -281,30 +322,15 @@ export class CredentialsFanout {
     const backupPath = isDefault
       ? this.backupPathFor?.(agent)
       : this.accountBackupPathFor(agent, account);
-    // Read, gate and write under the credential's own lock, the one a hub's
-    // account import takes too (llm-accounts Phase 9): neither may land an
-    // older token over one the other wrote between its read and its write.
-    const lockPath = backupPath ?? resolveAgentSpec(agent).credential?.hostBackup;
-    const gateAndWrite = async (): Promise<{ accept: boolean; reason: string }> => {
-      const existing = await readCredentialBackup(agent, { backupPath });
-      const v = shouldAcceptCredentialUpdate(agent, content, existing);
-      if (!v.accept) return v;
-      if (!isDefault && backupPath) {
-        // The account store's dir is owner-only, like `writeAccountSecret`'s.
-        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
-        await chmod(dirname(backupPath), 0o700).catch(() => {});
-      }
-      await writeCredentialBackup(agent, content, { backupPath });
-      return v;
-    };
-    const verdict = lockPath ? await withFileLock(lockPath, gateAndWrite) : await gateAndWrite();
+    const existing = await readCredentialBackup(agent, { backupPath });
+    const verdict = shouldAcceptCredentialUpdate(agent, content, existing);
     if (!verdict.accept) return { accepted: false, reason: verdict.reason };
-    await this.recordInCustody(agent, account, content);
-    const label = isDefault ? agent : `${agent} account '${account}'`;
-    this.log(
-      `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
-    );
-    this.schedule(agent, account, sourceBoxId);
+    if (!isDefault && backupPath) {
+      // The account store's dir is owner-only, like `writeAccountSecret`'s.
+      await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+      await chmod(dirname(backupPath), 0o700).catch(() => {});
+    }
+    await writeCredentialBackup(agent, content, { backupPath });
     return { accepted: true, reason: verdict.reason };
   }
 

@@ -99,6 +99,44 @@ function tmuxConfigSubcommands(sessionName: string): readonly (readonly string[]
  * and why each setting is set the way it is.
  */
 /**
+ * Move every `-e KEY=VALUE` with a value off a docker argv: it becomes `-e KEY`
+ * and the value goes in `env`, which docker reads for a name-only `-e` from
+ * its own environment. An argv is readable by every user on the host (`ps`),
+ * and the values here include API keys and a pasted account's token (#437-6).
+ * An empty `KEY=` stays as is: it blanks a key and carries nothing. Only keys
+ * that name a secret move: anything else (`DOCKER_HOST`, `PATH`, `HOME`) would
+ * reconfigure the host's docker client if it rode its env. Only the docker
+ * flags before `stopAt` (the image / container) are touched. Pure.
+ */
+const SECRET_ENV_KEY = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i;
+
+export function dockerEnvByName(
+  argv: readonly string[],
+  stopAt?: string,
+): { argv: string[]; env: Record<string, string> } {
+  const out: string[] = [];
+  const env: Record<string, string> = {};
+  let i = 0;
+  for (; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (stopAt !== undefined && a === stopAt) break;
+    const next = argv[i + 1];
+    if (a === '-e' && next !== undefined) {
+      const eq = next.indexOf('=');
+      if (eq > 0 && eq < next.length - 1 && SECRET_ENV_KEY.test(next.slice(0, eq))) {
+        const key = next.slice(0, eq);
+        env[key] = next.slice(eq + 1);
+        out.push('-e', key);
+        i++;
+        continue;
+      }
+    }
+    out.push(a);
+  }
+  return { argv: [...out, ...argv.slice(i)], env };
+}
+
+/**
  * `tmux new-session -e K=V` pairs for an agent's `boxRunEnv`. Needed because a
  * new session inherits the tmux SERVER's environment, so `docker exec -e` alone
  * does not reach it once another agent's session started the server.

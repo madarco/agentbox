@@ -29,7 +29,7 @@ import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'no
 import { randomBytes } from 'node:crypto';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { AgentCredential, SyncTransport } from '@agentbox/core';
+import type { AgentCredential, AgentSyncSpec, SyncTransport } from '@agentbox/core';
 import { AGENT_SYNC_SPECS, resolveAgentSpec } from '../registry.js';
 import type { AgentId } from '@agentbox/core';
 
@@ -249,12 +249,30 @@ export function credentialIdentityMismatch(
   a: string,
   b: string,
 ): boolean {
-  const paths = resolveAgentSpec(agent).credential?.identity?.jsonPaths ?? [];
-  return paths.some((path) => {
+  return credentialIdentityMatch(resolveAgentSpec(agent), a, b) === false;
+}
+
+/**
+ * Whether two blobs of the agent `spec` name the SAME owner: true when at least
+ * one declared identity path is present in both and every path present in both
+ * agrees; false on any disagreement; undefined when no declared path is present
+ * in both (nothing to compare). Takes the spec, not an id, so a test or a
+ * plugin spec outside the registry works. Pure.
+ */
+export function credentialIdentityMatch(
+  spec: Pick<AgentSyncSpec, 'credential'>,
+  a: string,
+  b: string,
+): boolean | undefined {
+  let compared = false;
+  for (const path of spec.credential?.identity?.jsonPaths ?? []) {
     const x = jsonStringAt(a, path);
     const y = jsonStringAt(b, path);
-    return x !== null && y !== null && x !== y;
-  });
+    if (x === null || y === null) continue;
+    if (x !== y) return false;
+    compared = true;
+  }
+  return compared ? true : undefined;
 }
 
 /** The agent's declared freshness value for a blob, or null when it declares none. */

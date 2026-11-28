@@ -6,6 +6,7 @@ import { execa } from 'execa';
 import {
   buildTermSafeTmuxExec,
   buildTmuxSessionArgs,
+  dockerEnvByName,
   CONTAINER_USER,
   hostRsyncStep,
   ensureVolume,
@@ -653,11 +654,13 @@ export async function startCodexSession(opts: StartCodexSessionOptions): Promise
   )) {
     envFlags.push('-e', `${k}=${v}`);
   }
+  // Values by name, off the argv: they include API keys (#437-6).
+  const byName = dockerEnvByName(envFlags);
   const result = await execa(
     'docker',
     [
       'exec',
-      ...envFlags,
+      ...byName.argv,
       '--user',
       CONTAINER_USER,
       opts.container,
@@ -669,7 +672,7 @@ export async function startCodexSession(opts: StartCodexSessionOptions): Promise
       cmd,
       ...buildTmuxSessionArgs(sessionName),
     ],
-    { reject: false },
+    { reject: false, env: byName.env },
   );
   if (result.exitCode === 0) return;
   const stderr = (result.stderr ?? '').toString();

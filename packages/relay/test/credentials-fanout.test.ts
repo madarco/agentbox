@@ -14,6 +14,13 @@ const payload = (agent: string, content: string) => ({
   capturedAt: new Date(0).toISOString(),
 });
 
+let lockCalls = 0;
+/** The accounts lock, counted; never the real ~/.agentbox lock file. */
+const countedLock = <T>(fn: () => Promise<T>): Promise<T> => {
+  lockCalls++;
+  return fn();
+};
+
 describe('CredentialsFanout', () => {
   let dir: string;
 
@@ -65,6 +72,7 @@ describe('CredentialsFanout', () => {
       },
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
       accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      accountsLock: countedLock,
       accountKindFor: () => Promise.resolve('login'),
       custody: { put },
       // The hub's own machine, not the box's origin PC (#444 (b)).
@@ -92,6 +100,8 @@ describe('CredentialsFanout', () => {
     await vi.advanceTimersByTimeAsync(150);
     await fanout.flush();
     expect(runs.sort()).toEqual(['claude:box-a:default', 'claude:box-work:work']);
+    // Only the named account's write runs under the accounts lock.
+    expect(lockCalls).toBeGreaterThan(0);
   });
 
   it('a named account has its own newest-wins gate', async () => {
@@ -101,6 +111,7 @@ describe('CredentialsFanout', () => {
       runPropagate: async () => {},
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
       accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      accountsLock: countedLock,
       accountKindFor: () => Promise.resolve('login'),
       boxAccountFor: () => Promise.resolve('work'),
     });
@@ -121,6 +132,7 @@ describe('CredentialsFanout', () => {
       runPropagate: run,
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
       accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
+      accountsLock: countedLock,
       accountKindFor: () => Promise.resolve(kind),
       boxAccountFor: () => Promise.resolve('ci'),
     });
@@ -277,6 +289,7 @@ describe('CredentialsFanout — custody write-back', () => {
         ),
       backupPathFor: (agent) => join(dir, `${agent}-credentials.json`),
       accountBackupPathFor: () => workPath,
+      accountsLock: countedLock,
       accountKindFor: () => Promise.resolve('login'),
       boxAccountFor: () => Promise.resolve(undefined),
     });

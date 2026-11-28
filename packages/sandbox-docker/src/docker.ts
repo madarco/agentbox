@@ -1,4 +1,5 @@
 import { execa, type Result } from 'execa';
+import { dockerEnvByName } from './sync/agents/shared.js';
 
 export interface DockerExecResult {
   exitCode: number;
@@ -148,9 +149,15 @@ export function runBoxArgv(spec: RunBoxSpec, opts: { init?: boolean } = {}): str
   return args;
 }
 
+/** `docker run` with the env values passed by name, off the argv. */
+function execRunBox(argv: string[], image: string) {
+  const byName = dockerEnvByName(argv, image);
+  return execa('docker', byName.argv, { env: byName.env });
+}
+
 export async function runBox(spec: RunBoxSpec): Promise<string> {
   try {
-    const { stdout } = await execa('docker', runBoxArgv(spec));
+    const { stdout } = await execRunBox(runBoxArgv(spec), spec.image);
     return stdout.trim();
   } catch (err) {
     const stderr = (err as { stderr?: unknown }).stderr;
@@ -158,7 +165,7 @@ export async function runBox(spec: RunBoxSpec): Promise<string> {
     // The failed run leaves the named container behind in `Created` state.
     await execa('docker', ['rm', '-f', spec.name], { reject: false });
     spec.onLog?.(MISSING_DOCKER_INIT_WARNING);
-    const { stdout } = await execa('docker', runBoxArgv(spec, { init: false }));
+    const { stdout } = await execRunBox(runBoxArgv(spec, { init: false }), spec.image);
     return stdout.trim();
   }
 }

@@ -93,6 +93,17 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Accounts on docker and cloud:**
+  - `claude --resume` finds a session started on another account: docker boxes
+    share one `agentbox-claude-projects` volume, which each new box keeps up to
+    date with the sessions older boxes wrote.
+  - A first sign-in that fails no longer leaves an orphan volume behind.
+  - A damaged `_claude.json` no longer blocks a re-login.
+  - A re-login no longer loses the account's email.
+  - A pasted token never appears on a `docker` command line or in a cloud
+    sandbox's create env.
+  - A Daytona box on a named login gets the account's newest login.
+
 - **Accounts:** `agentbox credentials` lists `default` when the agent is signed
   in but no box backed its login up yet. It names a damaged `accounts.json`
   instead of hiding every named account. A setup token or API key saved as

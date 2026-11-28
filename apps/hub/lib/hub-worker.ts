@@ -52,6 +52,8 @@ import {
   resolveHostCredentialFile,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
+  withAccountsLock,
+  readAccounts,
   STATE_DIR,
 } from '@agentbox/sandbox-core';
 import {
@@ -63,6 +65,7 @@ import {
   ACCOUNTS_CUSTODY_SEGMENT,
   accountIdProblem,
   accountSecretPath,
+  findAccount,
   isDefaultAccount,
   resolveAgentLauncher,
   toQueueKind,
@@ -187,19 +190,34 @@ async function seedAccountSecretsFromCustody(
         const incoming = found.data.toString('utf8');
         const backupPath = accountSecretPath(spec, id, stateDir)!;
         await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
-        // Same lock and gate as the default above.
-        const verdict = await withFileLock(backupPath, async () => {
-          const existing = await readCredentialBackup(spec.id, { backupPath });
-          // A pasted token has no expiry to order by: the latest push wins. A
-          // login gets the same newest-wins gate as the default above.
-          const v = decodePastedSecret(incoming)
-            ? existing === incoming
-              ? { accept: false, reason: 'unchanged' }
-              : { accept: true, reason: 'pasted secret changed' }
-            : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
-          if (v.accept) await writeCredentialBackup(spec.id, incoming, { backupPath });
-          return v;
-        });
+        // Same credential lock and gate as the default above, with the accounts
+        // lock inside it (the order the account import takes them in), so an
+        // `accounts rm` cannot land between the row check and the write.
+        const verdict = await withFileLock(backupPath, () =>
+          withAccountsLock(
+            async () => {
+              // Only an account this machine's store still has: a secret for a
+              // removed account (`accounts rm` just ran) must not come back.
+              const row = findAccount(
+                await readAccounts({ path: join(stateDir, 'accounts.json'), stateDir }),
+                spec.id,
+                id,
+              );
+              if (!row) return { accept: false, reason: 'no such account in this store' };
+              const existing = await readCredentialBackup(spec.id, { backupPath });
+              // A pasted token has no expiry to order by: the latest push wins. A
+              // login gets the same newest-wins gate as the default above.
+              const v = decodePastedSecret(incoming)
+                ? existing === incoming
+                  ? { accept: false, reason: 'unchanged' }
+                  : { accept: true, reason: 'pasted secret changed' }
+                : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+              if (v.accept) await writeCredentialBackup(spec.id, incoming, { backupPath });
+              return v;
+            },
+            { path: join(stateDir, 'accounts.json') },
+          ),
+        );
         if (!verdict.accept) {
           log(`kept the local ${label} credentials (custody copy ${verdict.reason})`);
           continue;
