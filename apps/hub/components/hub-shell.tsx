@@ -24,7 +24,7 @@ function ShellFrame({ children }: { children: ReactNode }) {
       />
       <AppSidebar />
       {/* The page sits on a raised panel inset from the sidebar's paper. */}
-      <main className="flex min-h-[calc(100vh-var(--banner-h,0px)-1rem)] min-w-0 flex-col rounded-xl bg-background shadow-sm ring-1 ring-black/[.04] md:my-2 md:mr-2 dark:ring-white/[.06] max-md:rounded-none">
+      <main className="flex min-h-[calc(100vh-var(--banner-h,0px)-1rem)] min-w-0 flex-col rounded-xl border border-black/[.06] bg-background shadow-sm md:my-2 md:mr-2 dark:border-white/[.08] max-md:rounded-none max-md:border-0">
         <Topbar />
         <div className="min-w-0 flex-1">{children}</div>
       </main>
