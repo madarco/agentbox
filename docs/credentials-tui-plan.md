@@ -162,9 +162,14 @@ and a "Make default" action on every other account card (the `PUT` route).
   `signed-in` with no hub watching is fanned out on the next read.
 - **Identity.** A renew whose browser signed in another identity (email, else
   org) than the account holds stores nothing and ends `error` with
-  `mismatch: { stored, signedIn }` (the default volume gets its previous login
-  back); `replace: true` stores it anyway. Checked before claude's finalize
-  copies the default login into the backup.
+  `mismatch: { stored, signedIn }`; `replace: true` stores it anyway. An
+  identity that cannot be read is refused the same way (fail closed). Checked
+  before claude's finalize copies the default login into the backup. The
+  login writes into the volume boxes mount live, so the credential and the
+  identity files are snapshotted first and put back on a refusal (a file that
+  was absent is removed); boxes may see the other login for the seconds
+  between the login's exit and the restore. A `replace` start refuses to join
+  a sign-in in flight without it.
 - **Safety.** Only a pid whose command line names `_account-login-worker
   <session>` is ever signalled (a restarted control box can reuse an old pid).
   A cancel while a code is being exchanged or the login stored waits for it

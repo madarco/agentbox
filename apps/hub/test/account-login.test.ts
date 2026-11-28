@@ -411,6 +411,17 @@ describe('review #529', () => {
     expect(v.mismatch).toEqual({ stored: { email: 'a@x' }, signedIn: { email: 'b@x' } });
   });
 
+  it('a replace start does not silently join a sign-in in flight without replace', async () => {
+    const b = backend();
+    const plain = await b.startAccountLogin('claude', 'work', {});
+    expect(plain.ok).toBe(true);
+    expect(await b.startAccountLogin('claude', 'work', { replace: true })).toMatchObject({
+      ok: false,
+      code: 'conflict',
+      error: expect.stringMatching(/cancel it first/),
+    });
+  });
+
   it('sameLoginIdentity: email first, then org; unknown is not a mismatch', () => {
     expect(sameLoginIdentity({ email: 'A@x.com' }, { email: 'a@x.com' })).toBe(true);
     expect(sameLoginIdentity({ email: 'a@x.com' }, { email: 'b@x.com' })).toBe(false);

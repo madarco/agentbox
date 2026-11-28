@@ -11,7 +11,8 @@ import {
   resolveAgentSpec,
   writeCredentialBackup,
 } from '@agentbox/sandbox-core';
-import { volumeSettingsTarget } from '@agentbox/sandbox-docker';
+import { execa } from 'execa';
+import { dockerVolumeFileReader, volumeSettingsTarget } from '@agentbox/sandbox-docker';
 import { withHubClient } from '../control-plane/with-hub.js';
 
 /** Push `agent`/`id`'s stored login to every box on the account, through the local hub. */
@@ -46,19 +47,48 @@ export async function readDefaultVolumeLogin(agent: string, image: string): Prom
     .catch(() => null);
 }
 
-/** Put `content` back as the default login in its shared volume (an undone sign-in). */
-export async function restoreDefaultVolumeLogin(
-  agent: string,
+/** Some files of a docker volume as they were (null = absent), to undo a sign-in. */
+export type VolumeSnapshot = ReadonlyMap<string, string | null>;
+
+export async function snapshotVolumeFiles(
+  volume: string,
   image: string,
-  content: string,
+  rels: readonly string[],
+): Promise<VolumeSnapshot> {
+  const read = dockerVolumeFileReader(volume, image);
+  const snap = new Map<string, string | null>();
+  for (const rel of new Set(rels)) snap.set(rel, await read(rel));
+  return snap;
+}
+
+/**
+ * Put the snapshot back: each file as it was, a file that was absent removed.
+ * Every file is attempted; the first failure is thrown after the rest.
+ */
+export async function restoreVolumeFiles(
+  volume: string,
+  image: string,
+  snap: VolumeSnapshot,
 ): Promise<void> {
-  const spec = resolveAgentSpec(agent);
-  if (!spec.credential) return;
-  await volumeSettingsTarget(spec.dockerVolume, image, spec.dockerVolume).writeText(
-    spec.credential.boxRelPath,
-    content,
-    { mode: 0o600 },
-  );
+  const target = volumeSettingsTarget(volume, image, volume);
+  let failure: unknown;
+  for (const [rel, content] of snap) {
+    try {
+      if (content !== null) {
+        await target.writeText(rel, content, { mode: 0o600 });
+      } else {
+        const r = await execa(
+          'docker',
+          ['run', '--rm', '--user', '0', '-v', `${volume}:/dst`, image, 'rm', '-f', `/dst/${rel}`],
+          { reject: false },
+        );
+        if (r.exitCode !== 0) throw new Error(`could not remove ${rel} from ${volume}`);
+      }
+    } catch (err) {
+      failure ??= err;
+    }
+  }
+  if (failure) throw failure;
 }
 
 /**

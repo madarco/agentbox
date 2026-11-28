@@ -32,7 +32,8 @@ import { agentLoginSpec } from '../agents/command/login.js';
 import {
   captureDefaultLogin,
   readDefaultVolumeLogin,
-  restoreDefaultVolumeLogin,
+  restoreVolumeFiles,
+  snapshotVolumeFiles,
 } from '../lib/login-fanout.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 
@@ -94,6 +95,18 @@ async function signInAndStore(
     { volume },
     { syncFromHost: true, image, ...(named ? { account } : {}) },
   );
+  // A renew is checked against the account's identity. The login writes into
+  // the volume boxes mount live, so what it touches is kept first and put
+  // back on a refusal: the credential and the files the identity is read from.
+  const stored = existing?.identity;
+  const checked = stored !== undefined && req.replace !== true;
+  const credRel = resolveAgentSpec(a.id).credential?.boxRelPath;
+  const snapshot = checked
+    ? await snapshotVolumeFiles(volume, image, [
+        ...(credRel ? [credRel] : []),
+        ...(a.runtime.accountIdentity?.files ?? []),
+      ])
+    : null;
   // Always, as the CLI's sign-in does: a volume left by an earlier account of
   // this name (its `rm` could not drop a mounted volume) must not lend its profile.
   if (named) await a.runtime.resetAccountVolume?.(volume, image);
@@ -127,8 +140,8 @@ async function signInAndStore(
     for (const rel of reader.files) files[rel] = await read(rel);
     return reader.parse(files);
   };
-  const stored = existing?.identity;
   let mismatch: NonNullable<AccountLoginWorkerState['mismatch']> | undefined;
+  let identityError: string | undefined;
   const res = await runAgentLogin({
     spec: binding.spec,
     dockerArgv: binding.dockerArgv,
@@ -139,7 +152,9 @@ async function signInAndStore(
     writeLog: (line) => log.write(line),
     onPhase: (phase, u) => {
       if (phase !== 'exchanging') flush();
-      ctx.committing.value = phase === 'exchanging';
+      // From the login's exit (verify) on, a cancel waits; a refused code
+      // brings the sign-in back to a cancellable phase.
+      if (phase !== 'done' && phase !== 'error') ctx.committing.value = phase === 'exchanging';
       // `done` is not ours to report yet: the login is not stored.
       if (phase === 'done' || phase === 'error') return;
       if (phase === 'starting' || phase === 'exchanging') {
@@ -170,12 +185,25 @@ async function signInAndStore(
       }
       return code;
     },
-    verify: binding.verify,
+    verify: () => {
+      // The login process exited: what it wrote must be stored or undone.
+      ctx.committing.value = true;
+      return binding.verify();
+    },
     finalize: async () => {
-      const signedIn = await readIdentity().catch(() => undefined);
-      if (stored && signedIn && !sameLoginIdentity(stored, signedIn) && req.replace !== true) {
-        mismatch = { stored, signedIn };
-        return {};
+      if (checked) {
+        let signedIn: AccountLoginIdentity | undefined;
+        try {
+          signedIn = await readIdentity();
+        } catch (err) {
+          // Fail closed: an unread identity is not a match.
+          identityError = err instanceof Error ? err.message : String(err);
+          return {};
+        }
+        if (signedIn && !sameLoginIdentity(stored, signedIn)) {
+          mismatch = { stored, signedIn };
+          return {};
+        }
       }
       return (await binding.finalize?.()) ?? {};
     },
@@ -188,14 +216,21 @@ async function signInAndStore(
     for (const c of sent) error = error.split(c).join('[redacted]');
     throw new Error(error);
   }
-  if (mismatch) {
-    // The default volume is what later default boxes seed from: put the
-    // previous login back (a named volume is reset before its next sign-in).
-    if (!named && before !== null) await restoreDefaultVolumeLogin(a.id, image, before);
-    throw new IdentityMismatchError(`${a.id}/${account}`, mismatch);
+  if (mismatch || identityError !== undefined) {
+    if (snapshot) {
+      try {
+        await restoreVolumeFiles(volume, image, snapshot);
+      } catch (err) {
+        throw new Error(
+          `the sign-in was refused, but ${volume} could not be put back (${err instanceof Error ? err.message : String(err)}); renew ${a.id}/${account} again`,
+        );
+      }
+    }
+    if (mismatch) throw new IdentityMismatchError(`${a.id}/${account}`, mismatch);
+    throw new Error(
+      `could not tell who signed in (${identityError}); nothing was changed (start again with replace to store it anyway)`,
+    );
   }
-  // From here the login is being stored: a cancel waits for it.
-  ctx.committing.value = true;
 
   if (named) {
     const cap = await captureVolumeLogin({

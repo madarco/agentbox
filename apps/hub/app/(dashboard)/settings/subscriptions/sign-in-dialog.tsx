@@ -65,14 +65,17 @@ export function SignInDialog({
   const [code, setCode] = useState('');
   const [sending, setSending] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  // Set by "Use this login anyway" after an identity mismatch.
-  const [replace, setReplace] = useState(false);
+  // Set by "Sign in and replace" after an identity mismatch, for that one
+  // attempt only: a later "Try again" checks the identity again.
+  const replaceNext = useRef(false);
   const finished = useRef(false);
   const live = view ? LIVE.has(view.state) : failure === null;
 
   // Start (or join the sign-in already in flight).
   useEffect(() => {
     let gone = false;
+    const replace = replaceNext.current;
+    replaceNext.current = false;
     setView(null);
     setFailure(null);
     call(base, {
@@ -97,7 +100,7 @@ export function SignInDialog({
     return () => {
       gone = true;
     };
-  }, [base, mode, attempt, replace]);
+  }, [base, mode, attempt]);
 
   // Follow it while it runs. A failed poll (a blip, a hub restart) is shown
   // and retried: the sign-in itself goes on regardless.
@@ -284,7 +287,7 @@ export function SignInDialog({
             size="sm"
             variant="ghost"
             onClick={() => {
-              setReplace(true);
+              replaceNext.current = true;
               setAttempt((n) => n + 1);
             }}
           >

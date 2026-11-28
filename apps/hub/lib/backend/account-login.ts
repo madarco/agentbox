@@ -25,6 +25,7 @@ import {
   isTerminalLoginPhase,
   listAccountLoginSessions,
   isAccountLoginWorker,
+  loginWorkerAlive,
   readAccountLoginRenew,
   readAccountLoginRequest,
   readAccountLoginState,
@@ -137,7 +138,24 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
   const codeWaitMs = deps.codeWaitMs ?? 30_000;
   /** Sessions this hub process is watching (fan-out on `signed-in`). */
   const watching = new Set<string>();
-  const isWorker = deps.isWorker ?? isAccountLoginWorker;
+  /**
+   * A pid once verified as a session's worker stays verified while it lives:
+   * the command-line check (a `ps` fork where there is no /proc) runs once per
+   * session, not on every poll.
+   */
+  const verified = new Map<string, number>();
+  const isWorker =
+    deps.isWorker ??
+    ((pid: number, session: string): boolean => {
+      if (verified.get(session) === pid) {
+        if (loginWorkerAlive(pid)) return true;
+        verified.delete(session);
+        return false;
+      }
+      if (!isAccountLoginWorker(pid, session)) return false;
+      verified.set(session, pid);
+      return true;
+    });
   /** Signal the session's worker, only when the pid is still that worker. */
   const signal = (session: string, pid: number, sig: NodeJS.Signals): void => {
     if (pid <= 0 || !isWorker(pid, session)) return;
@@ -348,6 +366,18 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       reap();
       // One sign-in per account: a second start answers the one in flight.
       const live = sessionsOf(spec.id, id).find(isLive);
+      if (
+        live &&
+        body.replace === true &&
+        readAccountLoginRequest(live, stateDir)?.replace !== true
+      ) {
+        // Joining would drop the replace silently.
+        return {
+          ok: false,
+          code: 'conflict',
+          error: `a sign-in of ${spec.id}/${id} is already in flight without replace; cancel it first`,
+        };
+      }
       if (live) {
         watch(live);
         return { ok: true, value: viewOf(live)! };
