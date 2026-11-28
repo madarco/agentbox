@@ -325,6 +325,14 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
     }
   }
 
+  // A hub restart mid-sign-in: the detached worker kept going, but nothing
+  // watched it. Resume every session still in flight or signed in without its
+  // fan-out, so the login reaches the boxes with no client polling.
+  for (const s of listAccountLoginSessions(stateDir)) {
+    const v = viewOf(s);
+    if (v && v.state !== 'done' && v.state !== 'error') watch(s);
+  }
+
   return {
     async startAccountLogin(agent, rawId, input) {
       const spec = resolveSpec(agent);

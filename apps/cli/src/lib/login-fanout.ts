@@ -12,7 +12,7 @@ import {
   writeCredentialBackup,
 } from '@agentbox/sandbox-core';
 import { execa } from 'execa';
-import { dockerVolumeFileReader, volumeSettingsTarget } from '@agentbox/sandbox-docker';
+import { volumeSettingsTarget } from '@agentbox/sandbox-docker';
 import { withHubClient } from '../control-plane/with-hub.js';
 
 /** Push `agent`/`id`'s stored login to every box on the account, through the local hub. */
@@ -47,48 +47,42 @@ export async function readDefaultVolumeLogin(agent: string, image: string): Prom
     .catch(() => null);
 }
 
-/** Some files of a docker volume as they were (null = absent), to undo a sign-in. */
-export type VolumeSnapshot = ReadonlyMap<string, string | null>;
-
-export async function snapshotVolumeFiles(
-  volume: string,
+/**
+ * Store a freshly signed-in default login: into the agent's shared volume
+ * (what later default boxes seed from) and the default login's backup (what
+ * the fan-out pushes). False when `content` is not a real login.
+ */
+export async function storeDefaultLogin(
+  agent: string,
   image: string,
-  rels: readonly string[],
-): Promise<VolumeSnapshot> {
-  const read = dockerVolumeFileReader(volume, image);
-  const snap = new Map<string, string | null>();
-  for (const rel of new Set(rels)) snap.set(rel, await read(rel));
-  return snap;
+  content: string,
+): Promise<boolean> {
+  const spec = resolveAgentSpec(agent);
+  if (!spec.credential || !isRealAgentCredential(spec.id, content)) return false;
+  await volumeSettingsTarget(spec.dockerVolume, image, spec.dockerVolume).writeText(
+    spec.credential.boxRelPath,
+    content,
+    { mode: 0o600 },
+  );
+  // The person just signed this login in: it replaces the stored one.
+  if ((await readCredentialBackup(spec.id)) !== content) {
+    await writeCredentialBackup(spec.id, content);
+  }
+  return true;
 }
 
 /**
- * Put the snapshot back: each file as it was, a file that was absent removed.
- * Every file is attempted; the first failure is thrown after the rest.
+ * Remove a docker volume, best effort (a scratch one a sign-in used). Retried
+ * for a few seconds: a just-killed `docker run --rm` still holds it while its
+ * container is torn down.
  */
-export async function restoreVolumeFiles(
-  volume: string,
-  image: string,
-  snap: VolumeSnapshot,
-): Promise<void> {
-  const target = volumeSettingsTarget(volume, image, volume);
-  let failure: unknown;
-  for (const [rel, content] of snap) {
-    try {
-      if (content !== null) {
-        await target.writeText(rel, content, { mode: 0o600 });
-      } else {
-        const r = await execa(
-          'docker',
-          ['run', '--rm', '--user', '0', '-v', `${volume}:/dst`, image, 'rm', '-f', `/dst/${rel}`],
-          { reject: false },
-        );
-        if (r.exitCode !== 0) throw new Error(`could not remove ${rel} from ${volume}`);
-      }
-    } catch (err) {
-      failure ??= err;
-    }
+export async function removeDockerVolume(volume: string, attempts = 10): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    const r = await execa('docker', ['volume', 'rm', '-f', volume], { reject: false });
+    if (r.exitCode === 0) return true;
+    await new Promise((res) => setTimeout(res, 1_000));
   }
-  if (failure) throw failure;
+  return false;
 }
 
 /**

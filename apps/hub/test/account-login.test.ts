@@ -31,6 +31,7 @@ import {
   isAccountLoginWorker,
   loginWorkerAlive,
   readAccountLoginRequest,
+  writeAccountLoginRequest,
   removeAccountLoginSession,
   sameLoginIdentity,
   writeAccountLoginCode,
@@ -420,6 +421,19 @@ describe('review #529', () => {
       code: 'conflict',
       error: expect.stringMatching(/cancel it first/),
     });
+  });
+
+  it('a restarted hub resumes the fan-out of a sign-in it was not watching', async () => {
+    const session = 'abcdef0123456789';
+    writeAccountLoginRequest(
+      session,
+      { agent: 'claude', account: 'work', mode: 'renew', createdAt: new Date().toISOString() },
+      dir,
+    );
+    writeAccountLoginState(session, { phase: 'signed-in', pid: process.pid }, dir);
+    backend(); // a fresh hub process: no start, no read
+    await waitUntil(() => Promise.resolve(renews.length > 0));
+    expect(renews).toEqual(['claude/work']);
   });
 
   it('sameLoginIdentity: email first, then org; unknown is not a mismatch', () => {

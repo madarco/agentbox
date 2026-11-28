@@ -29,12 +29,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { captureVolumeLogin, dockerVolumeFileReader, ensureImage } from '@agentbox/sandbox-docker';
 import { agentLoginSpec } from '../agents/command/login.js';
-import {
-  captureDefaultLogin,
-  readDefaultVolumeLogin,
-  restoreVolumeFiles,
-  snapshotVolumeFiles,
-} from '../lib/login-fanout.js';
+import { removeDockerVolume, storeDefaultLogin } from '../lib/login-fanout.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 
 type StatePatch = Partial<Omit<AccountLoginWorkerState, 'updatedAt' | 'pid'>>;
@@ -59,6 +54,8 @@ interface WorkerContext {
   signal: AbortSignal;
   /** Set while a cancel must wait: a code is being exchanged, or the login is being stored. */
   committing: { value: boolean };
+  /** The scratch volume the sign-in runs in, removed when the worker ends. */
+  scratch: { value: string | null };
 }
 
 /** Sign the account in and store it. Throws a message for the session's `error`. */
@@ -88,33 +85,23 @@ async function signInAndStore(
     agents: [a.id],
     onProgress: (line) => log.write(line),
   });
-  const volume = named
+  // The account's own volume, which its docker boxes mount live, is not
+  // touched until the new login passed the identity check: the sign-in runs in
+  // a scratch volume seeded like the account's (host config, no host login, no
+  // account state) and only the checked login is stored from it.
+  const target = named
     ? accountConfigVolume(a.runtime.sharedVolume, account)
     : a.runtime.sharedVolume;
-  await a.runtime.ensureVolume(
-    { volume },
-    { syncFromHost: true, image, ...(named ? { account } : {}) },
-  );
-  // A renew is checked against the account's identity. The login writes into
-  // the volume boxes mount live, so what it touches is kept first and put
-  // back on a refusal: the credential and the files the identity is read from.
+  const volume = `${target}-signin-${sessionId}`;
+  ctx.scratch.value = volume;
+  await a.runtime.ensureVolume({ volume }, { syncFromHost: true, image, account });
+  await a.runtime.resetAccountVolume?.(volume, image);
   const stored = existing?.identity;
   const checked = stored !== undefined && req.replace !== true;
-  const credRel = resolveAgentSpec(a.id).credential?.boxRelPath;
-  const snapshot = checked
-    ? await snapshotVolumeFiles(volume, image, [
-        ...(credRel ? [credRel] : []),
-        ...(a.runtime.accountIdentity?.files ?? []),
-      ])
-    : null;
-  // Always, as the CLI's sign-in does: a volume left by an earlier account of
-  // this name (its `rm` could not drop a mounted volume) must not lend its profile.
-  if (named) await a.runtime.resetAccountVolume?.(volume, image);
-  const before = named ? null : await readDefaultVolumeLogin(a.id, image);
 
   const binding = a.runtime.loginBinding({
     image,
-    ...(named ? { volume } : {}),
+    volume,
     writeLog: (line) => log.write(line),
   });
   // The pty echoes what is typed, so the raw stream would log the code. Once
@@ -129,9 +116,9 @@ async function signInAndStore(
     log.raw(text);
     held = null;
   };
-  // Who the browser signed in, read before anything is stored (claude's
-  // finalize copies the default login into the backup): a renew that picked
-  // another account in the browser must not re-identify this one.
+  // Who the browser signed in, read from the scratch volume before anything
+  // is stored: a renew that picked another account in the browser must not
+  // re-identify this one.
   const readIdentity = async (): Promise<AccountLoginIdentity | undefined> => {
     const reader = a.runtime.accountIdentity;
     if (!reader) return undefined;
@@ -140,8 +127,6 @@ async function signInAndStore(
     for (const rel of reader.files) files[rel] = await read(rel);
     return reader.parse(files);
   };
-  let mismatch: NonNullable<AccountLoginWorkerState['mismatch']> | undefined;
-  let identityError: string | undefined;
   const res = await runAgentLogin({
     spec: binding.spec,
     dockerArgv: binding.dockerArgv,
@@ -190,23 +175,9 @@ async function signInAndStore(
       ctx.committing.value = true;
       return binding.verify();
     },
-    finalize: async () => {
-      if (checked) {
-        let signedIn: AccountLoginIdentity | undefined;
-        try {
-          signedIn = await readIdentity();
-        } catch (err) {
-          // Fail closed: an unread identity is not a match.
-          identityError = err instanceof Error ? err.message : String(err);
-          return {};
-        }
-        if (signedIn && !sameLoginIdentity(stored, signedIn)) {
-          mismatch = { stored, signedIn };
-          return {};
-        }
-      }
-      return (await binding.finalize?.()) ?? {};
-    },
+    // Claude writes who signed in (`oauthAccount`) on this warm-up turn, so
+    // the identity is read after it.
+    ...(binding.finalize ? { finalize: binding.finalize } : {}),
     signal,
   });
   flush();
@@ -216,43 +187,57 @@ async function signInAndStore(
     for (const c of sent) error = error.split(c).join('[redacted]');
     throw new Error(error);
   }
-  if (mismatch || identityError !== undefined) {
-    if (snapshot) {
-      try {
-        await restoreVolumeFiles(volume, image, snapshot);
-      } catch (err) {
-        throw new Error(
-          `the sign-in was refused, but ${volume} could not be put back (${err instanceof Error ? err.message : String(err)}); renew ${a.id}/${account} again`,
-        );
-      }
+  if (checked) {
+    // Fail closed: a renew stores only a login it can tell is the account's.
+    let signedIn: AccountLoginIdentity | undefined;
+    try {
+      signedIn = await readIdentity();
+    } catch (err) {
+      throw new Error(
+        `could not tell who signed in (${err instanceof Error ? err.message : String(err)}); nothing was changed (start again with replace to store it anyway)`,
+      );
     }
-    if (mismatch) throw new IdentityMismatchError(`${a.id}/${account}`, mismatch);
-    throw new Error(
-      `could not tell who signed in (${identityError}); nothing was changed (start again with replace to store it anyway)`,
-    );
+    if (!signedIn?.email && !signedIn?.org) {
+      throw new Error(
+        'could not tell who signed in (no email or org in the new login); nothing was changed (start again with replace to store it anyway)',
+      );
+    }
+    if (!sameLoginIdentity(stored, signedIn)) {
+      throw new IdentityMismatchError(`${a.id}/${account}`, { stored: stored!, signedIn });
+    }
   }
 
+  const read = dockerVolumeFileReader(volume, image);
   if (named) {
     const cap = await captureVolumeLogin({
       spec: resolveAgentSpec(a.id),
       account: { id: account },
-      read: dockerVolumeFileReader(volume, image),
+      read,
       ...(a.runtime.accountIdentity ? { identity: a.runtime.accountIdentity } : {}),
     });
     log.write(`captured ${a.id}/${account} (written=${String(cap.written)}: ${cap.reason})`);
     if (!cap.written && cap.reason !== 'unchanged') {
       throw new Error(`the store kept its login (${cap.reason}); nothing was changed`);
     }
+    // Another identity replaced the account's: the volume's cached profile
+    // is the old one's (claude rewrites it on the next turn).
+    if (req.replace === true) await a.runtime.resetAccountVolume?.(target, image);
     return { ...(cap.identity ? { identity: cap.identity } : {}) };
   }
-  if (!(await captureDefaultLogin(a.id, image, before))) {
-    throw new Error('the sign-in left no new login in the volume');
+  const credRel = resolveAgentSpec(a.id).credential?.boxRelPath;
+  const content = credRel ? await read(credRel) : null;
+  if (content === null || !(await storeDefaultLogin(a.id, image, content))) {
+    throw new Error('the sign-in left no new login');
   }
+  if (req.replace === true) await a.runtime.resetAccountVolume?.(target, image);
   // A control box's custody copy is stale now (no-op without one).
   await syncAgentCredentialsIfChanged().catch((err: unknown) =>
     log.write(`custody sync failed: ${err instanceof Error ? err.message : String(err)}`),
   );
-  return {};
+  const identity = a.runtime.accountIdentity
+    ? await readIdentity().catch(() => undefined)
+    : undefined;
+  return identity ? { identity } : {};
 }
 
 export const accountLoginWorkerCommand = new Command('_account-login-worker')
@@ -262,6 +247,14 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
     const log = openCommandLog(`account-login-${id}`);
     log.write(`worker pid=${String(process.pid)} for session ${id}`);
     const committing = { value: false };
+    const scratch: { value: string | null } = { value: null };
+    /** Set once the worker is wrapping up, so a cancel's forced exit does not cut it short. */
+    let ending = false;
+    const dropScratch = async (): Promise<void> => {
+      if (!scratch.value) return;
+      const removed = await removeDockerVolume(scratch.value).catch(() => false);
+      if (!removed) log.write(`could not remove the scratch volume ${scratch.value}`);
+    };
     let cancelWaiting: string | null = null;
     let cur: Omit<AccountLoginWorkerState, 'updatedAt'> = { phase: 'starting', pid: process.pid };
     const setState = (patch: StatePatch): void => {
@@ -290,9 +283,13 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
       // The login itself ends on the abort at once. The image build and the
       // volume prep before it do not see it: end the process instead.
       setTimeout(() => {
+        if (ending) return;
+        ending = true;
         setState({ phase: 'error', error: 'cancelled' });
-        log.close();
-        process.exit(1);
+        void dropScratch().finally(() => {
+          log.close();
+          process.exit(1);
+        });
       }, 3_000).unref();
     };
     for (const sig of ['SIGTERM', 'SIGINT'] as const) {
@@ -316,6 +313,7 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
         log,
         signal: abort.signal,
         committing,
+        scratch,
       });
       setState({ phase: 'signed-in', ...done });
       code = 0;
@@ -332,6 +330,10 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
         ...(err instanceof IdentityMismatchError ? { mismatch: err.mismatch } : {}),
       });
     }
-    log.close();
-    process.exit(code);
+    if (!ending) {
+      ending = true;
+      await dropScratch();
+      log.close();
+      process.exit(code);
+    }
   });

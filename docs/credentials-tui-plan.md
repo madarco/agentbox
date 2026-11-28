@@ -160,22 +160,22 @@ and a "Make default" action on every other account card (the `PUT` route).
   `captureDefaultLogin`. On `signed-in` the hub runs the renew fan-out, so
   running boxes get the new login. Restart-safe: a session that reached
   `signed-in` with no hub watching is fanned out on the next read.
-- **Identity.** A renew whose browser signed in another identity (email, else
-  org) than the account holds stores nothing and ends `error` with
-  `mismatch: { stored, signedIn }`; `replace: true` stores it anyway. An
-  identity that cannot be read is refused the same way (fail closed). Checked
-  before claude's finalize copies the default login into the backup. The
-  login writes into the volume boxes mount live, so the credential and the
-  identity files are snapshotted first and put back on a refusal (a file that
-  was absent is removed); boxes may see the other login for the seconds
-  between the login's exit and the restore. A `replace` start refuses to join
-  a sign-in in flight without it.
+- **Identity.** The sign-in runs in a scratch volume (`<volume>-signin-<id>`,
+  seeded like the account's: host config, no host login, no account state,
+  removed when the worker ends), so the account's own volume, which its docker
+  boxes mount live, is untouched until the login is checked. A renew reads who
+  signed in after claude's warm-up turn (which writes `oauthAccount`) and stores
+  nothing when it is another identity (email, else org) than the account holds,
+  or when no email or org can be read (fail closed): the session ends `error`
+  with `mismatch: { stored, signedIn }` or a message. `replace: true` stores it
+  anyway (and drops the volume's cached profile of the old identity). A
+  `replace` start refuses to join a sign-in in flight without it.
 - **Safety.** Only a pid whose command line names `_account-login-worker
   <session>` is ever signalled (a restarted control box can reuse an old pid).
   A cancel while a code is being exchanged or the login stored waits for it
   to finish (and be fanned out). The fan-out watcher starts on start, on a
-  code submit and on any read, and waits through a worker that has not
-  written its state yet.
+  code submit, on any read and when the hub starts (a restart mid-sign-in),
+  and waits through a worker that has not written its state yet.
 - **Where it runs.** Always the hub's own machine and store: the PC's on a
   local hub, the control box's on a remote one (it has docker and the CLI).
 - **Web.** Settings → Subscriptions: a `Revoked` badge from `auth.state` (and
