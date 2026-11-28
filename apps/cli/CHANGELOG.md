@@ -57,8 +57,12 @@ CLI, not the raw commits.
   its tokens, in the hub web UI and `agentbox ls`.
 - **The hub web UI has a new design**: a Dashboard, a sidebar with a Settings
   section (General, Subscriptions, Skills, Files, Devices), and dark mode.
-- **Hetzner creates move to another location** when the first one is out of
-  capacity, and agent commands take `--size` and `--location`.
+- **Pick where a box runs.** The web create dialog and the tray have a Location
+  picker (Automatic, or a pinned region with that region's sizes), `agentbox status`
+  and the hub show each box's size and location, and `hub setup`/`hub deploy` take
+  `--location`/`--size` for the control box. Hetzner creates move to another
+  location when the first is out of capacity, and a box's default size follows
+  its location (cx types are EU-only).
 - **LLM egress through the hub** (`llm.proxy: forward`, `--llm-proxy`): a box's
   model traffic leaves from the hub's IP.
 - **Several PCs on one hub.**
