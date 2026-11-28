@@ -103,6 +103,7 @@ export {
   type ProviderDescriptor,
   type ProviderCapabilities,
   type ProviderCredentialField,
+  type ProviderRegion,
 } from '@agentbox/config';
 export {
   resolveProviderDescriptor,

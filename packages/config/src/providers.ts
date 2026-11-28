@@ -90,6 +90,29 @@ export interface ProviderCapabilities {
   readonly timeoutModel?: 'absolute' | 'inactivity';
 }
 
+/** One entry of `ProviderDescriptor.regions`. */
+export interface ProviderRegion {
+  readonly key: string;
+  readonly label: string;
+  /**
+   * The sizes to offer HERE, when this region does not offer the provider's own
+   * `sizes` (hetzner's cx line is EU-only). The first entry is the region's
+   * default size, used when no size is asked for. Absent = the provider's
+   * `sizes` and default apply. A UI swaps its size list for this one.
+   */
+  readonly sizes?: readonly { readonly key: string; readonly label: string }[];
+}
+
+/** The default size for a create in `location`: the region's own first size, else undefined. */
+export function regionDefaultSize(
+  descriptor: { readonly regions?: readonly ProviderRegion[] } | undefined,
+  location: string | undefined,
+): string | undefined {
+  const where = location?.trim().toLowerCase();
+  if (!where) return undefined;
+  return descriptor?.regions?.find((r) => r.key === where)?.sizes?.[0]?.key;
+}
+
 /**
  * Everything a UI or CLI can know about a provider WITHOUT loading its module.
  *
@@ -165,7 +188,7 @@ export interface ProviderDescriptor {
    * in every region: `POST /providers/{id}/size-check` with a `location` asks the
    * live catalog.
    */
-  readonly regions?: readonly { readonly key: string; readonly label: string }[];
+  readonly regions?: readonly ProviderRegion[];
   /**
    * Hint for a free-text location, e.g. `any DigitalOcean region slug, e.g. sgp1`.
    * Like `sizeHint`, its presence is what says `regions` is an OPEN list.
@@ -178,6 +201,17 @@ export interface ProviderDescriptor {
   /** Description of the per-provider `box.image<P>` KEY_REGISTRY entry. */
   readonly imageDesc: string;
 }
+
+const HETZNER_US_SIZES = [
+  { key: 'cpx21', label: 'cpx21 - 3 vCPU / 4 GB (default here)' },
+  { key: 'cpx31', label: 'cpx31 - 4 vCPU / 8 GB' },
+  { key: 'cpx41', label: 'cpx41 - 8 vCPU / 16 GB' },
+] as const;
+const HETZNER_SIN_SIZES = [
+  { key: 'cpx22', label: 'cpx22 - 2 vCPU / 4 GB (default here)' },
+  { key: 'cpx32', label: 'cpx32 - 4 vCPU / 8 GB' },
+  { key: 'cpx42', label: 'cpx42 - 8 vCPU / 16 GB' },
+] as const;
 
 export const PROVIDERS = [
   {
@@ -316,15 +350,17 @@ export const PROVIDERS = [
       { key: 'cx43', label: 'cx43 - 8 vCPU / 16 GB' },
     ],
     sizeHint: 'any Hetzner server type, e.g. cpx41',
-    // The cx types above are offered in eu-central only (nbg1, fsn1, hel1); a US
-    // or Singapore location needs a cpx/ccx type.
+    // The cx types above are offered in eu-central only (nbg1, fsn1, hel1). The
+    // shared x86 line elsewhere (GET /server_types, measured 2026-11-28):
+    // cpx?1 in the US, cpx?2 in eu-central + Singapore; ccx everywhere. So the
+    // US and Singapore locations carry their own floor-first size lists.
     regions: [
       { key: 'nbg1', label: 'nbg1 - Nuremberg, DE (default)' },
       { key: 'fsn1', label: 'fsn1 - Falkenstein, DE' },
       { key: 'hel1', label: 'hel1 - Helsinki, FI' },
-      { key: 'ash', label: 'ash - Ashburn, VA, US (no cx types)' },
-      { key: 'hil', label: 'hil - Hillsboro, OR, US (no cx types)' },
-      { key: 'sin', label: 'sin - Singapore (no cx types)' },
+      { key: 'ash', label: 'ash - Ashburn, VA, US', sizes: HETZNER_US_SIZES },
+      { key: 'hil', label: 'hil - Hillsboro, OR, US', sizes: HETZNER_US_SIZES },
+      { key: 'sin', label: 'sin - Singapore', sizes: HETZNER_SIN_SIZES },
     ],
     blurb: 'Hetzner Cloud VPSes',
     sizeDesc:

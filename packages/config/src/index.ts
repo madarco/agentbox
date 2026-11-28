@@ -47,7 +47,9 @@ export {
   providerMeta,
   providerKeyCap,
   perProviderConfigKey,
+  regionDefaultSize,
   type ProviderDescriptor,
+  type ProviderRegion,
   type ProviderCapabilities,
   type ProviderCredentialField,
 } from './providers.js';

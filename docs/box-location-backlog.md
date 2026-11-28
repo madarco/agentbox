@@ -8,11 +8,10 @@ fixed there. Newest last.
   deploy, while box creates retry the other eu-central locations (`failover.ts`). The deploy could
   reuse `planLocations` when the location came from the default rather than `--location`.
   (`packages/sandbox-hetzner/src/control-plane-deploy.ts` ~770)
-- **The Hetzner size/location table is static.** `vps-placement.ts` encodes which shared line is
-  offered where (cx eu-central, cpx?1 US, cpx?2 eu-central + sin; measured 2026-11-28) to pick a
-  per-location default and warn on a mismatch. It can drift; asking `GET /server_types` at setup
-  time (the token is local) would make it live. Box creates have the same gap: the descriptor's
-  `sizes` are all cx, so a box in ash/hil/sin needs a typed `--size`.
+- **The Hetzner size/location table is static.** The descriptor's `regions[].sizes` (per-location
+  lists and defaults) and `sandbox-hetzner/src/placement-rules.ts` (which line is offered where,
+  the control-box floor; measured 2026-11-28) can drift from the live catalog. Asking
+  `GET /server_types` at setup time (the token is local) would make the control-box warnings live.
 - **Daytona `--location` away from the baked region.** Declaring Daytona `regions` makes a typed
   `--location` reach the backend (it already honoured `box.daytonaRegion`). The base snapshot is
   registered in the region it was baked in (`PrepareRequest.location`, `packages/core/src/provider.ts`

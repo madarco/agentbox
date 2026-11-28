@@ -459,6 +459,17 @@ const setupSub = new Command('setup')
         process.exitCode = 1;
         return;
       }
+      // A target named by flag is known now: check its cloud token before the
+      // git credential prompt and the env write, so a missing one costs nothing.
+      if (opts.deploy === 'hetzner' || opts.deploy === 'digitalocean') {
+        const credErr = vpsCredentialError(opts.deploy);
+        if (credErr) {
+          log.error(credErr);
+          cmdLog.write(`preflight: ${credErr}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
       const gitAuth = await resolveGitAuthMode(opts.gitAuth);
       cmdLog.write(`git auth mode: ${gitAuth}`);
 
@@ -565,8 +576,10 @@ const setupSub = new Command('setup')
       // spinner and @clack prompts can't share the terminal).
       let placement: VpsPlacement | null = null;
       if (target === 'hetzner' || target === 'digitalocean') {
-        // Before any prompt: a missing token otherwise surfaces only after the
-        // placement and admin-login answers, which are then lost.
+        // A target picked interactively is only known here, after the git
+        // credential prompt and the env write. Still check before the placement
+        // and admin-login prompts, whose answers a late failure would lose.
+        // (`--deploy hetzner|digitalocean` is checked at the very start.)
         const credErr = vpsCredentialError(target);
         if (credErr) {
           log.error(credErr);
@@ -2128,7 +2141,11 @@ const deployDigitalOceanSub = new Command('digitalocean')
   .action(async (opts: DeployDigitalOceanOpts) => {
     const cmdLog = openCommandLog('hub-deploy');
     try {
-      if (opts.region && opts.location && opts.region.trim() !== opts.location.trim()) {
+      if (
+        opts.region &&
+        opts.location &&
+        opts.region.trim().toLowerCase() !== opts.location.trim().toLowerCase()
+      ) {
         log.error(
           `--region ${opts.region} and --location ${opts.location} disagree; --region is an alias, pass one.`,
         );

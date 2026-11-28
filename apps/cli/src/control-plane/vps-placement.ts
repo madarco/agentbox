@@ -1,13 +1,15 @@
 import { isCancel, log, select, text } from '@clack/prompts';
-import { PROVIDERS } from '@agentbox/config';
+import { PROVIDERS, regionDefaultSize, type ProviderRegion } from '@agentbox/config';
 import {
   CONTROL_PLANE_DEFAULT_REGION,
   CONTROL_PLANE_DEFAULT_SIZE,
+  controlPlanePlacementWarnings as digitaloceanPlacementWarnings,
   readDigitalOceanCredStatus,
 } from '@agentbox/sandbox-digitalocean';
 import {
   CONTROL_PLANE_DEFAULT_LOCATION,
   CONTROL_PLANE_DEFAULT_SERVER_TYPE,
+  controlPlanePlacementWarnings as hetznerPlacementWarnings,
   readHetznerCredStatus,
 } from '@agentbox/sandbox-hetzner';
 
@@ -34,110 +36,16 @@ export const VPS_DEFAULTS: Record<VpsTarget, VpsPlacement> = {
   digitalocean: { location: CONTROL_PLANE_DEFAULT_REGION, size: CONTROL_PLANE_DEFAULT_SIZE },
 };
 
-const FLOOR = { vcpus: 2, memoryGb: 4 };
-
-/**
- * Hetzner's shared x86 lines are each offered in a subset of locations
- * (GET /server_types, measured 2026-11-28): `cx` in eu-central only, `cpx?1` in
- * the US only, `cpx?2` in eu-central and Singapore. `ccx` is everywhere. So the
- * default `cx23` cannot follow a user to ash/hil/sin, and those locations get a
- * floor-sized sibling instead.
- */
-const HETZNER_EU = new Set(['nbg1', 'fsn1', 'hel1']);
-const HETZNER_US = new Set(['ash', 'hil']);
-
-const HETZNER_SIZES_BY_AREA: Record<
-  'eu' | 'us' | 'sin',
-  { key: string; label: string }[] | undefined
-> = {
-  // eu: the descriptor's cx list.
-  eu: undefined,
-  us: [
-    { key: 'cpx21', label: 'cpx21 - 3 vCPU / 4 GB (default here)' },
-    { key: 'cpx31', label: 'cpx31 - 4 vCPU / 8 GB' },
-    { key: 'cpx41', label: 'cpx41 - 8 vCPU / 16 GB' },
-  ],
-  sin: [
-    { key: 'cpx22', label: 'cpx22 - 2 vCPU / 4 GB (default here)' },
-    { key: 'cpx32', label: 'cpx32 - 4 vCPU / 8 GB' },
-    { key: 'cpx42', label: 'cpx42 - 8 vCPU / 16 GB' },
-  ],
-};
-
-function hetznerArea(location: string): 'eu' | 'us' | 'sin' | null {
-  const l = location.trim().toLowerCase();
-  if (HETZNER_EU.has(l)) return 'eu';
-  if (HETZNER_US.has(l)) return 'us';
-  if (l === 'sin') return 'sin';
-  return null;
-}
-
-/** The default size for a target at a location (Hetzner's cx23 is EU-only). */
+/** The default size for a target at a location: the region's own first size, else the default. */
 export function defaultSizeFor(target: VpsTarget, location: string): string {
-  if (target === 'hetzner') {
-    const sizes = HETZNER_SIZES_BY_AREA[hetznerArea(location) ?? 'eu'];
-    if (sizes?.[0]) return sizes[0].key;
-  }
-  return VPS_DEFAULTS[target].size;
+  return regionDefaultSize(descriptorOf(target), location) ?? VPS_DEFAULTS[target].size;
 }
 
-/**
- * The warning for a Hetzner type the static table says is not offered at
- * `location`, or null. A warning, not a refusal: the table can drift from the
- * live catalog, and Hetzner's own create error is the ground truth.
- */
-export function hetznerLocationWarning(size: string, location: string): string | null {
-  const s = size.trim().toLowerCase();
-  const area = hetznerArea(location);
-  if (!area) return null;
-  const offered = /^cx\d/.test(s)
-    ? area === 'eu'
-    : /^cpx\d1$/.test(s)
-      ? area === 'us'
-      : /^cpx\d2$/.test(s)
-        ? area !== 'us'
-        : true;
-  if (offered) return null;
-  return (
-    `Hetzner does not offer ${size} in ${location}, so the create will likely fail. ` +
-    `Use ${defaultSizeFor('hetzner', location)} there (or a ccx type, offered everywhere).`
-  );
-}
-
-// Hetzner x86 types under the floor (live catalog, 2026-11-28, plus the retired
-// cx11). Opaque slugs carry no shape, so an unlisted type is assumed big enough.
-const HETZNER_SMALL: Record<string, string> = {
-  cx11: '1 vCPU / 2 GB',
-  cpx02: '1 vCPU / 1 GB',
-  cpx11: '2 vCPU / 2 GB',
-  cpx12: '1 vCPU / 2 GB',
-};
-
-/**
- * The warning for a size below what the control box needs, or null. Hetzner
- * reads the list of known smaller types; DigitalOcean slugs spell their shape
- * (`s-1vcpu-2gb`). The Arm `cax` line warns at any size: the hub is deployed
- * for amd64.
- */
-export function hubSizeWarning(target: VpsTarget, size: string): string | null {
-  const s = size.trim().toLowerCase();
-  const floor = `${VPS_DEFAULTS[target].size} (${String(FLOOR.vcpus)} vCPU / ${String(FLOOR.memoryGb)} GB)`;
-  if (target === 'hetzner') {
-    if (/^cax/.test(s)) {
-      return `${size} is an Arm server type; the control box is deployed for amd64. Use ${floor} or larger.`;
-    }
-    const small = HETZNER_SMALL[s];
-    if (small) {
-      return `${size} (${small}) is below what the control box needs (it runs the hub and docker). Use ${floor} or larger.`;
-    }
-    return null;
-  }
-  const m = /(\d+)vcpu-(\d+)(gb|mb)/.exec(s);
-  if (!m) return null;
-  const vcpus = Number(m[1]);
-  const memoryGb = m[3] === 'mb' ? Number(m[2]) / 1024 : Number(m[2]);
-  if (vcpus >= FLOOR.vcpus && memoryGb >= FLOOR.memoryGb) return null;
-  return `${size} is below what the control box needs (it runs the hub and docker). Use ${floor} or larger.`;
+/** The provider package's warnings for this placement (floor, Arm, not offered there). */
+export function placementWarnings(target: VpsTarget, size: string, location: string): string[] {
+  return target === 'hetzner'
+    ? hetznerPlacementWarnings(size, location)
+    : digitaloceanPlacementWarnings(size);
 }
 
 /** The error for a deploy target with no cloud credential here, or null. */
@@ -158,7 +66,7 @@ function descriptorOf(target: VpsTarget) {
   return d as (typeof PROVIDERS)[number] & {
     sizes?: readonly { key: string; label: string }[];
     sizeHint?: string;
-    regions?: readonly { key: string; label: string }[];
+    regions?: readonly ProviderRegion[];
     regionHint?: string;
   };
 }
@@ -205,7 +113,9 @@ export async function resolveVpsPlacement(
   interactive: boolean,
 ): Promise<VpsPlacement | null> {
   const d = descriptorOf(target);
-  let location = flags.location?.trim() || '';
+  // Lowercased: the clouds' names are lowercase and the descriptor keys too,
+  // so `ASH` would match nothing here and reach the API as is.
+  let location = flags.location?.trim().toLowerCase() || '';
   let size = flags.size?.trim() || '';
   if (!location) {
     if (interactive) {
@@ -216,7 +126,7 @@ export async function resolveVpsPlacement(
         d.regionHint,
       );
       if (picked === null) return null;
-      location = picked;
+      location = picked.toLowerCase();
     } else {
       location = VPS_DEFAULTS[target].location;
     }
@@ -224,8 +134,8 @@ export async function resolveVpsPlacement(
   if (!size) {
     const fallback = defaultSizeFor(target, location);
     if (interactive) {
-      const area = target === 'hetzner' ? hetznerArea(location) : null;
-      const choices = (area ? HETZNER_SIZES_BY_AREA[area] : undefined) ?? d.sizes ?? [];
+      // A region that does not offer the provider's own sizes lists its own.
+      const choices = d.regions?.find((r) => r.key === location)?.sizes ?? d.sizes ?? [];
       const picked = await pick(
         `${d.label}: size for the control box`,
         choices,
@@ -238,10 +148,6 @@ export async function resolveVpsPlacement(
       size = fallback;
     }
   }
-  const warnings = [
-    hubSizeWarning(target, size),
-    target === 'hetzner' ? hetznerLocationWarning(size, location) : null,
-  ];
-  for (const w of warnings) if (w) log.warn(w);
+  for (const w of placementWarnings(target, size, location)) log.warn(w);
   return { location, size };
 }

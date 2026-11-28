@@ -160,3 +160,26 @@ describe('declared provider regions', () => {
     expect(marked.map((r) => r.key)).toEqual([expected]);
   });
 });
+
+describe('declared per-region sizes', () => {
+  type Region = { key: string; label: string; sizes?: readonly { key: string; label: string }[] };
+  const regions = (name: string): Region[] => [
+    ...((descriptor(name) as { regions?: readonly Region[] }).regions ?? []),
+  ];
+
+  it('hetzner: the EU uses the provider sizes; ash/hil/sin list their own, floor-sized first', () => {
+    for (const r of regions('hetzner')) {
+      if (['nbg1', 'fsn1', 'hel1'].includes(r.key)) expect(r.sizes, r.key).toBeUndefined();
+      else expect(r.sizes?.[0]?.label, r.key).toMatch(/\(default here\)/);
+    }
+  });
+
+  it('region sizes are plausible slugs, never the EU-only cx line', () => {
+    for (const r of regions('hetzner')) {
+      for (const s of r.sizes ?? []) {
+        expect(s.key, `${r.key}/${s.key}`).toMatch(/^[a-z0-9-]+$/);
+        expect(s.key, `${r.key}/${s.key}`).not.toMatch(/^cx\d/);
+      }
+    }
+  });
+});

@@ -8295,7 +8295,20 @@ export function buildOpenApi(): Record<string, unknown> {
                 'Locations to offer in a create picker, most common first. Each key is a literal --location value for THIS backend (hetzner location, DigitalOcean region slug, Daytona region); there is no cross-provider grammar. Absent = the provider has no location knob. A picker defaults to sending no location (the configured or provider placement, failover allowed), never to regions[0]; a chosen one goes as opts.location with opts.locationPinned: true.',
               items: {
                 type: 'object',
-                properties: { key: { type: 'string' }, label: { type: 'string' } },
+                properties: {
+                  key: { type: 'string' },
+                  label: { type: 'string' },
+                  sizes: {
+                    type: 'array',
+                    description:
+                      "Sizes to offer when this region is chosen, replacing the provider's `sizes` (hetzner's cx line is EU-only, so ash/hil/sin list cpx types). The first entry is the region's default size: a create there with no size gets it. Absent = the provider's `sizes` and default apply.",
+                    items: {
+                      type: 'object',
+                      properties: { key: { type: 'string' }, label: { type: 'string' } },
+                      required: ['key', 'label'],
+                    },
+                  },
+                },
                 required: ['key', 'label'],
               },
             },

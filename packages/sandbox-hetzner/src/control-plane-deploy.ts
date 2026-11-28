@@ -32,6 +32,7 @@ import { resolveHubDeployAssets } from './hub-deploy-assets.js';
 import { mintSshKey } from './ssh-key.js';
 import { scpUpload, sshExec, waitForSsh, type SshTargetArgs } from './ssh-cli.js';
 import { withHetznerRetry } from './retry.js';
+import { defaultServerTypeFor } from './placement-rules.js';
 
 export interface ControlPlaneHetznerDeployOptions {
   /** Contents of `control-plane.env` — GITHUB_APP_ID / _PRIVATE_KEY / ADMIN_TOKEN. */
@@ -763,15 +764,16 @@ export async function deployControlPlaneToHetzner(
 
   log(
     source.kind === 'package'
-      ? `provisioning ${opts.serverType ?? CONTROL_PLANE_DEFAULT_SERVER_TYPE} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
-      : `provisioning ${opts.serverType ?? CONTROL_PLANE_DEFAULT_SERVER_TYPE} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
+      ? `provisioning ${opts.serverType ?? defaultServerTypeFor(opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION)} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
+      : `provisioning ${opts.serverType ?? defaultServerTypeFor(opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION)} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
   );
   const { server } = await withHetznerRetry(
     { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
     () =>
       client.createServer({
         name,
-        server_type: opts.serverType ?? CONTROL_PLANE_DEFAULT_SERVER_TYPE,
+        server_type:
+          opts.serverType ?? defaultServerTypeFor(opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION),
         image: opts.serverImage ?? 'ubuntu-24.04',
         location: opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION,
         user_data: controlPlaneCloudInit({

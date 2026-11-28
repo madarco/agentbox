@@ -188,3 +188,26 @@ describe('provider table is the single source of truth', () => {
     });
   });
 });
+
+describe('regionDefaultSize', () => {
+  it("reads a region's first size, case-insensitively, else undefined", async () => {
+    const { regionDefaultSize } = await import('../src/providers.js');
+    const d = {
+      regions: [
+        { key: 'eu', label: 'eu' },
+        {
+          key: 'us',
+          label: 'us',
+          sizes: [
+            { key: 'big', label: 'big' },
+            { key: 'bigger', label: 'x' },
+          ],
+        },
+      ],
+    };
+    expect(regionDefaultSize(d, 'US')).toBe('big');
+    expect(regionDefaultSize(d, 'eu')).toBeUndefined();
+    expect(regionDefaultSize(d, undefined)).toBeUndefined();
+    expect(regionDefaultSize(undefined, 'us')).toBeUndefined();
+  });
+});
