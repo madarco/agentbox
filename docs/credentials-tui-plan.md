@@ -182,7 +182,23 @@ and a "Make default" action on every other account card (the `PUT` route).
   code submit, on any read and when the hub starts (a restart mid-sign-in),
   and waits through a worker that has not written its state yet.
 - **Where it runs.** Always the hub's own machine and store: the PC's on a
-  local hub, the control box's on a remote one (it has docker and the CLI).
+  local hub, the control box's on a remote one. The worker takes a
+  `SigninEngine` (`apps/cli/src/lib/signin-engine.ts`), chosen by
+  `resolveSigninDocker` (`@agentbox/sandbox-remote-docker`): `local` whenever a
+  docker CLI is on PATH (unchanged, even with a `hub` alias registered or the
+  daemon down); `hub` when there is none and the remote-docker alias `hub` is
+  registered, which is the control box's hub container. On `hub` everything
+  goes through the remote-docker chokepoint (`engine:hub` ControlMaster, login
+  shell, `quoteShellArgv`): the agent layer is built on the engine from a stdin
+  Dockerfile (`derivedAgentDockerfile`) on top of the remote base and tagged by
+  its own fingerprint; the scratch volume is created unseeded; the login runs
+  under `ssh -tt` in a container named after the scratch volume (so a killed
+  worker's leftovers are swept by name); verify, reads and claude's warm-up run
+  through the `DockerRun` passed to `loginBinding({ docker })`. The store is the
+  only place the login lands there: control-box boxes (remote-docker, cloud)
+  mount no account volume, they seed from the store and get the renew fan-out,
+  so the account-volume write and the profile reset are local-only
+  (`hostsAccountVolumes`). The hub's scratch sweep makes the same choice.
 - **Web.** Settings → Subscriptions: a `Revoked` badge from `auth.state` (and
   `Expiring`), "Seen failing in <box>" linking to the box, a Renew button on
   every login (primary when revoked), and an **Add a login** form; both open

@@ -53,6 +53,11 @@ export interface RunAgentLoginOptions {
   spec: AgentLoginSpec;
   /** Full `docker run …` argv for this agent's login (built by the caller). */
   dockerArgv: string[];
+  /**
+   * The process the pty runs instead of `docker <dockerArgv>`: the same argv
+   * wrapped for another engine (a control box's, over `ssh -tt`).
+   */
+  command?: { file: string; args: string[] };
   /** Verbatim mirror of the container's pty stream (do NOT reformat, do NOT print). */
   writeRaw: (chunk: string) => void;
   /** Optional annotated log line (progress notes, not the raw stream). */
@@ -140,12 +145,16 @@ export async function runAgentLogin(opts: RunAgentLoginOptions): Promise<RunAgen
       opts.onPhase(next, update);
     };
 
-    const pty = backend.ptySpawn('docker', opts.dockerArgv, {
-      name: 'xterm-256color',
-      cols: 200,
-      rows: 50,
-      env: process.env,
-    });
+    const pty = backend.ptySpawn(
+      opts.command?.file ?? 'docker',
+      opts.command?.args ?? opts.dockerArgv,
+      {
+        name: 'xterm-256color',
+        cols: 200,
+        rows: 50,
+        env: process.env,
+      },
+    );
 
     const finish = (result: RunAgentLoginResult): void => {
       if (finished) return;

@@ -42,6 +42,7 @@ import {
   type AccountLoginWorkerState,
   type AccountStoreOptions,
 } from '@agentbox/sandbox-core';
+import type { DockerRun } from '@agentbox/sandbox-docker';
 import type {
   AccountLoginBackend,
   AccountLoginView,
@@ -80,7 +81,9 @@ export interface AccountLoginDeps {
 
 const execFileAsync = promisify(execFile);
 
-const dockerScratchVolumes = {
+type ScratchVolumes = NonNullable<AccountLoginDeps['scratchVolumes']>;
+
+const dockerScratchVolumes: ScratchVolumes = {
   async list(): Promise<string[]> {
     const r = await execFileAsync('docker', ['volume', 'ls', '-q', '--filter', 'name=-signin-']);
     return r.stdout.split('\n').filter(Boolean);
@@ -89,6 +92,44 @@ const dockerScratchVolumes = {
     await execFileAsync('docker', ['volume', 'rm', '-f', name]);
   },
 };
+
+/**
+ * The same sweep on a remote engine (a control box's `hub`, where the worker
+ * signs in). A worker killed mid-login can leave a container on the volume
+ * too; `removeVolume` takes those first.
+ */
+export function remoteScratchVolumes(
+  run: DockerRun,
+  removeVolume: (run: DockerRun, volume: string) => Promise<boolean>,
+): ScratchVolumes {
+  return {
+    async list(): Promise<string[]> {
+      const r = await run(['volume', 'ls', '-q', '--filter', 'name=-signin-']);
+      if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `exit ${String(r.exitCode)}`);
+      return r.stdout.split('\n').filter(Boolean);
+    },
+    async remove(name: string): Promise<void> {
+      if (!(await removeVolume(run, name))) throw new Error(`could not remove ${name}`);
+    },
+  };
+}
+
+/**
+ * Where the worker's scratch volumes live, decided the way the worker decides
+ * where it signs in (`resolveSigninDocker`): this machine's docker, the
+ * control box's `hub` engine, or nowhere.
+ */
+async function defaultScratchVolumes(): Promise<ScratchVolumes | null> {
+  const rd = await import('@agentbox/sandbox-remote-docker');
+  const where = rd.resolveSigninDocker();
+  if (where === 'local') return dockerScratchVolumes;
+  if (where === 'hub') {
+    return remoteScratchVolumes((await rd.openRemoteDockerEngine()).run, (run, volume) =>
+      rd.removeRemoteSigninVolume(run, volume, { attempts: 3 }),
+    );
+  }
+  return null;
+}
 
 /** A finished session is kept this long for `GET` to report it, then reaped. */
 const KEEP_FINISHED_MS = 30 * 60_000;
@@ -267,8 +308,9 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
    * killed or crashed leaves one holding a live credential and a copy of the
    * host config. A volume still in use is left for the next sweep.
    */
-  const scratch = deps.scratchVolumes ?? dockerScratchVolumes;
   async function sweepScratchVolumes(): Promise<void> {
+    const scratch = deps.scratchVolumes ?? (await defaultScratchVolumes().catch(() => null));
+    if (!scratch) return;
     const names = await scratch.list().catch(() => [] as string[]);
     for (const name of names) {
       const session = signinScratchSession(name);

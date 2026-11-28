@@ -206,6 +206,62 @@ export async function dockerOnRemote(
   });
 }
 
+/**
+ * {@link dockerOnRemote} with `input` fed to docker's stdin (`run -i`, a
+ * `build -` Dockerfile). `sshExec` deliberately models no stdin, so this
+ * drives ssh directly over the same ControlMaster and login shell.
+ */
+export async function dockerOnRemoteWithInput(
+  target: SshTargetArgs,
+  argv: string[],
+  input: string,
+  opts: { timeoutMs?: number; onLine?: (line: string) => void } = {},
+): Promise<RemoteExecResult> {
+  const child = execa(
+    'ssh',
+    [...sshOptArgs(target), sshDestination(target), loginShell(`docker ${quoteShellArgv(argv)}`)],
+    {
+      reject: false,
+      input,
+      ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+    },
+  );
+  if (opts.onLine) {
+    const onLine = opts.onLine;
+    const handle = (chunk: Buffer | string): void => {
+      for (const line of chunk.toString().split(/\r?\n/)) if (line.trim()) onLine(line);
+    };
+    child.stdout?.on('data', handle);
+    child.stderr?.on('data', handle);
+  }
+  const res = await child;
+  return {
+    exitCode: typeof res.exitCode === 'number' ? res.exitCode : 1,
+    stdout: typeof res.stdout === 'string' ? res.stdout : '',
+    stderr: typeof res.stderr === 'string' ? res.stderr : '',
+  };
+}
+
+/**
+ * The ssh command that runs `docker <argv…>` on the remote engine under a
+ * terminal (`-tt`: the local side is a pty, never a tty ssh would detect), for
+ * an interactive `docker run -it`. Pure.
+ */
+export function dockerOnRemoteTtyCommand(
+  target: SshTargetArgs,
+  argv: string[],
+): { file: string; args: string[] } {
+  return {
+    file: 'ssh',
+    args: [
+      ...sshOptArgs(target),
+      '-tt',
+      sshDestination(target),
+      loginShell(`docker ${quoteShellArgv(argv)}`),
+    ],
+  };
+}
+
 /** Same, but throws with the remote's stderr on a non-zero exit. */
 export async function dockerOnRemoteOrThrow(
   target: SshTargetArgs,

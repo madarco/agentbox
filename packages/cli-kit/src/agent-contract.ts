@@ -20,7 +20,12 @@
  */
 import type { AttachOpenIn, EffectiveConfig, UserConfig } from '@agentbox/config';
 import type { AgentId, ResolvedCarryEntry } from '@agentbox/core';
-import type { AccountIdentityReader, BoxRecord, CreateBoxOptions } from '@agentbox/sandbox-docker';
+import type {
+  AccountIdentityReader,
+  BoxRecord,
+  CreateBoxOptions,
+  DockerRun,
+} from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import type { AgentLoginBinding } from './agent-login-bindings.js';
 import type { ResolvedTeleport } from './teleport-types.js';
@@ -230,6 +235,13 @@ export interface AgentRuntime {
    * `agentbox credentials add <agent>/<name> --login` refuses a `login` account without it.
    */
   supportsAccountLogin?: boolean;
+  /**
+   * Seed a sign-in volume on an engine this machine's config does not reach
+   * (a control box's, where the hub signs in): only the first-run state the
+   * agent's login and its warm-up need (claude's pre-onboarded
+   * `_claude.json`, where it then writes who signed in). Absent = nothing.
+   */
+  seedLoginVolume?(volume: string, image: string, docker: DockerRun): Promise<void>;
   /** Guided-login binding — used by `agentbox <agent> login` machinery. */
   loginBinding(o: {
     image: string;
@@ -237,6 +249,11 @@ export interface AgentRuntime {
     /** Sign in against this volume (a named account's) instead of `sharedVolume`. */
     volume?: string;
     writeLog?: (line: string) => void;
+    /**
+     * Where the binding's own docker checks (verify, warm-up) run: a control
+     * box's engine for a hub sign-in there. Default: this machine's docker.
+     */
+    docker?: DockerRun;
   }): AgentLoginBinding;
   /**
    * Before a named account's volume is signed in again: drop what the previous

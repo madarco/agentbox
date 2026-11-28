@@ -121,6 +121,7 @@ export {
   registryRefForSha,
   ensureImage,
   buildDerivedAgentImage,
+  derivedAgentDockerfile,
   variantImageRef,
   classifyDockerBaseFreshness,
   evaluateDockerBaseFreshness,
@@ -457,3 +458,9 @@ export {
   boxCredentialMount,
   writeBoxCredentialFile,
 } from './box-credentials.js';
+export {
+  localDockerRun,
+  type DockerRun,
+  type DockerRunOptions,
+  type DockerRunResult,
+} from './docker-run.js';

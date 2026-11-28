@@ -39,6 +39,8 @@ import {
   boxAccountForContainer,
   sessionAccountPolicy,
   withSessionLlmProxy,
+  localDockerRun,
+  type DockerRun,
 } from '@agentbox/sandbox-docker';
 import { encodeClaudeProjectsKey } from '@agentbox/sandbox-core';
 // The host-side unsyncable-symlink pre-scan moved to the shared sync layer
@@ -206,13 +208,13 @@ const ENSURE_ONBOARDED_STEP =
  * hard link (`ln` fails if the file exists, so a concurrent writer is never
  * replaced); with one there, only {@link ENSURE_ONBOARDED_STEP} runs.
  */
-async function seedDefaultClaudeJson(
+export async function seedDefaultClaudeJson(
   volume: string,
   image: string,
+  run: DockerRun = localDockerRun,
 ): Promise<'seeded' | 'patched' | 'unchanged'> {
   const json = JSON.stringify(defaultBoxClaudeJson(CONTAINER_WORKSPACE), null, 2);
-  const res = await execa(
-    'docker',
+  const res = await run(
     [
       'run',
       '--rm',
@@ -230,7 +232,7 @@ async function seedDefaultClaudeJson(
         'ln "$t" /dst/_claude.json 2>/dev/null && echo seeded; rm -f "$t"; fi; ' +
         ENSURE_ONBOARDED_STEP,
     ],
-    { input: json, reject: false },
+    { input: json },
   );
   if (res.exitCode !== 0) {
     throw new Error(
@@ -1388,14 +1390,19 @@ export interface WarmUpClaudeResult {
 export async function warmUpClaudeCredentials(
   volume: string,
   image: string,
-  opts: { onProgress?: (line: string) => void; attempts?: number } = {},
+  opts: {
+    onProgress?: (line: string) => void;
+    attempts?: number;
+    /** Where docker runs (a control box's engine); default this machine's. */
+    run?: DockerRun;
+  } = {},
 ): Promise<WarmUpClaudeResult> {
   const MAX_ATTEMPTS = Math.max(1, opts.attempts ?? 6);
   const SLEEP_MS = 5000;
+  const run = opts.run ?? localDockerRun;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     opts.onProgress?.(`checking credentials... ${attempt}/${MAX_ATTEMPTS}`);
-    const res = await execa(
-      'docker',
+    const res = await run(
       [
         'run',
         '--rm',
@@ -1411,11 +1418,11 @@ export async function warmUpClaudeCredentials(
         '-p',
         'ok',
       ],
-      { reject: false, timeout: 60_000 },
+      { timeoutMs: 60_000 },
     );
     // `claude -p` can exit 0 while printing an API error as the turn's text,
     // so success needs a clean exit AND no error signature in the output.
-    const out = `${res.stdout ?? ''}\n${res.stderr ?? ''}`;
+    const out = `${res.stdout}\n${res.stderr}`;
     const apiError = /API Error|is not supported on this model|"type":\s*"error"/i.test(out);
     if (res.exitCode === 0 && !apiError) return { warmed: true, attempts: attempt };
     if (attempt < MAX_ATTEMPTS) await delay(SLEEP_MS);

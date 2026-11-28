@@ -25,6 +25,8 @@ import {
   ensureVolume,
   volumeExists,
   stageLoopbackOverlay,
+  localDockerRun,
+  type DockerRun,
 } from '@agentbox/sandbox-docker';
 import { piEndpointFiles } from './endpoints.js';
 import { AgentInstallError, ensureAgentInstalled, resolveAgentSpec } from '@agentbox/sandbox-core';
@@ -395,21 +397,21 @@ export function runInteractivePiLogin(dockerArgv: string[]): { exitCode: number 
  * offer. `-s` (non-empty) plus a `{}` reject is the cheap shape test that
  * matches the registry's `realShape: 'nonempty-json'`.
  */
-export async function volumeHasPiAuth(volume: string, image: string): Promise<boolean> {
-  const res = await execa(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '-v',
-      `${volume}:/dst`,
-      image,
-      'sh',
-      '-c',
-      `test -s /dst/auth.json && [ "$(tr -d ' \\n\\t' < /dst/auth.json)" != '{}' ]`,
-    ],
-    { reject: false },
-  );
+export async function volumeHasPiAuth(
+  volume: string,
+  image: string,
+  run: DockerRun = localDockerRun,
+): Promise<boolean> {
+  const res = await run([
+    'run',
+    '--rm',
+    '-v',
+    `${volume}:/dst`,
+    image,
+    'sh',
+    '-c',
+    `test -s /dst/auth.json && [ "$(tr -d ' \\n\\t' < /dst/auth.json)" != '{}' ]`,
+  ]);
   return res.exitCode === 0;
 }
 

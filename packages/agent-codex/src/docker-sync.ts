@@ -15,6 +15,8 @@ import {
   boxAccountForContainer,
   sessionForwardEnv,
   withSessionLlmProxy,
+  localDockerRun,
+  type DockerRun,
 } from '@agentbox/sandbox-docker';
 import { ensureAgentInstalled, AgentInstallError, resolveAgentSpec } from '@agentbox/sandbox-core';
 import {
@@ -762,12 +764,21 @@ export function runInteractiveCodexLogin(dockerArgv: string[]): { exitCode: numb
  * the first-run sign-in offer when an earlier box / `agentbox codex login`
  * already authenticated.
  */
-export async function volumeHasCodexAuth(volume: string, image: string): Promise<boolean> {
-  const res = await execa(
-    'docker',
-    ['run', '--rm', '-v', `${volume}:/dst`, image, 'sh', '-c', 'test -e /dst/auth.json'],
-    { reject: false },
-  );
+export async function volumeHasCodexAuth(
+  volume: string,
+  image: string,
+  run: DockerRun = localDockerRun,
+): Promise<boolean> {
+  const res = await run([
+    'run',
+    '--rm',
+    '-v',
+    `${volume}:/dst`,
+    image,
+    'sh',
+    '-c',
+    'test -e /dst/auth.json',
+  ]);
   return res.exitCode === 0;
 }
 

@@ -195,7 +195,11 @@ to every box on the account. **Sign in with a new account** (at the top of the
 page) works the same way for a new account: pick the agent and a name, and the
 same sign-in dialog follows. **Add a setup token or API key** opens a dialog to
 paste one under a name. The sign-in runs on the hub's machine, so on a remote control box it
-signs in that box's own store. The tray uses the same `/api/v1/accounts/{agent}/{id}/login`
+signs in that box's own store. A control box's hub runs in a container with no
+docker of its own, so there the sign-in container runs on the box's own docker
+engine (the `hub` host its deploy registers; `agentbox hub update` registers it
+again if it is missing). The first sign-in for an agent there adds that agent to
+the box image on the engine, which takes a minute or two. The tray uses the same `/api/v1/accounts/{agent}/{id}/login`
 routes (see [the API reference](/docs/api)).
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each

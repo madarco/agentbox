@@ -9,6 +9,7 @@
  * newest-wins gated like every other credential write.
  */
 import { execa } from 'execa';
+import { localDockerRun, type DockerRun } from '../docker-run.js';
 import {
   findAccount,
   type AgentSyncSpec,
@@ -78,40 +79,41 @@ export async function readDockerVolumeFiles(
   volume: string,
   image: string,
   rels: readonly string[],
+  run: DockerRun = localDockerRun,
 ): Promise<Record<string, string | null>> {
   for (const rel of rels) {
     const problem = relPathProblem(rel);
     if (problem) throw new Error(`volume path '${rel}' ${problem}`);
   }
   if (rels.length === 0) return {};
-  const res = await execa(
-    'docker',
-    [
-      'run',
-      '--rm',
-      '--user',
-      '0',
-      '-v',
-      `${volume}:/dst:ro`,
-      image,
-      'sh',
-      '-c',
-      READ_FILES_SCRIPT,
-      'sh',
-      ...rels,
-    ],
-    { reject: false },
-  );
+  const res = await run([
+    'run',
+    '--rm',
+    '--user',
+    '0',
+    '-v',
+    `${volume}:/dst:ro`,
+    image,
+    'sh',
+    '-c',
+    READ_FILES_SCRIPT,
+    'sh',
+    ...rels,
+  ]);
   if (res.exitCode !== 0) {
-    const why = String(res.stderr ?? '').trim() || `exit ${String(res.exitCode)}`;
+    const why = res.stderr.trim() || `exit ${String(res.exitCode)}`;
     throw new Error(`could not read the docker volume ${volume}: ${why.slice(-300)}`);
   }
-  return parseVolumeFiles(String(res.stdout ?? ''), rels);
+  return parseVolumeFiles(res.stdout, rels);
 }
 
 /** A {@link VolumeFileReader} over one docker volume. */
-export function dockerVolumeFileReader(volume: string, image: string): VolumeFileReader {
-  return (rels) => readDockerVolumeFiles(volume, image, rels);
+export function dockerVolumeFileReader(
+  volume: string,
+  image: string,
+  run: DockerRun = localDockerRun,
+): VolumeFileReader {
+  return (rels) => readDockerVolumeFiles(volume, image, rels, run);
 }
 
 /**
