@@ -330,24 +330,6 @@ export interface Project {
   lastUsedAt?: number | null;
 }
 
-export interface Repo {
-  id: string;
-  full: string;
-  private: boolean;
-  lang: string;
-  pushedAt: number;
-}
-
-export interface GithubState {
-  // false on localhost — the GitHub App is a hosted-hub concern, not a laptop one.
-  available: boolean;
-  installed: boolean;
-  appName: string;
-  account: string;
-  installedAt: number;
-  repos: Repo[];
-}
-
 export interface User {
   login: string;
   name: string;
@@ -556,7 +538,6 @@ export interface AgentOption {
 
 export interface HubState {
   user: User;
-  github: GithubState;
   projects: Project[];
   /** Registered workspaces. Empty on the hosted/Postgres path (host state only). */
   workspaces: WorkspaceView[];

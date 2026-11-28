@@ -1242,6 +1242,24 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/settings/git-access': {
+        get: {
+          tags: ['Accounts'],
+          summary: 'How this hub reaches GitHub',
+          description:
+            "`local`: the hub runs on the user's PC; boxes hold no git credential and the relay runs `git push` / `gh` on this machine with the user's own login, after approval (`login` is that machine's `gh` login, when it has one). `gh`: a control box with `hub.gitAuth=gh`, holding the GitHub token `hub setup` copied from the PC; `login` is the account it resolves to, `tokenRejected` means GitHub answered 401. `app`: a control box holding a GitHub App key, leasing 1-hour single-repo tokens to boxes; `app` names it and where it is installed (or `error` says its key is missing). The mode follows `hub.gitAuth` exactly. On a `gh` hub, `app` (id only) is present when an App is configured too, because the create worker clones through it. Lookups are cached for minutes and best-effort (`error` says why a detail is missing). The token is never returned.",
+          responses: {
+            '200': {
+              description: 'The git access in force',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/GitAccess' } },
+              },
+            },
+            '401': errorResponse,
+            '503': errorResponse,
+          },
+        },
+      },
       '/accounts/policy': {
         get: {
           tags: ['Accounts'],
@@ -8218,6 +8236,40 @@ export function buildOpenApi(): Record<string, unknown> {
               oneOf: [{ $ref: '#/components/schemas/GitIdentity' }, { type: 'null' }],
             },
             unchanged: { type: 'boolean', enum: [true] },
+          },
+        },
+        GitAccess: {
+          type: 'object',
+          required: ['mode', 'host'],
+          properties: {
+            mode: { type: 'string', enum: ['local', 'gh', 'app'] },
+            host: { type: 'string', description: '`github.com` unless `GH_HOST` is set.' },
+            login: { type: 'string' },
+            tokenPresent: { type: 'boolean', description: '`gh` mode only.' },
+            tokenRejected: { type: 'boolean', enum: [true], description: '`gh` mode only.' },
+            app: {
+              type: 'object',
+              required: ['id'],
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                slug: { type: 'string' },
+                url: { type: 'string' },
+                owner: { type: 'string' },
+                installations: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['account', 'repositories'],
+                    properties: {
+                      account: { type: 'string' },
+                      repositories: { type: 'string', enum: ['all', 'selected'] },
+                    },
+                  },
+                },
+              },
+            },
+            error: { type: 'string' },
           },
         },
         AccountPolicy: {

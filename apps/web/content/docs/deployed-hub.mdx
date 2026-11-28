@@ -139,6 +139,10 @@ The box runs `git push`, the hub pulls the branch out of it as a git bundle, and
   re-run `hub setup`.
 </Callout>
 
+**Settings → General → Git** on the hub shows which account the token pushes as, and says so when
+GitHub rejects it (a revoked or expired token). The hub reads the token when it starts, and
+`hub update` does not send a new one: re-running `hub setup` is the only way to replace it today.
+
 ### Getting a shell on the control box
 
 The deploy mints a dedicated SSH key for the VPS (`~/.agentbox/control-plane/ssh/<stamp>/`) — it's the **only** key that machine trusts — and adds a `Host agentbox-hub` entry to AgentBox's [managed SSH config](/docs/configuration#ssh), so you can just:
