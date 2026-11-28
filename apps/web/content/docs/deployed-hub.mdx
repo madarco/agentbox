@@ -139,6 +139,10 @@ The box runs `git push`, the hub pulls the branch out of it as a git bundle, and
   re-run `hub setup`.
 </Callout>
 
+**Settings → General → Git** on the hub shows which account the token pushes as, and says so when
+GitHub rejects it (a revoked or expired token). The hub reads the token when it starts, and
+`hub update` does not send a new one: re-running `hub setup` is the only way to replace it today.
+
 ### Getting a shell on the control box
 
 The deploy mints a dedicated SSH key for the VPS (`~/.agentbox/control-plane/ssh/<stamp>/`) — it's the **only** key that machine trusts — and adds a `Host agentbox-hub` entry to AgentBox's [managed SSH config](/docs/configuration#ssh), so you can just:
@@ -271,7 +275,7 @@ The control box's resident worker provisions boxes with **your provider credenti
 
 `HCLOUD_TOKEN` · `E2B_API_KEY` · `DAYTONA_API_KEY` / `DAYTONA_JWT_TOKEN` / `DAYTONA_ORGANIZATION_ID` · `VERCEL_TOKEN` / `VERCEL_TEAM_ID` / `VERCEL_PROJECT_ID` · `DIGITALOCEAN_TOKEN` (plus any endpoint/region overrides you set — `HCLOUD_ENDPOINT`, `E2B_DOMAIN`, `DAYTONA_API_URL` / `DAYTONA_TARGET`, `DIGITALOCEAN_API_URL`)
 
-**2. After deploy, in-place (web UI).** The dashboard → **Settings** → the provider's credential form (token/key fields). This writes to the VPS's own `~/.agentbox/secrets.env` and the worker picks it up live — so you can add or rotate a provider on a running control box without redeploying.
+**2. After deploy, in-place (web UI).** The dashboard → **Settings** → the provider's **Credentials** button, which opens a dialog with its token/key fields. This writes to the VPS's own `~/.agentbox/secrets.env` and the worker picks it up live — so you can add or rotate a provider on a running control box without redeploying.
 
 <Callout type="warn" title="Vercel needs a real token">
   Vercel has two auth modes. A **CLI login** (`agentbox vercel login` interactively) keeps the
@@ -734,7 +738,7 @@ The keys `hub setup` writes to `~/.agentbox/control-plane/control-plane.env` are
 agentbox hub login https://<your-hub-url>
 ```
 
-It prints a link and a short code (`XXXX-XXXX`) and waits. Open the link — on that computer or any other — and sign in as the owner. The hub's **Settings → Devices** page (`/settings/devices`) fills in the code from the link; check it matches the one on your screen and click **Approve**. Codes are never listed for one-click approval: anyone who can reach the hub can open a code labelled like your laptop, so the code you read on your own screen is the proof. Typing it in works too. The **Waiting** list shows each code's computer name, address and age so you can deny strangers (or **Deny all**); one address can hold at most three waiting codes. The CLI receives a token for this computer only, saves it to `~/.agentbox/control-plane/device.json` (`0600`), points `relay.controlPlaneUrl` at the hub and restarts the local hub so its relay drains your `cp` and host-tool requests with it. From then on every command uses that token. It is never sent to a different hub.
+It prints a link and a short code (`XXXX-XXXX`) and waits. Open the link — on that computer or any other — and sign in as the owner. The link opens the hub's **Settings → Devices** page (`/settings/devices`) with the **Approve a computer** dialog filled in with the code; check it matches the one on your screen and click **Approve**. Codes are never listed for one-click approval: anyone who can reach the hub can open a code labelled like your laptop, so the code you read on your own screen is the proof. Typing it in works too. The **Waiting** list shows each code's computer name, address and age so you can deny strangers (or **Deny all**); one address can hold at most three waiting codes. The CLI receives a token for this computer only, saves it to `~/.agentbox/control-plane/device.json` (`0600`), points `relay.controlPlaneUrl` at the hub and restarts the local hub so its relay drains your `cp` and host-tool requests with it. From then on every command uses that token. It is never sent to a different hub.
 
 A device is identified by the computer's machine id, so renaming the computer changes nothing. From the machine that ran `agentbox hub setup` (or `hub expose`), `agentbox hub devices approve <code>` approves without a browser: approving needs a signed-in owner session, or the hub API key **together with** the admin token that machine holds. That machine keeps this power after it is enrolled itself: `hub devices approve|revoke|rename` send its API key and admin token, not its device token. The API key alone, which the menu-bar app and other thin clients carry, cannot approve a device, since a device token reads custody. Elsewhere, approve the code on the Devices page.
 

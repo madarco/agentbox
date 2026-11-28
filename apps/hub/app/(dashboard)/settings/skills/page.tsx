@@ -826,17 +826,18 @@ function SkillTableRow({
         ) : null}
         {s ? (
           <>
-            <select
+            <Select
               aria-label={`Update policy for ${name}`}
               title="How a new version reaches boxes"
               value={s.policy ?? 'auto'}
               disabled={busy !== null}
               onChange={(e) => onPolicy(e.target.value as SkillPolicy)}
-              className="h-[30px] rounded-md border border-border bg-card px-1.5 text-xs text-secondary-foreground"
+              size="sm"
+              className="h-[30px] bg-card text-secondary-foreground"
             >
               <option value="auto">auto-update</option>
               <option value="manual">approve updates</option>
-            </select>
+            </Select>
             {s.pending ? (
               <Button size="sm" onClick={onReview}>
                 Review update

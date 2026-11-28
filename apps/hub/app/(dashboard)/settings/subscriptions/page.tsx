@@ -3,6 +3,7 @@
 // Subscriptions page (Settings → Subscriptions) — the named LLM accounts of this hub's machine (logins, setup
 // tokens, API keys per agent; docs/llm-accounts-plan.md, Phase 5). PURE REST
 // CLIENT over /api/v1/accounts: list, add a pasted key or setup token, remove.
+// Both adds open in a dialog (add-account-dialogs.tsx); the page itself holds no form.
 // A login is signed in (added or renewed) from here through the hub's own
 // sign-in (`…/login`, SignInDialog). No secret ever comes back from the API. Each card shows
 // one meter per plan-limit window the account reports (hub settings 3b,
@@ -14,35 +15,21 @@ import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { SubMark, SubMeters, TierBadge, subLine, subName } from '@/components/subscription-meters';
-import { refreshAccounts, resetText, useAccounts, type Account } from '@/lib/accounts-client';
-import { groupSubscriptions, subscriptionKey, type AccountKind } from '@/lib/subscriptions';
+import {
+  accountsApi as api,
+  refreshAccounts,
+  resetText,
+  useAccounts,
+  type Account,
+} from '@/lib/accounts-client';
+import { groupSubscriptions, subscriptionKey } from '@/lib/subscriptions';
 import { useStore } from '@/lib/boxes/store';
 import { cn } from '@/lib/utils';
-import { newAccountName } from '@/app/(dashboard)/api/v1/lib/validate';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
+import { AddKeyDialog, NewLoginDialog } from './add-account-dialogs';
 import { SignInDialog } from './sign-in-dialog';
-
-type Kind = AccountKind;
-
-const KIND_LABEL: Record<Kind, string> = {
-  login: 'login',
-  'setup-token': 'setup token',
-  'api-key': 'API key',
-};
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`/api/v1/accounts${path}`, {
-    credentials: 'same-origin',
-    ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
-  });
-  const body = (await r.json().catch(() => ({}))) as { error?: { message?: string } };
-  if (!r.ok) throw new Error(body.error?.message ?? `request failed (${String(r.status)})`);
-  return body as T;
-}
 
 const enc = (a: Account): string => `/${encodeURIComponent(a.agent)}/${encodeURIComponent(a.id)}`;
 
@@ -73,14 +60,8 @@ export default function SubscriptionsPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
-  // Add form.
-  const [agent, setAgent] = useState('');
-  const [kind, setKind] = useState<Kind>('setup-token');
-  const [id, setId] = useState('');
-  const [token, setToken] = useState('');
-  // Add-a-login form, and the sign-in in progress (add or renew).
-  const [loginAgent, setLoginAgent] = useState('');
-  const [loginName, setLoginName] = useState('');
+  // The add dialog open, and the sign-in in progress (add or renew).
+  const [adding, setAdding] = useState<'login' | 'key' | null>(null);
   const [signIn, setSignIn] = useState<{
     agent: string;
     account: string;
@@ -103,20 +84,7 @@ export default function SubscriptionsPage() {
   const load = refreshAccounts;
 
   const pastedAgents = agents.filter((a) => a.kinds.some((k) => k !== 'login'));
-  const chosen = pastedAgents.find((a) => a.id === agent) ?? pastedAgents[0];
-  const pastedKinds: Kind[] = (chosen?.kinds ?? []).filter((k) => k !== 'login');
-  const chosenKind = pastedKinds.includes(kind) ? kind : pastedKinds[0];
-  // What the hub will store: an existing name as typed, a new one normalized.
-  const typedId = id.trim();
-  const existingName = (accounts ?? []).some((a) => a.agent === chosen?.id && a.id === typedId);
-  const savedAs = typedId && !existingName ? newAccountName(typedId) : null;
   const loginAgents = agents.filter((a) => a.kinds.includes('login'));
-  const loginChosen = loginAgents.find((a) => a.id === loginAgent) ?? loginAgents[0];
-  const loginTyped = loginName.trim();
-  const loginSavedAs = loginTyped ? newAccountName(loginTyped) : null;
-  const loginTaken = (accounts ?? []).some(
-    (a) => a.agent === loginChosen?.id && (a.id === loginTyped || a.id === loginSavedAs),
-  );
 
   const act = async (key: string, fn: () => Promise<unknown>): Promise<void> => {
     setBusy(key);
@@ -151,29 +119,41 @@ export default function SubscriptionsPage() {
       }),
     );
 
-  const add = () =>
-    act('add', async () => {
-      if (!chosen || !chosenKind) return;
-      await api('', {
-        method: 'POST',
-        body: JSON.stringify({
-          agent: chosen.id,
-          id: id.trim(),
-          kind: chosenKind,
-          token: token.trim(),
-        }),
-      });
-      setId('');
-      setToken('');
-    });
-
   return (
     <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-8 max-sm:px-4">
-      <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">Subscriptions</h1>
-      <div className="mt-1.5 text-sm text-muted-foreground">
-        The plans and keys boxes run on: several logins, setup tokens or API keys per agent. Choose
-        one when you create a box; <span className="font-mono">default</span> is the agent&apos;s
-        plain login. A box that borrows another agent&apos;s login counts under that login.
+      <div className="flex items-start gap-4 max-md:flex-col">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-[25px] font-semibold leading-tight tracking-[-0.025em]">
+            Subscriptions
+          </h1>
+          <div className="mt-1.5 text-sm text-muted-foreground">
+            The plans and keys boxes run on: several logins, setup tokens or API keys per agent.
+            Choose one when you create a box; <span className="font-mono">default</span> is the
+            agent&apos;s plain login. A box that borrows another agent&apos;s login counts under
+            that login.
+          </div>
+        </div>
+        {accounts ? (
+          <div className="flex flex-none flex-wrap items-center gap-2 pt-1">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pastedAgents.length === 0 || busy !== null}
+              title={pastedAgents.length === 0 ? 'No agent here takes a pasted account' : undefined}
+              onClick={() => setAdding('key')}
+            >
+              <Icons.plus /> Add a setup token or API key
+            </Button>
+            <Button
+              size="sm"
+              disabled={loginAgents.length === 0 || busy !== null || signIn !== null}
+              title={loginAgents.length === 0 ? 'No agent here takes a login account' : undefined}
+              onClick={() => setAdding('login')}
+            >
+              <Icons.key /> Sign in with a new account
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {error ? (
@@ -202,7 +182,7 @@ export default function SubscriptionsPage() {
               <EmptyBox>
                 <div>No accounts yet.</div>
                 <div className="mt-1.5 font-mono text-xs text-muted-foreground">
-                  Sign in with `agentbox claude login`, or add a named one below.
+                  Sign in with `agentbox claude login`, or add a named one with the buttons above.
                 </div>
               </EmptyBox>
             </>
@@ -247,147 +227,30 @@ export default function SubscriptionsPage() {
               </div>
             ))
           )}
-
-          <SectionLabel>Add a login</SectionLabel>
-          {loginAgents.length === 0 ? (
-            <EmptyBox>
-              <div>No agent here takes a login account.</div>
-            </EmptyBox>
-          ) : (
-            <Card className="p-4 px-5">
-              <form
-                className="flex flex-wrap items-center gap-2"
-                onSubmit={(ev) => {
-                  ev.preventDefault();
-                  if (!loginChosen || !loginSavedAs || loginTaken) return;
-                  setSignIn({ agent: loginChosen.id, account: loginSavedAs, mode: 'add' });
-                  setLoginName('');
-                }}
-              >
-                <select
-                  aria-label="Login agent"
-                  className="h-8 rounded-md border bg-background px-2 text-[13px]"
-                  value={loginChosen?.id ?? ''}
-                  onChange={(ev) => setLoginAgent(ev.target.value)}
-                >
-                  {loginAgents.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.id}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  value={loginName}
-                  onChange={(ev) => setLoginName(ev.target.value)}
-                  placeholder="name (e.g. work max)"
-                  aria-label="Login name"
-                  className="w-48 font-mono"
-                  autoComplete="off"
-                />
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={busy !== null || signIn !== null || !loginSavedAs || loginTaken}
-                >
-                  <Icons.key /> Sign in
-                </Button>
-              </form>
-              {loginTyped ? (
-                <div className="mt-2 font-mono text-[12px] text-muted-foreground">
-                  {loginTaken
-                    ? `${loginChosen?.id ?? ''}/${loginSavedAs ?? loginTyped} already exists; renew it above`
-                    : loginSavedAs
-                      ? loginSavedAs !== loginTyped
-                        ? `saved as ${loginChosen?.id ?? ''}/${loginSavedAs}`
-                        : null
-                      : 'a name is letters, digits, spaces or _'}
-                </div>
-              ) : null}
-              <div className="mt-3 text-[12px] text-muted-foreground">
-                Signs in on the hub&apos;s machine: open the page it shows, then paste the code back
-                here (claude) or approve the device code (codex).
-              </div>
-            </Card>
-          )}
-
-          <SectionLabel>Add a setup token or API key</SectionLabel>
-          {pastedAgents.length === 0 ? (
-            <EmptyBox>
-              <div>No agent here takes a pasted account.</div>
-            </EmptyBox>
-          ) : (
-            <Card className="p-4 px-5">
-              <form
-                className="flex flex-wrap items-center gap-2"
-                onSubmit={(ev) => {
-                  ev.preventDefault();
-                  void add();
-                }}
-              >
-                <select
-                  aria-label="Agent"
-                  className="h-8 rounded-md border bg-background px-2 text-[13px]"
-                  value={chosen?.id ?? ''}
-                  onChange={(ev) => setAgent(ev.target.value)}
-                >
-                  {pastedAgents.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.id}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Kind"
-                  className="h-8 rounded-md border bg-background px-2 text-[13px]"
-                  value={chosenKind ?? ''}
-                  onChange={(ev) => setKind(ev.target.value as Kind)}
-                >
-                  {pastedKinds.map((k) => (
-                    <option key={k} value={k}>
-                      {KIND_LABEL[k]}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  value={id}
-                  onChange={(ev) => setId(ev.target.value)}
-                  placeholder="name (e.g. work max)"
-                  aria-label="Name"
-                  title={savedAs ? `Saved as ${savedAs}` : undefined}
-                  className="w-40 font-mono"
-                  autoComplete="off"
-                />
-                <Input
-                  type="password"
-                  value={token}
-                  onChange={(ev) => setToken(ev.target.value)}
-                  placeholder={chosenKind === 'api-key' ? 'API key' : 'setup token'}
-                  className="min-w-[220px] flex-1 font-mono"
-                  autoComplete="off"
-                />
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={busy !== null || !id.trim() || !token.trim()}
-                >
-                  <Icons.plus /> Add
-                </Button>
-              </form>
-              {typedId && !existingName && savedAs !== typedId ? (
-                <div className="mt-2 font-mono text-[12px] text-muted-foreground">
-                  {savedAs
-                    ? `saved as ${chosen?.id ?? ''}/${savedAs}`
-                    : 'a name is letters, digits, spaces or _'}
-                </div>
-              ) : null}
-              <div className="mt-3 text-[12px] text-muted-foreground">
-                A setup token never renews, so it is the right kind for an account several boxes use
-                at once.
-              </div>
-            </Card>
-          )}
         </>
       )}
+      {adding === 'login' && accounts ? (
+        <NewLoginDialog
+          agents={loginAgents}
+          accounts={accounts}
+          onClose={() => setAdding(null)}
+          onSignIn={(agent, account) => {
+            setAdding(null);
+            setSignIn({ agent, account, mode: 'add' });
+          }}
+        />
+      ) : null}
+      {adding === 'key' && accounts ? (
+        <AddKeyDialog
+          agents={pastedAgents}
+          accounts={accounts}
+          onClose={() => setAdding(null)}
+          onAdded={() => {
+            setAdding(null);
+            void load();
+          }}
+        />
+      ) : null}
       {signIn ? (
         <SignInDialog
           key={`${signIn.agent}/${signIn.account}`}

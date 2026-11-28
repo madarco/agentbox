@@ -22,14 +22,6 @@ export async function getDashboardData(opts?: { live?: boolean }): Promise<HubSt
   // No source (e.g. plain `next start` with no Postgres) — nothing to read.
   return {
     user: { login: 'user', name: 'user' },
-    github: {
-      available: false,
-      installed: false,
-      appName: 'GitHub App',
-      account: '',
-      installedAt: 0,
-      repos: [],
-    },
     projects: [],
     workspaces: [],
     boxes: [],

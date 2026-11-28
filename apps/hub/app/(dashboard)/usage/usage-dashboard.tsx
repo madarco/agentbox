@@ -11,6 +11,7 @@ import { UsageView } from '@agentbox/usage-view/react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { Select } from '@/components/ui/select';
 import { Icons } from '@/components/icons';
 import {
   USAGE_RANGES,
@@ -106,15 +107,21 @@ export function UsageDashboard() {
 
   const actions = (
     <>
-      <label className="select">
-        <svg {...svg}>
+      {/* The shared Select in the view's 34px pill look, with its leading icon. */}
+      <span className="relative inline-flex">
+        <svg
+          {...svg}
+          className="pointer-events-none absolute left-3 top-1/2 z-10 size-3.5 -translate-y-1/2 text-[var(--muted)]"
+        >
           <rect x="4" y="7" width="16" height="12" rx="2" />
           <path d="M9 7V5h6v2" />
         </svg>
-        <select
+        <Select
           aria-label="Subscription"
           value={subscription ?? ''}
           onChange={(ev) => setSubscription(ev.target.value || undefined)}
+          wrapperClassName="max-w-[260px] max-sm:max-w-[190px]"
+          className="h-[34px] rounded-lg border-[var(--line)] bg-[var(--card)] pl-[33px] text-[13px] font-medium text-[var(--ink-2)] shadow-none focus-visible:border-[var(--green)] focus-visible:ring-[var(--green)]/30 dark:bg-[var(--card)]"
         >
           <option value="">All subscriptions</option>
           {options.map(([k, label]) => (
@@ -122,8 +129,8 @@ export function UsageDashboard() {
               {label}
             </option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </span>
       <button
         type="button"
         className="btn"

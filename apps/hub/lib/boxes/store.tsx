@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import type { Box, HubState, Project, Repo } from './types';
+import type { Box, HubState, Project } from './types';
 
 // Read-only data context. The dashboard layout (a server component) reads the
 // host state and passes it in as `data`; a lifecycle server action +
@@ -12,7 +12,6 @@ interface HubContextValue {
   project: (id: string) => Project | undefined;
   box: (id: string) => Box | undefined;
   boxesFor: (pid: string) => Box[];
-  repo: (full: string) => Repo | undefined;
 }
 
 const HubContext = createContext<HubContextValue | null>(null);
@@ -24,7 +23,6 @@ export function HubProvider({ data, children }: { data: HubState; children: Reac
       project: (id) => data.projects.find((p) => p.id === id),
       box: (id) => data.boxes.find((b) => b.id === id),
       boxesFor: (pid) => data.boxes.filter((b) => b.projectId === pid),
-      repo: (full) => data.github.repos.find((r) => r.full === full),
     }),
     [data],
   );

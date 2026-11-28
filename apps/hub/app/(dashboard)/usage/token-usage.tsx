@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Select } from '@/components/ui/select';
 import { EmptyBox } from '../boxes/components/empty-box';
 import { SectionLabel } from '../boxes/components/section-label';
 import { usageKeyLabel, type SubscriptionAccount } from '@/lib/subscriptions';
@@ -184,9 +185,9 @@ export function TokenUsage() {
             {r.label}
           </Button>
         ))}
-        <select
+        <Select
           aria-label="Subscription"
-          className="h-8 rounded-md border bg-background px-2 text-[13px]"
+          className="h-8 text-[13px]"
           value={subscription ?? ''}
           onChange={(ev) => setFilter('account', ev.target.value || undefined)}
         >
@@ -196,7 +197,7 @@ export function TokenUsage() {
               {label}
             </option>
           ))}
-        </select>
+        </Select>
         {Object.entries(others)
           .filter(([k]) => k !== 'account')
           .map(([k, v]) => (

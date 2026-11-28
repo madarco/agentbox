@@ -273,14 +273,6 @@ export async function getPostgresDashboardData(): Promise<Omit<HubState, 'authMo
     // Workspaces (and their tasks) are host-machine state: the hosted DB view
     // holds none, and an empty list is the honest answer, not a missing field.
     workspaces: [],
-    github: {
-      available: false,
-      installed: false,
-      appName: 'GitHub App',
-      account: '',
-      installedAt: 0,
-      repos: [],
-    },
     projects: deriveProjects(regs),
     boxes: regs.map((r) => mapBox(r, statusByBox.get(r.boxId))),
     approvals,
