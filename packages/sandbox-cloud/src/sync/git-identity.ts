@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { gitIdentitySourceLabel } from '@agentbox/core';
 import type { CloudBackend, CloudHandle, ResolvedGitIdentity } from '@agentbox/core';
 import { bashScript, quoteShellArg } from '../shell.js';
 
@@ -63,14 +64,6 @@ export async function seedGitIdentity(
   log(`git: configured committer identity ${name} <${email}> (from ${source})`);
 }
 
-/** Labels for the create log: which precedence step supplied the identity. */
-const SOURCE_LABELS = {
-  request: 'the requesting machine',
-  'hub-default': 'the hub default (git.identityName/git.identityEmail)',
-  host: "this machine's git config",
-  fallback: 'the agentbox fallback',
-} as const;
-
 /**
  * Request / hub default (resolved by the caller), then this machine's effective
  * `git config`, then the generic fallback. Name and email come from the same
@@ -83,7 +76,7 @@ export async function resolveBoxGitIdentity(
     return {
       name: opts.identity.name,
       email: opts.identity.email,
-      source: SOURCE_LABELS[opts.identity.source],
+      source: gitIdentitySourceLabel(opts.identity.source),
     };
   }
   const hostName = await readHostGitConfig('user.name', opts.hostRepo);
@@ -91,7 +84,7 @@ export async function resolveBoxGitIdentity(
   return {
     name: hostName ?? FALLBACK_NAME,
     email: hostEmail ?? FALLBACK_EMAIL,
-    source: hostName || hostEmail ? SOURCE_LABELS.host : SOURCE_LABELS.fallback,
+    source: gitIdentitySourceLabel(hostName || hostEmail ? 'host' : 'fallback'),
   };
 }
 

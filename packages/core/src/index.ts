@@ -192,6 +192,7 @@ export type { GitIdentity, GitIdentitySource, ResolvedGitIdentity } from './git-
 export {
   GIT_IDENTITY_MAX_LENGTH,
   gitIdentityFieldProblem,
+  gitIdentitySourceLabel,
   parseGitIdentity,
   resolveCreateGitIdentity,
 } from './git-identity.js';

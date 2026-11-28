@@ -7,9 +7,30 @@
  * the hub keeps one somebody already chose — the first PC to enroll sets it,
  * and the Settings page is where it changes.
  */
-import { homedir } from 'node:os';
-import type { GitIdentity } from '@agentbox/core';
-import { readProjectGitIdentity } from '../lib/hub-create-opts.js';
+import { execFileSync } from 'node:child_process';
+import { parseGitIdentity, type GitIdentity } from '@agentbox/core';
+
+function globalGitConfig(key: string): string | undefined {
+  try {
+    const v = execFileSync('git', ['config', '--global', key], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+    }).trim();
+    return v.length > 0 ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** This PC's global identity (never a repo-local one, even with a repo at ~). */
+export function readGlobalGitIdentity(): GitIdentity | undefined {
+  const parsed = parseGitIdentity({
+    name: globalGitConfig('user.name'),
+    email: globalGitConfig('user.email'),
+  });
+  return parsed.ok ? parsed.value : undefined;
+}
 
 export type HubGitIdentityOffer =
   | { outcome: 'set'; identity: GitIdentity }
@@ -27,7 +48,7 @@ export async function offerHubGitIdentity(opts: {
 }): Promise<HubGitIdentityOffer> {
   // The global identity, not whichever repo the command ran in: this is the
   // PC's identity, not a project's.
-  const identity = (opts.readIdentity ?? (() => readProjectGitIdentity(homedir())))();
+  const identity = (opts.readIdentity ?? readGlobalGitIdentity)();
   if (!identity) return { outcome: 'no-local-identity' };
   const res = await (opts.fetch ?? fetch)(
     `${opts.url.replace(/\/+$/, '')}/api/v1/settings/git-identity`,
@@ -60,6 +81,6 @@ export function describeHubGitIdentityOffer(r: HubGitIdentityOffer): string | nu
     case 'unsupported':
       return null;
     case 'no-local-identity':
-      return "This computer has no git user.name/user.email, so the hub's default commit identity was left unset. Set it on the hub's Settings page.";
+      return "This computer has no global git user.name/user.email to offer as the hub's default commit identity; if the hub has none, set it on its Settings page.";
   }
 }

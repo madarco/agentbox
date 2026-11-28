@@ -70,7 +70,7 @@ describe('opts.gitIdentity on POST /api/v1/boxes', () => {
 });
 
 describe('the hub default (GET/PUT /api/v1/settings/git-identity)', () => {
-  const backend = createGitIdentityBackend({ configHome: HOME });
+  const backend = createGitIdentityBackend({ cwd: HOME });
 
   beforeEach(async () => {
     await backend.setHubGitIdentity({ identity: null });
@@ -121,7 +121,7 @@ describe('the identity a worker-built box gets', () => {
   });
 
   it("reads the hub's configured default by default", async () => {
-    const backend = createGitIdentityBackend({ configHome: HOME });
+    const backend = createGitIdentityBackend({ cwd: HOME });
     await backend.setHubGitIdentity({ identity: TEAM });
     expect(await workerGitIdentity(undefined)).toEqual({ ...TEAM, source: 'hub-default' });
     await backend.setHubGitIdentity({ identity: null });

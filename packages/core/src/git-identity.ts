@@ -71,3 +71,17 @@ export function resolveCreateGitIdentity(
   if (hubDefault) return { name: hubDefault.name, email: hubDefault.email, source: 'hub-default' };
   return undefined;
 }
+
+/** How the create log names where a box's identity came from. */
+export function gitIdentitySourceLabel(source: GitIdentitySource | 'host' | 'fallback'): string {
+  switch (source) {
+    case 'request':
+      return 'the requesting machine';
+    case 'hub-default':
+      return 'the hub default (git.identity.name / git.identity.email)';
+    case 'host':
+      return "this machine's git config";
+    case 'fallback':
+      return 'the agentbox fallback';
+  }
+}

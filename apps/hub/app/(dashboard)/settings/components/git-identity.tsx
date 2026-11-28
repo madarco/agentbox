@@ -35,12 +35,25 @@ export function GitIdentityCard() {
 
   useEffect(() => {
     let alive = true;
+    // A failed read still unlocks the form (as unset) and says why, rather than
+    // leaving it greyed out with no explanation.
     fetch(ENDPOINT, { credentials: 'same-origin' })
-      .then(async (r) => (r.ok ? ((await r.json()) as { identity: Identity | null }) : null))
-      .then((j) => {
-        if (alive && j) apply(j.identity);
+      .then(async (r) => {
+        if (!alive) return;
+        if (r.ok) {
+          apply(((await r.json()) as { identity: Identity | null }).identity);
+          return;
+        }
+        apply(null);
+        setError(`Could not read the current identity: ${await errorOf(r)}`);
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if (!alive) return;
+        apply(null);
+        setError(
+          `Could not read the current identity: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
     return () => {
       alive = false;
     };
