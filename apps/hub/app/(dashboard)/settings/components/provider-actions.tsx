@@ -11,6 +11,15 @@ import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogBody,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogIcon,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Icons } from '@/components/icons';
 import { cn } from '@/lib/utils';
@@ -150,20 +159,8 @@ const MASK = '••••••••••••';
 function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   const router = useRouter();
   const fields = credFields(p);
-  // Required fields re-mask when emptied; optional ones (e.g. vercel team/project) don't.
-  const maskableKeys = new Set(fields.filter((f) => !f.optional).map((f) => f.key));
-  const [values, setValues] = useState<Record<string, string>>({});
-  // Start required fields masked when the provider already has credentials.
-  const [masked, setMasked] = useState<Record<string, boolean>>(() =>
-    p.hasCredentials
-      ? Object.fromEntries(fields.filter((f) => !f.optional).map((f) => [f.key, true]))
-      : {},
-  );
-  const [savingCreds, setSavingCreds] = useState(false);
-  const [credError, setCredError] = useState<string | null>(null);
-  // Always collapsed. Auto-expanding every unconfigured provider meant a fresh
-  // hub opened with a wall of credential forms — the badge already says which
-  // ones need attention, so let the user open the one they came for.
+  const [credsOpen, setCredsOpen] = useState(false);
+  // remote-docker's host list: always collapsed until its row is clicked.
   const [showForm, setShowForm] = useState(false);
   // A bake in flight: from a live job (p.jobId, survives navigation) or one we
   // just started here.
@@ -175,39 +172,6 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   // the credential form + provider Bake button, and its badge counts hosts.
   const isRD = p.id === 'remote-docker';
   const [hostCount, setHostCount] = useState<number | null>(null);
-
-  const saveCreds = async (): Promise<void> => {
-    setSavingCreds(true);
-    setCredError(null);
-    try {
-      const body: Record<string, string> = {};
-      for (const f of fields) {
-        if (masked[f.key]) continue; // the dot mask is a placeholder, not a value
-        const v = (values[f.key] ?? '').trim();
-        if (v) body[f.key] = v;
-      }
-      const res = await fetch(`/api/v1/providers/${encodeURIComponent(p.id)}/credentials`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        setCredError(j?.error?.message ?? `request failed (${res.status})`);
-        return;
-      }
-      setValues({});
-      // Re-mask the required fields now that they have a saved value.
-      setMasked(Object.fromEntries([...maskableKeys].map((k) => [k, true])));
-      setShowForm(false);
-      router.refresh(); // hasCredentials flips in getData
-    } catch (err) {
-      setCredError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSavingCreds(false);
-    }
-  };
 
   const bake = async (): Promise<void> => {
     setBaking(true);
@@ -246,12 +210,12 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
   // on `id === 'docker'` left every credential-free plugin unbakeable.
   const canBake = fields.length === 0 || p.hasCredentials;
   const hasFields = fields.length > 0;
-  const expandable = !onHub && (hasFields || isRD);
+  // Only remote-docker expands (its host list); credentials open in a dialog.
+  const expandable = !onHub && isRD;
 
   return (
     <div className="flex flex-col gap-3 p-4 px-5">
-      {/* Whole header row toggles the credential form (cloud providers). The
-          Re-bake button stops propagation so it never toggles. */}
+      {/* remote-docker: the whole header row toggles its host list. */}
       <div
         className={cn('flex items-center gap-3', expandable && 'cursor-pointer')}
         onClick={expandable ? () => setShowForm((s) => !s) : undefined}
@@ -289,6 +253,18 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
           </a>
         ) : isRD ? null : (
           <div className="flex flex-none items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            {hasFields ? (
+              <Button
+                type="button"
+                size="sm"
+                variant={p.hasCredentials ? 'ghost' : 'outline'}
+                aria-label={`${p.label} credentials`}
+                onClick={() => setCredsOpen(true)}
+              >
+                <Icons.key className="size-3.5" />
+                {p.hasCredentials ? 'Credentials' : 'Add credentials'}
+              </Button>
+            ) : null}
             <Button
               type="button"
               size="sm"
@@ -309,10 +285,7 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
               showForm && 'rotate-90',
             )}
           />
-        ) : (
-          // Keep the Re-bake button aligned with the chevron'd rows.
-          <span className="size-4 flex-none" aria-hidden />
-        )}
+        ) : null}
       </div>
 
       {isRD ? (
@@ -323,44 +296,16 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
         </div>
       ) : null}
 
-      {!onHub && showForm && fields.length > 0 ? (
-        <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-card/50 p-3">
-          {fields.map((f) => (
-            <div key={f.key} className="flex flex-col gap-1">
-              <label className="text-[11.5px] font-medium text-muted-foreground">
-                {f.label}
-                {f.optional ? ' (optional)' : ''}
-              </label>
-              <Input
-                type="password"
-                autoComplete="off"
-                value={masked[f.key] ? MASK : (values[f.key] ?? '')}
-                placeholder={f.placeholder}
-                onFocus={() => {
-                  // Clear the "already saved" mask on focus so a fresh value can be typed.
-                  if (masked[f.key]) {
-                    setMasked((m) => ({ ...m, [f.key]: false }));
-                    setValues((v) => ({ ...v, [f.key]: '' }));
-                  }
-                }}
-                onBlur={() => {
-                  // Restore the mask if a previously-saved field was left empty.
-                  if (maskableKeys.has(f.key) && !(values[f.key] ?? '').trim()) {
-                    setMasked((m) => ({ ...m, [f.key]: true }));
-                  }
-                }}
-                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                className="font-mono text-xs"
-              />
-            </div>
-          ))}
-          <div className="mt-1 flex items-center gap-2">
-            <Button type="button" size="sm" disabled={savingCreds} onClick={() => void saveCreds()}>
-              {savingCreds ? 'Saving…' : 'Save credentials'}
-            </Button>
-            {credError ? <span className="text-xs text-red-400">{credError}</span> : null}
-          </div>
-        </div>
+      {credsOpen ? (
+        <CredentialsDialog
+          provider={p}
+          fields={fields}
+          onClose={() => setCredsOpen(false)}
+          onSaved={() => {
+            setCredsOpen(false);
+            router.refresh(); // hasCredentials flips in getData
+          }}
+        />
       ) : null}
 
       {bakeError ? <div className="text-xs text-red-400">{bakeError}</div> : null}
@@ -376,5 +321,133 @@ function ProviderRow({ provider: p }: { provider: ProviderOption }) {
         />
       ) : null}
     </div>
+  );
+}
+
+function CredentialsDialog({
+  provider: p,
+  fields,
+  onClose,
+  onSaved,
+}: {
+  provider: ProviderOption;
+  fields: CredField[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  // Required fields re-mask when emptied; optional ones (e.g. vercel team/project) don't.
+  const maskableKeys = new Set(fields.filter((f) => !f.optional).map((f) => f.key));
+  const [values, setValues] = useState<Record<string, string>>({});
+  // Start required fields masked when the provider already has credentials.
+  const [masked, setMasked] = useState<Record<string, boolean>>(() =>
+    p.hasCredentials
+      ? Object.fromEntries(fields.filter((f) => !f.optional).map((f) => [f.key, true]))
+      : {},
+  );
+  const [savingCreds, setSavingCreds] = useState(false);
+  const [credError, setCredError] = useState<string | null>(null);
+
+  const saveCreds = async (): Promise<void> => {
+    setSavingCreds(true);
+    setCredError(null);
+    try {
+      const body: Record<string, string> = {};
+      for (const f of fields) {
+        if (masked[f.key]) continue; // the dot mask is a placeholder, not a value
+        const v = (values[f.key] ?? '').trim();
+        if (v) body[f.key] = v;
+      }
+      const res = await fetch(`/api/v1/providers/${encodeURIComponent(p.id)}/credentials`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        setCredError(j?.error?.message ?? `request failed (${res.status})`);
+        return;
+      }
+      onSaved();
+    } catch (err) {
+      setCredError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingCreds(false);
+    }
+  };
+
+  return (
+    <Dialog onClose={savingCreds ? () => {} : onClose}>
+      <DialogHeader>
+        <DialogIcon>
+          <Icons.key />
+        </DialogIcon>
+        <div>
+          <DialogTitle>{p.label} credentials</DialogTitle>
+          <DialogDescription>
+            {p.hasCredentials
+              ? 'saved values stay unless you type a new one'
+              : 'stored on this hub'}
+          </DialogDescription>
+        </div>
+      </DialogHeader>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void saveCreds();
+        }}
+      >
+        <DialogBody className="flex flex-col gap-3">
+          {fields.map((f, i) => (
+            <div key={f.key} className="flex flex-col gap-1">
+              <label
+                htmlFor={`cred-${p.id}-${f.key}`}
+                className="text-[11.5px] font-medium text-muted-foreground"
+              >
+                {f.label}
+                {f.optional ? ' (optional)' : ''}
+              </label>
+              <Input
+                id={`cred-${p.id}-${f.key}`}
+                type="password"
+                autoComplete="off"
+                autoFocus={i === 0 && !masked[f.key]}
+                disabled={savingCreds}
+                value={masked[f.key] ? MASK : (values[f.key] ?? '')}
+                placeholder={f.placeholder}
+                onFocus={() => {
+                  // Clear the "already saved" mask on focus so a fresh value can be typed.
+                  if (masked[f.key]) {
+                    setMasked((m) => ({ ...m, [f.key]: false }));
+                    setValues((v) => ({ ...v, [f.key]: '' }));
+                  }
+                }}
+                onBlur={() => {
+                  // Restore the mask if a previously-saved field was left empty.
+                  if (
+                    maskableKeys.has(f.key) &&
+                    p.hasCredentials &&
+                    !(values[f.key] ?? '').trim()
+                  ) {
+                    setMasked((m) => ({ ...m, [f.key]: true }));
+                  }
+                }}
+                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                className="font-mono text-xs"
+              />
+            </div>
+          ))}
+          {credError ? <div className="text-xs text-red-400">{credError}</div> : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" size="sm" variant="ghost" disabled={savingCreds} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={savingCreds}>
+            {savingCreds ? 'Saving…' : 'Save credentials'}
+          </Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
   );
 }

@@ -159,3 +159,15 @@ export function agoText(iso: string, now = Date.now()): string {
   if (ms < 48 * 60 * 60_000) return `updated ${String(Math.round(ms / 3_600_000))} h ago`;
   return `updated ${String(Math.round(ms / 86_400_000))} days ago`;
 }
+
+/** A call to `/api/v1/accounts<path>`; a non-2xx throws the API's error message. */
+export async function accountsApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(`/api/v1/accounts${path}`, {
+    credentials: 'same-origin',
+    ...init,
+    headers: { 'content-type': 'application/json', ...init?.headers },
+  });
+  const body = (await r.json().catch(() => ({}))) as { error?: { message?: string } };
+  if (!r.ok) throw new Error(body.error?.message ?? `request failed (${String(r.status)})`);
+  return body as T;
+}

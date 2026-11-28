@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import {
   api,
@@ -199,17 +200,18 @@ function BoxSkills({ id, running }: { id: string; running: boolean }) {
                     {h?.pending ? ' · update waiting' : ''}
                   </span>
                   {inLibrary ? (
-                    <select
+                    <Select
                       aria-label={`${name} in this box`}
                       value={choice}
                       disabled={busy !== null}
                       onChange={(e) => void bind(name, e.target.value as Choice)}
-                      className="h-7 rounded-md border border-border bg-card px-1.5 text-xs text-secondary-foreground"
+                      size="sm"
+                      className="bg-card text-secondary-foreground"
                     >
                       <option value="inherit">inherit</option>
                       <option value="include">on</option>
                       <option value="exclude">off</option>
-                    </select>
+                    </Select>
                   ) : null}
                 </div>
               );

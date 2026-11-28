@@ -529,28 +529,6 @@ body .usage {
   --sans: var(--font-ibm-plex-sans), 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
   --mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 }
-/* The subscription filter: a native select inside the view's .select pill. */
-.usage label.select {
-  position: relative;
-  padding-right: 8px;
-}
-.usage label.select select {
-  appearance: auto;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  max-width: 220px;
-  cursor: pointer;
-  outline: none;
-}
-.usage label.select:focus-within {
-  outline: 2px solid var(--green);
-  outline-offset: 1px;
-}
-.usage label.select select option {
-  color: initial;
-}
 .usage .btn:disabled {
   opacity: 0.55;
   cursor: default;
@@ -577,9 +555,4 @@ body .usage {
   font-size: 12px;
   color: var(--red);
   overflow-wrap: anywhere;
-}
-@media (max-width: 760px) {
-  .usage label.select select {
-    max-width: 150px;
-  }
 }

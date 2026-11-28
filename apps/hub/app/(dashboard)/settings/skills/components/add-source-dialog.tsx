@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { fmtBytes } from '@/lib/boxes/format';
 import { cn } from '@/lib/utils';
 import { api, errText, type AddResult, type SkillCandidate, type SkillPolicy } from './api';
@@ -315,14 +316,15 @@ export function AddSourceDialog({
             <div className="flex flex-wrap items-center gap-4 text-xs">
               <label className="flex items-center gap-1.5">
                 Updates
-                <select
+                <Select
                   value={policy}
                   onChange={(e) => setPolicy(e.target.value as SkillPolicy)}
-                  className="rounded-md border border-border bg-card px-1.5 py-1 text-xs"
+                  size="sm"
+                  className="bg-card"
                 >
                   <option value="manual">wait for approval</option>
                   <option value="auto">apply automatically</option>
-                </select>
+                </Select>
               </label>
               {pickedFindings ? (
                 <label className="flex items-center gap-1.5 text-[var(--amber)]">
