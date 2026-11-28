@@ -128,6 +128,12 @@ const descriptor: ProviderDescriptor = {
   ],
   sizeHint: 'vCPU count, e.g. 8',      // omit for a CLOSED set (no custom field)
   sizeAppliesAt: 'create',             // 'bake' if you reject per-create resources
+  // The location picker. Optional — omit and no picker appears.
+  regions: [
+    { key: 'eu-1', label: 'eu-1 - Frankfurt (default)' },
+    { key: 'us-1', label: 'us-1 - Virginia' },
+  ],
+  regionHint: 'a region id, e.g. ap-1',              // omit for a CLOSED set (no custom field)
   blurb: 'MyProvider microVMs',
   sizeDesc: 'Per-provider override of `box.size` for myprovider (vCPU count).',
   imageDesc: 'Per-provider override of `box.image` for myprovider (snapshot id).',
@@ -187,6 +193,20 @@ sizeIgnoredReason(size) {
   return `myprovider fixes resources at bake time: this box will run at ${baked}, not ${size}. Re-bake with: agentbox prepare --provider myprovider --force --size ${size}`;
 }
 ```
+
+### Declaring regions
+
+Same model as sizes: `--location` is an opaque string your backend reads (a
+Hetzner location `hel1`, a DigitalOcean region `fra1`, a Daytona region `eu`).
+
+| Field | Meaning |
+|---|---|
+| `regions` | The offered locations, your default first. Each `key` is a literal `--location` value; the `label` says where it is. Absent = no location picker, and `--location` is ignored with a warning. Declaring it is also what makes the CLI forward `--location` to you as `providerOptions.location` (with `locationPinned: true`, meaning the user chose it: do not move the box elsewhere on a capacity error). |
+| `regionHint` | Placeholder for a free-text location. Like `sizeHint`, its presence opens the list. |
+
+Not every size exists in every region; the descriptor does not try to say which.
+Record where a box actually landed by returning `location` in the backend's
+create handle.
 
 ## Choosing capability values
 

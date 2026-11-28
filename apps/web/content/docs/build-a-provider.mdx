@@ -122,6 +122,12 @@ const descriptor: ProviderDescriptor = {
   ],
   sizeHint: 'vCPU count, e.g. 8', // omit for a CLOSED set (no custom field)
   sizeAppliesAt: 'create', // 'bake' if you reject per-create resources
+  // The location picker. Optional — omit and no picker appears.
+  regions: [
+    { key: 'eu-1', label: 'eu-1 - Frankfurt (default)' },
+    { key: 'us-1', label: 'us-1 - Virginia' },
+  ],
+  regionHint: 'a region id, e.g. ap-1', // omit for a CLOSED set (no custom field)
   blurb: 'MyProvider microVMs',
   sizeDesc: 'Per-provider override of `box.size` for myprovider.',
   imageDesc: 'Per-provider override of `box.image` for myprovider.',
@@ -164,6 +170,15 @@ Three capabilities are easy to get wrong:
   module and defaults the rest to preserve current behavior. Declaring one just upgrades you from a
   bare provider name to a real label, credential form and capability gating.
 </Callout>
+
+### Regions
+
+Locations work the same way. `--location` is an opaque string your backend reads, and the location picker is built from what you declare:
+
+- **`regions`** — the offered locations, your default first. Declaring it is what makes the CLI and the hub forward a chosen location to you as `providerOptions.location`, with `locationPinned: true` when the user picked it (don't move the box on a capacity error). Omit it and `--location` is ignored with a warning.
+- **`regionHint`** — placeholder for a free-text location. Its presence opens the list, like `sizeHint`.
+
+Return `location` in your create handle so the box records where it actually landed.
 
 ## Cloud overrides (optional)
 

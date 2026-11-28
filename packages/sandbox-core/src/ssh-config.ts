@@ -233,6 +233,10 @@ export interface ControlPlaneDeployRecord {
    * `rev-parse` — so without this a control box is unattributable after the fact.
    */
   source?: HubDeploySource;
+  /** VPS deploys: where it runs (hetzner location / DigitalOcean region), as requested. */
+  location?: string;
+  /** VPS deploys: hetzner server type / DigitalOcean size slug, as requested. */
+  size?: string;
 
   // --- `provider: 'local'` only (agentbox hub expose) -----------------------
   // A control box that IS this machine's own hub, flipped to the deployed

@@ -46,6 +46,11 @@ export const providerModule: ProviderModule = {
 };
 
 export { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF };
+export {
+  controlPlanePlacementWarnings,
+  defaultServerTypeFor,
+  lineOfferedAt,
+} from './placement-rules.js';
 // Exported so the descriptor's declared default `size` can be asserted against
 // the value the backend really falls back to (apps/cli/test/provider-sizes.test.ts).
 export { HETZNER_DEFAULT_SERVER_TYPE } from './backend.js';
@@ -77,6 +82,8 @@ export {
 } from './cloud-init.js';
 export {
   applyControlPlaneConfig,
+  CONTROL_PLANE_DEFAULT_LOCATION,
+  CONTROL_PLANE_DEFAULT_SERVER_TYPE,
   deployControlPlaneToHetzner,
   destroyControlPlaneOnHetzner,
   updateControlPlaneOnHetzner,

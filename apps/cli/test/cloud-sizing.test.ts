@@ -113,15 +113,22 @@ describe('cloudSizingProviderOptions', () => {
     expect(cloudSizingProviderOptions('vercel', cfg, { size: '  ' })).toMatchObject({ size: '2' });
   });
 
-  it('lets the --location flag win over box.hetznerLocation, hetzner only', () => {
+  it('lets the --location flag win over box.hetznerLocation and box.daytonaRegion', () => {
     const cfg = makeCfg();
     expect(cloudSizingProviderOptions('hetzner', cfg, { location: ' fsn1 ' })).toEqual({
       location: 'fsn1',
       locationPinned: true,
     });
-    // --location is a hetzner/digitalocean flag; daytona's region comes from
-    // box.daytonaRegion, not from the flag.
-    expect(cloudSizingProviderOptions('daytona', cfg, { location: 'fsn1' })).toEqual(DAYTONA_BASE);
+    // Daytona declares regions, so a typed --location reaches it as a pin and
+    // wins over box.daytonaRegion.
+    expect(cloudSizingProviderOptions('daytona', cfg, { location: 'eu' })).toEqual({
+      ...DAYTONA_BASE,
+      location: 'eu',
+      locationPinned: true,
+    });
+    expect(
+      cloudSizingProviderOptions('daytona', makeCfg({ daytonaRegion: 'us' }), { location: 'eu' }),
+    ).toMatchObject({ location: 'eu' });
   });
 
   it('pins only a --location flag, never a configured location', () => {

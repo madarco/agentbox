@@ -32,6 +32,7 @@ import { resolveHubDeployAssets } from './hub-deploy-assets.js';
 import { mintSshKey } from './ssh-key.js';
 import { scpUpload, sshExec, waitForSsh, type SshTargetArgs } from './ssh-cli.js';
 import { withHetznerRetry } from './retry.js';
+import { defaultServerTypeFor } from './placement-rules.js';
 
 export interface ControlPlaneHetznerDeployOptions {
   /** Contents of `control-plane.env` — GITHUB_APP_ID / _PRIVATE_KEY / ADMIN_TOKEN. */
@@ -62,6 +63,10 @@ export interface ControlPlaneHetznerDeployResult {
   firewallId: number;
   sshKeyDir: string;
 }
+
+/** The control box's default server type: also the floor it is known to run on. */
+export const CONTROL_PLANE_DEFAULT_SERVER_TYPE = 'cx23';
+export const CONTROL_PLANE_DEFAULT_LOCATION = 'nbg1';
 
 const REMOTE_APP_DIR = '/opt/agentbox/apps/hub';
 // The monorepo checkout cloud-init makes in source mode — the parent of
@@ -759,17 +764,18 @@ export async function deployControlPlaneToHetzner(
 
   log(
     source.kind === 'package'
-      ? `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
-      : `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
+      ? `provisioning ${opts.serverType ?? defaultServerTypeFor(opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION)} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
+      : `provisioning ${opts.serverType ?? defaultServerTypeFor(opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION)} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
   );
   const { server } = await withHetznerRetry(
     { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
     () =>
       client.createServer({
         name,
-        server_type: opts.serverType ?? 'cx23',
+        server_type:
+          opts.serverType ?? defaultServerTypeFor(opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION),
         image: opts.serverImage ?? 'ubuntu-24.04',
-        location: opts.location ?? 'nbg1',
+        location: opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION,
         user_data: controlPlaneCloudInit({
           sshPubkey: key.publicKey,
           // Package mode needs no repo on the VPS at all.

@@ -9,6 +9,7 @@ import {
   type ControlPlaneDestroyResult,
 } from '@agentbox/sandbox-digitalocean';
 import { assertReachableRecord, persistDeployRecord, readDeployRecord } from './deploy-hetzner.js';
+import { VPS_DEFAULTS } from './vps-placement.js';
 
 /**
  * CLI wrapper for the DigitalOcean control-plane deploy: precheck the token, run
@@ -50,24 +51,34 @@ export async function runDigitalOceanDeploy(
     throw new Error('no DIGITALOCEAN_TOKEN configured — run `agentbox digitalocean login` first');
   }
   const envContent = await readFile(opts.envPath, 'utf8');
+  const placement = {
+    location: opts.region ?? VPS_DEFAULTS.digitalocean.location,
+    size: opts.size ?? VPS_DEFAULTS.digitalocean.size,
+  };
   const result = await deployControlPlaneToDigitalOcean({
     envContent,
     source: opts.source,
     ...(opts.domain ? { domain: opts.domain } : {}),
-    ...(opts.region ? { region: opts.region } : {}),
-    ...(opts.size ? { size: opts.size } : {}),
+    region: placement.location,
+    size: placement.size,
     onLog: opts.log,
     onProvisioned: async (info) => {
       const record: ControlPlaneDeployRecord = {
         provider: 'digitalocean',
         source: opts.source,
+        ...placement,
         ...info,
       };
       opts.onProvisioned?.(record);
       await persistDeployRecord(record);
     },
   });
-  await persistDeployRecord({ provider: 'digitalocean', source: opts.source, ...result });
+  await persistDeployRecord({
+    provider: 'digitalocean',
+    source: opts.source,
+    ...placement,
+    ...result,
+  });
   return { url: result.url };
 }
 

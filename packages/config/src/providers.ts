@@ -90,6 +90,29 @@ export interface ProviderCapabilities {
   readonly timeoutModel?: 'absolute' | 'inactivity';
 }
 
+/** One entry of `ProviderDescriptor.regions`. */
+export interface ProviderRegion {
+  readonly key: string;
+  readonly label: string;
+  /**
+   * The sizes to offer HERE, when this region does not offer the provider's own
+   * `sizes` (hetzner's cx line is EU-only). The first entry is the region's
+   * default size, used when no size is asked for. Absent = the provider's
+   * `sizes` and default apply. A UI swaps its size list for this one.
+   */
+  readonly sizes?: readonly { readonly key: string; readonly label: string }[];
+}
+
+/** The default size for a create in `location`: the region's own first size, else undefined. */
+export function regionDefaultSize(
+  descriptor: { readonly regions?: readonly ProviderRegion[] } | undefined,
+  location: string | undefined,
+): string | undefined {
+  const where = location?.trim().toLowerCase();
+  if (!where) return undefined;
+  return descriptor?.regions?.find((r) => r.key === where)?.sizes?.[0]?.key;
+}
+
 /**
  * Everything a UI or CLI can know about a provider WITHOUT loading its module.
  *
@@ -155,8 +178,22 @@ export interface ProviderDescriptor {
    * answers whether a given size actually needs that re-bake.
    */
   readonly sizeAppliesAt?: 'create' | 'bake';
-  /** Known regions/datacenters. Absent = the provider has no region choice. */
-  readonly regions?: readonly { readonly key: string; readonly label: string }[];
+  /**
+   * Regions/datacenters offered as a picker, most common first. A fixed
+   * provider default says "(default)" in its label; a provider whose default is
+   * account-dependent (daytona) marks none, so a picker's default must be "send
+   * no location", never `regions[0]`. Each `key` is a literal `--location` value for THIS backend (a Hetzner location,
+   * a DigitalOcean region slug, a Daytona region); there is no cross-provider
+   * grammar. Absent = the provider has no location knob. Not every size exists
+   * in every region: `POST /providers/{id}/size-check` with a `location` asks the
+   * live catalog.
+   */
+  readonly regions?: readonly ProviderRegion[];
+  /**
+   * Hint for a free-text location, e.g. `any DigitalOcean region slug, e.g. sgp1`.
+   * Like `sizeHint`, its presence is what says `regions` is an OPEN list.
+   */
+  readonly regionHint?: string;
   /** Fragment describing this backend, joined into the `box.provider` enum description. */
   readonly blurb: string;
   /** Description of the per-provider `box.size<P>` KEY_REGISTRY entry. */
@@ -164,6 +201,17 @@ export interface ProviderDescriptor {
   /** Description of the per-provider `box.image<P>` KEY_REGISTRY entry. */
   readonly imageDesc: string;
 }
+
+const HETZNER_US_SIZES = [
+  { key: 'cpx21', label: 'cpx21 - 3 vCPU / 4 GB (default here)' },
+  { key: 'cpx31', label: 'cpx31 - 4 vCPU / 8 GB' },
+  { key: 'cpx41', label: 'cpx41 - 8 vCPU / 16 GB' },
+] as const;
+const HETZNER_SIN_SIZES = [
+  { key: 'cpx22', label: 'cpx22 - 2 vCPU / 4 GB (default here)' },
+  { key: 'cpx32', label: 'cpx32 - 4 vCPU / 8 GB' },
+  { key: 'cpx42', label: 'cpx42 - 8 vCPU / 16 GB' },
+] as const;
 
 export const PROVIDERS = [
   {
@@ -247,6 +295,15 @@ export const PROVIDERS = [
     ],
     sizeHint: 'cpu-memory-disk in GB, e.g. 4-8-10',
     sizeAppliesAt: 'bake',
+    // The shared regions. linux-vm runs only in `us-east-1` (DAYTONA_VM_REGION),
+    // which is invitation-only, so it is reachable as a custom value rather than
+    // offered to every account. Absent = the account default (container class)
+    // or `us-east-1` (linux-vm).
+    regions: [
+      { key: 'us', label: 'us - United States' },
+      { key: 'eu', label: 'eu - Europe' },
+    ],
+    regionHint: 'a Daytona region, e.g. us-east-1 (linux-vm only runs there)',
     blurb: 'Daytona Cloud sandboxes',
     sizeDesc:
       'Per-provider override of `box.size` for daytona. `cpu-memory-disk` GB spec (e.g. `4-8-20`). Only honored on the image/Dockerfile create path; on the snapshot path the size is fixed at bake time (Daytona rejects custom resources on snapshot-resume).',
@@ -293,6 +350,18 @@ export const PROVIDERS = [
       { key: 'cx43', label: 'cx43 - 8 vCPU / 16 GB' },
     ],
     sizeHint: 'any Hetzner server type, e.g. cpx41',
+    // The cx types above are offered in eu-central only (nbg1, fsn1, hel1). The
+    // shared x86 line elsewhere (GET /server_types, measured 2026-11-28):
+    // cpx?1 in the US, cpx?2 in eu-central + Singapore; ccx everywhere. So the
+    // US and Singapore locations carry their own floor-first size lists.
+    regions: [
+      { key: 'nbg1', label: 'nbg1 - Nuremberg, DE (default)' },
+      { key: 'fsn1', label: 'fsn1 - Falkenstein, DE' },
+      { key: 'hel1', label: 'hel1 - Helsinki, FI' },
+      { key: 'ash', label: 'ash - Ashburn, VA, US', sizes: HETZNER_US_SIZES },
+      { key: 'hil', label: 'hil - Hillsboro, OR, US', sizes: HETZNER_US_SIZES },
+      { key: 'sin', label: 'sin - Singapore', sizes: HETZNER_SIN_SIZES },
+    ],
     blurb: 'Hetzner Cloud VPSes',
     sizeDesc:
       'Per-provider override of `box.size` for hetzner. Server type string (e.g. `cx23`, `cx33`, `cx43`).',
@@ -446,6 +515,19 @@ export const PROVIDERS = [
       { key: 's-8vcpu-16gb', label: '8 vCPU / 16 GB' },
     ],
     sizeHint: 'any DigitalOcean size slug, e.g. c-4',
+    regions: [
+      { key: 'nyc3', label: 'nyc3 - New York (default)' },
+      { key: 'nyc1', label: 'nyc1 - New York' },
+      { key: 'sfo3', label: 'sfo3 - San Francisco' },
+      { key: 'tor1', label: 'tor1 - Toronto' },
+      { key: 'ams3', label: 'ams3 - Amsterdam' },
+      { key: 'fra1', label: 'fra1 - Frankfurt' },
+      { key: 'lon1', label: 'lon1 - London' },
+      { key: 'sgp1', label: 'sgp1 - Singapore' },
+      { key: 'blr1', label: 'blr1 - Bangalore' },
+      { key: 'syd1', label: 'syd1 - Sydney' },
+    ],
+    regionHint: 'any DigitalOcean region slug, e.g. sfo2',
     blurb: 'DigitalOcean Droplets',
     sizeDesc:
       'Per-provider override of `box.size` for digitalocean. Droplet size slug (e.g. `s-2vcpu-4gb`, `s-4vcpu-8gb`).',

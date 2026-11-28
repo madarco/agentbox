@@ -57,6 +57,12 @@ import { makeControlPlaneCreateBox, cloneRepoWithLfs } from '../control-plane/cr
 import { runGitHubAppManifestFlow } from '../control-plane/github-app-manifest.js';
 import { deployControlPlaneToVercel } from '../control-plane/deploy-vercel.js';
 import {
+  resolveVpsPlacement,
+  VPS_DEFAULTS,
+  vpsCredentialError,
+  type VpsPlacement,
+} from '../control-plane/vps-placement.js';
+import {
   assertReachableRecord,
   purgeLocalControlPlaneState,
   readDeployRecord,
@@ -298,6 +304,10 @@ interface SetupOpts {
   tunnelToken?: string;
   publicUrl?: string;
   autostart?: boolean;
+  // --deploy hetzner|digitalocean placement.
+  location?: string;
+  size?: string;
+  yes?: boolean;
 }
 
 /**
@@ -433,6 +443,15 @@ const setupSub = new Command('setup')
     '--deploy local: the box-facing URL (your own proxy/DNS); skips tunnel URL scraping',
   )
   .option('--no-autostart', '--deploy local: do not install a launchd/systemd autostart unit')
+  .option(
+    '--location <name>',
+    `--deploy hetzner|digitalocean: where the VPS runs (hetzner location, default ${VPS_DEFAULTS.hetzner.location}; DigitalOcean region, default ${VPS_DEFAULTS.digitalocean.location}). Skips the prompt`,
+  )
+  .option(
+    '--size <type>',
+    `--deploy hetzner|digitalocean: VPS size (hetzner server type, default ${VPS_DEFAULTS.hetzner.size}; DigitalOcean size slug, default ${VPS_DEFAULTS.digitalocean.size}). Skips the prompt`,
+  )
+  .option('-y, --yes', 'use the default location and size instead of asking')
   .action(async (opts: SetupOpts) => {
     // Every progress line here goes to a @clack spinner, which overwrites
     // itself — a failed deploy left nothing to read afterwards. Tee to
@@ -446,6 +465,17 @@ const setupSub = new Command('setup')
         cmdLog.write(`preflight: ${ghErr.replace(/\n/g, ' ')}`);
         process.exitCode = 1;
         return;
+      }
+      // A target named by flag is known now: check its cloud token before the
+      // git credential prompt and the env write, so a missing one costs nothing.
+      if (opts.deploy === 'hetzner' || opts.deploy === 'digitalocean') {
+        const credErr = vpsCredentialError(opts.deploy);
+        if (credErr) {
+          log.error(credErr);
+          cmdLog.write(`preflight: ${credErr}`);
+          process.exitCode = 1;
+          return;
+        }
       }
       const gitAuth = await resolveGitAuthMode(opts.gitAuth);
       cmdLog.write(`git auth mode: ${gitAuth}`);
@@ -549,6 +579,36 @@ const setupSub = new Command('setup')
         return;
       }
 
+      // Placement prompts run before the auth prompt and the deploy spinner (a
+      // spinner and @clack prompts can't share the terminal).
+      let placement: VpsPlacement | null = null;
+      if (target === 'hetzner' || target === 'digitalocean') {
+        // A target picked interactively is only known here, after the git
+        // credential prompt and the env write. Still check before the placement
+        // and admin-login prompts, whose answers a late failure would lose.
+        // (`--deploy hetzner|digitalocean` is checked at the very start.)
+        const credErr = vpsCredentialError(target);
+        if (credErr) {
+          log.error(credErr);
+          process.exitCode = 1;
+          return;
+        }
+        placement = await resolveVpsPlacement(
+          target,
+          { location: opts.location, size: opts.size },
+          !opts.yes && process.stdin.isTTY === true,
+        );
+        if (!placement) {
+          log.warn('cancelled, nothing deployed.');
+          process.exitCode = 1;
+          return;
+        }
+        cmdLog.write(`placement: location=${placement.location} size=${placement.size}`);
+        log.info(`Deploying to ${target}: ${placement.size} in ${placement.location}.`);
+      } else if (opts.location || opts.size) {
+        log.warn(`--location/--size apply to --deploy hetzner|digitalocean; ignored for ${target}`);
+      }
+
       let deployedUrl: string | null = null;
       if (target !== 'none') {
         // Prompt for the hub login admin BEFORE the deploy spinner starts (a
@@ -606,17 +666,26 @@ const setupSub = new Command('setup')
             onLog(`hub source: ${describeHubDeploySource(source)}`);
             // hetzner + digitalocean share the same docker-compose VPS deploy,
             // signature-compatible; only the provisioned cloud differs.
-            const runVpsDeploy =
-              target === 'digitalocean' ? runDigitalOceanDeploy : runHetznerDeploy;
+            const common = {
+              envPath: ENV_PATH,
+              source,
+              log: onLog,
+              onProvisioned: (info: ControlPlaneDeployRecord) => {
+                provisioned = info;
+              },
+            };
             deployedUrl = (
-              await runVpsDeploy({
-                envPath: ENV_PATH,
-                source,
-                log: onLog,
-                onProvisioned: (info) => {
-                  provisioned = info;
-                },
-              })
+              target === 'digitalocean'
+                ? await runDigitalOceanDeploy({
+                    ...common,
+                    ...(placement ? { region: placement.location, size: placement.size } : {}),
+                  })
+                : await runHetznerDeploy({
+                    ...common,
+                    ...(placement
+                      ? { location: placement.location, serverType: placement.size }
+                      : {}),
+                  })
             ).url;
           }
           ds.stop(`deployed: ${deployedUrl}`);
@@ -1951,6 +2020,8 @@ interface DeployOpts {
   repo?: string;
   package?: string;
   domain?: string;
+  location?: string;
+  size?: string;
 }
 
 /**
@@ -1997,6 +2068,14 @@ const deployHetznerSub = new Command('hetzner')
     '--domain <host>',
     'serve on a hostname you control (point its DNS at the VPS first) instead of the default <ip>.sslip.io',
   )
+  .option(
+    '--location <name>',
+    `Hetzner location: nbg1, fsn1, hel1, ash, hil, sin (default ${VPS_DEFAULTS.hetzner.location})`,
+  )
+  .option(
+    '--size <type>',
+    `Hetzner server type, e.g. cx33 or ccx13 (default ${VPS_DEFAULTS.hetzner.size} in the EU, cpx21 in ash/hil, cpx22 in sin)`,
+  )
   .action(async (opts: DeployOpts) => {
     // Tee the spinner's progress to ~/.agentbox/logs/hub-deploy.log — a deploy
     // that dies at `compose up` or on a 502 otherwise leaves nothing to read.
@@ -2029,9 +2108,11 @@ const deployHetznerSub = new Command('hetzner')
             'the host and the control box will run different builds.',
         );
       }
+      const placement = (await resolveVpsPlacement('hetzner', opts, false))!;
       const ds = spinner();
-      ds.start('deploying the control box to hetzner');
+      ds.start(`deploying the control box to hetzner (${placement.size} in ${placement.location})`);
       cmdLog.write(`hub source: ${describeHubDeploySource(source)}`);
+      cmdLog.write(`placement: location=${placement.location} size=${placement.size}`);
       let deployedUrl: string;
       let provisioned: ControlPlaneDeployRecord | null = null;
       try {
@@ -2039,6 +2120,8 @@ const deployHetznerSub = new Command('hetzner')
           await runHetznerDeploy({
             envPath: ENV_PATH,
             source,
+            location: placement.location,
+            serverType: placement.size,
             ...(opts.domain ? { domain: opts.domain } : {}),
             log: (line) => {
               ds.message(line);
@@ -2079,8 +2162,8 @@ const deployHetznerSub = new Command('hetzner')
   });
 
 interface DeployDigitalOceanOpts extends DeployOpts {
+  /** Hidden alias of `--location`, kept from before the flags matched hetzner's. */
   region?: string;
-  size?: string;
 }
 
 // The same full-hub docker-compose deploy as `hub deploy hetzner`, on a
@@ -2106,11 +2189,29 @@ const deployDigitalOceanSub = new Command('digitalocean')
     '--domain <host>',
     'serve on a hostname you control (point its DNS at the Droplet first) instead of the default <ip>.sslip.io',
   )
-  .option('--region <slug>', 'DigitalOcean region slug (default nyc3)')
-  .option('--size <slug>', 'Droplet size slug (default s-2vcpu-4gb)')
+  .option(
+    '--location <slug>',
+    `DigitalOcean region slug, e.g. fra1 or sfo3 (default ${VPS_DEFAULTS.digitalocean.location})`,
+  )
+  .addOption(new Option('--region <slug>', 'alias of --location').hideHelp())
+  .option(
+    '--size <slug>',
+    `Droplet size slug, e.g. s-4vcpu-8gb (default ${VPS_DEFAULTS.digitalocean.size})`,
+  )
   .action(async (opts: DeployDigitalOceanOpts) => {
     const cmdLog = openCommandLog('hub-deploy');
     try {
+      if (
+        opts.region &&
+        opts.location &&
+        opts.region.trim().toLowerCase() !== opts.location.trim().toLowerCase()
+      ) {
+        log.error(
+          `--region ${opts.region} and --location ${opts.location} disagree; --region is an alias, pass one.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
       if (!existsSync(ENV_PATH)) {
         log.error(
           'No control-plane env found. Run `agentbox hub setup` first (it writes the git credential + admin token).',
@@ -2135,9 +2236,17 @@ const deployDigitalOceanSub = new Command('digitalocean')
             'the host and the control box will run different builds.',
         );
       }
+      const placement = (await resolveVpsPlacement(
+        'digitalocean',
+        { location: opts.location ?? opts.region, size: opts.size },
+        false,
+      ))!;
       const ds = spinner();
-      ds.start('deploying the control box to digitalocean');
+      ds.start(
+        `deploying the control box to digitalocean (${placement.size} in ${placement.location})`,
+      );
       cmdLog.write(`hub source: ${describeHubDeploySource(source)}`);
+      cmdLog.write(`placement: location=${placement.location} size=${placement.size}`);
       let deployedUrl: string;
       let provisioned: ControlPlaneDeployRecord | null = null;
       try {
@@ -2146,8 +2255,8 @@ const deployDigitalOceanSub = new Command('digitalocean')
             envPath: ENV_PATH,
             source,
             ...(opts.domain ? { domain: opts.domain } : {}),
-            ...(opts.region ? { region: opts.region } : {}),
-            ...(opts.size ? { size: opts.size } : {}),
+            region: placement.location,
+            size: placement.size,
             log: (line) => {
               ds.message(line);
               cmdLog.write(line);

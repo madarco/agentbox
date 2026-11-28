@@ -1106,6 +1106,7 @@ function listProviders(jobs: QueueJob[]): ProviderOption[] {
       ...(d.sizeHint ? { sizeHint: d.sizeHint } : {}),
       ...(d.sizeAppliesAt ? { sizeAppliesAt: d.sizeAppliesAt } : {}),
       ...(d.regions ? { regions: d.regions } : {}),
+      ...(d.regionHint ? { regionHint: d.regionHint } : {}),
     };
   });
 }

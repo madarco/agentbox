@@ -435,7 +435,23 @@ export interface ProviderOption {
    * `{ size, force: true }` first. Absent/'create' = it rides the create.
    */
   sizeAppliesAt?: 'create' | 'bake';
-  regions?: readonly { key: string; label: string }[];
+  /**
+   * Locations to offer in a create picker, most common first. Each key is a
+   * literal `--location` value for THIS backend. Absent = no location knob. The
+   * picker's default is "send no location" (configured/provider placement),
+   * never `regions[0]`.
+   */
+  regions?: readonly {
+    key: string;
+    label: string;
+    /**
+     * Sizes to offer when this region is chosen, replacing `sizes` (hetzner's
+     * cx line is EU-only). The first is the region's default size.
+     */
+    sizes?: readonly { key: string; label: string }[];
+  }[];
+  /** Placeholder for a free-text location. Its PRESENCE says `regions` is an open list. */
+  regionHint?: string;
   // Whether the provider has credentials on this host (docker: always true). A
   // cloud provider can have credentials but not yet be `configured` (baked).
   hasCredentials?: boolean;
