@@ -30,3 +30,17 @@ export function skillMachineActAuthorized(
   if (args.actor.kind === 'session') return true;
   return custodyByteReadAuthorized({ ...args, providedTokenIsDevice: false });
 }
+
+/**
+ * Who may run the read-only comparison with machine `machineId`: everyone
+ * {@link skillMachineActAuthorized} allows, plus that machine's own device
+ * token. A PC asking about itself learns only its own skill dirs next to the
+ * library metadata its token can already read (the tray's skills row does
+ * this). Another machine stays owner-only, and so do pull and send.
+ */
+export function skillMachineCompareAuthorized(
+  args: Parameters<typeof skillMachineActAuthorized>[0] & { machineId: string },
+): boolean {
+  if (args.actor.kind === 'device' && args.actor.deviceId === args.machineId) return true;
+  return skillMachineActAuthorized(args);
+}

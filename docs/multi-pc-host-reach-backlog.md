@@ -196,14 +196,15 @@ for teams PCs must never hold it (device tokens only).
   approve withdraws its code. No local hub restart: the running relay's poller already
   names this machine in `X-Agentbox-Device`.
 
+- **The tray could not compare skills once its machine enrolled (fixed 2026-11-28, same
+  branch).** `/api/v1/skill-machines/{id}/compare` took only a session or
+  `X-Agentbox-Admin-Token`, and the tray sends just its Bearer (`hub target --json`), which
+  on an enrolled PC is the device token, so its skills row stayed "Not compared". A device
+  token may now compare its own machine (`skillMachineCompareAuthorized`: the token's
+  device == `{id}`); another machine, and pull/send, stay owner-only.
+
 ## From the real-Hetzner sign-off of #429 / #432, noted, not fixed
 
-- **The tray cannot compare skills on a password hub.** `/api/v1/skill-machines/{id}/compare`
-  (and pull/send) take a signed-in session or `X-Agentbox-Admin-Token`; the tray sends
-  only its Bearer from `hub target --json` (the API key before the operator PC enrolls,
-  its device token after), so its skills row stays "Not compared" either way. The web
-  UI works. Fix belongs in the tray (send the admin token when the machine holds it)
-  or in the hub's auth for that route.
 - **`hub login` blip.** A PC's first `hub login` ended in `fetch failed`; it did not
   reproduce on retry.
 - **Poller noise for hub-built boxes.** The hub logs `[cloud-poller <id>] poll error:
