@@ -461,7 +461,8 @@ demo                 agentbox-agent-demo@0.1.0 (agent API v1)
 A path works too, for a package you are developing: `agentbox agent add ./my-agent`.
 `agentbox agent remove <package>` unregisters it (it does not uninstall the npm
 package). When its agents have named accounts, it asks whether to delete them
-too (rows, secrets and their docker volumes). `--purge-accounts` or
+too (rows, secrets and their docker volumes); it refuses while a box still uses
+one. `--purge-accounts` or
 `--keep-accounts` answers without a prompt; kept accounts are hidden until the
 package is added again.
 

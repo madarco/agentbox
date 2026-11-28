@@ -10,6 +10,7 @@ import { dockerField } from '@agentbox/core';
 import {
   accountEnvClears,
   accountEnvPolicy,
+  accountSuppressKeys,
   applyAccountEnv,
   allAgentLlmHosts,
   boxAccount,
@@ -46,10 +47,7 @@ export async function sessionAccountPolicy(
     const box = state.boxes.find((b) => dockerField(b, 'container') === container);
     return await accountEnvPolicy(spec, boxAccount(box, agent));
   } catch {
-    const suppress = Object.values(spec.accountEnv ?? {}).filter(
-      (k): k is string => typeof k === 'string',
-    );
-    return { inject: {}, suppress };
+    return { inject: {}, suppress: accountSuppressKeys(spec) };
   }
 }
 

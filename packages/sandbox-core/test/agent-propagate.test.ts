@@ -8,7 +8,7 @@ import {
   propagateStagedSettings,
   transportSettingsTarget,
   type SettingsTarget,
-  stagedItemsCarryCredential,
+  stagedItemsAreAccountBound,
 } from '../src/index.js';
 
 // The three `<agent>StagedItems` mappers moved to their agent packages; their
@@ -236,15 +236,18 @@ describe('planPropagateTargets', () => {
   });
 });
 
-describe('stagedItemsCarryCredential', () => {
+describe('stagedItemsAreAccountBound', () => {
   const file = (rel: string) => ({ rel, label: rel, kind: 'file' as const });
-  it("is true only when the set holds the agent's login file", () => {
-    expect(stagedItemsCarryCredential('codex', [file('config.toml'), file('auth.json')])).toBe(
-      true,
-    );
-    expect(stagedItemsCarryCredential('codex', [file('config.toml'), file('prompts')])).toBe(false);
-    expect(stagedItemsCarryCredential('claude', [file('skills/foo')])).toBe(false);
-    expect(stagedItemsCarryCredential('pi', [file('settings.json')])).toBe(false);
+  const dir = (rel: string) => ({ rel, label: rel, kind: 'dir' as const });
+  it('binds the login and root config files; nested content goes everywhere', () => {
+    expect(stagedItemsAreAccountBound('codex', [file('auth.json')])).toBe(true);
+    expect(stagedItemsAreAccountBound('codex', [file('config.toml')])).toBe(true);
+    expect(stagedItemsAreAccountBound('codex', [dir('prompts')])).toBe(false);
+    expect(
+      stagedItemsAreAccountBound('claude', [dir('skills/foo'), dir('plugins/cache/m/p')]),
+    ).toBe(false);
+    // No named accounts: never bound.
+    expect(stagedItemsAreAccountBound('pi', [file('settings.json')])).toBe(false);
   });
 });
 

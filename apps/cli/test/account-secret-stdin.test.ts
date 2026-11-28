@@ -35,3 +35,13 @@ describe('defaultPastedMessage', () => {
     expect(msg).toContain('agentbox credentials use claude/<name> --global');
   });
 });
+
+describe('readSecretFromStream without a newline', () => {
+  it('still ends when the pipe goes quiet', async () => {
+    const { PassThrough: P } = await import('node:stream');
+    const s = new P();
+    const p = readSecretFromStream(s, { idleMs: 10 });
+    s.write('tok-no-newline');
+    expect(await p).toBe('tok-no-newline');
+  });
+});

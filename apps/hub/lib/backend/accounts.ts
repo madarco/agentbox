@@ -43,13 +43,13 @@ import type { LimitsSource } from './account-limits';
 import type { HistoryAccountAuth } from './history';
 import {
   accountDefaults,
-  accountsFileProblem,
   AGENT_SYNC_SPECS,
   boxesOnAccount,
   encodePastedSecret,
   findAgentSpec,
   pastedSecretProblem,
   readAccounts,
+  readAccountsChecked,
   readAccountSecret,
   readState,
   removeAccount as removeStoredAccount,
@@ -451,10 +451,10 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       return { ok: true, value: await policy() };
     },
     async listAccounts(opts = {}) {
-      const [{ accounts }, storeError] = await Promise.all([
-        readAccounts(store),
-        accountsFileProblem(store),
-      ]);
+      const {
+        file: { accounts },
+        problem: storeError,
+      } = await readAccountsChecked(store);
       const all = await boxes().catch(() => []);
       const project =
         opts.project && !(await projectProblem(opts.project)) ? opts.project : undefined;

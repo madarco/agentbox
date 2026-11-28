@@ -6,7 +6,7 @@ import {
   boxAccount,
   makeStagingDir,
   planPropagateTargets,
-  stagedItemsCarryCredential,
+  stagedItemsAreAccountBound,
   propagateStagedSettings,
   readState,
   removeStagingDir,
@@ -98,9 +98,10 @@ export async function runPropagateStep(opts: {
     scope,
     projectRoot: sourceBox.projectRoot,
     excludeVolume,
-    // A set carrying the agent's login (codex's `auth.json`) stays within the
-    // source box's account; a login-free one reaches boxes on every account.
-    ...(stagedItemsCarryCredential(agent, opts.items)
+    // A set that can carry per-account state (codex's `auth.json` or
+    // `config.toml`) stays within the source box's account; skills, prompts and
+    // plugins reach boxes on every account.
+    ...(stagedItemsAreAccountBound(agent, opts.items)
       ? { account: boxAccount(sourceBox, agent) }
       : {}),
   });

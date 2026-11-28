@@ -37,15 +37,21 @@ export interface StagedItem {
 }
 
 /**
- * Whether a staged set holds `agent`'s login file (`credential.boxRelPath`), or
- * a directory above it. Such a set must stay within the source box's account;
- * a login-free set (skills, prompts, config) can go to every box. Pure apart
- * from the registry lookup.
+ * Whether a staged set can carry per-account state and so must stay within the
+ * source box's account: `agent`'s login file (or a directory above it), or any
+ * FILE at the config root (codex's `config.toml` can pick the auth method). Sets
+ * of nested content (skills, prompts, plugins) go to every box. An agent with
+ * no named accounts is never bound. Pure apart from the registry lookup.
  */
-export function stagedItemsCarryCredential(agent: AgentId, items: readonly StagedItem[]): boolean {
-  const rel = resolveAgentSpec(agent).credential?.boxRelPath;
-  if (!rel) return false;
-  return items.some((i) => i.rel === rel || rel.startsWith(`${i.rel.replace(/\/+$/, '')}/`));
+export function stagedItemsAreAccountBound(agent: AgentId, items: readonly StagedItem[]): boolean {
+  const spec = resolveAgentSpec(agent);
+  if ((spec.accountKinds ?? []).length === 0) return false;
+  const rel = spec.credential?.boxRelPath;
+  return items.some(
+    (i) =>
+      (i.kind === 'file' && !i.rel.includes('/')) ||
+      (rel !== undefined && (i.rel === rel || rel.startsWith(`${i.rel.replace(/\/+$/, '')}/`))),
+  );
 }
 
 /** A pulled settings set staged host-side, ready to propagate to targets. */
@@ -308,10 +314,10 @@ export function planPropagateTargets<B extends PropagateBoxLike>(
     /**
      * The LLM account whose login is being fanned out (llm-accounts Phase 4).
      * When set, only boxes on that account for `agent` are targets — `default`
-     * means boxes whose record names no account. Both callers pass one —
-     * settings propagation too, because a pulled item set can carry the
-     * agent's login (codex's `auth.json`). Absent = every box, which is only
-     * safe for a set known to carry no credential.
+     * means boxes whose record names no account. The credential fan-out always
+     * passes one; settings propagation passes one unless the set is known to
+     * carry no per-account state ({@link stagedItemsAreAccountBound}). Absent =
+     * every box.
      */
     account?: string;
     /** A credential fan-out: docker boxes with their own file go to `dockerBoxFiles`. */

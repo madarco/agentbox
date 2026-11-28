@@ -36,8 +36,10 @@ Fixed (`fix/accounts-backlog`):
   `state.json`.
 - **`download codex <named-box>`** leaves `auth.json` in the box
   (`AgentPullOptions.excludeCredential`).
-- **Settings from a default box reach named boxes** when the set carries no
-  login (`stagedItemsCarryCredential`).
+- **Settings from a default box reach named boxes** when the set holds only
+  nested content (skills, prompts, plugins); the login file and any root config
+  file (codex's `config.toml`) stay within the source box's account
+  (`stagedItemsAreAccountBound`).
 - **A stdin pipe that never closes** no longer hangs a pasted secret: the read
   ends once a full line has arrived and 1.5 s pass with no more data, and fails
   after 2 minutes with nothing at all.
@@ -184,7 +186,8 @@ rides the relay registration and the hub `Box` payload; `checkpoint
   purpose. Pass `-e KEY` and the value through execa's `env`.
 - ~~Settings propagate skips named boxes too (#437-8)~~ — Phase 4 scopes it to
   the source box's account instead (a pulled set can carry codex's `auth.json`).
-  Since the 2026-11-28 sweep a login-free set goes to every account.
+  Since the 2026-11-28 sweep a set of only skills, prompts or plugins goes to
+  every account.
 - **Provider SDK republish**: community providers on the published SDK (an old
   inlined `createCloudProvider`) ignore `req.accounts` — the box comes up on the
   default login. Additive: `CreateBoxRequest.accounts`, `BoxRecord.accounts`,

@@ -198,19 +198,34 @@ export async function readAccounts(opts: AccountStoreOptions = {}): Promise<Acco
 }
 
 /**
- * Why `accounts.json` cannot be trusted, as the message a mutation would throw
- * (naming the file), or null when it is fine or absent. Reads still list the
- * `default`s from their own files, so a listing shows this as a warning
- * instead of hiding every named account in silence.
+ * {@link readAccounts} plus why `accounts.json` cannot be trusted (`problem`:
+ * the message a mutation would throw, naming the file), from ONE read. An
+ * unreadable file (EACCES) is a problem too rather than a throw: the
+ * `default`s still list from their own files, so a listing shows the problem
+ * as a warning instead of hiding every named account in silence.
  */
-export async function accountsFileProblem(opts: AccountStoreOptions = {}): Promise<string | null> {
+export async function readAccountsChecked(
+  opts: AccountStoreOptions = {},
+): Promise<{ file: AccountsFile; problem: string | null }> {
   const o = resolveOpts(opts);
-  try {
-    const read = await readRaw(o.path);
-    return read.ok ? null : new AccountsFileError(o.path, read.reason).message;
-  } catch (err) {
-    return `${o.path}: ${err instanceof Error ? err.message : String(err)}`;
-  }
+  const [read, legacy] = await Promise.all([
+    readRaw(o.path).catch(
+      (err: unknown): RawRead => ({
+        ok: false,
+        reason: err instanceof Error ? err.message : String(err),
+      }),
+    ),
+    findLegacyAccountSlots(o.specs),
+  ]);
+  return {
+    file: viewOf(read.ok ? read.raw : undefined, legacy, o.specs),
+    problem: read.ok ? null : new AccountsFileError(o.path, read.reason).message,
+  };
+}
+
+/** Why `accounts.json` cannot be trusted, or null — see {@link readAccountsChecked}. */
+export async function accountsFileProblem(opts: AccountStoreOptions = {}): Promise<string | null> {
+  return (await readAccountsChecked(opts)).problem;
 }
 
 async function writeAtomic(path: string, content: string): Promise<void> {
@@ -341,20 +356,28 @@ export async function removeAccount(
 }
 
 /**
- * The stored account ids of agents this process may no longer know (an agent
- * package being unregistered), read straight off the file's rows. An
- * untrustworthy file reads as none.
+ * The stored NAMED account ids of agents this process may no longer know (an
+ * agent package being unregistered), read straight off the file's rows.
+ * Throws {@link AccountsFileError} on an untrustworthy file rather than
+ * reporting none.
  */
 export async function storedAccountIds(
   agents: readonly string[],
   opts: Pick<AccountStoreOptions, 'path'> = {},
 ): Promise<{ agent: string; id: string }[]> {
-  const read = await readRaw(opts.path ?? ACCOUNTS_FILE);
-  if (!read.ok || read.raw === undefined) return [];
+  const path = opts.path ?? ACCOUNTS_FILE;
+  const read = await readRaw(path);
+  if (!read.ok) throw new AccountsFileError(path, read.reason);
+  if (read.raw === undefined) return [];
   const out: { agent: string; id: string }[] = [];
   for (const row of (read.raw as AccountsFile).accounts as unknown[]) {
     const r = row as { agent?: unknown; id?: unknown } | null;
-    if (typeof r?.agent === 'string' && typeof r.id === 'string' && agents.includes(r.agent)) {
+    if (
+      typeof r?.agent === 'string' &&
+      typeof r.id === 'string' &&
+      !isDefaultAccount(r.id) &&
+      agents.includes(r.agent)
+    ) {
       out.push({ agent: r.agent, id: r.id });
     }
   }
@@ -362,11 +385,14 @@ export async function storedAccountIds(
 }
 
 /**
- * Drop every account row of `agents` and their secrets
+ * Drop every account row of `agents` and their named secrets
  * (`credentials/<agent>/`), under the accounts lock. For an agent package
  * being unregistered: its rows are hidden from every read once the registry
  * no longer has it, but a mutation passes them through, so they would stay on
- * disk with their secrets forever. Returns the rows removed.
+ * disk with their secrets forever. The secrets go only after the new file is
+ * written, so a failed write leaves rows with their secrets. A `default`
+ * row goes too, but not the agent's login backup (`credential.hostBackup`),
+ * which is its login, not an account. Returns the NAMED rows removed.
  */
 export async function purgeAgentAccounts(
   agents: readonly string[],
@@ -377,18 +403,24 @@ export async function purgeAgentAccounts(
     const problem = agentIdProblem(a);
     if (problem) throw new Error(problem);
   }
-  return editRows(o, async (rows) => {
+  return withFileLock(o.path, async () => {
+    const read = await readRaw(o.path);
+    if (!read.ok) throw new AccountsFileError(o.path, read.reason);
+    const rows = read.raw === undefined ? [] : [...(read.raw as AccountsFile).accounts];
     const removed: { agent: string; id: string }[] = [];
     const next = rows.filter((row) => {
       const r = row as { agent?: unknown; id?: unknown } | null;
       if (typeof r?.agent !== 'string' || !agents.includes(r.agent)) return true;
-      removed.push({ agent: r.agent, id: String(r.id) });
+      if (!isDefaultAccount(String(r.id))) removed.push({ agent: r.agent, id: String(r.id) });
       return false;
     });
+    if (next.length !== rows.length) {
+      await writeAtomic(o.path, JSON.stringify({ version: 1, accounts: next }, null, 2) + '\n');
+    }
     for (const a of agents) {
       await rm(join(o.stateDir, 'credentials', a), { recursive: true, force: true });
     }
-    return { rows: next, result: removed };
+    return removed;
   });
 }
 

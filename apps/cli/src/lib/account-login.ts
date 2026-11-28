@@ -38,9 +38,9 @@ export async function captureAccountLogin(
 }
 
 /**
- * Read a secret off a pipe. Ends at EOF, or once a full line has arrived and
- * the pipe then stays quiet for `idleMs`: a driver that writes the token and
- * never closes its end would otherwise hang the command forever. A pipe that
+ * Read a secret off a pipe. Ends at EOF, or once the pipe stays quiet for
+ * `idleMs` after a full line (4x that without a newline): a driver that writes
+ * the token and never closes its end would otherwise hang the command forever. A pipe that
  * sends nothing within `firstByteMs` is an error rather than a hang.
  */
 export function readSecretFromStream(
@@ -64,7 +64,9 @@ export function readSecretFromStream(
     const onData = (chunk: Buffer | string): void => {
       chunks.push(Buffer.from(chunk));
       if (timer) clearTimeout(timer);
-      if (Buffer.concat(chunks).includes(0x0a)) timer = setTimeout(() => finish(), idleMs);
+      // A token piped without a newline still ends, after a longer quiet spell.
+      const wait = Buffer.concat(chunks).includes(0x0a) ? idleMs : idleMs * 4;
+      timer = setTimeout(() => finish(), wait);
     };
     const onEnd = (): void => finish();
     const onError = (err: Error): void => finish(err);

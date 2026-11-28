@@ -392,6 +392,7 @@ export {
   AccountsFileError,
   accountProblem,
   accountsFileProblem,
+  readAccountsChecked,
   purgeAgentAccounts,
   storedAccountIds,
   defaultLoginPaths,
@@ -484,6 +485,7 @@ export type { SkillsStamp } from './skills/digest.js';
 export {
   accountEnvClears,
   accountEnvPolicy,
+  accountSuppressKeys,
   applyAccountEnv,
   boxAccount,
   accountDefaults,
