@@ -53,6 +53,7 @@ import { requireAgentSyncModule, type AgentVolumeChoice } from './agents/module.
 import { syncClaudeCredentials } from './claude-credentials.js';
 import type { AgentsConfigSpec } from './agents/skills.js';
 import { ensureAgentsVolume } from './agents/skills.js';
+import { boxGitConfigScript } from './box-gitconfig.js';
 import { copyCarryPathsToBox, copyHostEnvFilesToBox } from './host-export.js';
 import { resyncWorkspaceFromHost } from './in-box-git.js';
 
@@ -255,44 +256,25 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       return Promise.resolve([]);
     },
 
-    // Docker bind-mounts the building machine's ~/.gitconfig (read-only) when it
-    // exists. Precedence, highest first: that file's own identity, if it holds a
-    // complete one; else the resolved identity (requester, then hub default);
-    // else the generic agentbox one. Written whenever the mounted file does not
-    // decide it, because the box may carry a previous owner's identity from a
-    // checkpoint and must never commit as them. A repo-local override in the
-    // shared .git/config still wins over all of it, as on the host.
+    // Precedence, highest first: the requester's resolved identity (requester,
+    // then hub default); else the building machine's bind-mounted ~/.gitconfig
+    // when it holds a complete one; else the generic agentbox one. All of it is
+    // written into the box-owned global file (box-gitconfig.ts), which is what
+    // lets a request outrank the read-only mount, and is rewritten on every
+    // create so a checkpoint's previous owner never survives. A repo-local
+    // override in the shared .git/config still wins, as on the host.
     async seedGitIdentity(ctx: SyncContext): Promise<void> {
       const mountedFile = join(ctx.hostHome, '.gitconfig');
-      const mounted = existsSync(mountedFile);
-      const fromMount = mounted ? await hostFileIdentity(mountedFile) : 'none';
-      if (fromMount === 'full') {
-        if (ctx.gitIdentity) {
-          ctx.onLog(
-            "git: keeping this machine's bind-mounted ~/.gitconfig identity (a docker box shares the building machine's git config)",
-          );
-        }
-        return;
-      }
-      const want = ctx.gitIdentity ?? { ...GIT_IDENTITY_FALLBACK, source: 'fallback' as const };
-      // A mounted file with no user.* (a credential helper only) is read-only
-      // and outranks nothing at system level, so the identity goes there; with
-      // no mount, the box's own ~/.gitconfig takes it.
-      const scope = mounted ? '--system' : '--global';
+      const fromMount = existsSync(mountedFile) ? await hostFileIdentity(mountedFile) : 'none';
+      const want =
+        ctx.gitIdentity ??
+        (fromMount === 'full'
+          ? undefined
+          : { ...GIT_IDENTITY_FALLBACK, source: 'fallback' as const });
+      const { script, args } = boxGitConfigScript(want);
       const r = await execa(
         'docker',
-        [
-          'exec',
-          '--user',
-          mounted ? 'root' : 'vscode',
-          handle.container,
-          'sh',
-          '-c',
-          `git config ${scope} user.name "$1" && git config ${scope} user.email "$2"`,
-          'sh',
-          want.name,
-          want.email,
-        ],
+        ['exec', '--user', 'vscode', handle.container, 'sh', '-c', script, 'sh', ...args],
         { reject: false },
       );
       if (r.exitCode !== 0) {
@@ -301,14 +283,13 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
         );
         return;
       }
+      if (!want) {
+        ctx.onLog("git: committer identity from this machine's bind-mounted ~/.gitconfig");
+        return;
+      }
       ctx.onLog(
         `git: configured committer identity ${want.name} <${want.email}> (from ${gitIdentitySourceLabel(want.source)})`,
       );
-      if (fromMount === 'partial') {
-        ctx.onLog(
-          "git: this machine's bind-mounted ~/.gitconfig sets only one of user.name / user.email, and that half outranks the one above; set both there (or neither)",
-        );
-      }
     },
 
     async seedEnvFiles(ctx: SyncContext, patterns: string[]): Promise<{ copied: number }> {

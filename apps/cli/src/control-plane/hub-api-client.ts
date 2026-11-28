@@ -333,6 +333,8 @@ export interface HubApiCloneInput {
    * persistence; `false` is only ever an explicit opt-out.
    */
   persistent?: boolean;
+  /** Who the clone commits as: the requester's identity (`readProjectGitIdentity`). */
+  gitIdentity?: { name: string; email: string };
 }
 
 /** `POST /api/v1/boxes/:id/clone` — the staged clone plus its create job. */
@@ -1132,7 +1134,14 @@ export interface HubApiUsageSharePosted {
 }
 
 export type HubApiUsageDimension =
-  'day' | 'agent' | 'account' | 'box' | 'project' | 'host' | 'model' | 'session';
+  | 'day'
+  | 'agent'
+  | 'account'
+  | 'box'
+  | 'project'
+  | 'host'
+  | 'model'
+  | 'session';
 
 export interface HubApiUsageTotals {
   inputTokens: number;

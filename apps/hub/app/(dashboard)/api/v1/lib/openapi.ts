@@ -1066,6 +1066,11 @@ export function buildOpenApi(): Record<string, unknown> {
                       description:
                         "Always-on clone. OMIT to inherit the source box's persistence (a clone of a service box is always-on too); `false` is an explicit opt-out. `true` against e2b/vercel is refused with `conflict` — their platform session cap makes an always-on box impossible.",
                     },
+                    gitIdentity: {
+                      $ref: '#/components/schemas/GitIdentity',
+                      description:
+                        "Who the clone commits as: the requester's `user.name` / `user.email` (the CLI sends its project's effective identity). Same rules as `opts.gitIdentity` on POST /boxes. Absent = this hub's default (GET /settings/git-identity), then the clone folder's git config. Never the source box's identity.",
+                    },
                   },
                 },
               },

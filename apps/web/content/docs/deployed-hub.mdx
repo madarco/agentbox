@@ -405,10 +405,15 @@ building machine's git config for that folder, then the generic identity above. 
 names the source that won (`git: configured committer identity … (from the requesting machine)`).
 Changing the default does not touch existing boxes.
 
-A Docker box mounts the building machine's `~/.gitconfig`. If that file sets both `user.name` and
-`user.email`, the box keeps it. Otherwise (for example a hub whose `~/.gitconfig` holds only the
-`gh` credential helper) the box gets the resolved identity, or the generic one, so it never commits
-as whoever a checkpoint was taken from.
+A Docker box mounts the building machine's `~/.gitconfig` read-only, and its global git config is
+a box-owned file (`GIT_CONFIG_GLOBAL`) that includes the mounted one, so its credential helpers and
+aliases still apply. The requester's identity (or the hub default) is written after that include
+and wins over the mounted identity. With neither, a mounted `~/.gitconfig` that sets both
+`user.name` and `user.email` decides; otherwise the box gets the generic identity, so it never
+commits as whoever a checkpoint was taken from. A repo-local identity still wins over all of it.
+
+`agentbox clone` sends your identity the same way, so a clone commits as the person who cloned it,
+not as the source box's owner or the hub default.
 
 ### Base images are baked on the control box too
 

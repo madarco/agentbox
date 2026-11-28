@@ -1000,6 +1000,11 @@ export interface CloneBoxInput {
    * clone, and cloning an expendable box does not.
    */
   persistent?: boolean;
+  /**
+   * The requester's committer identity (the CLI's `readProjectGitIdentity`).
+   * Absent (web, tray) → the hub default, then the clone folder's git config.
+   */
+  gitIdentity?: { name: string; email: string };
 }
 
 export type PrepareCloneResult =

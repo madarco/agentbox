@@ -538,6 +538,18 @@ export function parseCloneBox(body: unknown): Parsed<CloneBoxInput> {
   }
   if (typeof persistent === 'boolean') out.persistent = persistent;
 
+  if (body.gitIdentity !== undefined) {
+    const gi = body.gitIdentity;
+    if (!isObject(gi)) {
+      return { ok: false, message: 'gitIdentity must be an object of { name, email }' };
+    }
+    const problem =
+      gitIdentityFieldProblem(gi.name, 'gitIdentity.name') ??
+      gitIdentityFieldProblem(gi.email, 'gitIdentity.email');
+    if (problem) return { ok: false, message: problem };
+    out.gitIdentity = { name: (gi.name as string).trim(), email: (gi.email as string).trim() };
+  }
+
   return { ok: true, value: out };
 }
 
