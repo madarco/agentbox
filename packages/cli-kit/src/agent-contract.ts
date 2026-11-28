@@ -234,8 +234,26 @@ export interface AgentRuntime {
   loginBinding(o: {
     image: string;
     extraArgs?: string[];
+    /** Sign in against this volume (a named account's) instead of `sharedVolume`. */
+    volume?: string;
     writeLog?: (line: string) => void;
   }): AgentLoginBinding;
+  /**
+   * Before a named account's volume is signed in again: drop what the previous
+   * login left there that the new one must not inherit (claude's cached
+   * profile). Absent = nothing to drop.
+   */
+  resetAccountVolume?(
+    volume: string,
+    image: string,
+    o?: {
+      /**
+       * Only the cached profile (claude's `oauthAccount`): for a volume every
+       * default box mounts live, whose API-key answers must stay.
+       */
+      profileOnly?: boolean;
+    },
+  ): Promise<void>;
   /**
    * Whether `<agent> login` needs a terminal. `always` for a flow that prompts
    * (opencode's provider picker); `interactive-only` when the guided flow needs

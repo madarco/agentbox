@@ -227,9 +227,17 @@ export interface HistoryAccountAuth {
     box: string;
     failedAt: string | null;
     error: string | null;
+    /** Where the newest refusal came from; set with `failedAt`. */
+    source?: HistoryAuthSource;
     okAt: string | null;
   }>;
 }
+
+/**
+ * `transcript`: the agent's own refusal line. `box`: ctl saw the login file
+ * signed out (`credentials-dead`), with no turn needed.
+ */
+export type HistoryAuthSource = 'transcript' | 'box';
 
 /** One auth event, as ingest records it. */
 export interface HistoryAuthEvent {
@@ -240,6 +248,8 @@ export interface HistoryAuthEvent {
   kind: 'fail' | 'ok';
   ts: string;
   error?: string;
+  /** A refusal's signal; default `transcript`. */
+  source?: HistoryAuthSource;
 }
 
 /**
@@ -845,6 +855,25 @@ export function createHistoryService(deps: HistoryServiceDeps): HistoryService {
           }),
         ),
       ),
+
+    // Same evidence as a refusal line, from ctl's credentials watcher: keyed by
+    // the account the box runs on now (the file it watches is that login's).
+    recordCredentialsDead: (e) =>
+      serialized(async () => {
+        const account = await accountFor(e.boxId, e.agent);
+        if (!account) {
+          log(`history: credentials-dead from unknown box ${e.boxId} (${e.agent}); not recorded`);
+          return;
+        }
+        await repo.recordAuth({
+          account,
+          box: e.boxName ?? e.boxId,
+          ...(e.alive
+            ? { kind: 'ok' as const }
+            : { kind: 'fail' as const, error: 'credentials-dead', source: 'box' as const }),
+          ts: e.ts,
+        });
+      }),
 
     async readRaw(fileId) {
       const parts: Buffer[] = [];

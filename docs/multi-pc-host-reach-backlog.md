@@ -37,6 +37,13 @@ A caller holding the hub's shared admin token can name any device in
 key (it reads custody and approves devices), so this is by design for one owner;
 for teams PCs must never hold it (device tokens only).
 
+### Any enrolled device can sign an account in or out
+
+The account write routes (`POST/DELETE /api/v1/accounts…`, `…/renew`, and the
+hub sign-in `…/{agent}/{id}/login` + `…/login/code`) take any authenticated
+caller, with no device or owner gate: a device can renew, replace or remove the
+hub's subscriptions. Fix with Stage 2's users: only the owner manages accounts.
+
 ## Remaining from review item 7 (double execution on re-offer)
 
 - **Mostly pre-existing**: an owner PC partitioned for longer than

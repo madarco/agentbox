@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import type { PostOutcome, RelayClient } from './relay-client.js';
-import { CREDENTIALS_UPDATED_EVENT } from './types.js';
+import {
+  CREDENTIALS_ALIVE_EVENT,
+  CREDENTIALS_DEAD_EVENT,
+  CREDENTIALS_UPDATED_EVENT,
+} from './types.js';
 import type { AgentId } from '@agentbox/core';
 
 /**
@@ -83,6 +87,27 @@ export function isRealCredentialText(shape: WatchedCredential['shape'], text: st
   return typeof refresh === 'string' && refresh.length > 0;
 }
 
+/**
+ * True for claude's signed-out shape: after a refresh it cannot make, claude
+ * rewrites its file with `accessToken: ""` and no refresh token (measured
+ * 2026-11-26, docs/credentials-tui-plan.md Phase 0). Only claude has a
+ * measured shape; a `nonempty-json` agent never reads as wiped.
+ */
+export function isWipedCredentialText(shape: WatchedCredential['shape'], text: string): boolean {
+  if (shape !== 'claude-oauth') return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  const oauth = (parsed as Record<string, unknown> | null)?.['claudeAiOauth'];
+  if (oauth === null || typeof oauth !== 'object') return false;
+  const o = oauth as Record<string, unknown>;
+  const refresh = o['refreshToken'];
+  return o['accessToken'] === '' && !(typeof refresh === 'string' && refresh.length > 0);
+}
+
 export interface CredentialsWatcherOptions {
   relay: RelayClient;
   /** Poll cadence. Default 15000ms. */
@@ -116,6 +141,10 @@ export class CredentialsWatcher {
   private readonly postTimeoutMs: number;
   private readonly lastMtime = new Map<string, number>();
   private readonly lastPosted = new Map<string, string>();
+  /** Agents whose wiped login the relay has; cleared when a real one returns. */
+  private readonly deadReported = new Set<string>();
+  /** Agents whose real login the relay has heard of since this watcher started. */
+  private readonly aliveReported = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
 
   constructor(opts: CredentialsWatcherOptions) {
@@ -173,30 +202,55 @@ export class CredentialsWatcher {
         // Only now is the read known good: recording the mtime before this
         // would permanently skip a file caught mid-write.
         if (!isRealCredentialText(file.shape, text)) {
+          if (isWipedCredentialText(file.shape, text) && !this.deadReported.has(file.agent)) {
+            // Once per transition: the next report needs a real login in between.
+            const outcome = await this.relay.post(
+              CREDENTIALS_DEAD_EVENT,
+              { schema: 1, agent: file.agent, wipedAt: new Date(st.mtimeMs).toISOString() },
+              { timeoutMs: this.postTimeoutMs },
+            );
+            // Retryable: leave the mtime unrecorded so the next tick re-reads it.
+            if (isRetryablePostFailure(outcome)) continue;
+            this.deadReported.add(file.agent);
+          }
           // Same mtime will still be a placeholder next tick — don't re-read it.
           this.lastMtime.set(file.agent, st.mtimeMs);
           continue;
         }
         const hash = createHash('sha256').update(text).digest('hex');
-        if (this.lastPosted.get(file.agent) === hash) {
-          this.lastMtime.set(file.agent, st.mtimeMs);
-          continue;
+        if (this.lastPosted.get(file.agent) !== hash) {
+          const outcome = await this.relay.post(
+            CREDENTIALS_UPDATED_EVENT,
+            {
+              schema: 1,
+              agent: file.agent,
+              contentBase64: Buffer.from(text, 'utf8').toString('base64'),
+              capturedAt: new Date().toISOString(),
+            },
+            { timeoutMs: this.postTimeoutMs },
+          );
+          // Leave both maps untouched on a retryable failure: the next tick re-reads
+          // the same file and tries again until the relay actually has it.
+          if (isRetryablePostFailure(outcome)) continue;
+          this.lastPosted.set(file.agent, hash);
         }
-        const outcome = await this.relay.post(
-          CREDENTIALS_UPDATED_EVENT,
-          {
-            schema: 1,
-            agent: file.agent,
-            contentBase64: Buffer.from(text, 'utf8').toString('base64'),
-            capturedAt: new Date().toISOString(),
-          },
-          { timeoutMs: this.postTimeoutMs },
-        );
-        // Leave both maps untouched on a retryable failure: the next tick re-reads
-        // the same file and tries again until the relay actually has it.
-        if (isRetryablePostFailure(outcome)) continue;
+        if (this.deadReported.has(file.agent) || !this.aliveReported.has(file.agent)) {
+          // The box holds a real login (a fan-out repaired it, or a restart
+          // forgot a wipe it reported): clear the dead evidence, or the account
+          // reads revoked until this box's next turn. Dated by the file, so a
+          // refusal seen after this login was written still stands.
+          const back = await this.relay.post(
+            CREDENTIALS_ALIVE_EVENT,
+            { schema: 1, agent: file.agent, at: new Date(st.mtimeMs).toISOString() },
+            { timeoutMs: this.postTimeoutMs },
+          );
+          // The mtime stays unrecorded, so the next tick retries (the update is
+          // not re-sent: its hash is already posted).
+          if (isRetryablePostFailure(back)) continue;
+          this.deadReported.delete(file.agent);
+          this.aliveReported.add(file.agent);
+        }
         this.lastMtime.set(file.agent, st.mtimeMs);
-        this.lastPosted.set(file.agent, hash);
       } catch {
         // Missing file / transient read error — try again next tick.
       }

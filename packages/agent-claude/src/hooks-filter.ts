@@ -268,9 +268,14 @@ export const ACCOUNT_STATE_KEYS: readonly string[] = [
   'cachedExtraUsageDisabledReason',
 ];
 
-/** The jq program that drops {@link ACCOUNT_STATE_KEYS}. Keys are plain identifiers. */
-export function accountStateJqDelete(): string {
-  return `del(${ACCOUNT_STATE_KEYS.map((k) => `.${k}`).join(', ')})`;
+/**
+ * The jq program that drops {@link ACCOUNT_STATE_KEYS}. Keys are plain
+ * identifiers. `profileOnly`: just the cached profile (`oauthAccount`), for a
+ * volume that keeps its own API-key answers (the shared default one).
+ */
+export function accountStateJqDelete(opts: { profileOnly?: boolean } = {}): string {
+  const keys = opts.profileOnly ? ['oauthAccount'] : ACCOUNT_STATE_KEYS;
+  return `del(${keys.map((k) => `.${k}`).join(', ')})`;
 }
 
 /** Drop {@link ACCOUNT_STATE_KEYS}. Pure; `stripped` is false when none were present. */

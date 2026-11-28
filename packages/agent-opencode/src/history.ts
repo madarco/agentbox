@@ -104,7 +104,15 @@ export function opencodeLineRecords(
     const ts = isoTime(time.completed);
     const cost = finiteNumber(data.cost);
     const context = finiteNumber(tokens.total);
+    // A refused credential (measured 2026-11-28, opencode 1.19.6, a bogus
+    // Anthropic key): the completed assistant message carries
+    // `error: { name: 'APIError', data: { statusCode: 401 } }` and no tokens.
+    const err = asObject(data.error);
+    const refused = err?.name === 'APIError' && asObject(err.data)?.statusCode === 401;
     return [
+      ...(refused
+        ? [{ kind: 'auth' as const, error: 'unauthorized', ...(ts ? { ts } : {}), at }]
+        : []),
       ...(context > 0
         ? [{ kind: 'context' as const, tokens: context, ...(ts ? { ts } : {}), at }]
         : []),

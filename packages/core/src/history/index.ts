@@ -11,6 +11,7 @@ export type {
   HistoryIdentity,
   HistoryIngestResult,
   HistoryIngestSink,
+  CredentialsDeadEvent,
   HistoryMemorySink,
   HistoryOrigin,
   HistoryLimitWindow,

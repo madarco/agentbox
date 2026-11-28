@@ -84,6 +84,12 @@ export {
   type CredentialsFanoutDeps,
   type CredentialsHandleResult,
 } from './credentials-fanout.js';
+export {
+  CREDENTIALS_ALIVE_EVENT,
+  CREDENTIALS_DEAD_EVENT,
+  handleCredentialsDead,
+  parseCredentialsDead,
+} from './credentials-dead.js';
 export { type Store, type PromptRow } from './store/store.js';
 export { MemoryStore, type MemoryStoreParts } from './store/memory-store.js';
 export { gateApproval, type ApprovalGate, type GateDeps, type PromptMode } from './permission.js';

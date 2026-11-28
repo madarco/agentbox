@@ -61,6 +61,40 @@ describe('CredentialsFanout', () => {
     expect(runs).toEqual(['claude:box-b']);
   });
 
+  it('runExclusive (the hub renew) waits for a running fan-out and drops a debounced one', async () => {
+    const runs: string[] = [];
+    let release!: () => void;
+    const fanout = make(async (agent, box) => {
+      runs.push(`refresh:${agent}:${box}`);
+      await new Promise<void>((r) => (release = r));
+    });
+    expect((await fanout.handle('box-a', payload('claude', claudeBlob(100)))).accepted).toBe(true);
+    await vi.advanceTimersByTimeAsync(150); // the refresh fan-out starts and holds
+    const renew = fanout.runExclusive('claude', 'default', async () => {
+      runs.push('renew');
+      return 7;
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(runs).toEqual(['refresh:claude:box-a']); // not at the same time
+    release();
+    expect(await renew).toBe(7);
+    // A refresh accepted now is still debouncing when a renew comes: the renew covers it.
+    expect((await fanout.handle('box-b', payload('claude', claudeBlob(200, 'r2')))).accepted).toBe(
+      true,
+    );
+    await fanout.runExclusive('claude', 'default', async () => {
+      runs.push('renew2');
+    });
+    await vi.advanceTimersByTimeAsync(150);
+    await fanout.flush();
+    expect(runs).toEqual(['refresh:claude:box-a', 'renew', 'renew2']);
+    // A failed renew does not break the chain for the next one.
+    await expect(
+      fanout.runExclusive('claude', 'default', () => Promise.reject(new Error('boom'))),
+    ).rejects.toThrow('boom');
+    expect(await fanout.runExclusive('claude', 'default', async () => 'ok')).toBe('ok');
+  });
+
   it('routes a named box to its own account: its copy, its custody path, its fan-out (llm-accounts Phase 4)', async () => {
     const runs: string[] = [];
     const put = vi.fn().mockResolvedValue(undefined);
@@ -275,7 +309,7 @@ describe('CredentialsFanout — custody write-back', () => {
     const runs: string[] = [];
     const fanout = new CredentialsFanout({
       log: () => {},
-      debounceMs: 100,
+      debounceMs: 60_000, // never fires mid-test; flush() drops it
       runPropagate: async (agent, box, account) => void runs.push(`${agent}:${box}:${account}`),
       runRepush: async (agent, box, account) => void repushes.push(`${agent}:${box}:${account}`),
       // box-b and box-d left `work` 5 s ago; box-c switched long ago.

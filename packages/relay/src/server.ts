@@ -106,6 +106,11 @@ import {
   CredentialsFanout,
   registrationBoxAccount,
 } from './credentials-fanout.js';
+import {
+  CREDENTIALS_ALIVE_EVENT,
+  CREDENTIALS_DEAD_EVENT,
+  handleCredentialsDead,
+} from './credentials-dead.js';
 import type {
   HistoryIngestSink,
   HistoryMemorySink,
@@ -320,6 +325,11 @@ export interface RelayServerHandle {
   stopCloudPoller: (boxId: string) => Promise<void>;
   /** Session-history shipping, when this relay has a hub sink. */
   history?: HistoryRelay;
+  /**
+   * The host-mode credential fan-out (null in box mode). The hub's renew joins
+   * its per-(agent, account) chain so a renew and a refresh never push at once.
+   */
+  credentialsFanout?: CredentialsFanout | null;
   close: () => Promise<void>;
 }
 
@@ -1287,6 +1297,21 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
         send(res, 202, { ok: true, accepted: verdict.accepted });
         return;
       }
+      // A signed-out login (no secret in it): auth evidence on the box's account.
+      // In box mode it rides the ring to the host poller, like the update above.
+      if (
+        (body.type === CREDENTIALS_DEAD_EVENT || body.type === CREDENTIALS_ALIVE_EVENT) &&
+        mode !== 'box'
+      ) {
+        const verdict = await handleCredentialsDead(opts.history, reg, body.payload, {
+          alive: body.type === CREDENTIALS_ALIVE_EVENT,
+        });
+        log(
+          `${body.type} box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
+        );
+        send(res, 202, { ok: true, recorded: verdict.recorded });
+        return;
+      }
       const ev = await store.appendEvent({
         boxId: reg.boxId,
         type: body.type,
@@ -2177,6 +2202,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                   );
                   continue;
                 }
+                if (ev.type === CREDENTIALS_DEAD_EVENT || ev.type === CREDENTIALS_ALIVE_EVENT) {
+                  const verdict = await handleCredentialsDead(opts.history, reg, ev.payload, {
+                    alive: ev.type === CREDENTIALS_ALIVE_EVENT,
+                  });
+                  log(
+                    `${ev.type} box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
+                  );
+                  continue;
+                }
                 await store.appendEvent({
                   boxId: reg.boxId,
                   type: ev.type,
@@ -2599,6 +2633,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       if (pollers) await pollers.stop(boxId);
     },
     ...(historyRelay ? { history: historyRelay } : {}),
+    credentialsFanout,
     close: async () => {
       historyRelay?.stop();
       if (pollers) await pollers.stopAll();

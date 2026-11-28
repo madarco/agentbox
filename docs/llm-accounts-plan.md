@@ -1033,8 +1033,8 @@ The same rule as today's `default` on a remote hub, now for every login:
 ## Backlog (not in these phases)
 
 - Switching a running box to another account (reseed + agent restart).
-- OAuth login driven from the hub (web / tray / remote control box), extending
-  the existing `jobs/:id/login-code` precedent.
+- ~~OAuth login driven from the hub~~ done: `POST /api/v1/accounts/:agent/:id/login`
+  (docs/credentials-tui-plan.md, Phase 2), same shape as `jobs/:id/login-code`.
 - Per-account usage, once [`agent-history-plan.md`](./agent-history-plan.md)
   lands token usage.
 - Dropping the legacy `~/.agentbox/<agent>-credentials.json` path for `default`.

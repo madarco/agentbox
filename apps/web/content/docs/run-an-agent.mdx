@@ -186,6 +186,16 @@ Without a terminal, `renew` (like `add --login`) prints the sign-in URL; finish
 with `agentbox credentials renew claude/work --code <CODE>`, which then pushes
 the login out.
 
+You can also sign in from the hub itself, with no terminal on the PC. On
+**Settings → Subscriptions**, a revoked account shows a **Revoked** badge and
+the box where it was seen failing. **Renew** opens a dialog: open the page it
+shows and approve, then paste the code back (claude) or enter the one-time code
+on the device page (codex). The new login replaces the stored one and is pushed
+to every box on the account. **Add a login** works the same way for a new
+account. The sign-in runs on the hub's machine, so on a remote control box it
+signs in that box's own store. The tray uses the same `/api/v1/accounts/{agent}/{id}/login`
+routes (see [the API reference](/docs/api)).
+
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
 secret 0600 under `~/.agentbox/credentials/`. The `default` row appears as soon
 as the agent is signed in on this machine, including a login only the agent's
@@ -194,7 +204,7 @@ own file holds (`~/.claude/.credentials.json`) that no box has backed up yet. If
 and the Subscriptions page name the file. Only the default logins are shown,
 and every change is refused until you fix the file or move it aside. The hub's **Settings → Subscriptions** page shows
 the same list, each card named by the account with its login's email and plan,
-and lets you add a setup token or API key, remove one, and pick the default.
+and lets you add a login, setup token or API key, renew a login, remove one, and pick the default.
 
 With a [remote hub](/docs/deployed-hub) the subscriptions belong to the **hub**,
 not to the computer that signed them in: every computer, the web UI and the
@@ -495,9 +505,7 @@ export const agentSpec = {
   install: { kind: 'npm', package: 'demo-cli' },
   dockerVolume: 'agentbox-demo-config',
   staticPaths: [{ hostHomeRel: ['.demo'], boxDir: '/home/vscode/.demo' }],
-  credential: {
-    /* where its login lives, on the box and in the host backup */
-  },
+  credential: {/* where its login lives, on the box and in the host backup */},
   forwardedEnvKeys: [],
   boxRunEnv: {},
   caps: { resume: false, teleport: 'stub', activitySource: [] },

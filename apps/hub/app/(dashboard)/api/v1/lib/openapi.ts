@@ -1688,6 +1688,107 @@ export function buildOpenApi(): Record<string, unknown> {
           },
         },
       },
+      '/accounts/{agent}/{id}/login': {
+        parameters: [
+          { name: 'agent', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        post: {
+          tags: ['Accounts'],
+          summary: 'Sign an account in from the hub',
+          description:
+            "Starts the agent's own login on the hub's machine (a throwaway container held by a detached worker) and answers the session once it shows the page to open, or still `starting` after ~20 s (poll GET). claude: open `url`, then post the code the browser shows to `…/login/code`. codex: open `url` and enter `userCode`; nothing to post. A new name adds the account (normalized like `POST /accounts`); an existing login is renewed. Once stored, the login is fanned out to the account's boxes (`…/renew`) and the session ends `done` with `renew: { pushed, failed, output }`. One sign-in per account: a second start answers the one in flight.",
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    mode: { type: 'string', enum: ['add', 'renew'] },
+                    replace: {
+                      type: 'boolean',
+                      description:
+                        'Store the login even when the browser signed in another identity than the account holds (otherwise the session ends `error` with `mismatch`).',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description:
+                '`{ session, agent, account, mode, state, url?, userCode?, input?, lastError?, error?, mismatch?, identity?, renew?, startedAt, updatedAt }`; `state` is `starting | awaiting-code | awaiting-approval | exchanging | pushing | done | error`',
+            },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+          },
+        },
+        get: {
+          tags: ['Accounts'],
+          summary: "The account's newest hub sign-in",
+          parameters: [
+            { name: 'session', in: 'query', required: false, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'the session (see POST)' },
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+        delete: {
+          tags: ['Accounts'],
+          summary: 'Cancel the sign-in in flight',
+          parameters: [
+            {
+              name: 'session',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: "Only this sign-in (another client's stays).",
+            },
+          ],
+          responses: {
+            '200': { description: 'the session, `error: cancelled`' },
+            '401': errorResponse,
+            '404': errorResponse,
+          },
+        },
+      },
+      '/accounts/{agent}/{id}/login/code': {
+        parameters: [
+          { name: 'agent', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        post: {
+          tags: ['Accounts'],
+          summary: 'Finish a hub sign-in with the browser code',
+          description:
+            'Hands the code to the sign-in waiting for it (`state: awaiting-code`). Answers once it is taken (`pushing` / `done`), refused (`awaiting-code` with `lastError`: post a fresh one) or failed (`error`). The code is never logged or echoed; 409 when the sign-in is not waiting for one.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { code: { type: 'string' }, session: { type: 'string' } },
+                  required: ['code'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'the session (see `POST …/login`)' },
+            '400': errorResponse,
+            '401': errorResponse,
+            '404': errorResponse,
+            '409': errorResponse,
+          },
+        },
+      },
       '/accounts/{agent}/{id}': {
         parameters: [
           { name: 'agent', in: 'path', required: true, schema: { type: 'string' } },

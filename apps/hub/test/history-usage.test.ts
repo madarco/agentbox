@@ -314,7 +314,13 @@ describe('usage (Phase 7)', () => {
     expect(await repo.accountAuth('claude/work')).toEqual({
       boxes: [
         { box: 'one', failedAt: null, error: null, okAt: day1 },
-        { box: 'two', failedAt: day1late, error: 'authentication_failed', okAt: null },
+        {
+          box: 'two',
+          failedAt: day1late,
+          error: 'authentication_failed',
+          source: 'transcript',
+          okAt: null,
+        },
       ],
     });
     // Another subscription is untouched.
@@ -325,6 +331,71 @@ describe('usage (Phase 7)', () => {
     ]);
     const two = (await repo.accountAuth('claude/work')).boxes.find((x) => x.box === 'two');
     expect(two).toMatchObject({ failedAt: day1late, okAt: null });
+  });
+
+  it("records a box's signed-out login file as evidence, with no turn (Phase 4)", async () => {
+    const { svc, ship, repo } = await setup({ b1: 'work' });
+    await svc.recordCredentialsDead!({ boxId: 'b1', boxName: 'one', agent: 'claude', ts: day1 });
+    // A box this hub does not know is not recorded under any account.
+    await svc.recordCredentialsDead!({ boxId: 'nope', agent: 'claude', ts: day1 });
+    expect(await repo.accountAuth('claude/work')).toEqual({
+      boxes: [{ box: 'one', failedAt: day1, error: 'credentials-dead', source: 'box', okAt: null }],
+    });
+    expect(await repo.accountAuth('claude/default')).toEqual({ boxes: [] });
+    // A real reply in that box afterwards is newer than the refusal.
+    await ship({ boxId: 'b1', boxName: 'one' }, 'claude', 'a1', [
+      { id: 'm1', ts: day2, model: 'x', in: 1, out: 3 },
+    ]);
+    expect((await repo.accountAuth('claude/work')).boxes[0]).toMatchObject({
+      failedAt: day1,
+      okAt: day2,
+    });
+    // A later transcript refusal replaces the source with its own.
+    await ship({ boxId: 'b1', boxName: 'one' }, 'claude', 'a2', [
+      { auth: 'authentication_failed', ts: '2026-11-22T09:00:00.000Z' },
+    ]);
+    expect((await repo.accountAuth('claude/work')).boxes[0]).toMatchObject({
+      error: 'authentication_failed',
+      source: 'transcript',
+    });
+  });
+
+  it('a real login back in the file after a wipe counts as working (no turn)', async () => {
+    const { svc, repo } = await setup({ b1: 'work' });
+    await svc.recordCredentialsDead!({ boxId: 'b1', boxName: 'one', agent: 'claude', ts: day1 });
+    await svc.recordCredentialsDead!({
+      boxId: 'b1',
+      boxName: 'one',
+      agent: 'claude',
+      ts: day2,
+      alive: true,
+    });
+    expect((await repo.accountAuth('claude/work')).boxes[0]).toMatchObject({
+      failedAt: day1,
+      okAt: day2,
+    });
+  });
+
+  it('adds the refusal source to a store from before Phase 4', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'auth-mig-'));
+    const path = join(dir, 'history.db');
+    const old = new DatabaseSync(path);
+    old.exec(`CREATE TABLE history_auth (account TEXT NOT NULL, box TEXT NOT NULL, fail_ts TEXT,
+      fail_error TEXT, ok_ts TEXT, PRIMARY KEY (account, box));
+      INSERT INTO history_auth VALUES ('claude/work', 'one', '${day1}', 'authentication_failed', NULL);`);
+    old.close();
+    const repo = await openSqliteHistoryRepo(path);
+    expect(await repo.accountAuth('claude/work')).toEqual({
+      boxes: [
+        {
+          box: 'one',
+          failedAt: day1,
+          error: 'authentication_failed',
+          source: 'transcript',
+          okAt: null,
+        },
+      ],
+    });
   });
 
   it('records a resumed session under the account the box switched to', async () => {
@@ -340,7 +411,15 @@ describe('usage (Phase 7)', () => {
     ]);
     expect((await repo.getSession('claude:s1'))!.account).toBe('claude/work');
     expect(await repo.accountAuth('claude/work')).toEqual({
-      boxes: [{ box: 'one', failedAt: day1, error: 'authentication_failed', okAt: null }],
+      boxes: [
+        {
+          box: 'one',
+          failedAt: day1,
+          error: 'authentication_failed',
+          source: 'transcript',
+          okAt: null,
+        },
+      ],
     });
     expect(await repo.accountAuth('claude/personal')).toEqual({
       boxes: [{ box: 'one', failedAt: null, error: null, okAt: day2 }],

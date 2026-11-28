@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS history_auth (
   box TEXT NOT NULL,
   fail_ts TEXT,
   fail_error TEXT,
+  fail_source TEXT,
   ok_ts TEXT,
   PRIMARY KEY (account, box)
 );
@@ -413,6 +414,10 @@ function migrateUsage(db: Db, o: HistoryRepoOptions): void {
   if (!columns(db, 'history_usage').has('cost_usd')) {
     db.exec('ALTER TABLE history_usage ADD COLUMN cost_usd REAL');
   }
+  // Credentials Phase 4: which signal a refusal came from (NULL = the transcript).
+  if (!columns(db, 'history_auth').has('fail_source')) {
+    db.exec('ALTER TABLE history_auth ADD COLUMN fail_source TEXT');
+  }
 }
 
 /**
@@ -655,8 +660,8 @@ export async function openSqliteHistoryRepo(
   // the box ran on then: a session resumed on another account after a switch
   // keeps its first `history_sessions.account`, its new events do not.
   const authFail = db.prepare(
-    `INSERT INTO history_auth (account, box, fail_ts, fail_error) VALUES (?1, ?2, ?3, ?4)
-     ON CONFLICT(account, box) DO UPDATE SET fail_ts = ?3, fail_error = ?4
+    `INSERT INTO history_auth (account, box, fail_ts, fail_error, fail_source) VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT(account, box) DO UPDATE SET fail_ts = ?3, fail_error = ?4, fail_source = ?5
      WHERE history_auth.fail_ts IS NULL OR history_auth.fail_ts <= ?3`,
   );
   const authOk = db.prepare(
@@ -665,7 +670,7 @@ export async function openSqliteHistoryRepo(
      WHERE history_auth.ok_ts IS NULL OR history_auth.ok_ts <= ?3`,
   );
   const authGet = db.prepare(
-    'SELECT box, fail_ts, fail_error, ok_ts FROM history_auth WHERE account = ? ORDER BY box',
+    'SELECT box, fail_ts, fail_error, fail_source, ok_ts FROM history_auth WHERE account = ? ORDER BY box',
   );
   const liveSums = db.prepare(
     `SELECT COUNT(*) AS c, SUM(input_tokens) AS i, SUM(output_tokens) AS o, SUM(cache_read_tokens) AS cr,
@@ -1223,8 +1228,9 @@ export async function openSqliteHistoryRepo(
       }
     },
     async recordAuth(e) {
-      if (e.kind === 'fail') authFail.run(e.account, e.box, e.ts, e.error ?? null);
-      else authOk.run(e.account, e.box, e.ts);
+      if (e.kind === 'fail') {
+        authFail.run(e.account, e.box, e.ts, e.error ?? null, e.source ?? 'transcript');
+      } else authOk.run(e.account, e.box, e.ts);
     },
     async accountAuth(account) {
       return {
@@ -1232,6 +1238,7 @@ export async function openSqliteHistoryRepo(
           box: String(r.box),
           failedAt: s(r.fail_ts),
           error: s(r.fail_error),
+          ...(r.fail_ts ? { source: r.fail_source === 'box' ? 'box' : 'transcript' } : {}),
           okAt: s(r.ok_ts),
         })),
       };

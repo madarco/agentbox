@@ -56,4 +56,7 @@ export function trimUrl(url: string): string {
 export const URL_BODY = '[^\\s\'"`<>)\\]\\u0000-\\u001f]';
 
 /** Output meaning "that input was wrong, try again" — claude and opencode both re-prompt. */
-export const INVALID_CODE = /invalid|incorrect|not a valid|try again|expired|rejected/i;
+// claude answers a truncated code with "That doesn't look like the full code"
+// and prompts again (measured, claude 2.1.x).
+export const INVALID_CODE =
+  /invalid|incorrect|not a valid|try again|expired|rejected|doesn't look like|does not look like/i;

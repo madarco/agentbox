@@ -13,6 +13,10 @@ CLI, not the raw commits.
 
 ### Added
 
+- **Renew or add a subscription login from the hub.** Settings -> Subscriptions
+  shows a Revoked badge with the box it was seen failing in, and Renew / Add a
+  login run the sign-in on the hub's machine (open the page, paste the code back)
+  and push the new login to every box on the account. Same API for the tray.
 - **Subscriptions on a remote hub belong to the hub.** Every computer's named
   logins, setup tokens and API keys are imported into the hub's own list, so any
   enrolled computer, the web UI and the tray can create a box on any of them; one
@@ -93,6 +97,9 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- The `agentbox credentials` menu comes back after a cancelled or failed sign-in
+  instead of exiting.
+
 - **A box created through a remote hub commits as you**, not as the generic
   `agentbox` identity. Every hub-routed create sends the project's
   `user.name`/`user.email`. Creates from the hub's web UI or the tray use the
@@ -121,7 +128,6 @@ CLI, not the raw commits.
   accounts too. `download codex` keeps a named box's `auth.json` in the box.
   `agent remove` can delete an unregistered agent's accounts. A docker session
   whose box registry can't be read no longer forwards your host's API key.
-
 - **A remote hub no longer lists "Docker (local)"**, which it has no engine for;
   its own engine is the Remote Docker host `hub`, now listed first. A PC pointed
   at a remote hub hides local docker the same way.

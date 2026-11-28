@@ -150,6 +150,24 @@ export type HistoryIngestResult =
 /** What an edge hands frames to: the hub service in-process, or an RPC. */
 export interface HistoryIngestSink {
   ingest(frame: HistoryFrame): Promise<HistoryIngestResult>;
+  /**
+   * A box's agent login file turned into its signed-out shape (claude wipes
+   * its tokens after a failed refresh): auth evidence with no turn needed
+   * (docs/credentials-tui-plan.md, Phase 4). Absent on a sink that does not
+   * keep auth evidence (an HTTP forwarder).
+   */
+  recordCredentialsDead?(e: CredentialsDeadEvent): Promise<void>;
+}
+
+/** What the relay hands the hub for a `credentials-dead` box event. Never a secret. */
+export interface CredentialsDeadEvent {
+  boxId: string;
+  boxName?: string;
+  agent: string;
+  /** When the file was wiped (its mtime in the box), ISO. */
+  ts: string;
+  /** A real login is back in the file after a reported wipe: evidence it works. */
+  alive?: true;
 }
 
 /** What the relay tells an in-box shipper (`history.config`). */

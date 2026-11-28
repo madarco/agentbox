@@ -173,6 +173,27 @@ function indexRecords(line: JsonObject, at: number): HistoryRecord[] {
   return [{ kind: 'meta', title, ...(ts ? { ts } : {}), at }];
 }
 
+/**
+ * A turn that ended on a refused credential (measured 2026-11-28, codex-cli
+ * 0.172.0, fake tokens): a ChatGPT login whose refresh failed ends
+ * `task_complete` with `error.codex_error_info: "unauthorized"`; a bogus API
+ * key with `{ http_connection_failed: { http_status_code: 401 } }`. The
+ * message is never kept: it can quote part of the key.
+ */
+function codexRefused(p: JsonObject): boolean {
+  const info = asObject(p.error)?.codex_error_info;
+  if (info === 'unauthorized') return true;
+  const failed = asObject(asObject(info)?.http_connection_failed);
+  return failed?.http_status_code === 401;
+}
+
+/** A line older than its session's start: replayed from a parent by a fork. */
+function copiedLine(ts: string | undefined, state: ParseState): boolean {
+  const start = typeof state.startedAt === 'string' ? Date.parse(state.startedAt) : NaN;
+  const t = ts ? Date.parse(ts) : NaN;
+  return Number.isFinite(start) && Number.isFinite(t) && t < start;
+}
+
 /** Records for one rollout line at byte offset `at`. `state.model` tracks the turn's model. */
 export function codexLineRecords(line: JsonObject, at: number, state: ParseState): HistoryRecord[] {
   const ts = nonEmptyString(line.timestamp);
@@ -181,6 +202,7 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
   const tsPart = ts ? { ts } : {};
   switch (line.type) {
     case 'session_meta': {
+      if (ts && typeof state.startedAt !== 'string') state.startedAt = ts;
       const cwd = nonEmptyString(p.cwd);
       return cwd ? [{ kind: 'meta', cwd, ...tsPart, at }] : [];
     }
@@ -226,6 +248,9 @@ export function codexLineRecords(line: JsonObject, at: number, state: ParseState
       }
       if (p.type === 'token_count') {
         return [...tokenCountRecords(p, tsPart, at), ...limitsRecords(p, tsPart, at)];
+      }
+      if (p.type === 'task_complete' && codexRefused(p) && !copiedLine(ts, state)) {
+        return [{ kind: 'auth', error: 'unauthorized', ...tsPart, at }];
       }
       return [];
     }

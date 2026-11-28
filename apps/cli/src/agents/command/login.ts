@@ -51,10 +51,9 @@ export function agentLoginSpec(id: string): AgentCliSpec | undefined {
 function refuseNamedAccount(a: AgentCliSpec, cmd: Command): void {
   const name = namedAccountFlag(cmd);
   if (name === undefined) return;
-  log.error(
+  throw new Error(
     `\`${a.id} login\` signs in the default account; add a named one with \`agentbox credentials add ${a.id}/${name} --login\``,
   );
-  process.exit(1);
 }
 
 /** The `--account` typed with `login`, wherever commander put it; undefined when none. */
@@ -98,16 +97,14 @@ async function signIn(
     // `signIn({volume})` would sign into the SHARED volume and seed the host's
     // login into the named one — capturing the owner's login under a new name.
     if (a.runtime.supportsAccountLogin !== true) {
-      log.error(`${a.shortName} cannot sign in a named login account yet`);
-      process.exit(1);
+      throw new Error(`${a.shortName} cannot sign in a named login account yet`);
     }
     // Before the whole OAuth flow, not after it.
     const existing = findAccount(await readAccounts(), a.id, account.id);
     if (existing && existing.kind !== 'login') {
-      log.error(
+      throw new Error(
         `account '${account.id}' is a ${existing.kind} account; remove it first (\`agentbox credentials rm ${a.id}/${account.id}\`)`,
       );
-      process.exit(1);
     }
   }
   const custom = a.runtime.loginCommand?.run;
@@ -124,7 +121,11 @@ async function signIn(
       },
       {
         syncCredentialsIfChanged: syncAgentCredentialsIfChanged,
-        fail: handleLifecycleError,
+        // Rethrow: the caller decides. A subcommand ends the process on it;
+        // the credentials menu reports it and comes back.
+        fail: (err: unknown) => {
+          throw err;
+        },
         captureAccountLogin: (o) => captureAccountLogin(a, o),
         dropOrphanAccountVolume: async (o) => {
           await dropOrphanAccountVolume(a.id, o.account.id, o.volume);
@@ -143,10 +144,9 @@ async function signIn(
   // prompts needs one either way.
   const ttyRequired = a.runtime.loginNeedsTty === 'always' || opts.interactive === true;
   if (!process.stdin.isTTY && ttyRequired) {
-    log.error(
+    throw new Error(
       `\`agentbox ${a.id} login${opts.interactive === true ? ' --interactive' : ''}\` needs an interactive terminal.`,
     );
-    process.exit(1);
   }
   const cfg = await loadEffectiveConfig(process.cwd());
   const baseImage = cfg.effective.box.image;
@@ -181,13 +181,11 @@ async function signIn(
   });
   if (res.cancelled) {
     await dropOrphan();
-    outro('sign-in cancelled');
-    process.exit(1);
+    throw new Error('sign-in cancelled');
   }
   if (!res.ok) {
     await dropOrphan();
-    log.error(res.error ?? 'login failed');
-    process.exit(1);
+    throw new Error(res.error ?? 'login failed');
   }
   if (account) {
     try {
@@ -223,8 +221,8 @@ export function wireLoginAction(a: AgentCliSpec, cmd: Command): Command {
     args: string[],
     rawOpts: LoginOptions & Record<string, unknown>,
   ) {
-    refuseNamedAccount(a, this);
     try {
+      refuseNamedAccount(a, this);
       const { interactive, ...extra } = rawOpts;
       const signedIn = await runAgentLogin(a, args, {
         ...(interactive ? { interactive } : {}),

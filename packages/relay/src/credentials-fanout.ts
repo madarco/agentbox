@@ -437,6 +437,32 @@ export class CredentialsFanout {
     this.pending.set(key, timer);
   }
 
+  /**
+   * Run `fn` (a full fan-out of `account`'s stored login, e.g. the hub's
+   * renew) on the same per-(agent, account) chain as the refresh fan-outs, so
+   * the two never push at once. A refresh fan-out still waiting on its debounce
+   * is dropped: `fn` pushes the same stored copy to every box, a superset.
+   */
+  async runExclusive<T>(agent: string, account: string, fn: () => Promise<T>): Promise<T> {
+    const key = `${agent}\u0000${account}`;
+    const waiting = this.pending.get(key);
+    if (waiting) {
+      clearTimeout(waiting);
+      this.pending.delete(key);
+    }
+    const prev = this.chains.get(key) ?? Promise.resolve();
+    const run = prev.then(fn);
+    // The chain itself never rejects: a failed renew must not fail the next refresh.
+    this.chains.set(
+      key,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
+  }
+
   /** Pending debounce timers + in-flight chain, for tests/shutdown. */
   async flush(): Promise<void> {
     for (const [agent, timer] of this.pending) {

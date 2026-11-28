@@ -8,9 +8,14 @@ import {
   CredentialsWatcher,
   isRealCredentialText,
   isRetryablePostFailure,
+  isWipedCredentialText,
   WATCHED_CREDENTIALS,
 } from '../src/credentials-watcher.js';
-import { CREDENTIALS_UPDATED_EVENT } from '../src/types.js';
+import {
+  CREDENTIALS_ALIVE_EVENT,
+  CREDENTIALS_DEAD_EVENT,
+  CREDENTIALS_UPDATED_EVENT,
+} from '../src/types.js';
 
 const CLAUDE_BLOB = JSON.stringify({
   claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: 123 },
@@ -18,14 +23,31 @@ const CLAUDE_BLOB = JSON.stringify({
 
 const DELIVERED: PostOutcome = { ok: true, status: 202 };
 
-/** `outcomes` is consumed one per call; once exhausted every post is delivered. */
+/**
+ * `outcomes` is consumed one per call; once exhausted every post is delivered.
+ * `credentials-alive` goes to its own spy (always delivered, no outcome
+ * consumed) so `post` counts what the other tests are about.
+ */
 function fakeRelay(outcomes: PostOutcome[] = []): {
   relay: RelayClient;
   post: ReturnType<typeof vi.fn>;
+  alive: ReturnType<typeof vi.fn>;
 } {
   const queue = [...outcomes];
-  const post = vi.fn(() => Promise.resolve(queue.shift() ?? DELIVERED));
-  return { relay: { enabled: true, post } as unknown as RelayClient, post };
+  const post = vi.fn((...call: [string, unknown, unknown?]) => {
+    void call;
+    return Promise.resolve(queue.shift() ?? DELIVERED);
+  });
+  const alive = vi.fn((...call: [string, unknown]) => {
+    void call;
+    return Promise.resolve(DELIVERED);
+  });
+  const relay = {
+    enabled: true,
+    post: (type: string, payload: unknown, opts?: unknown) =>
+      type === CREDENTIALS_ALIVE_EVENT ? alive(type, payload) : post(type, payload, opts),
+  };
+  return { relay: relay as unknown as RelayClient, post, alive };
 }
 
 /**
@@ -275,5 +297,122 @@ describe('isRetryablePostFailure', () => {
     expect(isRetryablePostFailure({ ok: false, status: 400 })).toBe(false);
     expect(isRetryablePostFailure({ ok: false, status: 401 })).toBe(false);
     expect(isRetryablePostFailure({ ok: true, status: 202 })).toBe(false);
+  });
+});
+
+// The shape claude writes after a refresh it cannot make (Phase 0, 2026-11-26).
+const WIPED_BLOB = JSON.stringify({
+  claudeAiOauth: { accessToken: '', refreshToken: '', expiresAt: 0, scopes: [] },
+});
+
+describe('isWipedCredentialText', () => {
+  it("is claude's emptied tokens only", () => {
+    expect(isWipedCredentialText('claude-oauth', WIPED_BLOB)).toBe(true);
+    expect(
+      isWipedCredentialText('claude-oauth', JSON.stringify({ claudeAiOauth: { accessToken: '' } })),
+    ).toBe(true);
+    expect(isWipedCredentialText('claude-oauth', CLAUDE_BLOB)).toBe(false);
+    // An empty access token next to a live refresh token is a refresh in flight.
+    expect(
+      isWipedCredentialText(
+        'claude-oauth',
+        JSON.stringify({ claudeAiOauth: { accessToken: '', refreshToken: 'r' } }),
+      ),
+    ).toBe(false);
+    expect(isWipedCredentialText('claude-oauth', '{}')).toBe(false);
+    expect(isWipedCredentialText('claude-oauth', 'not json')).toBe(false);
+    expect(isWipedCredentialText('nonempty-json', WIPED_BLOB)).toBe(false);
+  });
+});
+
+describe('CredentialsWatcher credentials-dead', () => {
+  let dir: string;
+  let path: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'cred-dead-'));
+    path = join(dir, '.credentials.json');
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  const watcher = (relay: RelayClient): CredentialsWatcher =>
+    new CredentialsWatcher({ relay, files: [{ agent: 'claude', path, shape: 'claude-oauth' }] });
+  const deadPosts = (post: ReturnType<typeof vi.fn>): unknown[][] =>
+    post.mock.calls.filter((c) => c[0] === CREDENTIALS_DEAD_EVENT);
+  const alivePosts = (alive: ReturnType<typeof vi.fn>): unknown[][] => alive.mock.calls;
+
+  it('reports a wiped login once, with its mtime and no contents', async () => {
+    await writeFile(path, WIPED_BLOB);
+    await utimes(path, 1_700_000_000, 1_700_000_000);
+    const { relay, post } = fakeRelay();
+    const w = watcher(relay);
+    await w.scan();
+    expect(deadPosts(post)).toHaveLength(1);
+    const payload = deadPosts(post)[0]![1] as Record<string, unknown>;
+    expect(payload).toEqual({
+      schema: 1,
+      agent: 'claude',
+      wipedAt: new Date(1_700_000_000_000).toISOString(),
+    });
+    // A rewrite to the same shape (new mtime) is the same transition.
+    await writeFile(path, WIPED_BLOB);
+    await utimes(path, 1_700_000_100, 1_700_000_100);
+    await w.scan();
+    expect(deadPosts(post)).toHaveLength(1);
+  });
+
+  it('reports again after a real login came back in between', async () => {
+    const { relay, post, alive } = fakeRelay();
+    const w = watcher(relay);
+    await writeFile(path, WIPED_BLOB);
+    await utimes(path, 1_700_000_000, 1_700_000_000);
+    await w.scan();
+    await writeFile(path, CLAUDE_BLOB);
+    await utimes(path, 1_700_000_100, 1_700_000_100);
+    await w.scan();
+    await writeFile(path, WIPED_BLOB);
+    await utimes(path, 1_700_000_200, 1_700_000_200);
+    await w.scan();
+    expect(deadPosts(post)).toHaveLength(2);
+    // The real login in between cleared it.
+    expect(alivePosts(alive)).toHaveLength(1);
+    expect(alivePosts(alive)[0]![1]).toEqual({
+      schema: 1,
+      agent: 'claude',
+      at: new Date(1_700_000_100_000).toISOString(),
+    });
+    expect(post.mock.calls.filter((c) => c[0] === CREDENTIALS_UPDATED_EVENT)).toHaveLength(1);
+  });
+
+  it('reports a real login on its first read, so a restart clears a wipe it forgot', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    await utimes(path, 1_700_000_000, 1_700_000_000);
+    const { relay, alive } = fakeRelay();
+    const w = watcher(relay);
+    await w.scan();
+    expect(alivePosts(alive)).toHaveLength(1);
+    // Once per watcher: a refreshed real login is not reported again.
+    await writeFile(path, CLAUDE_BLOB.replace('"r"', '"r2"'));
+    await utimes(path, 1_700_000_100, 1_700_000_100);
+    await w.scan();
+    expect(alivePosts(alive)).toHaveLength(1);
+  });
+
+  it('retries a report the relay did not take', async () => {
+    await writeFile(path, WIPED_BLOB);
+    const { relay, post } = fakeRelay([{ ok: false, status: null }]);
+    const w = watcher(relay);
+    await w.scan();
+    await w.scan();
+    expect(deadPosts(post)).toHaveLength(2);
+    await w.scan();
+    expect(deadPosts(post)).toHaveLength(2);
+  });
+
+  it('never reports a placeholder that is not the wiped shape', async () => {
+    await writeFile(path, '{}');
+    const { relay, post } = fakeRelay();
+    await watcher(relay).scan();
+    expect(post).not.toHaveBeenCalled();
   });
 });

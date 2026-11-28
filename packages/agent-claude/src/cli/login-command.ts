@@ -80,10 +80,9 @@ function printAwaitingCode(st: LoginState, account: LoginAccount | undefined): v
 async function startHeadlessLogin(args: string[], account?: LoginAccount): Promise<void> {
   // node-pty drives the login; without the prebuild there is no headless path.
   if (!(await loadPtyBackend())) {
-    log.error(
+    throw new Error(
       'Headless login needs the node-pty prebuild, which is not installed. Run `agentbox claude login` from an interactive terminal instead.',
     );
-    process.exit(1);
   }
   cleanupStaleSessions();
   // Only one live session at a time. Match ANY non-terminal live session (incl.
@@ -96,8 +95,7 @@ async function startHeadlessLogin(args: string[], account?: LoginAccount): Promi
     const pendingAccount = readLoginRequest(existing.id)?.account;
     const mismatch = sessionAccountMismatch(pendingAccount, account);
     if (mismatch) {
-      log.error(mismatch);
-      process.exit(1);
+      throw new Error(mismatch);
     }
     if (existing.state.phase === 'awaiting-code' && existing.state.url) {
       log.info('A login is already pending; finish it (or wait for it to expire):');
@@ -139,8 +137,7 @@ async function startHeadlessLogin(args: string[], account?: LoginAccount): Promi
   // re-exec for the worker; AGENTBOX_CLI_ENTRY wins if a wrapper set it.
   const entry = process.env.AGENTBOX_CLI_ENTRY ?? process.argv[1];
   if (!entry || !existsSync(entry)) {
-    log.error('could not resolve the agentbox CLI entry to spawn the login worker');
-    process.exit(1);
+    throw new Error('could not resolve the agentbox CLI entry to spawn the login worker');
   }
   const child = spawn(process.execPath, [entry, '_claude-login-worker', id], {
     detached: true,
@@ -166,14 +163,12 @@ async function startHeadlessLogin(args: string[], account?: LoginAccount): Promi
       return;
     }
     if (st?.phase === 'error') {
-      log.error(`login could not start: ${st.error ?? 'unknown error'}`);
-      process.exit(1);
+      throw new Error(`login could not start: ${st.error ?? 'unknown error'}`);
     }
     if (Date.now() > deadline) {
-      log.error(
+      throw new Error(
         `timed out waiting for the login URL — see ~/.agentbox/logs/claude-login-${id}.log`,
       );
-      process.exit(1);
     }
     await sleep(400);
   }
@@ -184,16 +179,14 @@ async function deliverLoginCode(code: string, account: LoginAccount | undefined)
   cleanupStaleSessions();
   const pending = findPendingSession();
   if (!pending) {
-    log.error(
+    throw new Error(
       'No pending login is waiting for a code. Start one first with `agentbox claude login` (or --headless).',
     );
-    process.exit(1);
   }
   const { id } = pending;
   const mismatch = sessionAccountMismatch(readLoginRequest(id)?.account, account);
   if (mismatch) {
-    log.error(mismatch);
-    process.exit(1);
+    throw new Error(mismatch);
   }
   const submittedAt = Date.now();
   writeLoginCode(id, code);
@@ -215,20 +208,21 @@ async function deliverLoginCode(code: string, account: LoginAccount | undefined)
     }
     if (st?.phase === 'error') {
       s.stop('sign-in failed');
-      log.error(st.error ?? 'login failed');
-      process.exit(1);
+      throw new Error(st.error ?? 'login failed');
     }
     // Worker reverted to awaiting-code after our submit → the code was rejected;
     // the session stays valid so a corrected `--code` can retry it.
     if (st?.phase === 'awaiting-code' && st.lastError && Date.parse(st.updatedAt) >= submittedAt) {
       s.stop('code rejected');
-      log.error(`${st.lastError}. Run \`${finishCommand(account)}\` again with a fresh code.`);
-      process.exit(1);
+      throw new Error(
+        `${st.lastError}. Run \`${finishCommand(account)}\` again with a fresh code.`,
+      );
     }
     if (Date.now() > deadline) {
       s.stop('sign-in timed out');
-      log.error('timed out completing sign-in — see the login worker log under ~/.agentbox/logs/');
-      process.exit(1);
+      throw new Error(
+        'timed out completing sign-in — see the login worker log under ~/.agentbox/logs/',
+      );
     }
     await sleep(500);
   }
@@ -334,18 +328,16 @@ export async function runClaudeLoginCommand(
     });
     if (res.cancelled) {
       await dropOrphan();
-      outro('sign-in cancelled');
-      process.exit(1);
+      throw new Error('sign-in cancelled');
     }
     if (!res.ok) {
       await dropOrphan();
-      log.error(res.error ?? 'login failed');
       // A login method whose output we can't recognize (an exotic `-- --sso`
       // shape) never reaches a prompt; the passthrough still drives it.
       if (res.error?.includes('never printed an auth URL')) {
         log.info("Try `agentbox claude login --interactive` to use claude's own login TUI.");
       }
-      process.exit(1);
+      throw new Error(res.error ?? 'login failed');
     }
     if (account && volume) {
       try {
