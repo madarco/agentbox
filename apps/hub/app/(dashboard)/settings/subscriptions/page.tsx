@@ -3,13 +3,13 @@
 // Subscriptions page (Settings → Subscriptions) — the named LLM accounts of this hub's machine (logins, setup
 // tokens, API keys per agent; docs/llm-accounts-plan.md, Phase 5). PURE REST
 // CLIENT over /api/v1/accounts: list, add a pasted key or setup token, remove.
-// A login is interactive and runs on the machine, so it is a command
-// to copy, not a form. No secret ever comes back from the API. Each card shows
+// A login is signed in (added or renewed) from here through the hub's own
+// sign-in (`…/login`, SignInDialog). No secret ever comes back from the API. Each card shows
 // one meter per plan-limit window the account reports (hub settings 3b,
 // design: control-shadcn/views-env.jsx SubscriptionsPane).
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,10 +18,12 @@ import { Input } from '@/components/ui/input';
 import { SubMark, SubMeters, TierBadge, subLine, subName } from '@/components/subscription-meters';
 import { refreshAccounts, resetText, useAccounts, type Account } from '@/lib/accounts-client';
 import { groupSubscriptions, subscriptionKey, type AccountKind } from '@/lib/subscriptions';
+import { useStore } from '@/lib/boxes/store';
 import { cn } from '@/lib/utils';
 import { newAccountName } from '@/app/(dashboard)/api/v1/lib/validate';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
+import { SignInDialog } from './sign-in-dialog';
 
 type Kind = AccountKind;
 
@@ -76,6 +78,21 @@ export default function SubscriptionsPage() {
   const [kind, setKind] = useState<Kind>('setup-token');
   const [id, setId] = useState('');
   const [token, setToken] = useState('');
+  // Add-a-login form, and the sign-in in progress (add or renew).
+  const [loginAgent, setLoginAgent] = useState('');
+  const [loginName, setLoginName] = useState('');
+  const [signIn, setSignIn] = useState<{
+    agent: string;
+    account: string;
+    mode: 'add' | 'renew';
+  } | null>(null);
+  const { state: hub } = useStore();
+  const onSignedIn = useCallback(() => void refreshAccounts(), []);
+  /** A box's detail page from the name the evidence carries, when the hub knows it. */
+  const boxHref = (name: string): string | undefined => {
+    const b = hub.boxes.find((x) => x.name === name || x.id === name);
+    return b ? `/boxes/${encodeURIComponent(b.id)}` : undefined;
+  };
 
   // Usage is a side fact: the cards render without it.
   useEffect(() => {
@@ -93,6 +110,13 @@ export default function SubscriptionsPage() {
   const typedId = id.trim();
   const existingName = (accounts ?? []).some((a) => a.agent === chosen?.id && a.id === typedId);
   const savedAs = typedId && !existingName ? newAccountName(typedId) : null;
+  const loginAgents = agents.filter((a) => a.kinds.includes('login'));
+  const loginChosen = loginAgents.find((a) => a.id === loginAgent) ?? loginAgents[0];
+  const loginTyped = loginName.trim();
+  const loginSavedAs = loginTyped ? newAccountName(loginTyped) : null;
+  const loginTaken = (accounts ?? []).some(
+    (a) => a.agent === loginChosen?.id && (a.id === loginTyped || a.id === loginSavedAs),
+  );
 
   const act = async (key: string, fn: () => Promise<unknown>): Promise<void> => {
     setBusy(key);
@@ -200,6 +224,12 @@ export default function SubscriptionsPage() {
                       weekLoaded={weekTokens !== null}
                       busy={busy !== null}
                       confirming={confirmRemove === subscriptionKey(a)}
+                      boxHref={boxHref}
+                      onRenew={
+                        a.kind === 'login'
+                          ? () => setSignIn({ agent: a.agent, account: a.id, mode: 'renew' })
+                          : undefined
+                      }
                       onMakeDefault={
                         agents.some((x) => x.id === a.agent) ? () => void makeDefault(a) : undefined
                       }
@@ -211,6 +241,68 @@ export default function SubscriptionsPage() {
                 </div>
               </div>
             ))
+          )}
+
+          <SectionLabel>Add a login</SectionLabel>
+          {loginAgents.length === 0 ? (
+            <EmptyBox>
+              <div>No agent here takes a login account.</div>
+            </EmptyBox>
+          ) : (
+            <Card className="p-4 px-5">
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(ev) => {
+                  ev.preventDefault();
+                  if (!loginChosen || !loginSavedAs || loginTaken) return;
+                  setSignIn({ agent: loginChosen.id, account: loginSavedAs, mode: 'add' });
+                  setLoginName('');
+                }}
+              >
+                <select
+                  aria-label="Login agent"
+                  className="h-8 rounded-md border bg-background px-2 text-[13px]"
+                  value={loginChosen?.id ?? ''}
+                  onChange={(ev) => setLoginAgent(ev.target.value)}
+                >
+                  {loginAgents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.id}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  value={loginName}
+                  onChange={(ev) => setLoginName(ev.target.value)}
+                  placeholder="name (e.g. work max)"
+                  aria-label="Login name"
+                  className="w-48 font-mono"
+                  autoComplete="off"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={busy !== null || signIn !== null || !loginSavedAs || loginTaken}
+                >
+                  <Icons.key /> Sign in
+                </Button>
+              </form>
+              {loginTyped ? (
+                <div className="mt-2 font-mono text-[12px] text-muted-foreground">
+                  {loginTaken
+                    ? `${loginChosen?.id ?? ''}/${loginSavedAs ?? loginTyped} already exists; renew it above`
+                    : loginSavedAs
+                      ? loginSavedAs !== loginTyped
+                        ? `saved as ${loginChosen?.id ?? ''}/${loginSavedAs}`
+                        : null
+                      : 'a name is letters, digits, spaces or _'}
+                </div>
+              ) : null}
+              <div className="mt-3 text-[12px] text-muted-foreground">
+                Signs in on the hub&apos;s machine: open the page it shows, then paste the code back
+                here (claude) or approve the device code (codex).
+              </div>
+            </Card>
           )}
 
           <SectionLabel>Add a setup token or API key</SectionLabel>
@@ -285,16 +377,25 @@ export default function SubscriptionsPage() {
               ) : null}
               <div className="mt-3 text-[12px] text-muted-foreground">
                 A setup token never renews, so it is the right kind for an account several boxes use
-                at once. To add a <span className="font-mono">login</span>, run{' '}
-                <span className="font-mono">
-                  agentbox credentials add claude/&lt;name&gt; --login
-                </span>{' '}
-                on this machine.
+                at once.
               </div>
             </Card>
           )}
         </>
       )}
+      {signIn ? (
+        <SignInDialog
+          key={`${signIn.agent}/${signIn.account}`}
+          agent={signIn.agent}
+          account={signIn.account}
+          mode={signIn.mode}
+          onClose={() => {
+            setSignIn(null);
+            void refreshAccounts();
+          }}
+          onFinished={onSignedIn}
+        />
+      ) : null}
     </div>
   );
 }
@@ -305,6 +406,8 @@ function SubscriptionCard({
   weekLoaded,
   busy,
   confirming,
+  boxHref,
+  onRenew,
   onMakeDefault,
   onAskRemove,
   onKeep,
@@ -315,6 +418,9 @@ function SubscriptionCard({
   weekLoaded: boolean;
   busy: boolean;
   confirming: boolean;
+  boxHref: (name: string) => string | undefined;
+  /** A login's sign-in again (absent for a pasted kind). */
+  onRenew: (() => void) | undefined;
   /** Absent for an agent with no `<agent>.account` setting. */
   onMakeDefault: (() => void) | undefined;
   onAskRemove: () => void;
@@ -325,6 +431,8 @@ function SubscriptionCard({
   const named = a.id !== 'default';
   const n = a.boxes.length;
   const atLimit = a.limits?.atLimit === true;
+  const revoked = a.auth?.state === 'revoked';
+  const failingHref = revoked && a.auth?.box ? boxHref(a.auth.box) : undefined;
   // The first window to reset that is full, for the at-limit note.
   const reset = resetText(
     a.limits?.windows
@@ -333,7 +441,13 @@ function SubscriptionCard({
       .sort()[0],
   );
   return (
-    <Card className={cn('p-4', atLimit && 'border-[var(--amber-line)]')}>
+    <Card
+      className={cn(
+        'p-4',
+        atLimit && 'border-[var(--amber-line)]',
+        revoked && 'border-[var(--red-line)]',
+      )}
+    >
       <div className="flex items-center gap-3 max-sm:flex-wrap">
         <SubMark account={a} />
         <div className="min-w-0 flex-1">
@@ -349,6 +463,25 @@ function SubscriptionCard({
               </Badge>
             ) : null}
             {a.hasSecret ? null : <Badge className="px-1.5 py-0 text-[10.5px]">no secret</Badge>}
+            {revoked ? (
+              <Badge
+                className="badge-err px-1.5 py-0 text-[10.5px]"
+                title={a.auth?.detail ?? 'The login was refused; sign it in again'}
+              >
+                Revoked
+              </Badge>
+            ) : a.auth?.state === 'expiring' ? (
+              <Badge
+                className="badge-warn px-1.5 py-0 text-[10.5px]"
+                title={
+                  a.auth.since
+                    ? `Expires ${new Date(a.auth.since).toLocaleDateString()}`
+                    : undefined
+                }
+              >
+                Expiring
+              </Badge>
+            ) : null}
           </div>
           <div className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground">
             {subLine(a)}
@@ -366,6 +499,17 @@ function SubscriptionCard({
               <span className="badge-dot" style={{ animation: 'none' }} />
               {atLimit ? 'at limit' : 'ok'}
             </Badge>
+          ) : null}
+          {onRenew ? (
+            <Button
+              size="sm"
+              variant={revoked ? 'default' : 'ghost'}
+              disabled={busy}
+              title="Sign in again, then push the new login to every box on this account"
+              onClick={onRenew}
+            >
+              <Icons.refresh /> Renew
+            </Button>
           ) : null}
           {a.default?.global || !onMakeDefault ? null : (
             <Button
@@ -404,6 +548,29 @@ function SubscriptionCard({
           <Button size="sm" variant="ghost" onClick={onKeep}>
             Keep
           </Button>
+        </div>
+      ) : null}
+      {revoked ? (
+        <div className="mt-3 flex items-start gap-2 border-t border-[var(--red-line)] pt-2.5 text-xs text-[var(--red)]">
+          <Icons.warn className="mt-px size-3.5 flex-none" />
+          <span>
+            {a.auth?.box ? (
+              <>
+                Seen failing in{' '}
+                {failingHref ? (
+                  <Link href={failingHref} className="font-mono underline underline-offset-2">
+                    {a.auth.box}
+                  </Link>
+                ) : (
+                  <span className="font-mono">{a.auth.box}</span>
+                )}
+                {a.auth.since ? ` (${new Date(a.auth.since).toLocaleString()})` : ''}.{' '}
+              </>
+            ) : null}
+            {onRenew
+              ? 'Renew signs it in again and pushes the new login to its boxes.'
+              : 'Replace its token with a new one.'}
+          </span>
         </div>
       ) : null}
       <div className="mt-3.5 empty:hidden">

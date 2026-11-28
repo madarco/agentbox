@@ -563,6 +563,7 @@ export interface HubBackend
     TimelineBackend,
     CheckoutBackend,
     AccountBackend,
+    AccountLoginBackend,
     SkillsBackend,
     PcSkillsBackend,
     HostSessionsBackend {
@@ -1560,6 +1561,63 @@ export interface AccountRenewView {
   failed: number;
   /** The fan-out's own lines (one per target). */
   output: string[];
+}
+
+/**
+ * A hub-driven sign-in (`/api/v1/accounts/:agent/:id/login`). `state`:
+ * `starting` (preparing the login container) → `awaiting-code` (open `url`,
+ * then post the code) or `awaiting-approval` (open `url`, enter `userCode`;
+ * nothing to post) → `exchanging` → `pushing` (stored; fanning it out to the
+ * account's boxes) → `done`; or `error` (`error` says why; `cancelled` after a
+ * DELETE). Never carries a secret.
+ */
+export interface AccountLoginView {
+  session: string;
+  agent: string;
+  account: string;
+  /** `add`: a new account; `renew`: a new login for an existing one. */
+  mode: 'add' | 'renew';
+  state:
+    | 'starting'
+    | 'awaiting-code'
+    | 'awaiting-approval'
+    | 'exchanging'
+    | 'pushing'
+    | 'done'
+    | 'error';
+  url?: string;
+  userCode?: string;
+  /** With `awaiting-code`: the browser's code, or a secret the agent asks for. */
+  input?: { kind: 'code' } | { kind: 'secret'; label: string };
+  /** A refused code; the sign-in still waits for a fresh one. */
+  lastError?: string;
+  error?: string;
+  identity?: AccountIdentity;
+  /** With `done`: the fan-out to the account's boxes. */
+  renew?: AccountRenewView & { error?: string };
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface AccountLoginBackend {
+  /** Body `{ mode?: 'add' | 'renew' }`; a new name is normalized like `POST /accounts`. */
+  startAccountLogin(
+    agent: string,
+    id: string,
+    input: unknown,
+  ): Promise<AccountResult<AccountLoginView>>;
+  getAccountLogin(
+    agent: string,
+    id: string,
+    session?: string,
+  ): Promise<AccountResult<AccountLoginView>>;
+  /** Body `{ code, session? }`; answers once the code is taken, refused or failed. */
+  submitAccountLoginCode(
+    agent: string,
+    id: string,
+    input: unknown,
+  ): Promise<AccountResult<AccountLoginView>>;
+  cancelAccountLogin(agent: string, id: string): Promise<AccountResult<AccountLoginView>>;
 }
 
 /** An agent that can hold named accounts, and which kinds. */

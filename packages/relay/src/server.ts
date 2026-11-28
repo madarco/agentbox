@@ -320,6 +320,11 @@ export interface RelayServerHandle {
   stopCloudPoller: (boxId: string) => Promise<void>;
   /** Session-history shipping, when this relay has a hub sink. */
   history?: HistoryRelay;
+  /**
+   * The host-mode credential fan-out (null in box mode). The hub's renew joins
+   * its per-(agent, account) chain so a renew and a refresh never push at once.
+   */
+  credentialsFanout?: CredentialsFanout | null;
   close: () => Promise<void>;
 }
 
@@ -2603,6 +2608,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       if (pollers) await pollers.stop(boxId);
     },
     ...(historyRelay ? { history: historyRelay } : {}),
+    credentialsFanout,
     close: async () => {
       historyRelay?.stop();
       if (pollers) await pollers.stopAll();

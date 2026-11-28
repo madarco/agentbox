@@ -23,6 +23,7 @@ import {
   claudeSessionInfo,
   ensureClaudeInstalled,
   ensureClaudeVolume,
+  resetVolumeAccountState,
   runInteractiveClaudeLogin,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
@@ -302,6 +303,7 @@ export const claudeRuntime: AgentRuntime = {
 
   signIn: (image, extraArgs, o) => signInToClaude(image, extraArgs, o),
   loginBinding: (o) => claudeLoginBinding(o),
+  resetAccountVolume: (volume, image) => resetVolumeAccountState(volume, image),
   loginNeedsTty: 'interactive-only',
   loginCommand: { options: addClaudeLoginOptions, run: runClaudeLoginCommand },
   // Claude's create always derives an image with the agent baked in and has

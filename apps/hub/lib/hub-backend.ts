@@ -232,11 +232,13 @@ import { hubProfile } from './auth-config';
 import {
   accountsInfoOf,
   subscriptionsOf,
+  cliPropagate,
   createAccountBackend,
   resolveCreateAccounts,
   setDefaultCheckpointRefusal,
 } from './backend/accounts';
 import { createLimitsSource } from './backend/account-limits';
+import { createAccountLoginBackend } from './backend/account-login';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { createProjectCustodySlugs } from './backend/project-custody';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
@@ -2299,6 +2301,12 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
   // a Store-only box has only the latter, and must still block `credentials rm`.
   const accounts = createAccountBackend({
     limits: accountLimits,
+    // On the relay's per-(agent, account) chain: a renew never pushes at the
+    // same time as a box's refresh fan-out of that account.
+    runPropagate: (agent, id) =>
+      handle.credentialsFanout
+        ? handle.credentialsFanout.runExclusive(agent, id, () => cliPropagate(agent, id))
+        : cliPropagate(agent, id),
     authEvidence: async (subscription) =>
       (await globalThis.__AGENTBOX_HUB_HISTORY?.repo.accountAuth(subscription)) ?? null,
     // A local box is in both: its state.json record (the richer one) wins.
@@ -2312,6 +2320,9 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
           .map((r) => ({ name: r.name, ...(r.accounts ? { accounts: r.accounts } : {}) })),
       ];
     },
+  });
+  const accountLogin = createAccountLoginBackend({
+    renew: (agent, id) => accounts.renewAccount(agent, id),
   });
   const workspaces = createWorkspaceBackend(backendDeps);
   const custodySlugs = createProjectCustodySlugs();
@@ -2413,6 +2424,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     ...pcSkills,
     ...createHostSessionsBackend(),
     ...accounts,
+    ...accountLogin,
     ...workspaces,
     ...managers,
     ...timeline,

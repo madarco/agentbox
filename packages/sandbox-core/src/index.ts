@@ -421,7 +421,13 @@ export { parseSkillFrontmatter } from './skills/frontmatter.js';
 export type { SkillFrontmatter } from './skills/frontmatter.js';
 export { isSecretFileName, scanSkillFiles, shannonEntropy } from './skills/scan.js';
 export type { SecretFinding } from './skills/scan.js';
-export { readSkillTree, SkillTooLargeError, treeHash, type SkillHashCache, type SkillHashEntry } from './skills/tree.js';
+export {
+  readSkillTree,
+  SkillTooLargeError,
+  treeHash,
+  type SkillHashCache,
+  type SkillHashEntry,
+} from './skills/tree.js';
 export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.js';
 export { SKILL_PROPOSAL_LIMITS } from './skills/proposal-limits.js';
 export {
@@ -485,3 +491,25 @@ export {
   type AccountEnvPolicy,
   type ResolvedBoxAccounts,
 } from './account-selection.js';
+export {
+  accountLoginDir,
+  accountLoginRootDir,
+  isAccountLoginId,
+  isTerminalLoginPhase,
+  listAccountLoginSessions,
+  loginWorkerAlive,
+  readAccountLoginRenew,
+  readAccountLoginRequest,
+  readAccountLoginState,
+  removeAccountLoginSession,
+  takeAccountLoginCode,
+  writeAccountLoginCode,
+  writeAccountLoginRenew,
+  writeAccountLoginRequest,
+  writeAccountLoginState,
+  type AccountLoginMode,
+  type AccountLoginRenewState,
+  type AccountLoginRequest,
+  type AccountLoginWorkerPhase,
+  type AccountLoginWorkerState,
+} from './account-login-session.js';

@@ -13,6 +13,10 @@ CLI, not the raw commits.
 
 ### Added
 
+- **Renew or add a subscription login from the hub.** Settings -> Subscriptions
+  shows a Revoked badge with the box it was seen failing in, and Renew / Add a
+  login run the sign-in on the hub's machine (open the page, paste the code back)
+  and push the new login to every box on the account. Same API for the tray.
 - **Skills library in the hub.** The hub keeps one library of skills, seeded
   from your PC and managed with `agentbox skills` or the hub's Skills page. It
   is delivered to every box of every provider in each agent's own skill folder.
@@ -87,6 +91,8 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- The `agentbox credentials` menu comes back after a cancelled or failed sign-in
+  instead of exiting.
 - **A remote hub no longer lists "Docker (local)"**, which it has no engine for;
   its own engine is the Remote Docker host `hub`, now listed first. A PC pointed
   at a remote hub hides local docker the same way.

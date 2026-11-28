@@ -62,7 +62,7 @@ credentials watcher sees it change but ignores it (not a real blob). It could
 report `credentials-dead` with no turn needed, but that needs a ctl/image
 change on every provider.
 
-## Phase 1 (this PR): CLI merge, TUI, revoked status, renew, defaults, `ls`
+## Phase 1 (done): CLI merge, TUI, revoked status, renew, defaults, `ls`
 
 CLI:
 
@@ -136,29 +136,53 @@ and a "Make default" action on every other account card (the `PUT` route).
   are selectable; Enter on an account opens the per-account actions, and the
   table comes back refreshed after each one.
 
-## Phase 2: Renew in the web UI
+## Phase 2 (done): sign in from the hub, Renew in the web UI
 
-- Subscriptions page: a `Revoked` badge (from `auth.state`) and a "Renew" action.
-  The fan-out half is the existing route. The sign-in half needs the
-  headless claude login (print URL, paste the code) driven by the hub: a
-  `POST /api/v1/accounts/:agent/:id/login` that starts the login container and
-  returns the URL, plus `…/login/code` to finish. Until then the page shows
-  the CLI command.
-- Show `auth.box` ("seen failing in <box>") with a link to the box.
+- **Hub-driven sign-in.** `POST /api/v1/accounts/:agent/:id/login` starts the
+  agent's own login on the hub's machine and answers a session view (never a
+  secret): `starting` → `awaiting-code` (claude: open `url`, post the code to
+  `…/login/code`) or `awaiting-approval` (codex device auth: open `url`, enter
+  `userCode`) → `exchanging` → `pushing` → `done` (with the fan-out's
+  `renew: { pushed, failed, output }`), or `error`. `GET …/login` reads it,
+  `DELETE …/login` cancels. A new name adds the account; an existing login is
+  renewed; one sign-in per account.
+- **Shape.** PKCE needs the URL-printer to be the code-exchanger, so the hub
+  slice (`apps/hub/lib/backend/account-login.ts`) spawns a detached CLI worker
+  (`agentbox _account-login-worker <id>`) that holds the login container, the
+  same pattern as the headless `claude login` and the create job's
+  `jobs/:id/login-code`. They talk through `~/.agentbox/account-login/<id>/`
+  (`request.json`, `state.json`, a 0600 `code` file consumed on read,
+  `renew.json`; the contract is `@agentbox/sandbox-core`
+  `account-login-session.ts`). The worker is agent-neutral: it uses the
+  runtime's `loginBinding({ volume })`, `ensureVolume`, `accountIdentity` and
+  the new optional `resetAccountVolume` (claude drops the cached profile), and
+  stores a named login with `captureVolumeLogin` or the default one with
+  `captureDefaultLogin`. On `signed-in` the hub runs the renew fan-out, so
+  running boxes get the new login. Restart-safe: a session that reached
+  `signed-in` with no hub watching is fanned out on the next read.
+- **Where it runs.** Always the hub's own machine and store: the PC's on a
+  local hub, the control box's on a remote one (it has docker and the CLI).
+- **Web.** Settings → Subscriptions: a `Revoked` badge from `auth.state` (and
+  `Expiring`), "Seen failing in <box>" linking to the box, a Renew button on
+  every login (primary when revoked), and an **Add a login** form; both open
+  the sign-in dialog (URL, code field, progress, result).
 
 ## Phase 3: tray
 
-`../agentbox-tray` is not reachable from a box. What would change there:
+`../agentbox-tray` is not reachable from a box; the coordinator builds it on
+the contract below (also in the PR body).
 
-- The Subscriptions section reads `GET /api/v1/accounts` today. It should
-  show `auth.state === 'revoked'` as a badge, with an action that opens a
-  terminal running `agentbox credentials renew <agent>/<id>` (the sign-in is
-  interactive) until Phase 2's hub login lands.
-- Default subscription: show the `defaults[agent]` account even with no box on
-  it, and clicking another account calls `PUT /api/v1/accounts/default`
-  (`scope: 'global'`).
-- Any shelled `agentbox accounts …` becomes `agentbox credentials …`
-  (`accounts` is gone).
+- Revoked badge: `GET /api/v1/accounts` → `accounts[].auth = { state: 'ok' |
+  'expiring' | 'revoked', since?, box?, detail? }`; `box` is the box name.
+- Renew / add: `POST /api/v1/accounts/{agent}/{id}/login` `{ mode?: 'add' |
+  'renew' }`, open `url` in the browser, then either post
+  `POST …/login/code` `{ code, session }` (state `awaiting-code`) or just poll
+  `GET …/login?session=` (state `awaiting-approval`, show `userCode`) until
+  `done` / `error`. `DELETE …/login` on dismiss.
+- Default subscription: `defaults[agent]` from the list; clicking another
+  account calls `PUT /api/v1/accounts/default` `{ agent, account | null,
+  scope: 'global' }`.
+- Any shelled `agentbox accounts …` becomes `agentbox credentials …`.
 
 ## Phase 4: detect a dead login without a turn
 
@@ -170,15 +194,12 @@ and a "Make default" action on every other account card (the `PUT` route).
 
 ## Known gaps (from the Phase 1 review)
 
-- **The TUI exits on a failed or cancelled sign-in.** `runAgentLogin` (and
-  claude's own login) end the process on a cancel or a rejected code instead
-  of throwing, so the menu closes rather than coming back. Fine for the
-  subcommands. The menu needs the login path to throw.
-- **Renew runs its own propagate.** `POST …/renew` spawns
-  `credentials propagate` directly instead of joining the relay's
-  per-(agent, account) chain. Both push the same stored file, so a race only
-  repeats a write. Routing renew through `CredentialsFanout` would remove even
-  that.
+- **The TUI exits on a failed or cancelled sign-in.** Fixed: the login path
+  (`runAgentLogin`, claude's login command) throws; the subcommands still end
+  with exit 1, the menu reports it and comes back.
+- **Renew runs its own propagate.** Fixed: the hub's renew runs on the relay's
+  `CredentialsFanout` per-(agent, account) chain (`runExclusive`), dropping a
+  refresh fan-out still in its debounce (the renew pushes a superset).
 - **`ls` fallback for an older hub** derives subscriptions from `accounts`
   alone and ignores a borrowed login (`codex/…` under openclaw). A current hub
   sends `subscriptions`.

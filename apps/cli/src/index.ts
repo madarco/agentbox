@@ -95,6 +95,7 @@ import { hubCommand } from './commands/hub.js';
 import { runQueuedJobCommand } from './commands/_run-queued-job.js';
 import { runQueuedPrepareCommand } from './commands/_run-queued-prepare.js';
 import { claudeLoginWorkerCommand } from './commands/_claude-login-worker.js';
+import { accountLoginWorkerCommand } from './commands/_account-login-worker.js';
 import { postUpdateRefreshCommand } from './commands/_post-update-refresh.js';
 import { runPostUpdateRefresh } from './lib/post-update-refresh.js';
 import { readInstalledTrayVersion } from './commands/install-app.js';
@@ -269,6 +270,7 @@ program.addCommand(runQueuedPrepareCommand, { hidden: true });
 // Internal worker that drives `claude auth login` under a pty for the headless
 // (non-TTY / --headless) login flow. Hidden — see _claude-login-worker.ts.
 program.addCommand(claudeLoginWorkerCommand, { hidden: true });
+program.addCommand(accountLoginWorkerCommand, { hidden: true });
 // Post-update worker: run by the freshly-installed binary after `self-update`.
 program.addCommand(postUpdateRefreshCommand, { hidden: true });
 // Internal entry points invoked by the Herdr plugin (`agentbox install herdr`).
