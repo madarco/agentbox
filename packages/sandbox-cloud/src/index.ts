@@ -121,6 +121,7 @@ export { makeCloudSync, type CloudSyncOptions } from './sync/cloud-sync.js';
 export { seedDynamicConfig, type SeedDynamicConfigOptions } from './sync/dynamic-sync.js';
 export {
   seedGitIdentity,
+  resolveBoxGitIdentity,
   seedGitCredentials,
   type SeedGitIdentityOptions,
 } from './sync/git-identity.js';

@@ -99,6 +99,7 @@ import {
   isDefaultAccount,
   namedAccounts,
   type LlmProxyRecord,
+  type ResolvedGitIdentity,
   type ResolvedCarryEntry,
   type ResyncResult,
   type SkillSelection,
@@ -219,6 +220,8 @@ export interface CreateBoxOptions {
   accounts?: Record<string, string>;
   /** The hub egress proxy, resolved by the caller (llm-accounts Phase 7). */
   llmProxy?: LlmProxyRecord;
+  /** Committer identity resolved by the caller; used only when the box has none. */
+  gitIdentity?: ResolvedGitIdentity;
   /**
    * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
    * every box mounts the shared `agentbox-claude-config` volume at
@@ -818,6 +821,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     hostWorkspace: workspace,
     projectRoot: opts.projectRoot ?? workspace,
     onLog: log,
+    ...(opts.gitIdentity ? { gitIdentity: opts.gitIdentity } : {}),
   });
   const sync = makeDockerSync({
     container: containerName,
@@ -1275,6 +1279,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     log('using /workspace from checkpoint image (no worktrees recorded; no rebind)');
   }
 
+  await sync.seedGitIdentity(syncCtx);
   await repairIdeOwnership(containerName);
   log('.vscode-server + .cursor-server ownership verified');
 

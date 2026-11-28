@@ -282,6 +282,7 @@ async function runCreateViaHubApi(
   // went with the seed above.
   const { opts: remoteOpts, warnings } = buildHubCreateOpts({
     providerName,
+    projectRoot,
     ...(remoteHost ? { remoteHost } : {}),
     cfg,
     flags: {

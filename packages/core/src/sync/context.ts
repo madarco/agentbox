@@ -9,6 +9,8 @@
  * `@agentbox/sandbox-core` can name it. The builder `makeSyncContext` (which
  * defaults `hostHome` to the OS home dir) lives in `@agentbox/sandbox-core`.
  */
+import type { ResolvedGitIdentity } from '../git-identity.js';
+
 export interface SyncContext {
   /** Friendly box name (`agentbox/<name>` branch, tmux session, logs). */
   boxName: string;
@@ -25,4 +27,6 @@ export interface SyncContext {
   /** Host home dir (source of `~/.claude` etc.). Overridable for tests. */
   hostHome: string;
   onLog: (line: string) => void;
+  /** Identity the caller resolved for the box (see `CreateBoxRequest.gitIdentity`). */
+  gitIdentity?: ResolvedGitIdentity;
 }

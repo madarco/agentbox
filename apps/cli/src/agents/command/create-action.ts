@@ -537,6 +537,7 @@ export async function runAgentCreate(
     if (iRouting.where === 'hub') {
       const hubOpts = buildHubCreateOpts({
         providerName,
+        projectRoot,
         ...(remoteHost ? { remoteHost } : {}),
         cfg,
         flags: {
@@ -845,6 +846,7 @@ export async function runAgentCreate(
     } else if (route.where === 'hub') {
       const hubOpts = buildHubCreateOpts({
         providerName,
+        projectRoot,
         ...(remoteHost ? { remoteHost } : {}),
         cfg,
         flags: {

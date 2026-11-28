@@ -74,6 +74,8 @@ export interface ControlPlaneCreateInput {
     accounts?: Record<string, string>;
     /** `--llm-proxy`: a mode; this hub resolves the upstream. */
     llmProxy?: 'off' | 'forward';
+    /** The requester's committer identity (validated at the API boundary). */
+    gitIdentity?: { name: string; email: string };
   };
 }
 

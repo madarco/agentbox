@@ -240,6 +240,7 @@ import { createLimitsSource } from './backend/account-limits';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { createProjectCustodySlugs } from './backend/project-custody';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
+import { createGitIdentityBackend } from './backend/git-identity';
 import { createProjectDir } from './boxes/create-project';
 import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
 
@@ -2413,6 +2414,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     ...pcSkills,
     ...createHostSessionsBackend(),
     ...accounts,
+    ...createGitIdentityBackend(),
     ...workspaces,
     ...managers,
     ...timeline,
@@ -3017,6 +3019,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             borrowCredentials: gated.borrowCredentials,
             ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
             ...(llmProxy ? { llmProxy } : {}),
+            // The requester's identity only: this path builds from a folder on
+            // THIS machine, whose own effective git config (repo-local override
+            // included) is the right fallback, so the hub default — meant for
+            // clones nobody's config describes — does not apply here.
+            ...(o.gitIdentity ? { gitIdentity: { ...o.gitIdentity, source: 'request' } } : {}),
             // Restore only. Not reachable from the wire — `parseCreateBox` does
             // not accept it — so a plain create cannot ask the worker to push an
             // arbitrary directory into a box's agent config dir.

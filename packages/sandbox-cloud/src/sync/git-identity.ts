@@ -1,10 +1,16 @@
 import { execa } from 'execa';
-import type { CloudBackend, CloudHandle } from '@agentbox/core';
+import type { CloudBackend, CloudHandle, ResolvedGitIdentity } from '@agentbox/core';
 import { bashScript, quoteShellArg } from '../shell.js';
 
 export interface SeedGitIdentityOptions {
   /** Host repo dir to read the effective `user.name`/`user.email` from. */
   hostRepo?: string;
+  /**
+   * The identity the caller resolved (a hub create: the requester's, else the
+   * hub default). Wins over the host repo's config, because on a hub the
+   * "host" is the hub machine, not the user's.
+   */
+  identity?: ResolvedGitIdentity;
   onLog?: (line: string) => void;
 }
 
@@ -40,8 +46,7 @@ export async function seedGitIdentity(
   opts: SeedGitIdentityOptions = {},
 ): Promise<void> {
   const log = opts.onLog ?? (() => {});
-  const name = (await readHostGitConfig('user.name', opts.hostRepo)) ?? FALLBACK_NAME;
-  const email = (await readHostGitConfig('user.email', opts.hostRepo)) ?? FALLBACK_EMAIL;
+  const { name, email, source } = await resolveBoxGitIdentity(opts);
 
   const script =
     `git config --global user.name ${quoteShellArg(name)} && ` +
@@ -55,7 +60,39 @@ export async function seedGitIdentity(
     );
     return;
   }
-  log(`git: configured committer identity ${name} <${email}>`);
+  log(`git: configured committer identity ${name} <${email}> (from ${source})`);
+}
+
+/** Labels for the create log: which precedence step supplied the identity. */
+const SOURCE_LABELS = {
+  request: 'the requesting machine',
+  'hub-default': 'the hub default (git.identityName/git.identityEmail)',
+  host: "this machine's git config",
+  fallback: 'the agentbox fallback',
+} as const;
+
+/**
+ * Request / hub default (resolved by the caller), then this machine's effective
+ * `git config`, then the generic fallback. Name and email come from the same
+ * step whenever the caller resolved one, so a box never mixes two people.
+ */
+export async function resolveBoxGitIdentity(
+  opts: Pick<SeedGitIdentityOptions, 'hostRepo' | 'identity'>,
+): Promise<{ name: string; email: string; source: string }> {
+  if (opts.identity) {
+    return {
+      name: opts.identity.name,
+      email: opts.identity.email,
+      source: SOURCE_LABELS[opts.identity.source],
+    };
+  }
+  const hostName = await readHostGitConfig('user.name', opts.hostRepo);
+  const hostEmail = await readHostGitConfig('user.email', opts.hostRepo);
+  return {
+    name: hostName ?? FALLBACK_NAME,
+    email: hostEmail ?? FALLBACK_EMAIL,
+    source: hostName || hostEmail ? SOURCE_LABELS.host : SOURCE_LABELS.fallback,
+  };
 }
 
 /**

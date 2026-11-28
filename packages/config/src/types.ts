@@ -311,6 +311,14 @@ export interface UserConfig {
   };
   git?: {
     pushMode?: GitPushMode;
+    /**
+     * A hub's default committer identity for the boxes it builds with no PC
+     * behind them (a web-UI or tray create). Read from the hub's GLOBAL config.
+     */
+    identity?: {
+      name?: string;
+      email?: string;
+    };
   };
   /** Named LLM accounts (docs/hub-settings-plan.md, Phase 3c). */
   accounts?: {
@@ -551,6 +559,10 @@ export interface EffectiveConfig {
   };
   git: {
     pushMode: GitPushMode;
+    identity: {
+      name?: string;
+      email?: string;
+    };
   };
   accounts: {
     onLimit: AccountsOnLimit;
@@ -774,6 +786,7 @@ export const BUILT_IN_DEFAULTS: EffectiveConfig = {
   },
   git: {
     pushMode: 'auto',
+    identity: {},
   },
   accounts: {
     onLimit: 'ask',
@@ -1431,6 +1444,18 @@ export const BUILTIN_KEY_REGISTRY: readonly KeyDescriptor[] = [
     enumValues: ['auto', 'relay', 'lease', 'direct'] as const,
     description:
       "How a box's `git push` reaches GitHub: `relay` (the host relay pushes with your host credentials — they never enter the box), `lease` (the relay/plane leases a short-lived GitHub-App token and the box pushes directly, so it works with the laptop off), `direct` (the box holds a COPY of your git credentials and pushes/pulls/signs entirely on its own — needs no host or hub, but the credentials live inside the box and its snapshots; set via `--with-credentials`, which copies them in behind a confirmation), or `auto` (default — lease when `relay.controlPlaneUrl` is set for the box, else relay). Only affects cloud boxes; docker boxes always use `relay`. Forcing `relay` needs a reachable host relay for the box; forcing `lease` needs a reachable relay/plane with a GitHub App; `direct` needs credentials to have been copied into the box at create time, and is REFUSED when a control box is configured (`relay.controlPlaneUrl`) — use leasing (the `auto` default) instead.",
+  },
+  {
+    key: 'git.identity.name',
+    type: 'string',
+    description:
+      "A hub's default committer name for the boxes it builds when no PC sent one (a create from the web UI or the tray). A create from the CLI sends the project's own `user.name`/`user.email`, which wins over this. Read from the hub machine's GLOBAL config. Set from the hub's Settings page or `PUT /api/v1/settings/git-identity`; the first PC to log in to a hub with none sets it to that PC's identity. Set together with `git.identity.email`: one without the other is ignored.",
+  },
+  {
+    key: 'git.identity.email',
+    type: 'string',
+    description:
+      "A hub's default committer email, paired with `git.identity.name` (see there). Read from the hub machine's GLOBAL config.",
   },
   {
     key: 'accounts.onLimit',

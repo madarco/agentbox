@@ -2868,12 +2868,18 @@ async function enrollThisMachine(
         import('../control-plane/owner-credentials.js'),
         import('../control-plane/remote-hub.js'),
       ]);
+    const owner = readOwnerCredentials();
     const res = await enrollOperatorDevice({
       url,
-      owner: readOwnerCredentials(),
+      owner,
       controlBoxIsThisMachine: await controlBoxIsThisMachine(),
     });
     const d = res.decision;
+    // Also on a re-run (`hub update`, already enrolled): that fills a hub
+    // deployed before the setting existed, and `ifUnset` keeps a chosen one.
+    if (owner && !(d.action === 'skip' && d.reason === 'this-machine')) {
+      await offerOperatorGitIdentity(url, owner.apiKey);
+    }
     if (res.enrolled) {
       log.success(`Enrolled this computer on the control box as ${res.enrolled.label}.`);
     } else if (d.action === 'revoked') {
@@ -2892,6 +2898,18 @@ async function enrollThisMachine(
       `Could not enroll this computer on the control box (${err instanceof Error ? err.message : String(err)}). ` +
         `Run \`agentbox hub login ${url}\` and approve it on ${url}/settings/devices.`,
     );
+  }
+}
+
+/** Best-effort, like the enrollment it follows. */
+async function offerOperatorGitIdentity(url: string, apiKey: string): Promise<void> {
+  try {
+    const { offerHubGitIdentity, describeHubGitIdentityOffer } =
+      await import('../control-plane/hub-git-identity.js');
+    const line = describeHubGitIdentityOffer(await offerHubGitIdentity({ url, bearer: apiKey }));
+    if (line) log.info(line);
+  } catch {
+    /* the hub's default identity is a convenience; setup already succeeded */
   }
 }
 

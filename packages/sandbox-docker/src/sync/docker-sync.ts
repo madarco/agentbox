@@ -239,10 +239,53 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       return Promise.resolve([]);
     },
 
-    // Docker bind-mounts the host's ~/.gitconfig straight into the box, so there
-    // is nothing to seed. Documented no-op (the cloud body copies it in).
-    seedGitIdentity(): Promise<void> {
-      return Promise.resolve();
+    // Docker bind-mounts the building machine's ~/.gitconfig (read-only), so the
+    // box authors as that machine's user. A resolved identity only fills the gap
+    // when there is none: a machine with no ~/.gitconfig (a hub) would otherwise
+    // leave every commit failing with "Committer identity unknown". Written at
+    // --system level because ~/.gitconfig may be the read-only bind.
+    async seedGitIdentity(ctx: SyncContext): Promise<void> {
+      const want = ctx.gitIdentity;
+      if (!want) return;
+      const current = await execa(
+        'docker',
+        ['exec', '--user', 'vscode', handle.container, 'git', 'config', 'user.email'],
+        { reject: false },
+      );
+      const have = (current.stdout ?? '').trim();
+      if (current.exitCode === 0 && have.length > 0) {
+        if (have !== want.email) {
+          ctx.onLog(
+            `git: keeping the bind-mounted ~/.gitconfig identity <${have}> (a docker box shares this machine's git config)`,
+          );
+        }
+        return;
+      }
+      const r = await execa(
+        'docker',
+        [
+          'exec',
+          '--user',
+          'root',
+          handle.container,
+          'sh',
+          '-c',
+          'git config --system user.name "$1" && git config --system user.email "$2"',
+          'sh',
+          want.name,
+          want.email,
+        ],
+        { reject: false },
+      );
+      if (r.exitCode !== 0) {
+        ctx.onLog(
+          `git: identity config failed (exit ${String(r.exitCode)}): ${(r.stderr || r.stdout).trim()}`,
+        );
+        return;
+      }
+      ctx.onLog(
+        `git: configured committer identity ${want.name} <${want.email}> (from ${want.source === 'request' ? 'the requesting machine' : 'the hub default'})`,
+      );
     },
 
     async seedEnvFiles(ctx: SyncContext, patterns: string[]): Promise<{ copied: number }> {

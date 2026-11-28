@@ -129,3 +129,51 @@ describe('--llm-proxy on a hub-routed create (llm-accounts Phase 7)', () => {
     expect(() => edgeLlmProxyMode('fwd', cfg('off'))).toThrow(/--llm-proxy/);
   });
 });
+
+describe("the requester's committer identity", () => {
+  it("sends the project's effective identity, repo-local override included", async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const repo = mkdtempSync(join(tmpdir(), 'agentbox-hub-gitid-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      // Repo-local config wins over any global identity on the test host.
+      execFileSync('git', ['-C', repo, 'config', 'user.name', 'Ada Lovelace']);
+      execFileSync('git', ['-C', repo, 'config', 'user.email', 'ada@example.com']);
+      const { opts } = buildHubCreateOpts({
+        providerName: 'hetzner',
+        cfg: makeCfg(),
+        flags: {},
+        projectRoot: repo,
+      });
+      expect(opts.gitIdentity).toEqual({ name: 'Ada Lovelace', email: 'ada@example.com' });
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('sends none when the project has no complete identity', () => {
+    const { opts } = buildHubCreateOpts({
+      providerName: 'hetzner',
+      cfg: makeCfg(),
+      flags: {},
+      projectRoot: '/nowhere',
+      readGitIdentity: () => undefined,
+    });
+    expect('gitIdentity' in opts).toBe(false);
+  });
+
+  it('also rides a docker:<alias> create', () => {
+    const { opts } = buildHubCreateOpts({
+      providerName: 'remote-docker',
+      remoteHost: 'devbox',
+      cfg: makeCfg(),
+      flags: {},
+      projectRoot: '/p',
+      readGitIdentity: () => ({ name: 'Ada', email: 'ada@example.com' }),
+    });
+    expect(opts.gitIdentity).toEqual({ name: 'Ada', email: 'ada@example.com' });
+  });
+});

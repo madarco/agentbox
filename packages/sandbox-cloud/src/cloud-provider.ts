@@ -1097,6 +1097,7 @@ export function createCloudProvider(
           projectRoot: req.projectRoot,
           boxWorkspace: CLOUD_WORKSPACE_DIR,
           onLog: log,
+          ...(req.gitIdentity ? { gitIdentity: req.gitIdentity } : {}),
         });
         // Before any credential seeding: a cloud base is agentless, and only
         // agent sets with a baked derived snapshot arrive with their binary. A

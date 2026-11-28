@@ -11,6 +11,7 @@ import type { BoxRecord, ProviderName, SkillSelection, SshTargetRecord } from '.
 import type { InboundPolicy } from './cloud-backend.js';
 import type { BoxEndpoints } from './endpoints.js';
 import type { ReplaceRule } from './replace.js';
+import type { ResolvedGitIdentity } from './git-identity.js';
 import type { BoxResourceStats } from './types.js';
 import type { SyncTransport } from './sync/transport.js';
 import type { ProviderSync } from './sync/provider-sync.js';
@@ -175,6 +176,13 @@ export interface CreateBoxRequest {
    * resolved by the caller. Recorded as `BoxRecord.llmProxy`.
    */
   llmProxy?: LlmProxyRecord;
+  /**
+   * Committer identity for the box, resolved by the caller when the machine
+   * building the box is not the user's (a hub create: the requester's identity,
+   * else the hub default). Absent = the provider reads the building machine's
+   * own `git config`, then falls back to a generic agentbox identity.
+   */
+  gitIdentity?: ResolvedGitIdentity;
   /** Override the base image / snapshot. */
   image?: string;
   /**

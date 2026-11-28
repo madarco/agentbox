@@ -84,6 +84,7 @@ export const dockerProvider: Provider = {
       ...(req.skills ? { skills: req.skills } : {}),
       ...(req.accounts ? { accounts: req.accounts } : {}),
       ...(req.llmProxy ? { llmProxy: req.llmProxy } : {}),
+      ...(req.gitIdentity ? { gitIdentity: req.gitIdentity } : {}),
       claudeConfig: po.claudeConfig,
       claudeEnv: po.claudeEnv,
       codexConfig: po.codexConfig,

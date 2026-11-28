@@ -386,6 +386,23 @@ agentbox create --provider e2b --local     # force a local build on this machine
   attach and re-login.
 </Callout>
 
+### Who the box commits as
+
+A box built on the control box commits as **you**, not as the control box. Every create from the
+CLI sends the project's effective `git config user.name` / `user.email` (a repo-local override
+included, exactly as a commit on your machine would use it), and the box is configured with it.
+The control box's own git config has no identity, so without this every box would fall back to
+`agentbox <agentbox@users.noreply.github.com>`.
+
+A create with no PC behind it (the web UI, the menu-bar app) sends no identity. Those boxes use the
+hub's default: **Settings → General → Git** on the hub, also `GET`/`PUT /api/v1/settings/git-identity`
+(global config keys `git.identity.name` / `git.identity.email` on the control box). The first
+computer to run `agentbox hub login` (or the machine that ran `hub setup`) fills it with its own
+identity when it is empty, and never replaces one that is set. With neither, a box takes the
+control box's own git config, then the generic identity above. The create log names the source
+that won (`git: configured committer identity … (from the requesting machine)`). Changing the
+default does not touch existing boxes.
+
 ### Base images are baked on the control box too
 
 Because a cloud box is built on the control box from **its** baked base, baking that base on your
