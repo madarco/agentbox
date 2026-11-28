@@ -20,6 +20,7 @@ const {
   createAccountImporter,
   credentialOwnerKey,
   freeAccountId,
+  importLoginVerdict,
   planAccountImport,
   tombstoneAccount,
   resolveHubAccountName,
@@ -37,6 +38,18 @@ const login = (owner: string, expiresAt: number, rt = 'r') =>
       organizationUuid: 'org-1',
     },
   });
+
+/** A fake codex auth.json: no freshness field, ordered by the access token's JWT `exp`. */
+const codexAuth = (exp: number, tag = 'x', account = 'acct-1') => {
+  const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return JSON.stringify({
+    tokens: {
+      access_token: `${b64({ alg: 'none' })}.${b64({ exp })}.sig`,
+      refresh_token: `fake-rt-${tag}`,
+      account_id: account,
+    },
+  });
+};
 
 const PC_A = 'aaaaaaaa-0000-0000-0000-000000000001';
 const PC_B = 'bbbbbbbb-0000-0000-0000-000000000002';
@@ -202,6 +215,19 @@ describe('tombstoneAccount (review: one agent never clears another)', () => {
     };
     const { file } = tombstoneAccount(start, 'codex', 'work', 't2');
     expect(file.removed.map((t) => t.agent).sort()).toEqual(['claude', 'codex']);
+  });
+});
+
+describe('importLoginVerdict (#528 review: codex is ordered by its JWT exp)', () => {
+  const codex = core.AGENT_SYNC_SPECS.find((s) => s.id === 'codex')!;
+  it("never takes a PC's older codex copy because it merely differs", () => {
+    expect(importLoginVerdict(codex, codexAuth(100, 'old'), codexAuth(200, 'new')).accept).toBe(
+      false,
+    );
+    expect(importLoginVerdict(codex, codexAuth(300, 'newer'), codexAuth(200, 'new')).accept).toBe(
+      true,
+    );
+    expect(importLoginVerdict(codex, codexAuth(1), null).accept).toBe(true);
   });
 });
 
@@ -398,6 +424,128 @@ describe('the importer (store + custody effects)', () => {
     expect(r!.action).toBe('kept');
     expect((await stat(path)).mtimeMs).toBe(before);
     expect(await readFile(path, 'utf8')).toBe(text);
+  });
+
+  it("keeps the hub's refreshed codex login over a PC's stale default and named copies", async () => {
+    const codexBackup = join(stateDir, 'codex-credentials.json');
+    const imp = createAccountImporter({
+      store: store(),
+      importsPath: join(stateDir, 'account-imports.json'),
+      custody: () => custody,
+      machineId: () => HUB,
+      defaultBackupPath: (spec) => (spec.id === 'codex' ? codexBackup : defaultBackup()),
+    });
+    await mkdir(stateDir, { recursive: true });
+    await core.writeCredentialBackup('codex', codexAuth(500, 'hub'), { backupPath: codexBackup });
+    const [d] = await imp.importItems([
+      { agent: 'codex', id: 'default', kind: 'login', secret: codexAuth(100, 'pc'), machine: PC_A },
+    ]);
+    expect(d!.action).toBe('kept');
+    expect(await readFile(codexBackup, 'utf8')).toBe(codexAuth(500, 'hub'));
+
+    const [first] = await imp.importItems([
+      {
+        agent: 'codex',
+        id: 'work',
+        kind: 'login',
+        secret: codexAuth(100, 'pc', 'acct-2'),
+        machine: PC_A,
+      },
+    ]);
+    expect(first).toMatchObject({ action: 'created' });
+    // A hub box refreshes it...
+    await core.writeAccountSecret('codex', 'work', codexAuth(900, 'hub', 'acct-2'), store());
+    // ...and the PC re-pushes its now-dead copy.
+    const [n] = await imp.importItems([
+      {
+        agent: 'codex',
+        id: 'work',
+        kind: 'login',
+        secret: codexAuth(100, 'pc', 'acct-2'),
+        machine: PC_A,
+      },
+    ]);
+    expect(n!.action).toBe('kept');
+    expect(await core.readAccountSecret('codex', 'work', store())).toBe(
+      codexAuth(900, 'hub', 'acct-2'),
+    );
+  });
+
+  it('waits for the credential lock the relay holds, then gates on what it wrote', async () => {
+    await mkdir(stateDir, { recursive: true });
+    await core.writeCredentialBackup('claude', login('u9', 100), { backupPath: defaultBackup() });
+    const { withFileLock } = await import('@agentbox/config');
+    let release!: () => void;
+    const held = withFileLock(defaultBackup(), async () => {
+      await new Promise<void>((r) => (release = r));
+      // The relay's fan-out lands a rotation while holding the lock.
+      await core.writeCredentialBackup('claude', login('u9', 999), {
+        backupPath: defaultBackup(),
+      });
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const pending = importer.importItems([item(PC_A, 'default', login('u9', 500))]);
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    await held;
+    const [r] = await pending;
+    expect(r!.action).toBe('kept');
+    expect(JSON.parse(await readFile(defaultBackup(), 'utf8')).claudeAiOauth.expiresAt).toBe(999);
+  });
+
+  it('a shared key is replaced only by the machine that set it (#528 review)', async () => {
+    const tok = (t: string) =>
+      core.encodePastedSecret({ kind: 'setup-token', token: 'sk-ant-oat01-' + t.repeat(30) });
+    const pasted = (machine: string, t: string) => ({
+      agent: 'claude',
+      id: 'ci',
+      kind: 'setup-token' as const,
+      secret: tok(t),
+      machine,
+    });
+    expect((await importer.importItems([pasted(PC_A, 'a')]))[0]!.action).toBe('created');
+    expect((await importer.importItems([pasted(PC_B, 'a')]))[0]).toMatchObject({
+      action: 'merged',
+      hubId: 'ci',
+    });
+    // A rotates its key: it set the token, so it may.
+    expect((await importer.importItems([pasted(PC_A, 'b')]))[0]!.action).toBe('updated');
+    // B's next automatic push still carries the old one: kept, never flipped back.
+    expect((await importer.importItems([pasted(PC_B, 'a')]))[0]!.action).toBe('kept');
+    expect(await core.readAccountSecret('claude', 'ci', store())).toBe(tok('b'));
+    // Replaced on the hub itself: no machine's import replaces it after that.
+    await importer.clearSetter('claude', 'ci');
+    expect((await importer.importItems([pasted(PC_A, 'c')]))[0]!.action).toBe('kept');
+  });
+
+  it("the hub's default name is the hub's own, never the requester's mapping (#528 review)", async () => {
+    await importer.importItems([item(PC_A, 'work', login('u1', 1))]);
+    await importer.importItems([item(PC_B, 'work', login('u2', 1))]); // -> work_2
+    const imports = await importer.readImports();
+    const base = { agents: ['claude'], requesterMachine: PC_B, store: store(), imports };
+    expect(await resolveHubCreateAccounts({ ...base, hubDefaults: { claude: 'work' } })).toEqual({
+      claude: 'work',
+    });
+    expect(await resolveHubCreateAccounts({ ...base, names: { claude: 'work' } })).toEqual({
+      claude: 'work_2',
+    });
+  });
+
+  it('refuses a box on default when the hub holds no default login', async () => {
+    await expect(
+      resolveHubCreateAccounts({
+        agents: ['claude'],
+        store: store(),
+        defaultLogin: () => Promise.resolve(null),
+      }),
+    ).rejects.toThrow(/no claude login \(the default account\)/);
+    expect(
+      await resolveHubCreateAccounts({
+        agents: ['claude'],
+        store: store(),
+        defaultLogin: () => Promise.resolve(login('u1', 1)),
+      }),
+    ).toEqual({});
   });
 
   it('a create never starts on an account the hub cannot seed', async () => {

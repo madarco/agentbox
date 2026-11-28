@@ -19,7 +19,7 @@
 
 import { execa } from 'execa';
 import { chmod, mkdir } from 'node:fs/promises';
-import { tryGetMachineId } from '@agentbox/config';
+import { tryGetMachineId, withFileLock } from '@agentbox/config';
 import { dirname } from 'node:path';
 import {
   accountCustodyPath,
@@ -260,15 +260,24 @@ export class CredentialsFanout {
     const backupPath = isDefault
       ? this.backupPathFor?.(agent)
       : this.accountBackupPathFor(agent, account);
-    const existing = await readCredentialBackup(agent, { backupPath });
-    const verdict = shouldAcceptCredentialUpdate(agent, content, existing);
+    // Read, gate and write under the credential's own lock, the one a hub's
+    // account import takes too (llm-accounts Phase 9): neither may land an
+    // older token over one the other wrote between its read and its write.
+    const lockPath = backupPath ?? resolveAgentSpec(agent).credential?.hostBackup;
+    const gateAndWrite = async (): Promise<{ accept: boolean; reason: string }> => {
+      const existing = await readCredentialBackup(agent, { backupPath });
+      const v = shouldAcceptCredentialUpdate(agent, content, existing);
+      if (!v.accept) return v;
+      if (!isDefault && backupPath) {
+        // The account store's dir is owner-only, like `writeAccountSecret`'s.
+        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+        await chmod(dirname(backupPath), 0o700).catch(() => {});
+      }
+      await writeCredentialBackup(agent, content, { backupPath });
+      return v;
+    };
+    const verdict = lockPath ? await withFileLock(lockPath, gateAndWrite) : await gateAndWrite();
     if (!verdict.accept) return { accepted: false, reason: verdict.reason };
-    if (!isDefault && backupPath) {
-      // The account store's dir is owner-only, like `writeAccountSecret`'s.
-      await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
-      await chmod(dirname(backupPath), 0o700).catch(() => {});
-    }
-    await writeCredentialBackup(agent, content, { backupPath });
     await this.recordInCustody(agent, account, content);
     const label = isDefault ? agent : `${agent} account '${account}'`;
     this.log(

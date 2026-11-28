@@ -300,3 +300,37 @@ describe('CredentialsFanout — custody write-back', () => {
     expect(runs).toEqual([]);
   });
 });
+
+describe('CredentialsFanout shares the credential lock with the hub import (#528 review)', () => {
+  it('waits for a held lock, then gates against what the holder wrote', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fanout-lock-'));
+    try {
+      const backup = join(dir, 'claude-credentials.json');
+      await writeFile(backup, claudeBlob(100));
+      const fanout = new CredentialsFanout({
+        log: () => {},
+        debounceMs: 10_000,
+        runPropagate: async () => {},
+        backupPathFor: () => backup,
+        boxAccountFor: () => Promise.resolve(undefined),
+      });
+      const { withFileLock } = await import('@agentbox/config');
+      let release!: () => void;
+      const held = withFileLock(backup, async () => {
+        await new Promise<void>((r) => (release = r));
+        // An account import lands a newer login while holding the lock.
+        await writeFile(backup, claudeBlob(900, 'imported'));
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      const pending = fanout.handle('box-a', payload('claude', claudeBlob(500, 'box')));
+      await new Promise((r) => setTimeout(r, 50));
+      release();
+      await held;
+      expect((await pending).accepted).toBe(false);
+      expect(JSON.parse(await readFile(backup, 'utf8')).claudeAiOauth.expiresAt).toBe(900);
+      await fanout.flush();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

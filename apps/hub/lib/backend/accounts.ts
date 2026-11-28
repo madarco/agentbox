@@ -659,6 +659,9 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         else await removeStoredAccount(spec.id, req.id, store).catch(() => {});
         throw err;
       }
+      // Set on the hub itself: no PC's import replaces this token after it
+      // (a PC holding the old one would put it back otherwise).
+      await importer.clearSetter(spec.id, req.id).catch(() => {});
       return { ok: true, value: await view(row) };
     },
 

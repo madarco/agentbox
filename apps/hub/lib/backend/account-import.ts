@@ -7,11 +7,13 @@
 // collision, mapping, tombstone, create-time resolution) are pure functions
 // here; `createAccountImporter` applies them to the store and custody.
 import { readFile, rename, writeFile, mkdir, chmod } from 'node:fs/promises';
+import { withFileLock } from '@agentbox/config';
 import { join, dirname } from 'node:path';
 import {
   ACCOUNTS_CUSTODY_SEGMENT,
   accountCustodyPath,
   accountIdProblem,
+  accountSecretPath,
   agentAccountKinds,
   DEFAULT_ACCOUNT_ID,
   findAccount,
@@ -23,6 +25,7 @@ import {
 } from '@agentbox/core';
 import {
   AGENT_SYNC_SPECS,
+  credentialExpiry,
   decodePastedSecret,
   findAgentSpec,
   isRealAgentCredential,
@@ -62,13 +65,40 @@ export interface AccountImportTombstone {
   at: string;
 }
 
+/**
+ * The machine whose import last set a pasted account's token. Only it may
+ * replace that token by import, so two PCs sharing a key never flip it back
+ * and forth (the last one to push a stale copy winning). A token replaced on
+ * the hub itself clears the entry: no import replaces it then.
+ */
+export interface PastedSetter {
+  agent: string;
+  hubId: string;
+  machine: string;
+}
+
 export interface AccountImportsFile {
   version: 1;
   imports: AccountImportMapping[];
   removed: AccountImportTombstone[];
+  setBy?: PastedSetter[];
 }
 
 export const EMPTY_IMPORTS: AccountImportsFile = { version: 1, imports: [], removed: [] };
+
+/** `file` with `agent/hubId`'s setter set to `machine` (or cleared with null). Pure. */
+export function withSetter(
+  file: AccountImportsFile,
+  agent: string,
+  hubId: string,
+  machine: string | null,
+): AccountImportsFile {
+  const rest = (file.setBy ?? []).filter((x) => !(x.agent === agent && x.hubId === hubId));
+  const setBy = machine ? [...rest, { agent, hubId, machine }] : rest;
+  const { setBy: _old, ...base } = file;
+  void _old;
+  return setBy.length > 0 ? { ...base, setBy } : base;
+}
 
 export function accountImportsPath(stateDir: string = STATE_DIR): string {
   return join(stateDir, 'account-imports.json');
@@ -97,7 +127,17 @@ export function parseImportsFile(text: string | null): AccountImportsFile {
       return str(x.agent) && str(x.machine) && str(x.localId);
     },
   );
-  return { version: 1, imports, removed };
+  const setBy = (
+    Array.isArray((r as { setBy?: unknown }).setBy)
+      ? ((r as { setBy: unknown[] }).setBy as unknown[])
+      : []
+  ).filter((m): m is PastedSetter => {
+    const x = m as Partial<PastedSetter>;
+    return str(x.agent) && str(x.hubId) && str(x.machine);
+  });
+  return setBy.length > 0
+    ? { version: 1, imports, removed, setBy }
+    : { version: 1, imports, removed };
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +229,39 @@ export function identityConflict(a?: LlmAccountIdentity, b?: LlmAccountIdentity)
   const eb = emailOf(b);
   if (ea && eb && ea !== eb) return true;
   return Boolean(a?.org && b?.org && a.org !== b.org);
+}
+
+/**
+ * Whether an imported LOGIN may replace the hub's copy (pure). A refresh
+ * revokes every older copy, so the hub keeps the NEWEST: ordered by when the
+ * access token expires (`credentialExpiry`: the agent's freshness field, else
+ * the JWT `exp` of `tokens.access_token`, which is how codex is ordered: it
+ * declares no freshness field, so a content-only compare took a PC's dead copy
+ * over the hub's refreshed one). Unknown on either side: the agent's own
+ * freshness rule (content changed, for an agent with no order at all).
+ */
+export function importLoginVerdict(
+  spec: Pick<AgentSyncSpec, 'id' | 'credential'>,
+  incoming: string,
+  existing: string | null,
+): { accept: boolean; reason: string } {
+  if (existing === null) return { accept: true, reason: 'no copy on the hub' };
+  if (existing === incoming) return { accept: false, reason: 'unchanged' };
+  const expiry = (text: string): number | null => {
+    try {
+      return credentialExpiry(spec.id, text);
+    } catch {
+      return null;
+    }
+  };
+  const mine = expiry(incoming);
+  const theirs = expiry(existing);
+  if (mine !== null && theirs !== null) {
+    return mine > theirs
+      ? { accept: true, reason: 'newer login' }
+      : { accept: false, reason: "not newer than the hub's copy" };
+  }
+  return shouldAcceptCredentialBlob(spec.credential?.freshness?.jsonPath, incoming, existing);
 }
 
 /**
@@ -298,6 +371,7 @@ export function withMapping(
   const entry =
     prev && prev.hubId === m.hubId && prev.machineLabel === m.machineLabel ? prev : { ...m, at };
   return {
+    ...file,
     version: 1,
     imports: [...file.imports.filter((x) => !same(x)), entry],
     removed: file.removed.filter((x) => !same(x)),
@@ -315,6 +389,7 @@ export function tombstoneAccount(
   return {
     dropped,
     file: {
+      ...withSetter(file, agent, hubId, null),
       version: 1,
       imports: file.imports.filter((m) => !(m.agent === agent && m.hubId === hubId)),
       removed: [
@@ -383,6 +458,8 @@ export interface AccountImporterDeps {
 
 export interface AccountImporter {
   readImports(): Promise<AccountImportsFile>;
+  /** A pasted token was replaced on the hub itself: no import replaces it after that. */
+  clearSetter(agent: string, hubId: string): Promise<void>;
   importItems(items: readonly AccountImportItem[]): Promise<ImportResult[]>;
   /**
    * A hub `rm`: run `remove` (the store removal), then tombstone the mappings
@@ -488,19 +565,41 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
     }
   }
 
+  /**
+   * A named login over the hub's copy, gated by {@link importLoginVerdict}
+   * under the credential's own lock (shared with the relay's fan-out).
+   */
+  async function importNamedLogin(
+    spec: AgentSyncSpec,
+    hubId: string,
+    secret: string,
+  ): Promise<{ written: boolean; reason: string }> {
+    const path = accountSecretPath(spec, hubId, store?.stateDir ?? STATE_DIR)!;
+    return withFileLock(path, async () => {
+      const existing = await readAccountSecret(spec.id, hubId, store);
+      const v = importLoginVerdict(spec, secret, existing);
+      if (!v.accept) return { written: false, reason: v.reason };
+      const w = await writeAccountSecret(spec.id, hubId, secret, store);
+      return { written: w.written, reason: w.reason };
+    });
+  }
+
   async function importDefault(
     item: AccountImportItem,
     spec: AgentSyncSpec,
   ): Promise<ImportResult> {
-    const backupPath = deps.defaultBackupPath?.(spec);
-    const existing = await readCredentialBackup(spec.id, backupPath ? { backupPath } : {});
-    // Freshness only (no identity gate): a PC that signed its default into
+    const backupPath = deps.defaultBackupPath?.(spec) ?? spec.credential!.hostBackup;
+    // Read, gate and write under the credential's own lock, the one the relay's
+    // fan-out takes for a box's refresh: an import must not land a revoked
+    // token over a rotation that happened between its read and its write.
+    // Expiry only (no identity gate): a PC that signed its default into
     // another subscription replaces it, as the custody push always did.
-    const v = shouldAcceptCredentialBlob(
-      spec.credential?.freshness?.jsonPath,
-      item.secret,
-      existing,
-    );
+    const v = await withFileLock(backupPath, async () => {
+      const existing = await readCredentialBackup(spec.id, { backupPath });
+      const verdict = importLoginVerdict(spec, item.secret, existing);
+      if (verdict.accept) await writeCredentialBackup(spec.id, item.secret, { backupPath });
+      return verdict;
+    });
     const result: ImportResult = {
       agent: spec.id,
       id: item.id,
@@ -509,7 +608,6 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
       reason: v.reason,
     };
     if (!v.accept) return result;
-    await writeCredentialBackup(spec.id, item.secret, backupPath ? { backupPath } : {});
     await custody()
       ?.put(
         accountCustodyPath(spec.id, DEFAULT_ACCOUNT_ID, spec.credential!.boxRelPath),
@@ -603,7 +701,7 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
         );
       }
       if (item.kind === 'login') {
-        const w = await writeAccountSecret(spec.id, target.hubId, item.secret, store);
+        const w = await importNamedLogin(spec, target.hubId, item.secret);
         action = target.why === 'mapping' ? (w.written ? 'updated' : 'kept') : 'merged';
         reason = w.written
           ? `took this PC's newer login (${w.reason})`
@@ -611,13 +709,22 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
       } else if ((pasted.get(target.hubId) ?? null) === item.secret) {
         action = target.why === 'mapping' ? 'kept' : 'merged';
         reason = 'same token';
-      } else {
+      } else if (
+        (imports.setBy ?? []).some(
+          (x) => x.agent === spec.id && x.hubId === target.hubId && x.machine === item.machine,
+        )
+      ) {
         await writeAccountSecret(spec.id, target.hubId, item.secret, store);
         action = 'updated';
         reason = 'new token';
+      } else {
+        // Another machine (or the hub itself) set the current token: this PC's
+        // copy is not newer just because it differs.
+        action = 'kept';
+        reason = `the hub's token was set elsewhere; replace it with \`agentbox credentials add ${spec.id}/${target.hubId} --replace\``;
       }
     }
-    const next = withMapping(
+    const mapped = withMapping(
       imports,
       {
         agent: spec.id,
@@ -628,6 +735,11 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
       },
       at,
     );
+    const next =
+      item.kind !== 'login' &&
+      (action === 'created' || action === 'renamed' || action === 'updated')
+        ? withSetter(mapped, spec.id, target.hubId, item.machine)
+        : mapped;
     const c = custody();
     if (c) {
       const hubMachine = deps.machineId();
@@ -651,6 +763,14 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
 
   return {
     readImports,
+    clearSetter: (agent, hubId) =>
+      serialized(async () => {
+        const before = await readImports();
+        const after = withSetter(before, agent, hubId, null);
+        if (JSON.stringify(after) !== JSON.stringify(before)) {
+          await writeJsonAtomic(importsPath, after);
+        }
+      }),
     importItems: (items) =>
       serialized(async () => {
         const before = await readImports();
@@ -749,6 +869,11 @@ export async function resolveHubCreateAccounts(o: {
   hubDefaults?: Readonly<Record<string, string | undefined>>;
   store?: AccountStoreOptions;
   imports?: AccountImportsFile;
+  /**
+   * The hub's own (default) login of an agent, or null. A box on `default`
+   * with none starts signed out, so that is refused too. Absent: not checked.
+   */
+  defaultLogin?: (agent: string) => Promise<string | null>;
 }): Promise<Record<string, string>> {
   const names = o.names ?? {};
   for (const agent of Object.keys(names)) {
@@ -762,20 +887,33 @@ export async function resolveHubCreateAccounts(o: {
   for (const agent of o.agents) {
     const spec = findAgentSpec(agent);
     if (!spec) continue;
-    const name = names[spec.id] ?? o.hubDefaults?.[spec.id] ?? DEFAULT_ACCOUNT_ID;
+    const sent = names[spec.id];
+    const name = sent ?? o.hubDefaults?.[spec.id] ?? DEFAULT_ACCOUNT_ID;
+    // The requester's own names apply only to a name it SENT: the hub's
+    // default `work` is the hub's `work`, not that PC's `work` (filed `work_2`).
     const hubId = resolveHubAccountName({
       agent: spec.id,
       name,
       rows: file.accounts,
       imports,
-      ...(o.requesterMachine ? { requesterMachine: o.requesterMachine } : {}),
+      ...(sent !== undefined && o.requesterMachine ? { requesterMachine: o.requesterMachine } : {}),
     });
     if (hubId === undefined) {
       throw new Error(
         `no ${spec.id} account '${name}' on this hub: push it from the PC that signed it in (\`agentbox hub credentials push\`), or pick one from \`agentbox credentials\``,
       );
     }
-    if (isDefaultAccount(hubId)) continue;
+    if (isDefaultAccount(hubId)) {
+      if (o.defaultLogin && spec.credential && agentAccountKinds(spec).length > 0) {
+        const text = await o.defaultLogin(spec.id);
+        if (text === null || !isRealAgentCredential(spec.id, text)) {
+          throw new Error(
+            `this hub has no ${spec.id} login (the default account), so a box on it would start signed out: push one (\`agentbox hub credentials push\`), or pick a named account`,
+          );
+        }
+      }
+      continue;
+    }
     const row = findAccount(file, spec.id, hubId)!;
     if (o.loginOnly?.includes(spec.id) && row.kind !== 'login') {
       throw new Error(

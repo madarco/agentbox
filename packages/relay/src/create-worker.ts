@@ -41,6 +41,11 @@ export type CreateBoxFn = (
  * without touching the host-coupled create flow.
  */
 export interface CreateBoxDeps {
+  /**
+   * Refuse a request before anything is leased or cloned (the hub resolves the
+   * box's accounts here: one it cannot seed fails the job at no cost).
+   */
+  preflight?(request: CreateJobRequest): Promise<void>;
   /** Mint an authed HTTPS remote URL for the repo (App lease → x-access-token URL). */
   leaseRemoteUrl(repoUrl: string): Promise<string>;
   /**
@@ -203,6 +208,7 @@ export function makeControlPlaneCreateBox(deps: CreateBoxDeps): CreateBoxFn {
     const log = deps.logFor?.(jobId) ?? deps.log ?? (() => {});
     const dir = deps.tmpDir(jobId);
     try {
+      if (deps.preflight) await deps.preflight(request);
       log(`leasing a push token for ${request.repoUrl}`);
       const authedUrl = await deps.leaseRemoteUrl(request.repoUrl);
       // `useBranch` reuses an existing branch instead of forking a new one, so

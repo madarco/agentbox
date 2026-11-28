@@ -218,6 +218,8 @@ export async function resolveWorkerAccounts(o: {
   )) {
     if (d.global) hubDefaults[agent] = d.global;
   }
+  // A box that takes its model auth from an env key needs no login of its own.
+  const envAuth = o.borrowCredentials.some((id) => id.startsWith('env:'));
   return resolveHubCreateAccounts({
     agents,
     ...(o.names ? { names: o.names } : {}),
@@ -225,6 +227,7 @@ export async function resolveWorkerAccounts(o: {
     ...(o.requesterMachine ? { requesterMachine: o.requesterMachine } : {}),
     hubDefaults,
     imports: await createAccountImporter({ machineId: () => tryGetMachineId() }).readImports(),
+    ...(envAuth ? {} : { defaultLogin: (agent: string) => readCredentialBackup(agent) }),
   });
 }
 
@@ -379,6 +382,18 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
   const extraInboundCidrs = opts.adminCidr ? [opts.adminCidr] : undefined;
 
   return makeControlPlaneCreateBox({
+    // Before the lease and the clone: a box whose account this hub cannot seed
+    // fails here at no cost. The logins are seeded from custody first, so a
+    // default login pushed since the last create counts.
+    preflight: async (request) => {
+      await seedHostBackupsFromCustody(custody, log);
+      await resolveWorkerAccounts({
+        agentId: request.agent ? resolveCreateAgentSpec(request.agent)?.id : undefined,
+        names: request.opts?.accounts,
+        borrowCredentials: request.opts?.borrowCredentials ?? [],
+        requesterMachine: request.requester?.machineId,
+      });
+    },
     /**
      * Resolve a clone URL the worker can authenticate with.
      *

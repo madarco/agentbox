@@ -485,6 +485,13 @@ export async function runAgentCreate(
    * each borrowed lender's. Memoised for the same reason as `modelAuth` — both
    * the `-i` and the foreground branch need it, decided before any box exists.
    */
+  // Both resolutions below see the same config: its warnings print once.
+  let accountWarningsShown = false;
+  const warnAccounts = (warnings: readonly string[]): void => {
+    if (accountWarningsShown) return;
+    accountWarningsShown = true;
+    for (const w of warnings) log.warn(w);
+  };
   let accountsPromise: Promise<Record<string, string>> | undefined;
   const boxAccounts = (): Promise<Record<string, string>> =>
     (accountsPromise ??= (async () => {
@@ -496,7 +503,7 @@ export async function runAgentCreate(
           config: cfgLoaded,
           loginOnly: lenders,
         });
-        for (const w of r.warnings) log.warn(w);
+        warnAccounts(r.warnings);
         for (const [agent, id] of Object.entries(r.accounts)) {
           cmdLog.write(`account: ${agent} runs on '${id}'`);
         }
@@ -523,7 +530,7 @@ export async function runAgentCreate(
           loginOnly: lenders,
           verify: false,
         });
-        for (const w of r.warnings) log.warn(w);
+        warnAccounts(r.warnings);
         return r.accounts;
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err), 1);

@@ -336,10 +336,6 @@ on a remote hub a subscription belongs to the hub. These items are done:
 
 ## From Phase 9 (hub-owned subscriptions)
 
-- **Teams (Stage 2):** any enrolled device can send any `machine` in an import
-  or a create's `requester`, so it can resolve another PC's own name for an
-  account. A convenience mapping, not a trust boundary; same hole as the rest of
-  multi-PC host-reach.
 - **A PC's `default` that is the subscription of a hub NAMED account** stays two
   hub accounts (the default import does not dedupe into named ones), so two
   refresh chains revoke each other. The reverse (a named login equal to the

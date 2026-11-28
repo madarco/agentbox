@@ -903,13 +903,19 @@ answers per item `{agent, id, hubId?, action, reason}`, `action` one of
   `agents/<a>/<file>` custody), newest-wins. That replaces the hash-only
   custody PUT for the default login.
 - **Identity dedupe.** Two PCs signed in to the same subscription become one
-  hub account: an incoming login merges into a hub login of the same agent
-  whose identity has the same email (case-insensitive) and no conflicting
-  org. The secret is then gated newest-wins (`writeAccountSecret`), so
-  merging never puts an older token over a live one. A pasted kind (no
-  identity) merges only into a hub account of the same kind holding the
-  SAME token. Nothing merges into `default` from a named account, or the
-  other way round (the default slot is its own path).
+  hub account. The key is the login's own owner fields (the spec's
+  `credential.identity.jsonPaths`: claude `accountUuid` + `organizationUuid`,
+  codex `account_id`), else the row's email (case-insensitive, no conflicting
+  org). A named login of the subscription the hub's DEFAULT login runs on
+  maps onto `default` (measured on the real control box: the Mac's
+  `claude/second` is the hub default's account). The secret is then gated
+  newest-wins (below), so merging never puts an older token over a live one.
+  A pasted kind (no identity) merges only into a hub account of the same kind
+  holding the SAME token, and is then replaced by import only from the
+  machine whose import last set it (`setBy` in the imports file): two PCs
+  sharing a key never flip it back and forth, and a token replaced on the hub
+  itself (`credentials add --replace`, the web) is replaced by no import. An
+  incoming `default` never merges into a named hub account (left out, below).
 - **Mapping first.** An item whose `(agent, machine, localId)` is already
   mapped goes to that hub account (a re-push after a refresh), unless both
   identities are known and differ (the PC re-signed that name into another
@@ -948,9 +954,13 @@ The same rule as today's `default` on a remote hub, now for every login:
   machine id (#444 (b): it used the box's origin PC before, which filed a
   hub-owned account in a PC's slot) and fans it out to the account's boxes.
 - That refresh revokes the PC's copy (Phase 0 incident). The PC must not
-  hand the dead copy back: the import is **newest-wins on the hub**
-  (`writeAccountSecret` / `shouldAcceptCredentialUpdate` compare the
-  freshness field), not hash-only, and it needs no custody read on the PC
+  hand the dead copy back: the import is **newest-wins on the hub**, ordered
+  by `credentialExpiry` (the freshness field, else the access token's JWT
+  `exp`: codex declares no freshness field, so a content compare would take
+  any differing, dead copy), not hash-only. The read-gate-write runs under
+  the credential's own file lock, the one the relay's fan-out takes for a
+  box's refresh, so neither lands an older token over the other's write. It
+  needs no custody read on the PC
   (an enrolled PC has only the API key, which cannot read custody, which is
   why the PC-side `planCredentialPush` gate fell back to always-upload).
 - The PC gets the live copy back with `agentbox hub credentials pull`, which
@@ -975,11 +985,15 @@ The same rule as today's `default` on a remote hub, now for every login:
      `localId`) → its hub account;
   2. else a hub account with that id;
   3. no name sent → the hub's global `<agent>.account` (what
-     `PUT /api/v1/accounts/default` writes; web and tray creates send none);
+     `PUT /api/v1/accounts/default` writes; web and tray creates send none),
+     taken as a HUB id: the requester's mapping applies only to a name it
+     sent;
   4. else `default`.
   A named account that is missing, has no secret, or is a pasted kind where a
-  borrowed login is needed **fails the job** with the reason; a create never
-  starts a box on an account it cannot seed. The box records the HUB id, so
+  borrowed login is needed, and `default` when the hub holds no login of that
+  agent, **fail the job** with the reason, before the lease and the clone
+  (`CreateBoxDeps.preflight`); a create never starts a box on an account it
+  cannot seed. The box records the HUB id, so
   `agentbox ls`, `Box.accountsInfo`, `credentials switch` and the fan-out all
   read one name.
 
@@ -1004,9 +1018,12 @@ The same rule as today's `default` on a remote hub, now for every login:
 
 ### Left out
 
-- Teams (Stage 2): any enrolled device can claim any `machine` in an import
-  or a create's `requester`, so the mapping is a convenience, not a trust
-  boundary. Same hole as the rest of multi-PC host-reach.
+- Teams (Stage 2): the import route pins a device token to its own `machine`
+  (403 otherwise, like `PUT /checkouts`), and `POST /api/v1/boxes` already
+  replaces a create's `requester.machineId` with the verified device, so one
+  PC can neither plant a mapping, replace a key or clear a tombstone as
+  another, nor resolve another PC's own names. The owner's API key acts for
+  any machine.
 - A PC's local docker boxes keep using the PC's own store; an account removed
   on the hub stays on the PC until `agentbox credentials --local rm`.
 - A named login and the `default` of another PC that are the same
