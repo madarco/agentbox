@@ -2,7 +2,7 @@
 
 > **2026-11-26:** `agentbox accounts` and `<agent> login --account/--setup-token/--api-key` are now `agentbox credentials` (`list`, `add`, `renew`, `use`, `rm`, `label`, `switch`); see [`credentials-tui-plan.md`](./credentials-tui-plan.md). Command names below are as they were when this was written.
 
-Status: **Phase 0 partly done, Phases 1-5 and 7 done (2026-11-22)** — see
+Status: **Phase 0 partly done, Phases 1-5 and 7 done (2026-11-22), Phase 9 (hub-owned subscriptions) 2026-11-28** — see
 [Phase 0 results](#phase-0-results) and [Phase 1 as built](#phase-1-as-built).
 Single-account facts are measured for claude and codex; the two-account half of
 (a)/(b) is blocked on account B. One phase per session. Open items:
@@ -214,6 +214,7 @@ when `llm.proxy != off`.
 | 6 | Tray. | 5 |
 | 7 | Hub proxy, mode chosen by Phase 0: relay listener, auth, allowlist, `llm.proxy` config + flag, split-proxy runtime script, launch-seam env, vercel `networkPolicy`, egress verified against `egress-ip` detection. | 0 |
 | 8 | The other proxy mode, if still wanted. | 7 |
+| 9 | **Hub-owned subscriptions on a remote hub**: a PC's logins and keys are imported into the remote hub's own account store; every PC, the web UI and the tray see and create on the same list. See [Phase 9](#phase-9-hub-owned-subscriptions-on-a-remote-hub). | 5 |
 
 Phases 1–6 and 7 are independent; 7 can run in parallel with 1–6 after Phase 0.
 
@@ -777,10 +778,13 @@ custody design below).
    - Pasted secrets (API keys, setup tokens) are NOT pushed: nothing on a hub
      reads them, and they never refresh. Only named logins travel.
    - A hub seeds named accounts from custody only for its OWN machine id —
-     its store is per machine. Making a PC's named account usable by a remote
-     control box needs that box to keep a per-machine account list (rows
-     travel next to the secret, a create resolves accounts against the
-     REQUESTER's machine); that is the next step after this phase, not in it.
+     its store is per machine.
+   - ~~Next step: a per-machine account list on the control box (rows travel
+     next to the secret, a create resolves accounts against the REQUESTER's
+     machine).~~ **Superseded by [Phase 9](#phase-9-hub-owned-subscriptions-on-a-remote-hub)**
+     (owner's decision, 2026-11-28): that design keeps a subscription usable
+     only from the PC that signed it in. On a remote hub a subscription now
+     belongs to the HUB, and every PC uses the same list.
 
 ## Phase 7 as built (hub egress proxy, `forward`)
 
@@ -854,6 +858,177 @@ Phase 0 (c) measured the CONNECT path for both agents (refreshes included), so
    stopped, a model host got `502 … hub proxy 127.0.0.1:18790 unreachable`
    while other hosts still worked. An egress-IP check from a real cloud box
    needs a public `llm.proxyUrl` and is left to the coordinator (PR body).
+
+## Phase 9: hub-owned subscriptions on a remote hub
+
+Observed 2026-11-28: a Mac with `claude/default` and `claude/second` ran
+`agentbox hub setup`. The remote hub listed only the `default` logins; its
+custody held `agents/claude/accounts/<mac>/second/.credentials.json`, but
+nothing read it (the hub lists and resolves accounts from its own store, and
+rows never travelled). Worse, with `claude.account: second` in the Mac's
+global config, a hub-routed `agentbox claude --provider hetzner` built a box
+recorded as `claude/second` with **no login in it**: the CLI resolved the
+account against the Mac's store and sent the name, and the worker passed it
+to `provider.create` unchecked, whose stager found no secret on the hub.
+
+**Decision (owner).** On a remote hub a subscription belongs to the **hub**,
+not to the PC that signed it in. Every enrolled PC, the web UI and the tray
+see one list and can create boxes on any entry. The hub's copy is the live
+token: hub boxes refresh it and the relay fans the renewal out. A local hub
+(no `relay.controlPlaneUrl`) is unchanged: it is the PC's own store.
+
+### Import
+
+The PC never writes a hub account through custody. It calls
+**`POST /api/v1/accounts/import`** with one item per login or key:
+`{agent, id, kind, identity?, secret, machine, machineLabel?, force?}`
+(`id` is the PC's own name; `machine` its machine id). The hub decides and
+answers per item `{agent, id, hubId?, action, reason}`, `action` one of
+`created | merged | updated | kept | renamed | refused | removed`.
+
+- **Callers**: every point that pushed logins before. `hub setup` /
+  `hub update` finalize and the change-detected re-push (`syncAgentCredentials`,
+  run after a login and before a hub-routed create), `hub credentials push`,
+  and the PC-side fan-out's custody mirror (`credentials propagate`). An old
+  hub answers 404, and the PC falls back to the old custody push.
+- **Store**: the hub writes the row into its OWN `accounts.json` and the
+  secret through `writeAccountSecret`, so list, resolve, seed, switch, the
+  relay fan-out and `Box.accountsInfo` work unchanged. It also mirrors a
+  login to custody at `agents/<a>/accounts/<hubMachine>/<hubId>/<file>` (the
+  path `seedAccountSecretsFromCustody` already reads, and the one a PC pulls
+  from). Which PC account each hub account came from is kept in a hub-side
+  file, `~/.agentbox/account-imports.json`
+  (`{imports: [{agent, machine, localId, hubId, machineLabel?, at}], removed: [...]}`),
+  never on the `LlmAccount` row: the core model stays as it is.
+- **`default`** is imported too, into the hub's `default` (legacy backup +
+  `agents/<a>/<file>` custody), newest-wins. That replaces the hash-only
+  custody PUT for the default login.
+- **Identity dedupe.** Two PCs signed in to the same subscription become one
+  hub account. The key is the login's own owner fields (the spec's
+  `credential.identity.jsonPaths`: claude `accountUuid` + `organizationUuid`,
+  codex `account_id`), else the row's email (case-insensitive, no conflicting
+  org). A named login of the subscription the hub's DEFAULT login runs on
+  maps onto `default` (measured on the real control box: the Mac's
+  `claude/second` is the hub default's account). The secret is then gated
+  newest-wins (below), so merging never puts an older token over a live one.
+  A pasted kind (no identity) merges only into a hub account of the same kind
+  holding the SAME token, and is then replaced by import only from the
+  machine whose import last set it (`setBy` in the imports file): two PCs
+  sharing a key never flip it back and forth, and a token replaced on the hub
+  itself (`credentials add --replace`, the web) is replaced by no import. An
+  incoming `default` never merges into a named hub account (left out, below).
+- **Mapping first.** An item whose `(agent, machine, localId)` is already
+  mapped goes to that hub account (a re-push after a refresh), unless both
+  identities are known and differ (the PC re-signed that name into another
+  subscription): then it is treated as new.
+- **Id collisions.** The same id from another PC with a different (or
+  unknown) identity never overwrites: it is imported under a suffixed id
+  (`second_2`, `second_3`, …; the base is cut to fit 32 characters) and the
+  mapping records it. Picked over refusing because the mapping already makes
+  the PC's own name work for that PC (Selection below), so nothing has to be
+  renamed, and a refusal would leave a stored subscription unusable until
+  someone ran a rename that the account model does not have (ids name docker
+  volumes and custody paths).
+- **Pasted keys and setup tokens now travel.** Phase 5 kept them home because
+  nothing on a hub read them. A hub-owned account is read by every create on
+  that hub, and both kinds are static: a setup token never refreshes, so any
+  number of holders is safe (it is the kind Phase 0 recommends for many
+  boxes), and an API key has no refresh at all. They go only through the
+  import route, into the hub's store, and are not mirrored to custody (no box
+  posts them back, so nothing would ever read the copy).
+- **Removed on the hub** (`DELETE /api/v1/accounts/:agent/:id` there): the
+  mappings of that account become tombstones in `removed`, so the next
+  automatic push from that PC answers `removed` instead of bringing it back.
+  `agentbox hub credentials push --force` clears them.
+- **Old custody objects**: every import deletes the Phase 5 per-PC copy of
+  the item (`agents/<a>/accounts/<machine>/<localId>/…`, unless it is the
+  hub's own canonical path) and any Phase 4 flat object
+  (`agents/<a>/accounts/<id>/<file>`, five segments). Both are dead: nothing
+  reads them.
+
+### Who refreshes
+
+The same rule as today's `default` on a remote hub, now for every login:
+
+- The hub's copy is the live token. A hub box that refreshes posts it to the
+  relay, which writes the hub's store, mirrors it to custody under the HUB's
+  machine id (#444 (b): it used the box's origin PC before, which filed a
+  hub-owned account in a PC's slot) and fans it out to the account's boxes.
+- That refresh revokes the PC's copy (Phase 0 incident). The PC must not
+  hand the dead copy back: the import is **newest-wins on the hub**, ordered
+  by `credentialExpiry` (the freshness field, else the access token's JWT
+  `exp`: codex declares no freshness field, so a content compare would take
+  any differing, dead copy), not hash-only. The read-gate-write runs under
+  the credential's own file lock, the one the relay's fan-out takes for a
+  box's refresh, so neither lands an older token over the other's write. It
+  needs no custody read on the PC
+  (an enrolled PC has only the API key, which cannot read custody, which is
+  why the PC-side `planCredentialPush` gate fell back to always-upload).
+- The PC gets the live copy back with `agentbox hub credentials pull`, which
+  now pulls named logins too: for every hub login mapped to this machine it
+  reads `agents/<a>/accounts/<hubMachine>/<hubId>/<file>` (admin-token read,
+  as for `default`) into the PC's own `<localId>`, newest-wins.
+- `agentbox credentials renew <agent>/<id>` on a PC pointed at the hub signs
+  in on the PC, imports the new login (newer, so accepted) and asks the hub to
+  fan it out (`POST /accounts/:agent/:id/renew` on the hub).
+
+### Selection
+
+- The CLI resolves only the NAME when the create goes to a remote hub:
+  `--account` > project `<agent>.account` > global `<agent>.account`, sent as
+  `opts.accounts` (an explicit `default` included). It does not check the
+  PC's store (`resolveBoxAccounts({ verify: false })`): the hub may hold an
+  account this PC never signed in. A create that falls back to building
+  locally checks the PC's store as before.
+- The hub worker resolves every agent of the box (its agent plus borrowed
+  lenders) BEFORE anything is built, `resolveHubCreateAccounts`:
+  1. a name the requester's machine imported (`requester.machineId` +
+     `localId`) → its hub account;
+  2. else a hub account with that id;
+  3. no name sent → the hub's global `<agent>.account` (what
+     `PUT /api/v1/accounts/default` writes; web and tray creates send none),
+     taken as a HUB id: the requester's mapping applies only to a name it
+     sent;
+  4. else `default`.
+  A named account that is missing, has no secret, or is a pasted kind where a
+  borrowed login is needed, and `default` when the hub holds no login of that
+  agent, **fail the job** with the reason, before the lease and the clone
+  (`CreateBoxDeps.preflight`); a create never starts a box on an account it
+  cannot seed. The box records the HUB id, so
+  `agentbox ls`, `Box.accountsInfo`, `credentials switch` and the fan-out all
+  read one name.
+
+### Surfaces
+
+- `GET /api/v1/accounts` on the hub lists the imported accounts; each may
+  carry `importedFrom: [{machine, machineLabel?, id}]` (optional, additive,
+  so the web page and the tray decode it unchanged).
+- `agentbox credentials` (list, the menu, `rm`, `use`, `switch`, `renew`) on
+  a PC with a remote hub configured asks the REMOTE hub (it used
+  `preferLocal`). `--local` keeps the old view of this PC's own store, which
+  its docker boxes still use. `use` writes the PC's own config (project or
+  `--global`), validated against the hub's list, because that config is what
+  the CLI sends; the hub's own default is set from the web UI.
+- `add --login` still signs in on the PC (an interactive container here),
+  then imports to the hub. `add --api-key/--setup-token` goes to the hub
+  directly.
+- `rm` on the hub removes the row, the secret, the hub-machine custody copy
+  and every PC copy it was imported from, and tombstones the mappings.
+- The hub System page counts only `agents/<a>/<boxRelPath>` as the agent's
+  login (#442); named objects no longer read as "logged in".
+
+### Left out
+
+- Teams (Stage 2): the import route pins a device token to its own `machine`
+  (403 otherwise, like `PUT /checkouts`), and `POST /api/v1/boxes` already
+  replaces a create's `requester.machineId` with the verified device, so one
+  PC can neither plant a mapping, replace a key or clear a tombstone as
+  another, nor resolve another PC's own names. The owner's API key acts for
+  any machine.
+- A PC's local docker boxes keep using the PC's own store; an account removed
+  on the hub stays on the PC until `agentbox credentials --local rm`.
+- A named login and the `default` of another PC that are the same
+  subscription stay two hub accounts (two holders, two refresh chains).
 
 ## Backlog (not in these phases)
 

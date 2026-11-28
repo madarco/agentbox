@@ -1519,6 +1519,23 @@ export interface AccountView {
   auth: AccountAuthView;
   /** Set when this account is the agent's default for new boxes, per config layer. */
   default?: { global?: true; project?: true };
+  /**
+   * The PC accounts imported into this hub account (llm-accounts Phase 9):
+   * the PC's machine id, its label, and the PC's own name for it. Absent on a
+   * hub nothing was imported into (a local hub).
+   */
+  importedFrom?: Array<{ machine: string; machineLabel?: string; id: string }>;
+}
+
+/** One item's outcome of `POST /api/v1/accounts/import`. */
+export interface AccountImportResultView {
+  agent: string;
+  /** The PC's own name. */
+  id: string;
+  /** The hub account it is now (absent when refused or removed). */
+  hubId?: string;
+  action: 'created' | 'merged' | 'updated' | 'kept' | 'renamed' | 'removed' | 'refused';
+  reason: string;
 }
 
 /**
@@ -1605,6 +1622,8 @@ export interface AccountBackend {
   setAccountPolicy(input: unknown): Promise<AccountResult<AccountPolicyView>>;
   /** A pasteable kind (`api-key` / `setup-token`); a login is interactive only. */
   addPastedAccount(input: unknown): Promise<AccountResult<AccountView>>;
+  /** A PC's logins and keys into this hub's store (Phase 9). */
+  importAccounts(input: unknown): Promise<AccountResult<AccountImportResultView[]>>;
   removeAccount(
     agent: string,
     id: string,

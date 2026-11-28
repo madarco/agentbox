@@ -90,8 +90,6 @@ Not fixed:
   across accounts. A named volume today has its own `projects/`.
 - **Renaming an account id** is not offered: the docker volume, Daytona subpath
   and custody path all derive from it. A rename would be a copy + remove.
-- **`accounts rm` does not touch custody.** Named accounts never reach custody
-  until Phase 4; add the custody delete then.
 - **Not live-run in Phase 2:** a named OAuth login end to end (it needs a second
   real account) and a named-volume seed against a real image (the seed is
   covered by a docker-mocked test). Steps for the coordinator are in the PR.
@@ -163,11 +161,6 @@ The two Phase 3 must-fix items above are done: `prune --all` keeps every
 - ~~`agentbox create --account` on an agentless box~~ — now refused for any
   agent the box does not carry (only a borrowed lender can be named there);
   `agentbox <agent> --account` is the way.
-- **A remote control box refuses `--account`** (it has no account store until
-  Phase 5): the hub re-resolves `opts.accounts` against its own store and
-  answers "no claude account 'work' on this machine". Deliberate — the CLI
-  cannot hand a remote hub a secret it never received — but the message could
-  say "this control box" instead of "this machine".
 - **Each cloud create reads `accounts.json` once per agent** (stager, env
   policy). Correct, small; pass one read down if it ever shows up in a profile.
 
@@ -198,21 +191,8 @@ rides the relay registration and the hub `Box` payload; `checkpoint
 
 ## From Phase 4 (fan-out per account)
 
-- **Account rows do not travel to custody** — only the secrets. A remote control
-  box therefore still refuses a named create (it has no `accounts.json` row);
-  Phase 5 brings the account list to the hub.
 - **A pasted-kind account's secret is pushed to custody too** (so a hub can
   seed it later); it is static, so nothing ever fans it out.
-- **`agentbox accounts rm` leaves the account's custody objects** on a control
-  box (`agents/<agent>/accounts/<id>/…`). Add the delete when Phase 5 wires the
-  hub's account list.
-- **The custody push is hash-only, not newest-wins** (Phase 4 review): a PC
-  holding an older copy of a named login re-uploads it over a newer one the
-  hub's relay recorded from a refreshing box. The default login's push has the
-  same shape today; fix both by gating the upload on the freshness field.
-- **`agentbox hub credentials pull` only pulls the default objects**: a named
-  account refreshed on the control box is not brought back to the PC. Mirror
-  `seedAccountSecretsFromCustody` on the pull side.
 - **A plugin credential whose `boxRelPath` contains `/`** is never seeded per
   account (the custody seed expects exactly `agents/<a>/accounts/<id>/<file>`).
   No built-in has one; compare `parts.slice(4).join('/')`.
@@ -236,26 +216,9 @@ with no recorded volume instead of falling back to the shared default volume.
   Phase 5 consumes these objects: key them by owner/device (or carry the
   account identity), decide whether pasted secrets travel at all, and delete
   them on `accounts rm`.
-- **The hub System page counts named-account custody objects as the agent's
-  login** (`custody-view.ts` `summarizeAgentCredentials` groups by
-  `agents/<agent>/`): a PC with only a named claude account shows Claude as
-  logged in, but a hub create gets no default login. Count only
-  `agents/<a>/<boxRelPath>`, and list accounts separately.
 
 ## From Phase 5 (surfaces)
 
-- **A remote control box cannot run a PC's named account yet.** The custody
-  objects are now keyed by machine, but the control box has no per-machine
-  account list: a create there still resolves `--account` against the control
-  box's own store and refuses. Next step: rows travel next to the secret
-  (`agents/<a>/accounts/<machine>/<id>/account.json`), the control box keeps a
-  per-machine account view, and a create resolves accounts against the
-  REQUESTER's machine (`requester.machineId`) and seeds that machine's secret.
-- **Old flat custody objects** (`agents/<a>/accounts/<id>/<file>`, pushed by a
-  Phase 4 CLI) are left in place and never read again; a one-time cleanup can
-  delete them.
-- **`accounts rm` still leaves the machine's custody objects** on a control box.
-  Add the delete with the per-machine account view above.
 - **The tray** (`../agentbox-tray`) does not show accounts yet (Phase 6):
   `Box.accounts` / `Box.accountsInfo` and `/api/v1/accounts` are ready for it.
 - **No docs figure for the Accounts page** yet; capture one per
@@ -267,16 +230,6 @@ Fixed in #444: the `POST` / `PATCH` / `DELETE /api/v1/accounts…` routes now
 answer a store failure (a corrupt `accounts.json`) with the error envelope
 naming the file, like `GET`, instead of a bare 500.
 
-- **(b) MUST FIX before "accounts resolve against the requester's machine":**
-  `credentials-fanout.ts` (~251) files a hub-side box's refreshed account login
-  under the box's ORIGIN machine id, although the account itself came from the
-  hub's own store — so it lands in PC B's custody slot. Key it by the hub's own
-  machine id (or drop the update) until per-machine account lists exist. Same
-  root cause: the hub accepts a remote PC's `--account` against its OWN store
-  (the Phase 3 resolution), which only works because a remote hub has no rows.
-- **(f) `custody-client.ts` (~311) reads the machine id before the account
-  loop**, so a failure reading it also skips the DEFAULT-login push. Read it
-  lazily inside the loop (or catch it), so the default push never depends on it.
 
 ## From Phase 7 (hub egress proxy, `forward`)
 
@@ -344,3 +297,62 @@ the unencrypted hub leg).
   queued-create opts. Harmless (memoized, same value); drop one.
 - **L9 A project-level `llm.proxyPort` / `llm.proxyUrl` is silently ignored**
   (they are global-only by design). Warn when a project config sets them.
+
+## Fixed in Phase 9 (hub-owned subscriptions, 2026-11-28)
+
+[Phase 9](./llm-accounts-plan.md#phase-9-hub-owned-subscriptions-on-a-remote-hub):
+on a remote hub a subscription belongs to the hub. These items are done:
+
+- **#444 (b)** the relay filed a hub-side box's refreshed named login under the
+  box's ORIGIN machine. It now uses the hub's own machine id
+  (`CredentialsFanout` `machineId`), the path the hub seeds from.
+- **Account rows did not travel; a remote control box refused `--account`, or
+  built a box recorded on an account it could not seed** (the 2026-11-28
+  incident; also the Phase 3 "refuses `--account`" message and the Phase 5
+  "cannot run a PC's named account yet"). A PC imports its logins and keys with
+  `POST /api/v1/accounts/import`; the worker resolves `opts.accounts` against
+  the hub's store (the requester's own name first) and fails the job when it
+  cannot seed one.
+- **`accounts rm` / `credentials rm` left the custody objects** (the Phase 2,
+  Phase 4 and Phase 5 notes). `rm` on the hub deletes the hub's copy and every
+  PC copy it was imported from, and tombstones the mappings.
+- **`hub credentials pull` pulled only the default objects.** It now pulls this
+  PC's named logins too (newest-wins, under the PC's own name).
+- **#444 (f)** the machine id was read before the account loop: now lazily, and
+  the import path never needs it for the default login's decision.
+- **The custody push was hash-only, not newest-wins** (default and named): the
+  import is newest-wins ON THE HUB, so a PC with only the API key (which cannot
+  read custody to compare) no longer puts a revoked copy back. The custody PUT
+  stays as the fallback for an older hub.
+- **Old flat custody objects** (Phase 4) and the Phase 5 per-PC copies are
+  deleted by the import that supersedes them.
+- **#442 System page** counted named-account objects as the agent's login: it
+  now counts `agents/<a>/accounts/…` apart ("no default login + N named").
+- **#444 (e), part:** the stale "a remote control box has no account store"
+  comments in `apps/hub/lib/backend/accounts.ts` and `hub-worker.ts`.
+
+## From Phase 9 (hub-owned subscriptions)
+
+- **A PC's `default` that is the subscription of a hub NAMED account** stays two
+  hub accounts (the default import does not dedupe into named ones), so two
+  refresh chains revoke each other. The reverse (a named login equal to the
+  hub's default) is merged.
+- **`agentbox create --account claude=…` (an agentless box borrowing a lender)
+  still checks the PC's store** before a hub-routed create; only the agent
+  commands (`agentbox claude --account`) send the bare name. Move `create` to
+  `resolveBoxAccounts({ verify: false })` when its target is remote.
+- **`credentials --local rm`** removes this PC's account only; the hub keeps its
+  imported copy (by design: the hub owns it). An account removed on the hub
+  stays on the PC until `--local rm`.
+- **`credentials switch` on a PC with a remote hub** asks the remote hub, so a
+  local docker box needs `credentials --local switch`.
+- **An identity-less login** (no `accountUuid` in the blob, no email on the row)
+  never merges: a second PC's copy of the same subscription under the same name
+  gets a suffix.
+- **The tray** shows nothing of `importedFrom` (optional; Swift `Codable`
+  ignores unknown keys, so nothing breaks).
+- **An import batch re-reads the store per item** (the rows, each row's secret,
+  the default backup) inside the importer's lock (Phase 9 review). The flat
+  custody sweep runs once per batch now; reading the rows and owner keys once
+  per batch and updating them as items land would make a 64-item push cheaper.
+  Small today (a PC has a handful of logins).

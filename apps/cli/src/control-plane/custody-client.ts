@@ -378,9 +378,20 @@ export async function collectAgentCredentialUploads(only?: AgentId): Promise<Upl
   // machine: two PCs' `claude/work` can be two subscriptions). Pasted secrets
   // (API keys, setup tokens) do not travel: nothing on a hub reads them, and
   // they never refresh (Phase 5 custody design).
-  const machine = getMachineId();
+  // Read lazily (#444 (f)): a machine-id failure skips the named logins, never
+  // the default login above. (This is the fallback for a hub without the
+  // import route; a current hub takes `credential-import.ts`.)
+  let machine: string | null | undefined;
   for (const account of (await readAccounts()).accounts) {
     if (isDefaultAccount(account.id) || account.kind !== 'login') continue;
+    if (machine === undefined) {
+      try {
+        machine = getMachineId();
+      } catch {
+        machine = null;
+      }
+    }
+    if (machine === null) break;
     if (only && account.agent !== only) continue;
     const spec = AGENT_SYNC_SPECS.find((s) => s.id === account.agent);
     if (!spec?.credential) continue;
