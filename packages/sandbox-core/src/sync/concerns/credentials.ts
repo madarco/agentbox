@@ -249,12 +249,7 @@ export function credentialIdentityMismatch(
   a: string,
   b: string,
 ): boolean {
-  const paths = resolveAgentSpec(agent).credential?.identity?.jsonPaths ?? [];
-  return paths.some((path) => {
-    const x = jsonStringAt(a, path);
-    const y = jsonStringAt(b, path);
-    return x !== null && y !== null && x !== y;
-  });
+  return credentialIdentityMatch(resolveAgentSpec(agent), a, b) === false;
 }
 
 /**

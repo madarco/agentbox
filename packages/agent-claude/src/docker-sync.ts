@@ -302,7 +302,9 @@ export function usesSharedProjects(volume: string): boolean {
 export async function migrateProjectsToShared(volume: string, image: string): Promise<void> {
   const script =
     'if [ -d /src/projects ]; then ' +
-    'rsync -a --update --chown=1000:1000 /src/projects/ /dst/ || exit 1; fi; ' +
+    // Not `memory/`: the host memory rekey writes the shared volume's own, and
+    // a config volume's is a stale copy of some other repo's (one key for all).
+    "rsync -a --update --chown=1000:1000 --exclude='/*/memory/' /src/projects/ /dst/ || exit 1; fi; " +
     'chown 1000:1000 /dst';
   const res = await execa(
     'docker',
@@ -523,18 +525,18 @@ async function ensureClaudeVolumeSeeded(
     // The key is [A-Za-z0-9-] only (encodeClaudeProjectsKey), so it's shell-safe
     // to interpolate. Empty snippet when no workspace or the helper finds no
     // host memory dir (the `[ -d ... ]` guard).
-    // Not into a volume whose `projects/` the shared projects volume hides: the
-    // write would never reach a box (and those boxes' images read memory from
-    // `autoMemoryDirectory` anyway).
-    const memoryKey =
-      opts.hostWorkspace && !usesSharedProjects(spec.volume)
-        ? encodeClaudeProjectsKey(opts.hostWorkspace)
-        : null;
+    // A volume whose `projects/` the shared projects volume hides gets it in
+    // the shared volume instead (mounted at /dst-projects), where its boxes read.
+    const memoryKey = opts.hostWorkspace ? encodeClaudeProjectsKey(opts.hostWorkspace) : null;
+    const sharedProjects = usesSharedProjects(spec.volume);
+    const projectsRoot = sharedProjects ? '/dst-projects' : '/dst/projects';
+    if (memoryKey && sharedProjects) args.push('-v', `${CLAUDE_PROJECTS_VOLUME}:/dst-projects`);
     const memoryRekeyStep = memoryKey
       ? ` && { [ -d "/src-claude/projects/${memoryKey}/memory" ] && ` +
-        `mkdir -p /dst/projects/-workspace && ` +
-        `rm -rf /dst/projects/-workspace/memory && ` +
-        `cp -a "/src-claude/projects/${memoryKey}/memory" /dst/projects/-workspace/memory; true; }`
+        `mkdir -p ${projectsRoot}/-workspace && ` +
+        `rm -rf ${projectsRoot}/-workspace/memory && ` +
+        `cp -a "/src-claude/projects/${memoryKey}/memory" ${projectsRoot}/-workspace/memory && ` +
+        `chown -R 1000:1000 ${projectsRoot}/-workspace; true; }`
       : '';
     args.push(
       opts.image,

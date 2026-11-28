@@ -30,9 +30,14 @@ describe('mergeAccountIdentity', () => {
   it("never keeps another subscription's email (sameLogin false, or plans differ)", () => {
     const stored = { email: 'a@b.c', org: 'Acme', plan: 'max' };
     expect(mergeAccountIdentity(stored, { plan: 'max' }, false)).toEqual({ plan: 'max' });
-    // Cannot tell from the credentials: only a matching plan keeps the label.
+    // Cannot tell from the credentials: two known, different plans drop it…
     expect(mergeAccountIdentity(stored, { plan: 'pro' })).toEqual({ plan: 'pro' });
     expect(mergeAccountIdentity(stored, { plan: 'max' })).toEqual(stored);
+    // …a missing plan keeps it.
+    expect(mergeAccountIdentity(stored, { email: 'a@b.c' })).toEqual({
+      email: 'a@b.c',
+      org: 'Acme',
+    });
   });
 
   it('a new email wins, and nothing new keeps the stored identity', () => {

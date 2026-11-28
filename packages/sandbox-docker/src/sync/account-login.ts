@@ -121,7 +121,8 @@ export function dockerVolumeFileReader(volume: string, image: string): VolumeFil
  * must not wipe the label. Only for the SAME login: `sameLogin` is what the
  * two credentials' identity fields say (false: another subscription signed in
  * under this name, so its identity is taken as it is; undefined: they cannot
- * tell, so the plan must match). Display only. Pure.
+ * tell, so only two known, different plans count as another one). Display
+ * only. Pure.
  */
 export function mergeAccountIdentity(
   stored: LlmAccountIdentity | undefined,
@@ -131,7 +132,11 @@ export function mergeAccountIdentity(
   if (!fresh) return sameLogin === false ? undefined : stored;
   if (!stored) return fresh;
   if (sameLogin === false) return fresh;
-  if (sameLogin === undefined && (!fresh.plan || fresh.plan !== stored.plan)) return fresh;
+  // Cannot tell from the credentials: only two KNOWN, different plans say it
+  // is another subscription; a missing plan keeps the label.
+  if (sameLogin === undefined && fresh.plan && stored.plan && fresh.plan !== stored.plan) {
+    return fresh;
+  }
   const out: LlmAccountIdentity = { ...fresh };
   if (!out.email && stored.email) out.email = stored.email;
   if (!out.org && stored.org) out.org = stored.org;
@@ -247,7 +252,11 @@ export async function captureVolumeLogin(
   }
   if (!res.written) return { written: false, reason: res.reason, identity: before };
   if (existing && newIdentity !== before) {
-    await upsertAccount({ ...row, ...(newIdentity ? { identity: newIdentity } : {}) }, o.store);
+    // Built from the row WITHOUT the old identity: another subscription
+    // signed in under this name and read none must show none, not the old one.
+    const { identity: _old, ...rest } = row;
+    void _old;
+    await upsertAccount({ ...rest, ...(newIdentity ? { identity: newIdentity } : {}) }, o.store);
   }
   return { written: true, reason: res.reason, identity: newIdentity };
 }

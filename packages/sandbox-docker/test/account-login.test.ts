@@ -160,3 +160,37 @@ describe('captureVolumeLogin re-login identity', () => {
     expect(row?.identity).toEqual({ email: 'w@x.io', plan: 'max' });
   });
 });
+
+describe('captureVolumeLogin: another subscription under the same name', () => {
+  it('drops the old email when the new login reads no identity of its own', async () => {
+    const withIds = {
+      ...spec,
+      credential: {
+        ...spec.credential!,
+        identity: { jsonPaths: [['claudeAiOauth', 'accountUuid']] },
+      },
+    } as AgentSyncSpec;
+    const s2 = { ...store, specs: [withIds] };
+    const blob = (exp: number, uuid: string) =>
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: exp, accountUuid: uuid },
+      });
+    await captureVolumeLogin({
+      spec: withIds,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': blob(100, 'u-1') }),
+      identity: { files: ['.credentials.json'], parse: () => ({ email: 'old@x.io', plan: 'max' }) },
+      store: s2,
+    });
+    const res = await captureVolumeLogin({
+      spec: withIds,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': blob(200, 'u-2') }),
+      identity: { files: ['.credentials.json'], parse: () => undefined },
+      store: s2,
+    });
+    expect(res.identity).toBeUndefined();
+    const row = (await readAccounts(s2)).accounts.find((a) => a.id === 'work');
+    expect(row?.identity).toBeUndefined();
+  });
+});

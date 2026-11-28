@@ -110,7 +110,11 @@ import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
-import { removeCloudAgentEnvFile, writeCloudAgentEnvFile } from './agent-env-file.js';
+import {
+  removeCloudAgentEnvFile,
+  writeCloudAgentEnvFile,
+  type AccountEnvAuthority,
+} from './agent-env-file.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
 import { adminCustodySink, pushProjectSeedToCustody, SEED_PUSH_MS } from './custody-seed.js';
@@ -671,23 +675,6 @@ export function createCloudProvider(
       boxHost: deriveCloudBoxHost(box.name, webPreview?.url),
       credentialSync,
     });
-    // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
-    // on every wake. Built from the waking process's env, but each line only
-    // fills a key the sandbox env lacks, so an SDK box keeps its create-time
-    // forwarded keys. Best-effort for those: a box that comes up without them
-    // still runs. NOT for a pasted account's token, which lives only in this
-    // file (never the sandbox env): one retry, then the wake fails, rather than
-    // a box whose agent has no auth at all.
-    const agentEnv = await buildCloudAgentEnv(box.agents, box.accounts ?? {});
-    const authority = await cloudAccountAuthority(box.agents, box.accounts ?? {}, {
-      switched: (box.accountSwitches ?? []).map((x) => x.agent),
-      forwarded: agentEnv,
-    });
-    await writeWakeAgentEnv(
-      box.name,
-      () => writeCloudAgentEnvFile(backend, h, agentEnv, authority),
-      Object.keys(authority.set).length > 0,
-    );
     // Re-register on resume. A control-plane box registers on the plane (with
     // its origin URL, needed for lease minting); a classic-cloud box registers
     // on the host relay so its CloudBoxPoller picks up the fresh preview
@@ -792,6 +779,40 @@ export function createCloudProvider(
     } catch {
       // best-effort
     }
+    // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
+    // on every wake. Built from the waking process's env, but each line only
+    // fills a key the sandbox env lacks, so an SDK box keeps its create-time
+    // forwarded keys. Best-effort for those: a box that comes up without them
+    // still runs. NOT for a pasted account's token, which lives only in this
+    // file (never the sandbox env): one retry, then the wake fails, rather than
+    // a box whose agent has no auth at all. Last, so the record, the relay
+    // registration and the reconcile above are done whatever happens here.
+    let envWrite: {
+      agentEnv: Record<string, string>;
+      authority: AccountEnvAuthority;
+      pasted: boolean;
+    };
+    try {
+      const agentEnv = await buildCloudAgentEnv(box.agents, box.accounts ?? {});
+      const authority = await cloudAccountAuthority(box.agents, box.accounts ?? {}, {
+        switched: (box.accountSwitches ?? []).map((x) => x.agent),
+        forwarded: agentEnv,
+      });
+      // Only a named account's own token makes the file required; the host
+      // keys a switched agent forwards are best-effort like the rest.
+      const pasted = await cloudAccountAuthority(box.agents, box.accounts ?? {});
+      envWrite = { agentEnv, authority, pasted: Object.keys(pasted.set).length > 0 };
+    } catch (err) {
+      process.stderr.write(
+        `agentbox: WARN: ${box.name}: agent env not rebuilt on wake (${err instanceof Error ? err.message : String(err)})\n`,
+      );
+      return next;
+    }
+    await writeWakeAgentEnv(
+      box.name,
+      () => writeCloudAgentEnvFile(backend, h, envWrite.agentEnv, envWrite.authority),
+      envWrite.pasted,
+    );
     return next;
   }
 

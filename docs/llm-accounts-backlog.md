@@ -314,9 +314,11 @@ Fixed (`fix/accounts-backlog-docker`):
   transcripts keep arriving. A shared copy that is newer (a session continued in
   a new box) is never overwritten, and rsync's temp-and-rename leaves no partial
   file. A failed copy fails the create. The old dir stays in place for a
-  rollback; `prune --all` keeps the volume. Since the overlay hides the config
-  volume's `projects/`, the legacy host-memory rekey (pre-Phase-4 images only)
-  is skipped on those volumes.
+  rollback; `prune --all` keeps the volume. The legacy host-memory rekey
+  (pre-Phase-4 images) writes into the shared volume, and the copy skips
+  `*/memory/`, a stale other-repo copy in the config volume. Known limit: a
+  session that diverges between a pre-upgrade box and a new box keeps whichever
+  copy is newer.
 - **An orphan `-acct-` volume after a failed first login** is removed
   (`dropOrphanAccountVolume`, only when the store has no row, retrying a few seconds while the aborted
   login container still holds it) on cancel,

@@ -123,6 +123,8 @@ describe('the shared projects volume (--resume across accounts)', () => {
     expect(argv).toContain('agentbox-claude-config-acct-other:/src:ro');
     // A newer source (an appended transcript) wins; a newer shared copy stays.
     expect(argv.join(' ')).toContain('rsync -a --update --chown=1000:1000');
+    // A config volume's old memory/ is never copied over the shared one.
+    expect(argv.join(' ')).toContain("--exclude='/*/memory/'");
     expect(argv.join(' ')).toContain('chown 1000:1000 /dst');
   });
 
@@ -142,12 +144,14 @@ describe('the shared projects volume (--resume across accounts)', () => {
     ).rejects.toThrow(/agentbox-claude-projects.*rsync: boom/);
   });
 
-  it('skips the legacy memory rekey into a volume whose projects/ is hidden', async () => {
+  it('writes the legacy memory rekey into the shared projects volume, not the hidden dir', async () => {
     await ensureClaudeVolume(
       { volume: 'agentbox-claude-config' },
       { syncFromHost: true, image: 'img', hostWorkspace: '/w/proj' },
     );
+    // Into the shared projects volume, which is where those boxes read.
     expect(seedScript).not.toContain('/dst/projects/-workspace/memory');
+    expect(seedScript).toContain('/dst-projects/-workspace/memory');
     await ensureClaudeVolume(
       { volume: 'agentbox-claude-config-b1234abcd' },
       { syncFromHost: true, image: 'img', hostWorkspace: '/w/proj' },
