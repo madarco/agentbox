@@ -480,18 +480,21 @@ export async function runAgentCreate(
       }
     })());
 
+  // Both account resolutions below can warn about the same config line: each
+  // distinct warning prints once.
+  const accountWarningsShown = new Set<string>();
+  const warnAccounts = (warnings: readonly string[]): void => {
+    for (const w of warnings) {
+      if (accountWarningsShown.has(w)) continue;
+      accountWarningsShown.add(w);
+      log.warn(w);
+    }
+  };
   /**
    * The named LLM account per agent (llm-accounts Phase 3): this agent's, plus
    * each borrowed lender's. Memoised for the same reason as `modelAuth` — both
    * the `-i` and the foreground branch need it, decided before any box exists.
    */
-  // Both resolutions below see the same config: its warnings print once.
-  let accountWarningsShown = false;
-  const warnAccounts = (warnings: readonly string[]): void => {
-    if (accountWarningsShown) return;
-    accountWarningsShown = true;
-    for (const w of warnings) log.warn(w);
-  };
   let accountsPromise: Promise<Record<string, string>> | undefined;
   const boxAccounts = (): Promise<Record<string, string>> =>
     (accountsPromise ??= (async () => {

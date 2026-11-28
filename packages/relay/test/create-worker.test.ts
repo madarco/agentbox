@@ -177,6 +177,12 @@ describe('makeControlPlaneCreateBox', () => {
     expect(created).toEqual([]);
   });
 
+  it("hands the preflight's result to createBox, so the work is done once", async () => {
+    const { deps, created } = harness({ preflight: () => Promise.resolve({ claude: 'work' }) });
+    await makeControlPlaneCreateBox(deps)(request, 'job-q');
+    expect(created[0]!.preflight).toEqual({ claude: 'work' });
+  });
+
   it('falls back to the worker-wide log when no per-job logger exists', async () => {
     const shared: string[] = [];
     const { deps } = harness({ log: (l) => shared.push(l) });

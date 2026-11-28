@@ -69,7 +69,9 @@ export interface AccountImportTombstone {
  * The machine whose import last set a pasted account's token. Only it may
  * replace that token by import, so two PCs sharing a key never flip it back
  * and forth (the last one to push a stale copy winning). A token replaced on
- * the hub itself clears the entry: no import replaces it then.
+ * the hub itself is marked {@link SET_ON_HUB}: no import replaces it then. No
+ * entry at all (an account imported before this rule) lets the machine whose
+ * own name maps to it replace it, and records that machine.
  */
 export interface PastedSetter {
   agent: string;
@@ -85,6 +87,25 @@ export interface AccountImportsFile {
 }
 
 export const EMPTY_IMPORTS: AccountImportsFile = { version: 1, imports: [], removed: [] };
+
+/** `setBy` marker for a token set on the hub itself (a machine id is a UUID). */
+export const SET_ON_HUB = ':hub';
+
+/**
+ * Whether an import from `machine` may replace a pasted hub account's token
+ * that differs from its own (pure): it set the current one, or nothing is
+ * recorded and the item reached the account through its own mapping.
+ */
+export function mayReplacePasted(
+  file: AccountImportsFile,
+  agent: string,
+  hubId: string,
+  machine: string,
+  viaMapping: boolean,
+): boolean {
+  const setter = (file.setBy ?? []).find((x) => x.agent === agent && x.hubId === hubId);
+  return setter ? setter.machine === machine : viaMapping;
+}
 
 /** `file` with `agent/hubId`'s setter set to `machine` (or cleared with null). Pure. */
 export function withSetter(
@@ -458,8 +479,12 @@ export interface AccountImporterDeps {
 
 export interface AccountImporter {
   readImports(): Promise<AccountImportsFile>;
-  /** A pasted token was replaced on the hub itself: no import replaces it after that. */
-  clearSetter(agent: string, hubId: string): Promise<void>;
+  /**
+   * Set a pasted token on the hub itself: `write` runs in the importer's chain
+   * (no import lands between), then the account is marked {@link SET_ON_HUB}
+   * so no import replaces that token after it.
+   */
+  setOnHub<T>(agent: string, hubId: string, write: () => Promise<T>): Promise<T>;
   importItems(items: readonly AccountImportItem[]): Promise<ImportResult[]>;
   /**
    * A hub `rm`: run `remove` (the store removal), then tombstone the mappings
@@ -710,9 +735,7 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
         action = target.why === 'mapping' ? 'kept' : 'merged';
         reason = 'same token';
       } else if (
-        (imports.setBy ?? []).some(
-          (x) => x.agent === spec.id && x.hubId === target.hubId && x.machine === item.machine,
-        )
+        mayReplacePasted(imports, spec.id, target.hubId, item.machine, target.why === 'mapping')
       ) {
         await writeAccountSecret(spec.id, target.hubId, item.secret, store);
         action = 'updated';
@@ -721,7 +744,7 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
         // Another machine (or the hub itself) set the current token: this PC's
         // copy is not newer just because it differs.
         action = 'kept';
-        reason = `the hub's token was set elsewhere; replace it with \`agentbox credentials add ${spec.id}/${target.hubId} --replace\``;
+        reason = `the hub's token was set elsewhere; to change it, replace it on the hub (\`agentbox credentials add ${spec.id}/${target.hubId} --replace\` with this hub configured, or its Subscriptions page)`;
       }
     }
     const mapped = withMapping(
@@ -763,13 +786,15 @@ export function createAccountImporter(deps: AccountImporterDeps): AccountImporte
 
   return {
     readImports,
-    clearSetter: (agent, hubId) =>
+    setOnHub: <T>(agent: string, hubId: string, write: () => Promise<T>) =>
       serialized(async () => {
+        const result = await write();
         const before = await readImports();
-        const after = withSetter(before, agent, hubId, null);
+        const after = withSetter(before, agent, hubId, SET_ON_HUB);
         if (JSON.stringify(after) !== JSON.stringify(before)) {
           await writeJsonAtomic(importsPath, after);
         }
+        return result;
       }),
     importItems: (items) =>
       serialized(async () => {

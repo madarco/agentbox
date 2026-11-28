@@ -646,22 +646,24 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         kind: req.kind,
         createdAt: new Date(now()).toISOString(),
       };
-      await upsertAccount(row, store);
-      try {
-        await writeAccountSecret(
-          spec.id,
-          req.id,
-          encodePastedSecret({ kind: req.kind as 'api-key' | 'setup-token', token }),
-          store,
-        );
-      } catch (err) {
-        if (existing) await upsertAccount(existing, store).catch(() => {});
-        else await removeStoredAccount(spec.id, req.id, store).catch(() => {});
-        throw err;
-      }
-      // Set on the hub itself: no PC's import replaces this token after it
-      // (a PC holding the old one would put it back otherwise).
-      await importer.clearSetter(spec.id, req.id).catch(() => {});
+      // In the importer's chain, so an import in flight cannot land a PC's
+      // token over this one; then marked set on the hub, so no PC's import
+      // replaces it after (one holding the old token would put it back).
+      await importer.setOnHub(spec.id, req.id, async () => {
+        await upsertAccount(row, store);
+        try {
+          await writeAccountSecret(
+            spec.id,
+            req.id,
+            encodePastedSecret({ kind: req.kind as 'api-key' | 'setup-token', token }),
+            store,
+          );
+        } catch (err) {
+          if (existing) await upsertAccount(existing, store).catch(() => {});
+          else await removeStoredAccount(spec.id, req.id, store).catch(() => {});
+          throw err;
+        }
+      });
       return { ok: true, value: await view(row) };
     },
 

@@ -514,8 +514,55 @@ describe('the importer (store + custody effects)', () => {
     expect((await importer.importItems([pasted(PC_B, 'a')]))[0]!.action).toBe('kept');
     expect(await core.readAccountSecret('claude', 'ci', store())).toBe(tok('b'));
     // Replaced on the hub itself: no machine's import replaces it after that.
-    await importer.clearSetter('claude', 'ci');
+    await importer.setOnHub('claude', 'ci', () => Promise.resolve());
     expect((await importer.importItems([pasted(PC_A, 'c')]))[0]!.action).toBe('kept');
+  });
+
+  it('a key imported before the setter rule is still replaced by the machine it maps from', async () => {
+    const tok = (t: string) =>
+      core.encodePastedSecret({ kind: 'api-key', token: 'sk-ant-api03-' + t.repeat(30) });
+    const pasted = (machine: string, t: string) => ({
+      agent: 'claude',
+      id: 'key',
+      kind: 'api-key' as const,
+      secret: tok(t),
+      machine,
+    });
+    await importer.importItems([pasted(PC_A, 'a')]);
+    // The previous hub version wrote no `setBy`.
+    const path = join(stateDir, 'account-imports.json');
+    const legacy = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    delete legacy.setBy;
+    await writeFile(path, JSON.stringify(legacy));
+    // B's other token under the same name is another key (suffixed), never a
+    // replacement; A, through its own mapping, may replace it.
+    expect((await importer.importItems([pasted(PC_B, 'z')]))[0]).toMatchObject({
+      action: 'renamed',
+      hubId: 'key_2',
+    });
+    expect((await importer.importItems([pasted(PC_A, 'b')]))[0]!.action).toBe('updated');
+    expect(await core.readAccountSecret('claude', 'key', store())).toBe(tok('b'));
+  });
+
+  it('a hub-side replace runs in the import chain: an import queued behind it sees the marker', async () => {
+    const tok = (t: string) =>
+      core.encodePastedSecret({ kind: 'setup-token', token: 'sk-ant-oat01-' + t.repeat(30) });
+    await importer.importItems([
+      { agent: 'claude', id: 'ci', kind: 'setup-token', secret: tok('a'), machine: PC_A },
+    ]);
+    let release!: () => void;
+    const replace = importer.setOnHub('claude', 'ci', async () => {
+      await new Promise<void>((r) => (release = r));
+      await core.writeAccountSecret('claude', 'ci', tok('h'), store());
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    const racing = importer.importItems([
+      { agent: 'claude', id: 'ci', kind: 'setup-token', secret: tok('b'), machine: PC_A },
+    ]);
+    release();
+    await replace;
+    expect((await racing)[0]!.action).toBe('kept');
+    expect(await core.readAccountSecret('claude', 'ci', store())).toBe(tok('h'));
   });
 
   it("the hub's default name is the hub's own, never the requester's mapping (#528 review)", async () => {

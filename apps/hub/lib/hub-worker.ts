@@ -16,7 +16,12 @@ import { mkdir, readdir, rm } from 'node:fs/promises';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { loadEffectiveConfig, parseProviderSpec, tryGetMachineId } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  parseProviderSpec,
+  tryGetMachineId,
+  withFileLock,
+} from '@agentbox/config';
 import { createAccountImporter, resolveHubCreateAccounts } from './backend/account-import.js';
 import {
   cloneRepoWithLfs,
@@ -111,13 +116,19 @@ export async function seedHostBackupsFromCustody(
       // custody's hours-old copy. Claude's OAuth refresh ROTATES the refresh
       // token, so an older blob isn't merely expired — it is dead, and the box
       // cannot recover from it. Same newest-wins rule the fanout applies.
-      const existing = await readCredentialBackup(spec.id);
-      const verdict = shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+      // Under the credential's own lock, the one the relay's fan-out and the
+      // account import take: a rotation landing between this read and this
+      // write must not be replaced by custody's older copy.
+      const verdict = await withFileLock(spec.credential.hostBackup, async () => {
+        const existing = await readCredentialBackup(spec.id);
+        const v = shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        if (v.accept) await writeCredentialBackup(spec.id, incoming);
+        return v;
+      });
       if (!verdict.accept) {
         log(`kept the local ${spec.id} credentials (custody copy ${verdict.reason})`);
         continue;
       }
-      await writeCredentialBackup(spec.id, incoming);
       log(`seeded ${spec.id} credentials from custody (${verdict.reason})`);
     } catch (err) {
       log(
@@ -168,20 +179,24 @@ async function seedAccountSecretsFromCustody(
         if (!found) continue;
         const incoming = found.data.toString('utf8');
         const backupPath = accountSecretPath(spec, id, stateDir)!;
-        const existing = await readCredentialBackup(spec.id, { backupPath });
-        // A pasted token has no expiry to order by: the latest push wins. A
-        // login gets the same newest-wins gate as the default above.
-        const verdict = decodePastedSecret(incoming)
-          ? existing === incoming
-            ? { accept: false, reason: 'unchanged' }
-            : { accept: true, reason: 'pasted secret changed' }
-          : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+        // Same lock and gate as the default above.
+        const verdict = await withFileLock(backupPath, async () => {
+          const existing = await readCredentialBackup(spec.id, { backupPath });
+          // A pasted token has no expiry to order by: the latest push wins. A
+          // login gets the same newest-wins gate as the default above.
+          const v = decodePastedSecret(incoming)
+            ? existing === incoming
+              ? { accept: false, reason: 'unchanged' }
+              : { accept: true, reason: 'pasted secret changed' }
+            : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+          if (v.accept) await writeCredentialBackup(spec.id, incoming, { backupPath });
+          return v;
+        });
         if (!verdict.accept) {
           log(`kept the local ${label} credentials (custody copy ${verdict.reason})`);
           continue;
         }
-        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
-        await writeCredentialBackup(spec.id, incoming, { backupPath });
         log(`seeded ${label} credentials from custody (${verdict.reason})`);
       } catch (err) {
         log(
@@ -202,6 +217,12 @@ export async function resolveWorkerAccounts(o: {
   names: Readonly<Record<string, string>> | undefined;
   borrowCredentials: readonly string[];
   requesterMachine: string | undefined;
+  /**
+   * The hub starts the agent itself (a prompt, or a web create): a box on
+   * `default` with no hub login would fail its first turn, so it is refused.
+   * A cold create (the PC attaches) may still sign in inside the box.
+   */
+  startsSession?: boolean;
 }): Promise<Record<string, string>> {
   const lenders = agentSourceIds(o.borrowCredentials);
   const agents = o.agentId ? [o.agentId, ...lenders] : lenders;
@@ -220,6 +241,7 @@ export async function resolveWorkerAccounts(o: {
   }
   // A box that takes its model auth from an env key needs no login of its own.
   const envAuth = o.borrowCredentials.some((id) => id.startsWith('env:'));
+  const checkDefault = o.startsSession === true && !envAuth;
   return resolveHubCreateAccounts({
     agents,
     ...(o.names ? { names: o.names } : {}),
@@ -227,7 +249,7 @@ export async function resolveWorkerAccounts(o: {
     ...(o.requesterMachine ? { requesterMachine: o.requesterMachine } : {}),
     hubDefaults,
     imports: await createAccountImporter({ machineId: () => tryGetMachineId() }).readImports(),
-    ...(envAuth ? {} : { defaultLogin: (agent: string) => readCredentialBackup(agent) }),
+    ...(checkDefault ? { defaultLogin: (agent: string) => readCredentialBackup(agent) } : {}),
   });
 }
 
@@ -368,6 +390,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         names: request.opts?.accounts,
         borrowCredentials: request.opts?.borrowCredentials ?? [],
         requesterMachine: request.requester?.machineId,
+        startsSession: Boolean(request.prompt) || request.startAgent === true,
       });
       const named = Object.entries(accounts)
         .map(([a, id]) => `${a}=${id}`)
@@ -387,11 +410,12 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
     // default login pushed since the last create counts.
     preflight: async (request) => {
       await seedHostBackupsFromCustody(custody, log);
-      await resolveWorkerAccounts({
+      return resolveWorkerAccounts({
         agentId: request.agent ? resolveCreateAgentSpec(request.agent)?.id : undefined,
         names: request.opts?.accounts,
         borrowCredentials: request.opts?.borrowCredentials ?? [],
         requesterMachine: request.requester?.machineId,
+        startsSession: Boolean(request.prompt) || request.startAgent === true,
       });
     },
     /**
@@ -430,6 +454,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
     cloneRepo: (authedUrl, repoUrl, dest, branch) =>
       cloneRepoWithLfs(runGit, authedUrl, toHttpsUrl(repoUrl), dest, branch, log),
     createBox: async ({
+      preflight,
       workspacePath,
       name,
       repoUrl,
@@ -464,17 +489,21 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       if (mod.ensureCredentials) await mod.ensureCredentials();
       // Seed agent creds from custody just before create, so provider.create's
       // seed step reads a logged-in host backup.
-      await seedHostBackupsFromCustody(custody, log);
-      // The accounts the box runs on, resolved against THIS hub's store (the
-      // logins and keys PCs imported into it; llm-accounts Phase 9) BEFORE
-      // anything is built: a name the hub cannot seed fails the job here, so a
-      // box never starts signed out on an account it was recorded as.
-      const accounts = await resolveWorkerAccounts({
-        agentId: agentSpec?.id,
-        names: createOpts?.accounts,
-        borrowCredentials: createOpts?.borrowCredentials ?? [],
-        requesterMachine: requester?.machineId,
-      });
+      // The logins were seeded from custody and the accounts resolved against
+      // THIS hub's store (the logins and keys PCs imported into it; Phase 9)
+      // by the preflight, before the lease and the clone: a name the hub cannot
+      // seed failed the job there. A caller without one (a test) does it here.
+      let accounts = preflight as Record<string, string> | undefined;
+      if (!accounts) {
+        await seedHostBackupsFromCustody(custody, log);
+        accounts = await resolveWorkerAccounts({
+          agentId: agentSpec?.id,
+          names: createOpts?.accounts,
+          borrowCredentials: createOpts?.borrowCredentials ?? [],
+          requesterMachine: requester?.machineId,
+          startsSession: Boolean(prompt) || startAgent === true,
+        });
+      }
       if (Object.keys(accounts).length > 0) {
         log(
           `accounts: ${Object.entries(accounts)
