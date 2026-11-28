@@ -597,12 +597,39 @@ export function parseProviderCredentials(body: unknown): Parsed<Record<string, s
 // A size is an opaque, provider-specific string (`cx43`, `4`, `4-8-10`) — the
 // provider's own parser is the only thing that can judge it, so this checks
 // nothing but presence.
-export function parseSizeCheck(body: unknown): Parsed<string> {
+export interface SizeCheckQuery {
+  size: string;
+  location?: string;
+  /** The create's agent: picks the variant snapshot whose regions/disk are checked. */
+  agent?: string;
+  /** The create's project: its config supplies the default size. */
+  projectId?: string;
+}
+
+export function parseSizeCheck(body: unknown): Parsed<SizeCheckQuery> {
   if (!isObject(body)) return { ok: false, message: 'body must be a JSON object' };
   const size = optionalString(body['size'], 'size');
   if (!size.ok) return size;
-  if (size.value === undefined) return { ok: false, message: 'size is required' };
-  return { ok: true, value: size.value };
+  const location = optionalString(body['location'], 'location');
+  if (!location.ok) return location;
+  const agent = optionalString(body['agent'], 'agent');
+  if (!agent.ok) return agent;
+  const projectId = optionalString(body['projectId'], 'projectId');
+  if (!projectId.ok) return projectId;
+  const where = location.value?.trim();
+  // `location` alone is a valid question: "can the DEFAULT size go there?".
+  if (size.value === undefined && !where) {
+    return { ok: false, message: 'size or location is required' };
+  }
+  return {
+    ok: true,
+    value: {
+      size: size.value ?? '',
+      ...(where ? { location: where } : {}),
+      ...(agent.value?.trim() ? { agent: agent.value.trim() } : {}),
+      ...(projectId.value?.trim() ? { projectId: projectId.value.trim() } : {}),
+    },
+  };
 }
 
 export function parseProviderPrepare(body: unknown): Parsed<{

@@ -37,3 +37,8 @@ fixed there. Newest last.
 - **The CLI shows size/location only from a local record.** `agentbox status` renders the local
   `BoxRecord`; a box that lives only on a remote hub shows them through `ls --json` / the Box
   payload, not `status`.
+- **The tray create panel has no Location row yet.** The tray lives in `../agentbox-tray`; the
+  contract is in the phase 3 PR body.
+- **No CLI pre-create placement check.** `agentbox create --location ash` (no `--size`) on hetzner
+  still fails at the backend preflight with the default cx23. The CLI could call
+  `checkPlacement` before queueing, like the size advisory does.

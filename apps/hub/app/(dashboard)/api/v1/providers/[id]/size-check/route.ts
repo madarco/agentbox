@@ -7,6 +7,9 @@
 // lets a create form re-bake only when the size really differs from the baked
 // one, instead of firing a 2-10 minute bake on every size change.
 //
+// With a `location`, it also asks the provider's live catalog whether that size
+// (an empty size = the configured default) exists there: `offered` + `offeredReason`.
+//
 // Advisory, so it never fails the caller: an unresolvable provider or a backend
 // without the hook answers false rather than erroring.
 import { backendOrNull } from '../../../lib/backend';
@@ -34,5 +37,6 @@ export async function POST(
   const parsed = parseSizeCheck(body);
   if (!parsed.ok) return fail('invalid_request', parsed.message, parsed.details);
 
-  return ok(await backend.checkProviderSize(id, parsed.value));
+  const { size, ...where } = parsed.value;
+  return ok(await backend.checkProviderSize(id, size, where));
 }

@@ -649,7 +649,13 @@ export interface HubBackend
   // answer `true` with the sentence to show the user — which is what lets a
   // create form re-bake only when it has to, instead of on every size change.
   // A provider with no `sizeIgnoredReason` hook answers `false`.
-  checkProviderSize(id: string, size: string): Promise<ProviderSizeCheck>;
+  // With `location`, also asks the provider's live catalog (`checkPlacement`)
+  // whether that size (empty = the configured default) exists there.
+  checkProviderSize(
+    id: string,
+    size: string,
+    where?: { location?: string; agent?: string; projectId?: string },
+  ): Promise<ProviderSizeCheck>;
   // Enqueue a background image-bake (prepare) job for a provider; returns the
   // jobId (progress streams over the per-job log SSE, like create). Reuses an
   // in-flight bake for the same provider if one exists.

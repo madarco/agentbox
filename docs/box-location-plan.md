@@ -1,6 +1,6 @@
 # Box location and size, end to end
 
-Status: accepted (owner-approved). Phase 1 in progress.
+Status: accepted (owner-approved). Phases 1-3 implemented (one PR each, stacked).
 
 A box's **location** (Hetzner datacenter, DigitalOcean region, Daytona region) and **size**
 (Hetzner server type, DigitalOcean size slug, Daytona `cpu-mem-disk`, Vercel vCPUs) are already
@@ -68,9 +68,11 @@ Touches:
   declares `regions`, default "Automatic" (the provider's configured/default location, failover
   allowed); a chosen location sends `opts.location` + `opts.locationPinned: true`; a custom value
   where `regionHint` exists.
-- `POST /providers/{id}/size-check` takes `{size, location}` and, when both are set and the provider
-  has a live catalog (hetzner `listServerTypes` / `listLocations`, DigitalOcean `listSizes`),
-  answers whether that size is offered there. The dialog shows the answer.
+- `POST /providers/{id}/size-check` takes `{size?, location?, agent?, projectId?}`. With a location
+  it calls the new optional `ProviderModule.checkPlacement`, which runs the create's own preflight
+  against the live catalog (hetzner `validateServerChoice`, DigitalOcean `validateSizeChoice`,
+  Daytona snapshot `regionIds`). An empty size is checked as the default the create would use
+  (the project's config, else the provider's). The dialog shows the answer.
 - Verify the hub create path (`validate.ts` → `hub-worker.ts` → `cloudSizingProviderOptions`)
   records and honours a pinned location on hetzner and digitalocean.
 - Tray contract in the PR body (the tray lives in `../agentbox-tray`).
@@ -79,11 +81,11 @@ Touches:
 
 1. **Daytona region vs. the baked snapshot.** A snapshot lists the regions it exists in
    (`regionIds`, measured `["us"]` for this account's base). Phase 1 has the backend refuse an
-   explicit region outside that list with a pointer. Phase 3 still has to decide whether the web
-   select shows regions without a base.
-2. **DigitalOcean snapshots are regional.** A base snapshot exists only in the regions it was
-   transferred to; a create elsewhere fails. Does the backend already transfer, or should the
-   size-check also say "base not available in this region"?
+   explicit region outside that list with a pointer. Phase 3 shows the Daytona regions and the
+   placement check warns in the dialog when the base is not in the chosen region.
+2. **DigitalOcean snapshots are regional.** The create preflight already refuses a region the
+   snapshot is not in. Phase 3's placement check runs that same preflight, so the dialog says so
+   before the create.
 3. **Floor for the control box.** `cx23` / `s-2vcpu-4gb` are the documented floor. Should setup
    refuse a smaller size or only warn? This plan warns (a user may know their load).
 4. **Hetzner failover for the control box.** Box creates fail over within a network zone; the

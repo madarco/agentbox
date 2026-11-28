@@ -227,6 +227,35 @@ describe('the box shape the submitting machine resolved', () => {
     expect(m.request.opts).not.toHaveProperty('size');
     expect(m.request.opts).not.toHaveProperty('location');
   });
+
+  it('carries a web/tray pin to the worker in providerOptions', () => {
+    // The web dialog sends `locationPinned` as a field; the worker reads the
+    // pin from providerOptions only. Dropping it let a chosen location fail over.
+    const m = controlPlaneCreateRequest(
+      {
+        provider: 'hetzner',
+        opts: { location: 'hel1', locationPinned: true, providerOptions: { swap: 'off' } },
+      },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts).toMatchObject({
+      location: 'hel1',
+      providerOptions: { swap: 'off', locationPinned: true },
+    });
+    expect(m.dropped).not.toContain('locationPinned');
+  });
+
+  it('does not pin without a location', () => {
+    const m = controlPlaneCreateRequest(
+      { provider: 'hetzner', opts: { locationPinned: true } },
+      REPO,
+    );
+    expect(m.ok).toBe(true);
+    if (!m.ok) return;
+    expect(m.request.opts?.providerOptions).toBeUndefined();
+  });
 });
 
 describe('the portable key list is the mapping', () => {

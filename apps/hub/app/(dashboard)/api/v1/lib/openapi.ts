@@ -5054,9 +5054,9 @@ export function buildOpenApi(): Record<string, unknown> {
       '/providers/{id}/size-check': {
         post: {
           tags: ['Providers'],
-          summary: 'Would a box created at this size actually get it?',
+          summary: 'Would a box created at this size (and location) actually get it?',
           description:
-            'Most backends apply a size per create and answer false. Daytona and e2b fix CPU/memory when the base is baked and discard anything else, so they answer true with the reason to show. Lets a create form re-bake only when the size really differs from the baked one. Advisory: an unresolvable provider or a backend with no opinion answers false.',
+            "Most backends apply a size per create and answer false. Daytona and e2b fix CPU/memory when the base is baked and discard anything else, so they answer true with the reason to show. Lets a create form re-bake only when the size really differs from the baked one. With a `location`, also asks the provider's live catalog whether that size exists there (hetzner server types, DigitalOcean sizes, the regions a daytona base snapshot is in) and answers `offered`; an empty size means the configured default, which is the case worth catching (hetzner's default cx23 is EU-only). Advisory: an unresolvable provider or a backend with no opinion answers false and omits `offered`.",
           parameters: [
             {
               name: 'id',
@@ -5077,10 +5077,14 @@ export function buildOpenApi(): Record<string, unknown> {
                     size: {
                       type: 'string',
                       description:
-                        'A literal --size value for this provider (e.g. cx43, 4, 4-8-10). Opaque here — the provider parses it.',
+                        'A literal --size value for this provider (e.g. cx43, 4, 4-8-10). Opaque here — the provider parses it. Optional when `location` is given (empty = the configured default size).',
+                    },
+                    location: {
+                      type: 'string',
+                      description:
+                        'A literal --location value for this provider (e.g. hel1, fra1, eu). One of size / location is required.',
                     },
                   },
-                  required: ['size'],
                 },
               },
             },
@@ -5101,6 +5105,16 @@ export function buildOpenApi(): Record<string, unknown> {
                       reason: {
                         type: 'string',
                         description: "Why, in the provider's own words. Only when rebakeRequired.",
+                      },
+                      offered: {
+                        type: 'boolean',
+                        description:
+                          'Only when a location was asked about and the provider has a live catalog: whether a box of this size can be created there. Absent = nothing to say.',
+                      },
+                      offeredReason: {
+                        type: 'string',
+                        description:
+                          'Why not, and what is offered there instead. Only when offered is false.',
                       },
                     },
                     required: ['rebakeRequired'],

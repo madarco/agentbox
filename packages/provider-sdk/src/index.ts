@@ -71,6 +71,7 @@ export {
   errSummary,
   firstLine,
   type ProviderModule,
+  type PlacementCheck,
   type CheckResult,
   type CheckStatus,
   type CredStatusSummary,

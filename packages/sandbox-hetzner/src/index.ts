@@ -15,6 +15,7 @@ import type { Provider } from '@agentbox/core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { hetznerBackend, HETZNER_DEFAULT_BOX_IMAGE_REF } from './backend.js';
+import { checkHetznerPlacement } from './placement-check.js';
 import { prepareHetznerProvider } from './prepare.js';
 import {
   currentHetznerBaseFingerprintLive,
@@ -42,6 +43,7 @@ export const providerModule: ProviderModule = {
   setCredentials: setHetznerCredentials,
   currentBaseFingerprintLive: () => currentHetznerBaseFingerprintLive(),
   currentBaseFileHashes: () => currentHetznerBaseFileHashes(),
+  checkPlacement: (q) => checkHetznerPlacement(q),
   doctorChecks,
 };
 
@@ -51,6 +53,7 @@ export {
   defaultServerTypeFor,
   lineOfferedAt,
 } from './placement-rules.js';
+export { checkHetznerPlacement, hetznerPlacementVerdict } from './placement-check.js';
 // Exported so the descriptor's declared default `size` can be asserted against
 // the value the backend really falls back to (apps/cli/test/provider-sizes.test.ts).
 export { HETZNER_DEFAULT_SERVER_TYPE } from './backend.js';

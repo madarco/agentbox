@@ -108,7 +108,14 @@ a cookie (30 days) and strips it from the address, so from then on a plain
   common grammar), with a **Custom…** option where the backend accepts free-form
   values. Docker has no Size row: it sizes with `box.memory` / `box.cpus`. On Daytona
   and E2B the size is fixed when the base image is baked, so choosing a different one
-  rebuilds the base first — the form says so before you commit. When a project has no
+  rebuilds the base first — the form says so before you commit. Providers with
+  datacenters (Hetzner, DigitalOcean, Daytona) also get a **Location** row. It defaults
+  to **Automatic**: the configured or provider-default location, where Hetzner may
+  move the box to another EU location when one is out of capacity. Picking a location
+  pins the box there. The form then asks the provider's live catalog whether the
+  chosen size (or the default one) exists in that location, and says so before you
+  create: Hetzner's `cx` types are EU-only, and a Daytona base exists only in the
+  region it was baked in. When a project has no
   `agentbox.yaml` and no default snapshot, a **Run setup wizard** toggle (on by
   default) seeds the agent's first turn to explore the repo and propose an
   `agentbox.yaml`.
