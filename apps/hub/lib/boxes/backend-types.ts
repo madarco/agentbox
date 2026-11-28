@@ -570,6 +570,7 @@ export interface HubBackend
     AccountBackend,
     AccountLoginBackend,
     GitIdentityBackend,
+    GitAccessBackend,
     SkillsBackend,
     PcSkillsBackend,
     HostSessionsBackend {
@@ -1699,6 +1700,49 @@ export interface GitIdentityBackend {
   getHubGitIdentity(): Promise<GitIdentityView>;
   /** `{ identity: {name, email} | null, ifUnset? }`. */
   setHubGitIdentity(input: unknown): Promise<AccountResult<GitIdentityView>>;
+}
+
+/** Where a GitHub App is installed (`GET /app/installations`). */
+export interface GitAccessInstallation {
+  account: string;
+  repositories: 'all' | 'selected';
+}
+
+export interface GitAccessApp {
+  id: string;
+  name?: string;
+  slug?: string;
+  url?: string;
+  owner?: string;
+  installations?: GitAccessInstallation[];
+}
+
+/**
+ * `GET /api/v1/settings/git-access`: how this hub reaches GitHub. `local` = the
+ * PC's own git and `gh`; `gh` = a token `hub setup` copied to the control box;
+ * `app` = a GitHub App leasing 1-hour single-repo tokens. Never carries a token.
+ */
+export interface GitAccessView {
+  mode: 'local' | 'gh' | 'app';
+  /** The GitHub host the credential is for (`github.com` unless `GH_HOST`). */
+  host: string;
+  /** `local`: the PC's `gh` login; `gh`: the account the hub's token resolves to. */
+  login?: string;
+  /** `gh` only: whether the hub holds a token at all. */
+  tokenPresent?: boolean;
+  /** `gh` only: GitHub answered 401 for the token. */
+  tokenRejected?: true;
+  /**
+   * `app`: the App boxes lease from. `gh`: present (id only) when an App is
+   * configured too, because the create worker clones through it.
+   */
+  app?: GitAccessApp;
+  /** Why `login` / `app` details are missing, when a lookup failed. */
+  error?: string;
+}
+
+export interface GitAccessBackend {
+  getGitAccess(): Promise<GitAccessView>;
 }
 
 export interface AccountBackend {

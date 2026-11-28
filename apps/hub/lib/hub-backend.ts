@@ -243,6 +243,7 @@ import { createAccountLoginBackend } from './backend/account-login';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { createProjectCustodySlugs } from './backend/project-custody';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
+import { createGitAccessBackend } from './backend/git-access';
 import { createGitIdentity, createGitIdentityBackend } from './backend/git-identity';
 import { createProjectDir } from './boxes/create-project';
 import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
@@ -264,7 +265,6 @@ import type {
   Box,
   BoxStatus,
   BoxTaskSummary,
-  GithubState,
   HubState,
   Project,
   ProviderOption,
@@ -1376,15 +1376,6 @@ function currentUser(): User {
   return { login, name: login };
 }
 
-const LOCAL_GITHUB: GithubState = {
-  available: false,
-  installed: false,
-  appName: 'GitHub App',
-  account: '',
-  installedAt: 0,
-  repos: [],
-};
-
 function mapApproval(p: PendingApproval): Approval {
   return {
     id: p.id,
@@ -2435,6 +2426,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
     ...accounts,
     ...accountLogin,
     ...createGitIdentityBackend(),
+    ...createGitAccessBackend(),
     ...workspaces,
     ...managers,
     ...timeline,
@@ -2592,7 +2584,6 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       );
       return {
         user: currentUser(),
-        github: LOCAL_GITHUB,
         projects: projects.map((p) => {
           const wsId = wsByProject.get(p.id);
           return wsId ? { ...p, workspaceId: wsId } : p;

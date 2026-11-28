@@ -41,7 +41,8 @@ Facts the phases build on (paths under `apps/hub` unless noted):
   `SideItem` has no children. Active state is `pathname.startsWith`. Breadcrumbs
   (`components/topbar.tsx`) know only `projects/*`, `boxes/*` and `settings`.
 - **Settings** `app/(dashboard)/settings/page.tsx`: sandbox providers (credentials, prepare),
-  remote docker hosts, the GitHub App card and repos.
+  remote docker hosts, the git access card (`GET /api/v1/settings/git-access`) and the commit
+  identity for new boxes.
 - **Accounts** `accounts/page.tsx` over `GET/POST /api/v1/accounts`, `PATCH/DELETE
   /accounts/{agent}/{id}`. An account is `{agent, id, label?, kind: login|setup-token|api-key,
   identity?{email, org, plan}, hasSecret, boxes[]}`. No limit data anywhere; per-account token
@@ -84,7 +85,7 @@ Dashboard            5
 Approvals            2
 Usage
 Settings                  (expands while on /settings/*; collapsed otherwise, with a chevron)
-  General                 providers, remote docker hosts, GitHub
+  General                 providers, remote docker hosts, git access
   Subscriptions   1 at limit
   Skills          9
   Files
@@ -629,3 +630,12 @@ Hetzner. Phase 3 is the long one: it may split into a second box for 3c once 3a 
   under a `default` account and never triggers a claude limits read.
 - **One secret read per listing** (3b review): `GET /accounts` reads a claude account's secret file
   for `hasSecret` and again for the usage token; the limits source also ignores a custom `store`.
+- **Rotating a control box's GitHub token** (git access card): nothing sends a new token to a running
+  control box. `hub setup` copies one at deploy time into the hub's `secrets.env`, `hub update` does
+  not re-ship `secrets.env`, and the hub reads the token only at boot (`loadHubGitToken` in
+  `server.ts`). The card says "run `agentbox hub setup` again", which redeploys. Wanted: a command
+  that re-reads the PC's token (`findHostGitToken`), writes it to the hub (a `/api/v1` route, so the
+  web UI could do it too) and re-runs `gh auth setup-git` live.
+- **Repositories an App installation covers** (git access card): the card shows each installation's
+  account and `all` / `selected`; listing the selected repos needs an installation token per
+  installation, so it is not fetched.
