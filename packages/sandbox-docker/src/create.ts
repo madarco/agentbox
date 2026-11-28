@@ -26,6 +26,7 @@ import {
 } from '@agentbox/sandbox-core';
 import { DEFAULT_BOX_RELAY_PORT } from '@agentbox/relay';
 import { loadEffectiveConfig } from '@agentbox/config';
+import { BOX_GITCONFIG_PATH } from './sync/box-gitconfig.js';
 import { makeDockerSync } from './sync/docker-sync.js';
 import {
   buildAgentsMounts,
@@ -99,6 +100,7 @@ import {
   isDefaultAccount,
   namedAccounts,
   type LlmProxyRecord,
+  type ResolvedGitIdentity,
   type ResolvedCarryEntry,
   type ResyncResult,
   type SkillSelection,
@@ -219,6 +221,8 @@ export interface CreateBoxOptions {
   accounts?: Record<string, string>;
   /** The hub egress proxy, resolved by the caller (llm-accounts Phase 7). */
   llmProxy?: LlmProxyRecord;
+  /** Committer identity resolved by the caller; used only when the box has none. */
+  gitIdentity?: ResolvedGitIdentity;
   /**
    * Claude Code config volume. When omitted, defaults to `{ isolate: false }` —
    * every box mounts the shared `agentbox-claude-config` volume at
@@ -818,6 +822,7 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     hostWorkspace: workspace,
     projectRoot: opts.projectRoot ?? workspace,
     onLog: log,
+    ...(opts.gitIdentity ? { gitIdentity: opts.gitIdentity } : {}),
   });
   const sync = makeDockerSync({
     container: containerName,
@@ -1140,6 +1145,9 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
       portMappings: [...vncPortMappings, ...webPortMappings, ...sshPortMappings],
       env: {
         AGENTBOX_BOX_ID: id,
+        // The box-owned global git config, so a requested identity can outrank
+        // the read-only ~/.gitconfig mount (see sync/box-gitconfig.ts).
+        GIT_CONFIG_GLOBAL: BOX_GITCONFIG_PATH,
         ...agentboxEnv,
         ...Object.assign({}, ...agentMounts.map((m) => m.env)),
         ...relayEnv,
@@ -1156,6 +1164,10 @@ export async function createBox(opts: CreateBoxOptions): Promise<CreatedBox> {
     throw err;
   }
   log(`container ${containerName} started`);
+  // First thing in the running box: GIT_CONFIG_GLOBAL points at a file this
+  // writes, and until it exists git sees no global config at all (not even the
+  // mounted ~/.gitconfig it includes), so every in-box git step comes after.
+  await sync.seedGitIdentity(syncCtx);
 
   // Provisional registration: the box now exists, so persist it before the
   // remaining finalization steps. If create dies past this point, the record

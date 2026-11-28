@@ -386,6 +386,35 @@ agentbox create --provider e2b --local     # force a local build on this machine
   attach and re-login.
 </Callout>
 
+### Who the box commits as
+
+A box built on the control box commits as **you**, not as the control box. Every create from the
+CLI sends the project's effective `git config user.name` / `user.email` (a repo-local override
+included, exactly as a commit on your machine would use it), and the box is configured with it.
+The control box's own git config has no identity, so without this every box would fall back to
+`agentbox <agentbox@users.noreply.github.com>`. When the project has no complete identity, the CLI
+warns that the box will commit as the hub's default instead.
+
+A create with no PC behind it (the web UI, the menu-bar app) sends no identity. Those boxes use the
+hub's default: **Settings → General → Git** on the hub, also `GET`/`PUT /api/v1/settings/git-identity`
+(global config keys `git.identity.name` / `git.identity.email` on the control box). This applies to
+every box the hub builds, including one from a project folder on the hub's own machine. The first
+computer to run `agentbox hub login` (or the machine that ran `hub setup`) fills it with its own
+global identity when it is empty, and never replaces one that is set. With neither, a box takes the
+building machine's git config for that folder, then the generic identity above. The create log
+names the source that won (`git: configured committer identity … (from the requesting machine)`).
+Changing the default does not touch existing boxes.
+
+A Docker box mounts the building machine's `~/.gitconfig` read-only, and its global git config is
+a box-owned file (`GIT_CONFIG_GLOBAL`) that includes the mounted one, so its credential helpers and
+aliases still apply. The requester's identity (or the hub default) is written after that include
+and wins over the mounted identity. With neither, a mounted `~/.gitconfig` that sets both
+`user.name` and `user.email` decides; otherwise the box gets the generic identity, so it never
+commits as whoever a checkpoint was taken from. A repo-local identity still wins over all of it.
+
+`agentbox clone` sends your identity the same way, so a clone commits as the person who cloned it,
+not as the source box's owner or the hub default.
+
 ### Base images are baked on the control box too
 
 Because a cloud box is built on the control box from **its** baked base, baking that base on your

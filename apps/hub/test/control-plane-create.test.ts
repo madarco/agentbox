@@ -253,6 +253,7 @@ describe('the portable key list is the mapping', () => {
     sessionName: 'work',
     imageRegistry: 'ghcr.io/acme',
     providerOptions: { timeoutMs: 2_700_000 },
+    gitIdentity: { name: 'Ada Lovelace', email: 'ada@example.com' },
   };
 
   it('carries every portable key, and the list names them all', () => {

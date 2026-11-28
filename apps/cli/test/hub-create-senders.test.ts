@@ -33,6 +33,21 @@ describe('one builder feeds every hub-routed create', () => {
     }
   });
 
+  it("every builder call names the project, so the requester's git identity travels", () => {
+    // Without `projectRoot` the builder sends no identity, and the control box
+    // falls back to its own git config: the hub's, which is nobody's.
+    for (const parts of senders) {
+      const s = src(...parts);
+      const calls = s.split('buildHubCreateOpts({').slice(1);
+      for (const call of calls) {
+        const body = call.slice(0, call.indexOf('flags:'));
+        expect(body, `${parts.join('/')} calls the builder without projectRoot`).toMatch(
+          /projectRoot/,
+        );
+      }
+    }
+  });
+
   it('no sender keeps a hand-written opts literal', () => {
     // The two names the old literals went by.
     for (const parts of senders) {

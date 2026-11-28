@@ -13,7 +13,15 @@ import type { CreateBoxInput, PrepareCloneResult } from './backend-types';
 /** The `prepareClone` fields this builder reads. */
 export type StagedClone = Extract<PrepareCloneResult, { ok: true }>;
 
-export function cloneCreateInput(prepared: StagedClone): CreateBoxInput {
+/**
+ * `gitIdentity` is the clone requester's (the route's body), never the source
+ * box's: the person cloning is the one who will commit. Absent, the create's
+ * own precedence applies (the hub default, then the folder's git config).
+ */
+export function cloneCreateInput(
+  prepared: StagedClone,
+  gitIdentity?: { name: string; email: string },
+): CreateBoxInput {
   return {
     projectId: prepared.projectId,
     provider: prepared.provider,
@@ -47,6 +55,7 @@ export function cloneCreateInput(prepared: StagedClone): CreateBoxInput {
       // this same project's block, which is the rule `resyncCarryFiles` already
       // applies when it re-copies within an existing grant.
       carryYes: true,
+      ...(gitIdentity ? { gitIdentity } : {}),
     },
   };
 }

@@ -1,4 +1,4 @@
-import type { LlmProxyRecord, SkillSelection } from '@agentbox/core';
+import type { GitIdentity, LlmProxyRecord, SkillSelection } from '@agentbox/core';
 import type { BoxStatusSnapshot } from '../status-store.js';
 import type { BoxRegistration, GitRpcResult, PromptAskEvent, RelayEvent } from '../types.js';
 
@@ -114,6 +114,7 @@ export const PORTABLE_CREATE_OPT_KEYS = [
   'sessionName',
   'imageRegistry',
   'providerOptions',
+  'gitIdentity',
 ] as const;
 
 export type PortableCreateOptKey = (typeof PORTABLE_CREATE_OPT_KEYS)[number];
@@ -189,6 +190,14 @@ export interface CreateJobRequestOpts {
    * client, since one of them opens a firewall.
    */
   providerOptions?: Record<string, string | number | boolean>;
+  /**
+   * The requester's effective committer identity (`git -C <project> config
+   * user.name/user.email`). The worker's own git config is the hub machine's,
+   * which is nobody's: without this every hub-built box commits as the generic
+   * agentbox identity. Absent = the hub's `git.identity*` default, then the
+   * worker machine's config.
+   */
+  gitIdentity?: GitIdentity;
 }
 
 /** A durable box-creation job (the hosted plane's create queue). */

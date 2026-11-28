@@ -1,4 +1,4 @@
-import type { LlmProxyRecord, SkillSelection } from '@agentbox/core';
+import type { LlmProxyRecord, ResolvedGitIdentity, SkillSelection } from '@agentbox/core';
 import { recordCreateJobTimeline } from './timeline-hooks.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -241,6 +241,8 @@ export interface QueueJobCreateOpts {
   accounts?: Record<string, string>;
   /** The hub egress proxy (`--llm-proxy`), resolved before enqueue. */
   llmProxy?: LlmProxyRecord;
+  /** Committer identity resolved before enqueue (request, else the hub default). */
+  gitIdentity?: ResolvedGitIdentity;
   /** `--no-resync` → false; resync the box with the host on (checkpoint) create. */
   resync?: boolean;
   sharedDockerCache?: boolean;

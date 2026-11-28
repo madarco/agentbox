@@ -11,7 +11,7 @@
  */
 
 import { homedir } from 'node:os';
-import type { SyncContext } from '@agentbox/core';
+import type { ResolvedGitIdentity, SyncContext } from '@agentbox/core';
 
 export type { SyncContext } from '@agentbox/core';
 
@@ -24,6 +24,7 @@ export interface SyncContextInit {
   boxWorkspace?: string;
   hostHome?: string;
   onLog?: (line: string) => void;
+  gitIdentity?: ResolvedGitIdentity;
 }
 
 /** Build a `SyncContext` with the conventional defaults filled in. */
@@ -37,5 +38,6 @@ export function makeSyncContext(init: SyncContextInit): SyncContext {
     boxWorkspace: init.boxWorkspace ?? '/workspace',
     hostHome: init.hostHome ?? homedir(),
     onLog: init.onLog ?? (() => {}),
+    ...(init.gitIdentity ? { gitIdentity: init.gitIdentity } : {}),
   };
 }

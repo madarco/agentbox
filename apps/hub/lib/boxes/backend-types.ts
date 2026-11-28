@@ -198,6 +198,11 @@ export interface CreateBoxOpts {
    * resolved here, from this hub's own `llm.proxyPort` / `llm.proxyUrl`.
    */
   llmProxy?: 'off' | 'forward';
+  /**
+   * The requester's committer identity (the CLI's project `git config`). Absent
+   * → this hub's `git.identity.*` default, then this machine's own git config.
+   */
+  gitIdentity?: { name: string; email: string };
   resync?: boolean;
   sharedDockerCache?: boolean;
   portless?: boolean;
@@ -563,6 +568,7 @@ export interface HubBackend
     TimelineBackend,
     CheckoutBackend,
     AccountBackend,
+    GitIdentityBackend,
     SkillsBackend,
     PcSkillsBackend,
     HostSessionsBackend {
@@ -994,6 +1000,11 @@ export interface CloneBoxInput {
    * clone, and cloning an expendable box does not.
    */
   persistent?: boolean;
+  /**
+   * The requester's committer identity (the CLI's `readProjectGitIdentity`).
+   * Absent (web, tray) → the hub default, then the clone folder's git config.
+   */
+  gitIdentity?: { name: string; email: string };
 }
 
 export type PrepareCloneResult =
@@ -1592,6 +1603,19 @@ export type AccountResult<T> =
 /** What the hub does when a box's account is at its limit. */
 export interface AccountPolicyView {
   onLimit: 'ask' | 'switch';
+}
+
+/** `GET/PUT /api/v1/settings/git-identity`: the hub's default committer identity. */
+export interface GitIdentityView {
+  identity: { name: string; email: string } | null;
+  /** Set on an `ifUnset` write that found an identity already in force. */
+  unchanged?: true;
+}
+
+export interface GitIdentityBackend {
+  getHubGitIdentity(): Promise<GitIdentityView>;
+  /** `{ identity: {name, email} | null, ifUnset? }`. */
+  setHubGitIdentity(input: unknown): Promise<AccountResult<GitIdentityView>>;
 }
 
 export interface AccountBackend {

@@ -32,7 +32,7 @@ export async function POST(
   const prepared = await backend.prepareClone(id, parsed.value);
   if (!prepared.ok) return failFromAction(prepared.error);
 
-  const created = await backend.create(cloneCreateInput(prepared));
+  const created = await backend.create(cloneCreateInput(prepared, parsed.value.gitIdentity));
   if (!created.ok) return failFromAction(created.error);
   // The source's box-scope skill bindings follow the clone once its id exists.
   // Not awaited: the caller streams the create job meanwhile.

@@ -512,6 +512,14 @@
       "properties": {
         "pushMode": {
           "enum": ["auto", "relay", "lease", "direct"]
+        },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "email": { "type": "string" }
+          }
         }
       }
     },

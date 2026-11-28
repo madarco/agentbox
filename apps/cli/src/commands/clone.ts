@@ -5,7 +5,9 @@ import { resolveBoxOrExit } from '../box-ref.js';
 import { streamJobToCompletion } from '../control-plane/job-stream.js';
 import { boxOwningHubIsLocal, withHubClient } from '../control-plane/with-hub.js';
 import { BOTS_DIR_REL, botWorkspaceRoot } from '@agentbox/sandbox-core';
+import { existsSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
+import { missingGitIdentityWarning, readProjectGitIdentity } from '../lib/hub-create-opts.js';
 import { handleLifecycleError } from './_errors.js';
 
 /**
@@ -92,6 +94,16 @@ interface CloneOpts {
  * doing it here would have been a second implementation the web UI and the tray
  * could not use (`docs/hub-api-single-path-plan.md`).
  */
+/**
+ * Where the requester's git identity is read for a clone: the source box's
+ * project when that folder is on this machine (its repo-local identity, as a
+ * create from it would use), else the working directory, which resolves to the
+ * global identity outside a repo.
+ */
+export function cloneIdentityDir(projectRoot: string | undefined, cwd = process.cwd()): string {
+  return projectRoot && existsSync(projectRoot) ? projectRoot : cwd;
+}
+
 export const cloneCommand = new Command('clone')
   .description("Create a new box from another box's workspace files, with a fresh agent identity")
   .argument('<box>', 'source box ref: project index, id, id prefix, name, or container')
@@ -136,6 +148,11 @@ export const cloneCommand = new Command('clone')
         }
       }
 
+      // The clone commits as whoever asked for it, exactly like a create: on a
+      // hub several people use, the hub default is someone else.
+      const identity = readProjectGitIdentity(cloneIdentityDir(source.projectRoot));
+      if ('problem' in identity) log.warn(missingGitIdentityWarning(identity.problem));
+
       const s = makeProgressReporter(false);
       s.start(`cloning ${source.name}`);
       const outcome = await withHubClient(
@@ -147,6 +164,7 @@ export const cloneCommand = new Command('clone')
             into,
             all: opts.all === true,
             persistent: opts.persistent,
+            ...('identity' in identity ? { gitIdentity: identity.identity } : {}),
           });
           cmdLog.write(
             `staged: ${String(staged.files)} file(s) -> ${staged.workspace}; job ${staged.jobId}`,

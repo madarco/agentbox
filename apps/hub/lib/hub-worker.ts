@@ -71,6 +71,7 @@ import {
   toQueueKind,
   type ResolvedCarryEntry,
 } from '@agentbox/core';
+import { createGitIdentity } from './backend/git-identity.js';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
 import { createStartsSession, resolveCreateAgentSpec } from './boxes/create-agent.js';
@@ -635,6 +636,13 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
         // Resolved at enqueue against this hub's own address.
         ...(createOpts?.llmProxy ? { llmProxy: createOpts.llmProxy } : {}),
+        // The requester's identity, else this hub's default. This machine's own
+        // git config is the hub's, not the user's, so it only comes after both
+        // (the provider reads it when this is absent).
+        ...(await (async () => {
+          const gitIdentity = await createGitIdentity(createOpts?.gitIdentity);
+          return gitIdentity ? { gitIdentity } : {};
+        })()),
         // Everything provider-shaped comes from the machine that HAS the project
         // config; this box has neither the checkout nor
         // `~/.agentbox/projects/<hash>`, so resolving any of it here would only

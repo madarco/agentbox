@@ -571,6 +571,7 @@ export async function runAgentCreate(
       const accounts = await hubAccountNames();
       const hubOpts = buildHubCreateOpts({
         providerName,
+        projectRoot,
         ...(remoteHost ? { remoteHost } : {}),
         cfg,
         flags: {
@@ -883,6 +884,7 @@ export async function runAgentCreate(
       const accounts = await hubAccountNames();
       const hubOpts = buildHubCreateOpts({
         providerName,
+        projectRoot,
         ...(remoteHost ? { remoteHost } : {}),
         cfg,
         flags: {

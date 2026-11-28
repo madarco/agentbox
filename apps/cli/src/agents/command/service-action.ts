@@ -521,6 +521,7 @@ export async function runServiceAgent(
         if (route.where === 'hub') {
           const serviceHubOpts = buildHubCreateOpts({
             providerName,
+            projectRoot: project.root,
             ...(remoteHost ? { remoteHost } : {}),
             cfg,
             flags: cloudSizingFlags(opts),

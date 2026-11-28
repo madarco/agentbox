@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { useStore } from '@/lib/boxes/store';
 import { SectionLabel } from '../boxes/components/section-label';
+import { GitIdentityCard } from './components/git-identity';
 import { LimitPolicyCard } from './components/limit-policy';
 import { ProvidersSection } from './components/provider-actions';
 
@@ -51,6 +52,9 @@ export default function SettingsPage() {
 
       <SectionLabel>Subscriptions</SectionLabel>
       <LimitPolicyCard />
+
+      <SectionLabel>Git</SectionLabel>
+      <GitIdentityCard />
 
       <SectionLabel>GitHub App</SectionLabel>
       {!gh.available ? (
