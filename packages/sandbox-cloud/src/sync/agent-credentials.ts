@@ -365,12 +365,19 @@ async function buildForwardedEnv(
     if (typeof v === 'string' && v.length > 0) env[k] = v;
   }
   // A named account gets exactly its own auth: the host's keys for that agent
-  // are dropped and a pasted account's token is added (llm-accounts Phase 3).
+  // are dropped (llm-accounts Phase 3). A pasted account's token is NOT added
+  // here: this map becomes the sandbox's create env, which the provider's
+  // console and API show. The token reaches the agent only through the 0600
+  // agent env file (`cloudAccountAuthority` → `writeCloudAgentEnvFile`), which
+  // every launcher sources.
   let out = env;
   for (const agent of agents) {
     const account = accounts[agent];
     if (!account || isDefaultAccount(account)) continue;
-    out = applyAccountEnv(out, await accountEnvPolicy(resolveAgentSpec(agent), account));
+    const suppress = Object.values(resolveAgentSpec(agent).accountEnv ?? {}).filter(
+      (k): k is string => typeof k === 'string',
+    );
+    out = applyAccountEnv(out, { inject: {}, suppress });
   }
   return out;
 }
@@ -537,6 +544,26 @@ async function seedCredentialsOne(
   if (hasVolume && !opts.force) {
     const probe = await backend.exec(handle, `test -f ${credentialsMountPath}/${SEED_MARKER}`);
     if (probe.exitCode === 0) {
+      // A NAMED login's subpath was seeded by an earlier box and may hold an
+      // older login than the store (a re-login since, a refresh from another
+      // provider). Reconcile newest-wins with the account's own copy instead of
+      // trusting the marker; the default keeps the marker (its fan-out and the
+      // wake reconcile cover it).
+      const account = opts.accounts?.[spec.kind];
+      if (account && !isDefaultAccount(account)) {
+        const plan = await accountReconcilePlan({ [spec.kind]: account });
+        if (plan.backups[spec.kind]) {
+          await reconcileAgentCredentials(backend, handle, {
+            agents: [spec.kind],
+            backups: plan.backups,
+            onLog: (l) => log(`${spec.kind}: ${l}`),
+          });
+          log(
+            `${spec.kind}: account '${account}' already seeded — reconciled with its stored login`,
+          );
+          return;
+        }
+      }
       log(`${spec.kind}: credentials already seeded — mounting only`);
       return;
     }

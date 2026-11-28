@@ -154,6 +154,7 @@ export {
   shouldAcceptCredentialBlob,
   shouldAcceptCredentialUpdate,
   credentialIdentityMismatch,
+  credentialIdentityMatch,
   IDENTITY_MISMATCH,
   writeCredentialBackup,
   readCredentialBackup,

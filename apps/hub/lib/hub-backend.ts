@@ -2307,6 +2307,8 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       handle.credentialsFanout
         ? handle.credentialsFanout.runExclusive(agent, id, () => cliPropagate(agent, id))
         : cliPropagate(agent, id),
+    // Imports mirror a login into the hub's custody; `rm` drops its copies.
+    custody: () => handle.custody ?? null,
     authEvidence: async (subscription) =>
       (await globalThis.__AGENTBOX_HUB_HISTORY?.repo.accountAuth(subscription)) ?? null,
     // A local box is in both: its state.json record (the richer one) wins.

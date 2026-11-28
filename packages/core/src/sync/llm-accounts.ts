@@ -211,6 +211,16 @@ export function accountConfigVolume(baseVolume: string, account: string): string
 }
 
 /**
+ * The docker volume an agent's session transcripts live in across ALL its
+ * accounts (`agentbox-claude-config` -> `agentbox-claude-projects`), mounted
+ * over the transcripts dir of the default and every named account volume so a
+ * session can be resumed on another account. Never removed by `prune`.
+ */
+export function sharedProjectsVolume(baseVolume: string): string {
+  return `${baseVolume.replace(/-config$/, '')}-projects`;
+}
+
+/**
  * Subpath of the shared cloud credentials volume (Daytona) for one account.
  * `default` keeps the agent's `credential.cloudSubpath` (`claude/`); a named
  * account gets a SIBLING, `claude-acct-work/`. Never a child: a default box

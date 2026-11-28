@@ -17,17 +17,25 @@ import {
 } from '@agentbox/core';
 import {
   readAccounts,
+  credentialIdentityMatch,
+  readAccountsChecked,
+  readAccountSecret,
   removeAccount,
   upsertAccount,
   writeAccountSecret,
   type AccountStoreOptions,
 } from '@agentbox/sandbox-core';
 
-/** Volume-relative path → contents, or null when the file is absent. */
-export type VolumeFileReader = (rel: string) => Promise<string | null>;
+/**
+ * Volume-relative paths → each one's contents, or null when the file is
+ * absent. Throws when the volume cannot be read at all (docker failed), which
+ * is not the same as "the login left no file".
+ */
+export type VolumeFileReader = (rels: readonly string[]) => Promise<Record<string, string | null>>;
 
 function relPathProblem(rel: string): string | null {
   if (rel.length === 0 || rel.startsWith('/')) return 'must be a relative path';
+  if (/[\t\n\r]/.test(rel)) return 'must not contain tabs or newlines';
   if (rel.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) {
     return 'must not contain empty, `.` or `..` segments';
   }
@@ -35,20 +43,137 @@ function relPathProblem(rel: string): string | null {
 }
 
 /**
- * Read one file out of a docker volume, as text, in a throwaway container.
- * The contents stay in this process — callers must never log them.
+ * One line per requested file: `<rel>\t<base64>` when it is a regular file,
+ * `<rel>\t-` when it is not. base64 so any byte survives the line protocol.
  */
-export function dockerVolumeFileReader(volume: string, image: string): VolumeFileReader {
-  return async (rel) => {
+const READ_FILES_SCRIPT =
+  'for f in "$@"; do if [ -f "/dst/$f" ]; then printf \'%s\\t\' "$f"; base64 -w0 "/dst/$f" || exit 3; printf \'\\n\'; ' +
+  'else printf \'%s\\t-\\n\' "$f"; fi; done';
+
+/** Parse {@link READ_FILES_SCRIPT}'s output. Pure. */
+export function parseVolumeFiles(
+  stdout: string,
+  rels: readonly string[],
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const line of stdout.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab <= 0) continue;
+    const rel = line.slice(0, tab);
+    const body = line.slice(tab + 1);
+    if (!rels.includes(rel)) continue;
+    out[rel] = body === '-' ? null : Buffer.from(body, 'base64').toString('utf8');
+  }
+  for (const rel of rels) {
+    if (!(rel in out)) throw new Error(`the volume read returned nothing for '${rel}'`);
+  }
+  return out;
+}
+
+/**
+ * Read files out of a docker volume, as text, in ONE throwaway container. The
+ * contents stay in this process — callers must never log them.
+ */
+export async function readDockerVolumeFiles(
+  volume: string,
+  image: string,
+  rels: readonly string[],
+): Promise<Record<string, string | null>> {
+  for (const rel of rels) {
     const problem = relPathProblem(rel);
     if (problem) throw new Error(`volume path '${rel}' ${problem}`);
-    const res = await execa(
-      'docker',
-      ['run', '--rm', '--user', '0', '-v', `${volume}:/dst:ro`, image, 'cat', `/dst/${rel}`],
-      { reject: false, stripFinalNewline: false },
-    );
-    return res.exitCode === 0 ? res.stdout : null;
-  };
+  }
+  if (rels.length === 0) return {};
+  const res = await execa(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst:ro`,
+      image,
+      'sh',
+      '-c',
+      READ_FILES_SCRIPT,
+      'sh',
+      ...rels,
+    ],
+    { reject: false },
+  );
+  if (res.exitCode !== 0) {
+    const why = String(res.stderr ?? '').trim() || `exit ${String(res.exitCode)}`;
+    throw new Error(`could not read the docker volume ${volume}: ${why.slice(-300)}`);
+  }
+  return parseVolumeFiles(String(res.stdout ?? ''), rels);
+}
+
+/** A {@link VolumeFileReader} over one docker volume. */
+export function dockerVolumeFileReader(volume: string, image: string): VolumeFileReader {
+  return (rels) => readDockerVolumeFiles(volume, image, rels);
+}
+
+/**
+ * The identity to store after a re-login: the new one, with the stored email
+ * and org kept where the new one lacks them. A re-login whose warm-up turn
+ * failed reads a plan-only identity (the reset removed `oauthAccount`), which
+ * must not wipe the label. Only for the SAME login: `sameLogin` is what the
+ * two credentials' identity fields say (false: another subscription signed in
+ * under this name, so its identity is taken as it is; undefined: they cannot
+ * tell, so only two known, different plans count as another one). Display
+ * only. Pure.
+ */
+export function mergeAccountIdentity(
+  stored: LlmAccountIdentity | undefined,
+  fresh: LlmAccountIdentity | undefined,
+  sameLogin?: boolean,
+): LlmAccountIdentity | undefined {
+  if (!fresh) return sameLogin === false ? undefined : stored;
+  if (!stored) return fresh;
+  if (sameLogin === false) return fresh;
+  // Cannot tell from the credentials: only two KNOWN, different plans say it
+  // is another subscription; a missing plan keeps the label.
+  if (sameLogin === undefined && fresh.plan && stored.plan && fresh.plan !== stored.plan) {
+    return fresh;
+  }
+  const out: LlmAccountIdentity = { ...fresh };
+  if (!out.email && stored.email) out.email = stored.email;
+  if (!out.org && stored.org) out.org = stored.org;
+  return out;
+}
+
+/**
+ * Remove a named account's config volume when the store has no row for the
+ * account: a first login that failed or was cancelled leaves one behind, and
+ * `credentials rm` cannot remove it (no row). Never touches a volume of an
+ * account that exists, so a failed RE-login keeps its account's live volume.
+ * Best-effort; returns whether a volume was removed.
+ */
+export async function dropOrphanAccountVolume(
+  agent: string,
+  id: string,
+  volume: string,
+  store?: AccountStoreOptions,
+  removeVolume: (volume: string) => Promise<{ exitCode?: number; stderr?: unknown }> = (v) =>
+    execa('docker', ['volume', 'rm', v], { reject: false }),
+): Promise<boolean> {
+  try {
+    // A store that cannot be trusted (corrupt, unsupported version) reads as
+    // no named rows, which would make a live account's volume look orphaned.
+    const { file, problem } = await readAccountsChecked(store);
+    if (problem || findAccount(file, agent, id)) return false;
+  } catch {
+    return false; // cannot tell: keep it
+  }
+  // The aborted login container may still be going away and hold the volume
+  // for a moment: retry "in use" for a few seconds.
+  for (let attempt = 0; ; attempt++) {
+    const r = await removeVolume(volume);
+    if (r.exitCode === 0) return true;
+    if (!/in use/i.test(String(r.stderr ?? '')) || attempt >= 10) return false;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
 }
 
 /** How an agent reads a display identity off a captured login. */
@@ -85,18 +210,13 @@ export async function captureVolumeLogin(
 ): Promise<CaptureVolumeLoginResult> {
   const cred = o.spec.credential;
   if (!cred) throw new Error(`agent '${o.spec.id}' declares no credential to capture`);
-  const text = await o.read(cred.boxRelPath);
+  const rels = [...new Set([cred.boxRelPath, ...(o.identity?.files ?? [])])];
+  const files = await o.read(rels);
+  const text = files[cred.boxRelPath] ?? null;
   if (text === null || text.trim() === '') {
     throw new Error(`the login did not leave a credential in the account's volume`);
   }
-  let identity: LlmAccountIdentity | undefined;
-  if (o.identity) {
-    const files: Record<string, string | null> = {};
-    for (const rel of o.identity.files) {
-      files[rel] = rel === cred.boxRelPath ? text : await o.read(rel);
-    }
-    identity = o.identity.parse(files);
-  }
+  const identity = o.identity ? o.identity.parse(files) : undefined;
   const existing = findAccount(await readAccounts(o.store), o.spec.id, o.account.id);
   if (existing && existing.kind !== 'login') {
     throw new Error(
@@ -112,7 +232,14 @@ export async function captureVolumeLogin(
   // The row must exist before its secret, but it must not describe a login the
   // store then refuses: an existing account keeps its old identity until the
   // new secret is actually written.
-  const newIdentity = identity ?? existing?.identity;
+  // Whether the stored login and the new one are one subscription, by the
+  // agent's declared identity fields (account / org uuid).
+  const storedSecret = existing
+    ? await readAccountSecret(o.spec.id, o.account.id, o.store).catch(() => null)
+    : null;
+  const sameLogin =
+    storedSecret === null ? undefined : credentialIdentityMatch(o.spec, text, storedSecret);
+  const newIdentity = mergeAccountIdentity(existing?.identity, identity, sameLogin);
   const before = existing ? existing.identity : newIdentity;
   if (before) row.identity = before;
   await upsertAccount(row, o.store);
@@ -125,7 +252,11 @@ export async function captureVolumeLogin(
   }
   if (!res.written) return { written: false, reason: res.reason, identity: before };
   if (existing && newIdentity !== before) {
-    await upsertAccount({ ...row, ...(newIdentity ? { identity: newIdentity } : {}) }, o.store);
+    // Built from the row WITHOUT the old identity: another subscription
+    // signed in under this name and read none must show none, not the old one.
+    const { identity: _old, ...rest } = row;
+    void _old;
+    await upsertAccount({ ...rest, ...(newIdentity ? { identity: newIdentity } : {}) }, o.store);
   }
   return { written: true, reason: res.reason, identity: newIdentity };
 }

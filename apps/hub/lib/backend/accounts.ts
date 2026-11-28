@@ -2,8 +2,8 @@
 // and the `/api/v1/accounts` list. Resolved HERE, against THIS machine's
 // account store and the project's config (never the repo's agentbox.yaml): the
 // box's agent plus every borrowed lender, whose account must be a login. A
-// remote control box resolves against its own store, which holds no PC's
-// accounts, so a PC's named account is refused there with a message naming it.
+// remote control box resolves its creates in the worker instead, against the
+// accounts PCs imported into it (Phase 9, `account-import.ts`).
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -40,6 +40,7 @@ import type {
   AccountView,
 } from '../boxes/backend-types';
 import type { LimitsSource } from './account-limits';
+import { createAccountImporter, type AccountImporter, type ImportCustody } from './account-import';
 import type { HistoryAccountAuth } from './history';
 import {
   accountDefaults,
@@ -129,6 +130,10 @@ export interface AccountBackendDeps {
    */
   runPropagate?: (agent: string, id: string) => Promise<{ exitCode: number; output: string }>;
   now?: () => number;
+  /** The hub's custody store (imports mirror logins there; `rm` cleans it). Null: none. */
+  custody?: () => ImportCustody | null;
+  /** The importer (tests); default one over `store`, `custody` and `machineId`. */
+  importer?: AccountImporter;
 }
 
 /** A setup token from `claude setup-token` lives one year. */
@@ -294,6 +299,16 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
   const store = deps.store;
   const now = deps.now ?? Date.now;
   const runPropagate = deps.runPropagate ?? cliPropagate;
+  const machineIdOf = (): string | undefined =>
+    deps.machineId ? deps.machineId() : tryGetMachineId();
+  const importer =
+    deps.importer ??
+    createAccountImporter({
+      ...(store ? { store } : {}),
+      ...(deps.custody ? { custody: deps.custody } : {}),
+      machineId: machineIdOf,
+      now,
+    });
   const secretWrittenAt =
     deps.secretWrittenAt ??
     (async (agent: string, id: string): Promise<number | null> => {
@@ -307,6 +322,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
     account: LlmAccount,
     all?: readonly AccountBoxFacts[],
     defaults?: Record<string, AccountDefaultView>,
+    imported?: Awaited<ReturnType<AccountImporter['readImports']>>,
   ): Promise<AccountView> {
     const list = all ?? (await boxes().catch(() => []));
     const on = boxesOnSubscription(list, account.agent, account.id);
@@ -337,6 +353,16 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       ...(limits ? { limits } : {}),
       auth: accountAuthState(account, ev, written, now()),
       ...(Object.keys(isDefault).length > 0 ? { default: isDefault } : {}),
+      ...(() => {
+        const from = (imported?.imports ?? [])
+          .filter((m) => m.agent === account.agent && m.hubId === account.id)
+          .map((m) => ({
+            machine: m.machine,
+            ...(m.machineLabel ? { machineLabel: m.machineLabel } : {}),
+            id: m.localId,
+          }));
+        return from.length > 0 ? { importedFrom: from } : {};
+      })(),
     };
   }
 
@@ -467,10 +493,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       } catch (err) {
         defaultsError = configError(err);
       }
-      const views = await Promise.all(accounts.map((a) => view(a, all, defaults)));
+      const imported = await importer.readImports().catch(() => undefined);
+      const views = await Promise.all(accounts.map((a) => view(a, all, defaults, imported)));
       const agents = accountAgents().map((s) => ({ id: s.id, kinds: agentAccountKinds(s) }));
       // A machine with no id yet (unwritable HOME) lists its accounts without one.
-      const machine = deps.machineId ? deps.machineId() : tryGetMachineId();
+      const machine = machineIdOf();
       return {
         accounts: views,
         agents,
@@ -629,20 +656,36 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         kind: req.kind,
         createdAt: new Date(now()).toISOString(),
       };
-      await upsertAccount(row, store);
-      try {
-        await writeAccountSecret(
-          spec.id,
-          req.id,
-          encodePastedSecret({ kind: req.kind as 'api-key' | 'setup-token', token }),
-          store,
-        );
-      } catch (err) {
-        if (existing) await upsertAccount(existing, store).catch(() => {});
-        else await removeStoredAccount(spec.id, req.id, store).catch(() => {});
-        throw err;
-      }
+      // In the importer's chain, so an import in flight cannot land a PC's
+      // token over this one; then marked set on the hub, so no PC's import
+      // replaces it after (one holding the old token would put it back).
+      await importer.setOnHub(spec.id, req.id, async () => {
+        await upsertAccount(row, store);
+        try {
+          await writeAccountSecret(
+            spec.id,
+            req.id,
+            encodePastedSecret({ kind: req.kind as 'api-key' | 'setup-token', token }),
+            store,
+          );
+        } catch (err) {
+          if (existing) await upsertAccount(existing, store).catch(() => {});
+          else await removeStoredAccount(spec.id, req.id, store).catch(() => {});
+          throw err;
+        }
+      });
       return { ok: true, value: await view(row) };
+    },
+
+    async importAccounts(input) {
+      const items = (input as { items?: unknown } | null)?.items;
+      if (!Array.isArray(items) || items.length === 0) {
+        return { ok: false, code: 'invalid_request', error: 'items must be a non-empty array' };
+      }
+      if (items.length > 64) {
+        return { ok: false, code: 'invalid_request', error: 'at most 64 items per import' };
+      }
+      return { ok: true, value: await importer.importItems(items) };
     },
 
     async removeAccount(agent, id) {
@@ -668,7 +711,12 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
           error: `${spec.id} account '${id}' is still used by ${inUse.map((b) => b.name).join(', ')}`,
         };
       }
-      await removeStoredAccount(spec.id, id, store);
+      // With its custody copies (the hub's and every PC's it was imported
+      // from) and its import mappings, so a PC's next automatic push does not
+      // bring it back. One chain with the importer: no import lands mid-removal.
+      await importer.forgetAccount(spec.id, id, async () => {
+        await removeStoredAccount(spec.id, id, store);
+      });
       deps.limits?.forget(spec.id, id);
       const volume = accountConfigVolume(spec.dockerVolume, id);
       const r = await removeVolume(volume);

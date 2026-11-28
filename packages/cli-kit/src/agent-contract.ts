@@ -101,6 +101,12 @@ export interface AgentLoginHost {
    * captured.
    */
   captureAccountLogin(o: { account: { id: string }; volume: string; image: string }): Promise<void>;
+  /**
+   * After a NAMED account's login did NOT complete: remove `volume` when the
+   * store has no row for the account (a first login), so no orphan volume is
+   * left. Best-effort, never throws. Optional for older hosts.
+   */
+  dropOrphanAccountVolume?(o: { account: { id: string }; volume: string }): Promise<void>;
 }
 
 export interface AgentRuntime {

@@ -110,7 +110,11 @@ import { mergePreviewUrls } from './preview-urls.js';
 import { readExposedServicePorts } from './expose-ports.js';
 import { downloadFromCloudBox, pullCloudDirContents, uploadToCloudBox } from './cloud-cp.js';
 import { kickCloudBootstrap } from './bootstrap-launch.js';
-import { removeCloudAgentEnvFile, writeCloudAgentEnvFile } from './agent-env-file.js';
+import {
+  removeCloudAgentEnvFile,
+  writeCloudAgentEnvFile,
+  type AccountEnvAuthority,
+} from './agent-env-file.js';
 import { readGitOriginUrl, registerBoxWithPlane } from './plane-register.js';
 import { pushBoxSshToCustody } from './custody-ssh.js';
 import { adminCustodySink, pushProjectSeedToCustody, SEED_PUSH_MS } from './custody-seed.js';
@@ -312,6 +316,37 @@ async function bootstrapPortlessForCloudBox(
     }
   }
   return { alias: args.boxName, url };
+}
+
+/**
+ * Write a waking box's agent env file: one retry, then a warning, or (when the
+ * file holds a pasted account's token, `required`) an error that fails the
+ * wake. The message names the step and the exec's exit, never the values.
+ */
+export async function writeWakeAgentEnv(
+  boxName: string,
+  write: () => Promise<void>,
+  required: boolean,
+): Promise<void> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await write();
+      return;
+    } catch (err) {
+      last = err;
+    }
+  }
+  const why = last instanceof Error ? last.message : String(last);
+  if (required) {
+    throw new Error(
+      `${boxName}: could not write the agent env holding the box's account token (${why}); start it again`,
+    );
+  }
+  process.stderr.write(
+    `agentbox: WARN: ${boxName}: agent env not rewritten on wake (${why}); ` +
+      'forwarded API keys may be missing on a VPS box\n',
+  );
 }
 
 export function createCloudProvider(
@@ -640,29 +675,6 @@ export function createCloudProvider(
       boxHost: deriveCloudBoxHost(box.name, webPreview?.url),
       credentialSync,
     });
-    // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
-    // on every wake. Built from the waking process's env, but each line only
-    // fills a key the sandbox env lacks, so an SDK box keeps its create-time
-    // auth. Best-effort, like the reconcile below: a box that comes up without
-    // it still runs, its agent just lacks the forwarded keys.
-    try {
-      const agentEnv = await buildCloudAgentEnv(box.agents, box.accounts ?? {});
-      await writeCloudAgentEnvFile(
-        backend,
-        h,
-        agentEnv,
-        await cloudAccountAuthority(box.agents, box.accounts ?? {}, {
-          switched: (box.accountSwitches ?? []).map((x) => x.agent),
-          forwarded: agentEnv,
-        }),
-      );
-    } catch (err) {
-      // The message names the step and the exec's exit, never the values.
-      process.stderr.write(
-        `agentbox: WARN: ${box.name}: agent env not rewritten on wake (${err instanceof Error ? err.message : String(err)}); ` +
-          'forwarded API keys and a named account token may be missing on a VPS box\n',
-      );
-    }
     // Re-register on resume. A control-plane box registers on the plane (with
     // its origin URL, needed for lease minting); a classic-cloud box registers
     // on the host relay so its CloudBoxPoller picks up the fresh preview
@@ -767,6 +779,40 @@ export function createCloudProvider(
     } catch {
       // best-effort
     }
+    // `/run` is tmpfs and a VPS stop is a power-off: the agent env file is gone
+    // on every wake. Built from the waking process's env, but each line only
+    // fills a key the sandbox env lacks, so an SDK box keeps its create-time
+    // forwarded keys. Best-effort for those: a box that comes up without them
+    // still runs. NOT for a pasted account's token, which lives only in this
+    // file (never the sandbox env): one retry, then the wake fails, rather than
+    // a box whose agent has no auth at all. Last, so the record, the relay
+    // registration and the reconcile above are done whatever happens here.
+    let envWrite: {
+      agentEnv: Record<string, string>;
+      authority: AccountEnvAuthority;
+      pasted: boolean;
+    };
+    try {
+      const agentEnv = await buildCloudAgentEnv(box.agents, box.accounts ?? {});
+      const authority = await cloudAccountAuthority(box.agents, box.accounts ?? {}, {
+        switched: (box.accountSwitches ?? []).map((x) => x.agent),
+        forwarded: agentEnv,
+      });
+      // Only a named account's own token makes the file required; the host
+      // keys a switched agent forwards are best-effort like the rest.
+      const pasted = await cloudAccountAuthority(box.agents, box.accounts ?? {});
+      envWrite = { agentEnv, authority, pasted: Object.keys(pasted.set).length > 0 };
+    } catch (err) {
+      process.stderr.write(
+        `agentbox: WARN: ${box.name}: agent env not rebuilt on wake (${err instanceof Error ? err.message : String(err)})\n`,
+      );
+      return next;
+    }
+    await writeWakeAgentEnv(
+      box.name,
+      () => writeCloudAgentEnvFile(backend, h, envWrite.agentEnv, envWrite.authority),
+      envWrite.pasted,
+    );
     return next;
   }
 
@@ -1243,14 +1289,18 @@ export function createCloudProvider(
         // a 0600 file the launcher sources: a VPS has no sandbox-wide env to
         // carry it, and the SDK providers get the same values either way, so a
         // failure is logged rather than failing a create that is otherwise up.
+        const authority = await cloudAccountAuthority(undefined, req.accounts ?? {});
         try {
-          await writeCloudAgentEnvFile(
-            backend,
-            handle,
-            agentVolumes.env,
-            await cloudAccountAuthority(undefined, req.accounts ?? {}),
-          );
+          await writeCloudAgentEnvFile(backend, handle, agentVolumes.env, authority);
         } catch (err) {
+          // A pasted account's token travels ONLY in this file (never the
+          // sandbox env), so without it the box has no auth at all: fail the
+          // create rather than hand over a box that asks to log in.
+          if (Object.keys(authority.set).length > 0) {
+            throw new Error(
+              `could not write the agent env holding the account's token: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
           log(
             `WARN: agent env not written (${err instanceof Error ? err.message : String(err)}); ` +
               'forwarded API keys and a named account token may be missing on a VPS box',

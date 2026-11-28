@@ -15,8 +15,8 @@ const login = (expiresAt: number): string =>
 
 const reader =
   (files: Record<string, string>): VolumeFileReader =>
-  (rel) =>
-    Promise.resolve(files[rel] ?? null);
+  (rels) =>
+    Promise.resolve(Object.fromEntries(rels.map((r) => [r, files[r] ?? null])));
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'agentbox-acct-login-'));
@@ -133,5 +133,64 @@ describe('captureVolumeLogin', () => {
       }),
     ).rejects.toThrow(/setup-token account/);
     expect((await readAccounts(store)).accounts[0]!.kind).toBe('setup-token');
+  });
+});
+
+describe('captureVolumeLogin re-login identity', () => {
+  it('keeps the stored email when the new login reads a plan only', async () => {
+    await upsertAccount(
+      {
+        agent: 'claude',
+        id: 'work',
+        kind: 'login',
+        createdAt: 't',
+        identity: { email: 'w@x.io', plan: 'max' },
+      },
+      store,
+    );
+    const res = await captureVolumeLogin({
+      spec,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': login(500) }),
+      identity: { files: ['.credentials.json'], parse: () => ({ plan: 'max' }) },
+      store,
+    });
+    expect(res.identity).toEqual({ email: 'w@x.io', plan: 'max' });
+    const row = (await readAccounts(store)).accounts.find((a) => a.id === 'work');
+    expect(row?.identity).toEqual({ email: 'w@x.io', plan: 'max' });
+  });
+});
+
+describe('captureVolumeLogin: another subscription under the same name', () => {
+  it('drops the old email when the new login reads no identity of its own', async () => {
+    const withIds = {
+      ...spec,
+      credential: {
+        ...spec.credential!,
+        identity: { jsonPaths: [['claudeAiOauth', 'accountUuid']] },
+      },
+    } as AgentSyncSpec;
+    const s2 = { ...store, specs: [withIds] };
+    const blob = (exp: number, uuid: string) =>
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: exp, accountUuid: uuid },
+      });
+    await captureVolumeLogin({
+      spec: withIds,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': blob(100, 'u-1') }),
+      identity: { files: ['.credentials.json'], parse: () => ({ email: 'old@x.io', plan: 'max' }) },
+      store: s2,
+    });
+    const res = await captureVolumeLogin({
+      spec: withIds,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': blob(200, 'u-2') }),
+      identity: { files: ['.credentials.json'], parse: () => undefined },
+      store: s2,
+    });
+    expect(res.identity).toBeUndefined();
+    const row = (await readAccounts(s2)).accounts.find((a) => a.id === 'work');
+    expect(row?.identity).toBeUndefined();
   });
 });

@@ -127,6 +127,14 @@ export async function resolveBoxAccounts(o: {
    * login travels as a FILE — a pasted token has none to lend.
    */
   loginOnly?: readonly string[];
+  /**
+   * `false`: resolve only the NAMES, for a create a remote hub runs against its
+   * own accounts (llm-accounts Phase 9). The store is not read, and every
+   * name that came from a flag or a config layer is returned, an explicit
+   * `default` included, so the hub can tell "the PC chose default" from "no
+   * choice" (its own default then applies). Default `true`.
+   */
+  verify?: boolean;
 }): Promise<ResolvedBoxAccounts> {
   const flags = o.flags ?? {};
   const warnings: string[] = [];
@@ -152,6 +160,18 @@ export async function resolveBoxAccounts(o: {
       layerValue(o.config?.layers.project.values, spec.id) ??
       layerValue(o.config?.layers.global.values, spec.id) ??
       DEFAULT_ACCOUNT_ID;
+    if (o.verify === false) {
+      const chosen =
+        flags[spec.id] ??
+        layerValue(o.config?.layers.project.values, spec.id) ??
+        layerValue(o.config?.layers.global.values, spec.id);
+      if (chosen === undefined) continue;
+      if (!isDefaultAccount(chosen) && agentAccountKinds(spec).length === 0) {
+        throw new Error(`${spec.id} does not support named accounts (account '${chosen}')`);
+      }
+      accounts[spec.id] = chosen;
+      continue;
+    }
     if (isDefaultAccount(id)) continue;
     if (agentAccountKinds(spec).length === 0) {
       throw new Error(`${spec.id} does not support named accounts (account '${id}')`);

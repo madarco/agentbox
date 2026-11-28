@@ -100,7 +100,8 @@ async function signInAndStore(
   // `account`): a sign-in that changed nothing must not pass for a new one.
   const credRel = resolveAgentSpec(a.id).credential?.boxRelPath;
   const read = dockerVolumeFileReader(volume, image);
-  const seeded = credRel ? await read(credRel) : null;
+  const readOne = async (rel: string): Promise<string | null> => (await read([rel]))[rel] ?? null;
+  const seeded = credRel ? await readOne(credRel) : null;
   const stored = existing?.identity;
   const checked = stored !== undefined && req.replace !== true;
 
@@ -127,10 +128,7 @@ async function signInAndStore(
   const readIdentity = async (): Promise<AccountLoginIdentity | undefined> => {
     const reader = a.runtime.accountIdentity;
     if (!reader) return undefined;
-    const read = dockerVolumeFileReader(volume, image);
-    const files: Record<string, string | null> = {};
-    for (const rel of reader.files) files[rel] = await read(rel);
-    return reader.parse(files);
+    return reader.parse(await dockerVolumeFileReader(volume, image)(reader.files));
   };
   const res = await runAgentLogin({
     spec: binding.spec,
@@ -192,7 +190,7 @@ async function signInAndStore(
     for (const c of sent) error = error.split(c).join('[redacted]');
     throw new Error(error);
   }
-  const content = credRel ? await read(credRel) : null;
+  const content = credRel ? await readOne(credRel) : null;
   if (content === null || content === seeded) {
     throw new Error('the sign-in left no new login; nothing was changed');
   }

@@ -99,6 +99,7 @@ export {
   DEFAULT_ACCOUNT_ID,
   LLM_ACCOUNT_KINDS,
   accountCloudSubpath,
+  sharedProjectsVolume,
   cleanIdentityField,
   IDENTITY_FIELD_MAX,
   accountConfigVolume,

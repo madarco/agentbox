@@ -17,6 +17,12 @@ CLI, not the raw commits.
   shows a Revoked badge with the box it was seen failing in, and Renew / Add a
   login run the sign-in on the hub's machine (open the page, paste the code back)
   and push the new login to every box on the account. Same API for the tray.
+- **Subscriptions on a remote hub belong to the hub.** Every computer's named
+  logins, setup tokens and API keys are imported into the hub's own list, so any
+  enrolled computer, the web UI and the tray can create a box on any of them; one
+  subscription signed in on two computers becomes one account, and a create the hub
+  cannot sign in now fails before the box is built instead of starting signed out.
+
 - **Skills library in the hub.** The hub keeps one library of skills, seeded
   from your PC and managed with `agentbox skills` or the hub's Skills page. It
   is delivered to every box of every provider in each agent's own skill folder.
@@ -93,6 +99,17 @@ CLI, not the raw commits.
 
 - The `agentbox credentials` menu comes back after a cancelled or failed sign-in
   instead of exiting.
+- **Accounts on docker and cloud:**
+  - `claude --resume` finds a session started on another account: docker boxes
+    share one `agentbox-claude-projects` volume, which each new box keeps up to
+    date with the sessions older boxes wrote.
+  - A first sign-in that fails no longer leaves an orphan volume behind.
+  - A damaged `_claude.json` no longer blocks a re-login.
+  - A re-login no longer loses the account's email.
+  - A pasted token never appears on a `docker` command line or in a cloud
+    sandbox's create env.
+  - A Daytona box on a named login gets the account's newest login.
+
 - **Accounts:** `agentbox credentials` lists `default` when the agent is signed
   in but no box backed its login up yet. It names a damaged `accounts.json`
   instead of hiding every named account. A setup token or API key saved as

@@ -11,7 +11,7 @@
  * control flow.
  */
 import { loadEffectiveConfig } from '@agentbox/config';
-import { ensureImage } from '@agentbox/sandbox-docker';
+import { dropOrphanAccountVolume, ensureImage } from '@agentbox/sandbox-docker';
 import type { Command } from 'commander';
 import { handleLifecycleError } from '../../commands/_errors.js';
 import { syncAgentCredentialsIfChanged } from '../../commands/control-plane.js';
@@ -127,6 +127,9 @@ async function signIn(
           throw err;
         },
         captureAccountLogin: (o) => captureAccountLogin(a, o),
+        dropOrphanAccountVolume: async (o) => {
+          await dropOrphanAccountVolume(a.id, o.account.id, o.volume);
+        },
       },
     );
     return;
@@ -168,22 +171,33 @@ async function signIn(
   );
   s.stop('image ready');
 
+  // A first login that does not complete must not leave its volume behind.
+  const dropOrphan = async (): Promise<void> => {
+    if (account) await dropOrphanAccountVolume(a.id, account.id, volume);
+  };
   const res = await a.runtime.signIn(image, args, {
     passthrough: opts.interactive === true,
     ...(account ? { volume } : {}),
   });
   if (res.cancelled) {
+    await dropOrphan();
     throw new Error('sign-in cancelled');
   }
   if (!res.ok) {
+    await dropOrphan();
     throw new Error(res.error ?? 'login failed');
   }
   if (account) {
-    await captureAccountLogin(a, {
-      account: { id: account.id },
-      volume,
-      image,
-    });
+    try {
+      await captureAccountLogin(a, {
+        account: { id: account.id },
+        volume,
+        image,
+      });
+    } catch (err) {
+      await dropOrphan();
+      throw err;
+    }
     return;
   }
   outro('signed in — credentials saved for future boxes');

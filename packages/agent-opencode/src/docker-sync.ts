@@ -7,6 +7,7 @@ import { execa } from 'execa';
 import {
   buildTermSafeTmuxExec,
   buildTmuxSessionArgs,
+  dockerEnvByName,
   tmuxSessionEnvArgs,
   CONTAINER_USER,
   ensureVolume,
@@ -329,11 +330,13 @@ export async function startOpencodeSession(opts: StartOpencodeSessionOptions): P
     const v = process.env[k];
     if (typeof v === 'string' && v.length > 0) envFlags.push('-e', `${k}=${v}`);
   }
+  // Secret values by name, off the argv (#437-6).
+  const byName = dockerEnvByName(envFlags);
   const result = await execa(
     'docker',
     [
       'exec',
-      ...envFlags,
+      ...byName.argv,
       '--user',
       CONTAINER_USER,
       opts.container,
@@ -350,7 +353,7 @@ export async function startOpencodeSession(opts: StartOpencodeSessionOptions): P
       cmd,
       ...buildTmuxSessionArgs(sessionName),
     ],
-    { reject: false },
+    { reject: false, env: byName.env },
   );
   if (result.exitCode === 0) return;
   const stderr = (result.stderr ?? '').toString();
