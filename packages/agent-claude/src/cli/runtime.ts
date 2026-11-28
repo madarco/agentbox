@@ -25,6 +25,7 @@ import {
   ensureClaudeVolume,
   resetVolumeAccountState,
   runInteractiveClaudeLogin,
+  seedDefaultClaudeJson,
   SHARED_CLAUDE_VOLUME,
   startClaudeSession,
   warmUpClaudeCredentials,
@@ -302,6 +303,9 @@ export const claudeRuntime: AgentRuntime = {
   },
 
   signIn: (image, extraArgs, o) => signInToClaude(image, extraArgs, o),
+  seedLoginVolume: async (volume, image, docker) => {
+    await seedDefaultClaudeJson(volume, image, docker);
+  },
   loginBinding: (o) => claudeLoginBinding(o),
   resetAccountVolume: async (volume, image, o) => {
     await resetVolumeAccountState(volume, image, o);

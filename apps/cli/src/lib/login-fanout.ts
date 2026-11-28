@@ -127,15 +127,20 @@ export async function bestEffort(
  * Store a freshly signed-in default login: into the agent's shared volume
  * (what later default boxes seed from), atomically, and the default login's
  * backup (what the fan-out pushes). False when `content` is not a real login.
+ * `volume: false` stores the backup only: on a machine whose docker holds no
+ * shared volume boxes mount (a control box), the backup is all there is.
  */
 export async function storeDefaultLogin(
   agent: string,
   image: string,
   content: string,
+  opts: { volume?: boolean } = {},
 ): Promise<boolean> {
   const spec = resolveAgentSpec(agent);
   if (!spec.credential || !isRealAgentCredential(spec.id, content)) return false;
-  await writeVolumeFileAtomic(spec.dockerVolume, image, spec.credential.boxRelPath, content);
+  if (opts.volume !== false) {
+    await writeVolumeFileAtomic(spec.dockerVolume, image, spec.credential.boxRelPath, content);
+  }
   // The person just signed this login in: it replaces the stored one.
   if ((await readCredentialBackup(spec.id)) !== content) {
     await writeCredentialBackup(spec.id, content);

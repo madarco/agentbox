@@ -129,3 +129,13 @@ export {
   type RemoteHostSharer,
   type RemoteHostBaker,
 } from './share-hook.js';
+export {
+  chooseSigninDocker,
+  commandOnPath,
+  openRemoteDockerEngine,
+  remoteAgentImageRef,
+  removeRemoteSigninVolume,
+  resolveSigninDocker,
+  type RemoteDockerEngine,
+  type SigninDockerChoice,
+} from './signin-engine.js';

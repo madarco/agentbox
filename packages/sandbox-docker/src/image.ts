@@ -370,6 +370,47 @@ export function variantImageRef(ref: string, agents: readonly string[] | undefin
 }
 
 /**
+ * The Dockerfile of the thin agent layer {@link buildDerivedAgentImage} builds:
+ * `FROM <baseRef>` plus each agent's install recipe. Context-free (FROM + RUN
+ * only), so a remote engine can build it from stdin. Pure.
+ */
+export function derivedAgentDockerfile(
+  baseRef: string,
+  agents: readonly string[],
+  agentSettings?: AgentSettingsMap,
+): string[] {
+  const lines: string[] = [`FROM ${baseRef}`];
+  for (const id of agents) {
+    const spec = resolveAgentSpec(id);
+    const install = resolveAgentInstall(spec.install, agentSettings?.[spec.id]);
+    lines.push(`# ---- ${spec.id} ----`, 'USER root');
+    if (install.packages && install.packages.length > 0) {
+      lines.push(`RUN ${renderPackageInstall(install.packages)}`);
+    }
+    // The agent's own settings, as env its recipe and post-install can branch
+    // on. A `RUN` prefix rather than an `ENV` line: `ENV` would persist into
+    // every box built from the image and leak one agent's settings to the next
+    // layer's.
+    const settingEnv = renderAgentSettingEnv(agentSettings?.[spec.id]);
+    const recipe = settingEnv + renderInstallRecipe(install.recipe);
+    if (install.runAs === 'box-user') {
+      // Native installers write into the INVOKING user's ~/.local/bin, so
+      // running them as root would put the binary in /root.
+      lines.push(`USER ${BOX_USER}`, `RUN ${recipe}`, 'USER root');
+    } else {
+      lines.push(`RUN ${recipe}`);
+    }
+    if (install.postInstall) lines.push(`RUN ${settingEnv}${install.postInstall}`);
+    lines.push(
+      `RUN command -v ${spec.binary} >/dev/null || (echo "${spec.id} not on PATH after install" >&2; exit 71)`,
+    );
+  }
+  // Restore the base's final USER/WORKDIR: we switched to root above.
+  lines.push(`USER ${BOX_USER}`, 'WORKDIR /workspace');
+  return lines;
+}
+
+/**
  * Build `derivedRef` as a thin layer on top of `baseRef` that adds `agents`.
  *
  * Deriving rather than rebuilding the whole Dockerfile with a different
@@ -391,34 +432,7 @@ export async function buildDerivedAgentImage(opts: {
   agentSettings?: AgentSettingsMap;
   onProgress?: (line: string) => void;
 }): Promise<void> {
-  const lines: string[] = [`FROM ${opts.baseRef}`];
-  for (const id of opts.agents) {
-    const spec = resolveAgentSpec(id);
-    const install = resolveAgentInstall(spec.install, opts.agentSettings?.[spec.id]);
-    lines.push(`# ---- ${spec.id} ----`, 'USER root');
-    if (install.packages && install.packages.length > 0) {
-      lines.push(`RUN ${renderPackageInstall(install.packages)}`);
-    }
-    // The agent's own settings, as env its recipe and post-install can branch
-    // on. A `RUN` prefix rather than an `ENV` line: `ENV` would persist into
-    // every box built from the image and leak one agent's settings to the next
-    // layer's.
-    const settingEnv = renderAgentSettingEnv(opts.agentSettings?.[spec.id]);
-    const recipe = settingEnv + renderInstallRecipe(install.recipe);
-    if (install.runAs === 'box-user') {
-      // Native installers write into the INVOKING user's ~/.local/bin, so
-      // running them as root would put the binary in /root.
-      lines.push(`USER ${BOX_USER}`, `RUN ${recipe}`, 'USER root');
-    } else {
-      lines.push(`RUN ${recipe}`);
-    }
-    if (install.postInstall) lines.push(`RUN ${settingEnv}${install.postInstall}`);
-    lines.push(
-      `RUN command -v ${spec.binary} >/dev/null || (echo "${spec.id} not on PATH after install" >&2; exit 71)`,
-    );
-  }
-  // Restore the base's final USER/WORKDIR: we switched to root above.
-  lines.push(`USER ${BOX_USER}`, 'WORKDIR /workspace');
+  const lines = derivedAgentDockerfile(opts.baseRef, opts.agents, opts.agentSettings);
 
   // No context files are needed -- everything is FROM + RUN -- so build from an
   // empty dir rather than re-sending the multi-hundred-MB runtime tree.

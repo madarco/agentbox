@@ -2,6 +2,7 @@ import type { AgentVolumeChoice } from './agents/module.js';
 import { chmod, mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { execa } from 'execa';
+import { localDockerRun, type DockerRun } from '../docker-run.js';
 import { STATE_DIR } from '../state.js';
 
 // The pure, agent-neutral credential guards moved to the credentials concern in
@@ -185,9 +186,10 @@ echo "PRESENT=$PRESENT REFRESH=$REFRESH"
 export async function volumeClaudeCredentials(
   volume: string,
   image: string,
+  run: DockerRun = localDockerRun,
 ): Promise<VolumeClaudeCredentials> {
   try {
-    const { stdout } = await execa('docker', [
+    const res = await run([
       'run',
       '--rm',
       '--user',
@@ -199,7 +201,8 @@ export async function volumeClaudeCredentials(
       '-c',
       VOLUME_CRED_PROBE_SCRIPT,
     ]);
-    return parseVolumeClaudeCredentials(stdout);
+    if (res.exitCode !== 0) return { present: false, hasRefreshToken: false };
+    return parseVolumeClaudeCredentials(res.stdout);
   } catch {
     return { present: false, hasRefreshToken: false };
   }

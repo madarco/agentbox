@@ -7,6 +7,7 @@ import {
   SHARED_OPENCODE_VOLUME,
   volumeHasOpencodeAuth,
 } from '../docker-sync.js';
+import type { DockerRun } from '@agentbox/sandbox-docker';
 import { withLoginDefaults, type AgentLoginBinding } from '@agentbox/cli-kit';
 import { OPENCODE_LOGIN_SPEC } from './login.js';
 
@@ -14,6 +15,7 @@ export function opencodeLoginBinding(o: {
   image: string;
   volume?: string;
   extraArgs?: string[];
+  docker?: DockerRun;
 }): AgentLoginBinding {
   const volume = o.volume ?? SHARED_OPENCODE_VOLUME;
   const { image } = o;
@@ -21,6 +23,6 @@ export function opencodeLoginBinding(o: {
   return {
     spec: OPENCODE_LOGIN_SPEC,
     dockerArgv: buildOpencodeLoginRunArgv({ volume, image, extraArgs }),
-    verify: () => volumeHasOpencodeAuth(volume, image),
+    verify: () => volumeHasOpencodeAuth(volume, image, o.docker),
   };
 }

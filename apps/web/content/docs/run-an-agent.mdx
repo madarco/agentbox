@@ -193,7 +193,11 @@ shows and approve, then paste the code back (claude) or enter the one-time code
 on the device page (codex). The new login replaces the stored one and is pushed
 to every box on the account. **Add a login** works the same way for a new
 account. The sign-in runs on the hub's machine, so on a remote control box it
-signs in that box's own store. The tray uses the same `/api/v1/accounts/{agent}/{id}/login`
+signs in that box's own store. A control box's hub runs in a container with no
+docker of its own, so there the sign-in container runs on the box's own docker
+engine (the `hub` host its deploy registers; `agentbox hub update` registers it
+again if it is missing). The first sign-in for an agent there adds that agent to
+the box image on the engine, which takes a minute or two. The tray uses the same `/api/v1/accounts/{agent}/{id}/login`
 routes (see [the API reference](/docs/api)).
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
@@ -505,7 +509,9 @@ export const agentSpec = {
   install: { kind: 'npm', package: 'demo-cli' },
   dockerVolume: 'agentbox-demo-config',
   staticPaths: [{ hostHomeRel: ['.demo'], boxDir: '/home/vscode/.demo' }],
-  credential: {/* where its login lives, on the box and in the host backup */},
+  credential: {
+    /* where its login lives, on the box and in the host backup */
+  },
   forwardedEnvKeys: [],
   boxRunEnv: {},
   caps: { resume: false, teleport: 'stub', activitySource: [] },

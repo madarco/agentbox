@@ -4,7 +4,11 @@
  * warm-up. Beside the runtime that is its only caller — see
  * `lib/agent-login-bindings.ts` for why it is not in the shared lib.
  */
-import { syncClaudeCredentials, volumeClaudeCredentials } from '@agentbox/sandbox-docker';
+import {
+  syncClaudeCredentials,
+  volumeClaudeCredentials,
+  type DockerRun,
+} from '@agentbox/sandbox-docker';
 import {
   buildClaudeLoginRunArgv,
   SHARED_CLAUDE_VOLUME,
@@ -18,6 +22,7 @@ export function claudeLoginBinding(o: {
   volume?: string;
   extraArgs?: string[];
   writeLog?: (line: string) => void;
+  docker?: DockerRun;
 }): AgentLoginBinding {
   const volume = o.volume ?? SHARED_CLAUDE_VOLUME;
   const { image } = o;
@@ -25,12 +30,13 @@ export function claudeLoginBinding(o: {
   return {
     spec: CLAUDE_LOGIN_SPEC,
     dockerArgv: buildClaudeLoginRunArgv({ volume, image, extraArgs }),
-    verify: async () => (await volumeClaudeCredentials(volume, image)).hasRefreshToken,
+    verify: async () => (await volumeClaudeCredentials(volume, image, o.docker)).hasRefreshToken,
     // Absorb the fresh-token first-request 400 in a throwaway container before
     // any box uses these credentials, then mirror them to the host backup.
     finalize: async () => {
       const warm = await warmUpClaudeCredentials(volume, image, {
         onProgress: (l) => o.writeLog?.(l),
+        ...(o.docker ? { run: o.docker } : {}),
       });
       // Only the shared volume mirrors to the legacy backup, which IS the
       // default account; a named account's volume is captured by the caller.

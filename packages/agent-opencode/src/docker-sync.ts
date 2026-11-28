@@ -15,6 +15,8 @@ import {
   volumeExists,
   createDockerSyncTransport,
   stageLoopbackOverlay,
+  localDockerRun,
+  type DockerRun,
 } from '@agentbox/sandbox-docker';
 import { opencodeEndpointFiles } from './endpoints.js';
 import { ensureAgentInstalled, resolveAgentSpec, AgentInstallError } from '@agentbox/sandbox-core';
@@ -444,12 +446,21 @@ export function runInteractiveOpencodeLogin(dockerArgv: string[]): { exitCode: n
  * data-dir root). Used to skip the first-run sign-in offer when an earlier box
  * / `agentbox opencode login` already authenticated.
  */
-export async function volumeHasOpencodeAuth(volume: string, image: string): Promise<boolean> {
-  const res = await execa(
-    'docker',
-    ['run', '--rm', '-v', `${volume}:/dst`, image, 'sh', '-c', 'test -e /dst/auth.json'],
-    { reject: false },
-  );
+export async function volumeHasOpencodeAuth(
+  volume: string,
+  image: string,
+  run: DockerRun = localDockerRun,
+): Promise<boolean> {
+  const res = await run([
+    'run',
+    '--rm',
+    '-v',
+    `${volume}:/dst`,
+    image,
+    'sh',
+    '-c',
+    'test -e /dst/auth.json',
+  ]);
   return res.exitCode === 0;
 }
 

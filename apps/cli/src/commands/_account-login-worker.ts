@@ -10,9 +10,7 @@
  * stored (a named account's secret, or the default login's backup) and the
  * worker ends at `signed-in`; the hub then fans it out to the account's boxes.
  */
-import { homedir } from 'node:os';
 import { Command } from 'commander';
-import { loadEffectiveConfig } from '@agentbox/config';
 import { accountConfigVolume, findAccount, isDefaultAccount } from '@agentbox/core';
 import { openCommandLog, runAgentLogin, type AgentCliSpec } from '@agentbox/cli-kit';
 import {
@@ -27,14 +25,10 @@ import {
   writeAccountLoginState,
   type AccountLoginWorkerState,
 } from '@agentbox/sandbox-core';
-import { captureVolumeLogin, dockerVolumeFileReader, ensureImage } from '@agentbox/sandbox-docker';
+import { captureVolumeLogin, dockerVolumeFileReader } from '@agentbox/sandbox-docker';
 import { agentLoginSpec } from '../agents/command/login.js';
-import {
-  bestEffort,
-  removeDockerVolume,
-  storeDefaultLogin,
-  writeVolumeFileAtomic,
-} from '../lib/login-fanout.js';
+import { bestEffort, storeDefaultLogin, writeVolumeFileAtomic } from '../lib/login-fanout.js';
+import { resolveSigninEngine, type SigninEngine } from '../lib/signin-engine.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 
 type StatePatch = Partial<Omit<AccountLoginWorkerState, 'updatedAt' | 'pid'>>;
@@ -52,7 +46,7 @@ class IdentityMismatchError extends Error {
   }
 }
 
-interface WorkerContext {
+export interface WorkerContext {
   setState: (patch: StatePatch) => void;
   sessionId: string;
   log: ReturnType<typeof openCommandLog>;
@@ -61,16 +55,18 @@ interface WorkerContext {
   committing: { value: boolean };
   /** The scratch volume the sign-in runs in, removed when the worker ends. */
   scratch: { value: string | null };
+  /** Where docker runs: this machine's, or a control box's engine. */
+  engine: SigninEngine;
 }
 
 /** Sign the account in and store it. Throws a message for the session's `error`. */
-async function signInAndStore(
+export async function signInAndStore(
   a: AgentCliSpec,
   req: AccountLoginRequest,
   ctx: WorkerContext,
 ): Promise<StatePatch> {
   const { account, mode } = req;
-  const { setState, sessionId, log, signal } = ctx;
+  const { setState, sessionId, log, signal, engine } = ctx;
   const named = !isDefaultAccount(account);
   if (named && a.runtime.supportsAccountLogin !== true) {
     // A runtime that ignores the volume would sign the owner's shared login in
@@ -83,13 +79,8 @@ async function signInAndStore(
   }
   if (mode === 'add' && existing) throw new Error(`${a.id}/${account} already exists`);
 
-  // The hub's own machine config: the hub's cwd is no project of the user's.
-  const cfg = await loadEffectiveConfig(homedir());
-  log.write('preparing the sign-in image');
-  const { ref: image } = await ensureImage(cfg.effective.box.image, {
-    agents: [a.id],
-    onProgress: (line) => log.write(line),
-  });
+  log.write(`preparing the sign-in image (${engine.where} docker)`);
+  const image = await engine.ensureImage(a.id, (line) => log.write(line));
   // The account's own volume, which its docker boxes mount live, is not
   // touched until the new login passed the identity check: the sign-in runs in
   // a scratch volume seeded like the account's (host config, no host login, no
@@ -99,12 +90,11 @@ async function signInAndStore(
     : a.runtime.sharedVolume;
   const volume = `${target}-signin-${sessionId}`;
   ctx.scratch.value = volume;
-  // `account` strips the host's login and account state from the seed.
-  await a.runtime.ensureVolume({ volume }, { syncFromHost: true, image, account });
+  await engine.prepareVolume(a, volume, image, account);
   // An agent whose seed still carries the host's login (one that ignores
   // `account`): a sign-in that changed nothing must not pass for a new one.
   const credRel = resolveAgentSpec(a.id).credential?.boxRelPath;
-  const read = dockerVolumeFileReader(volume, image);
+  const read = dockerVolumeFileReader(volume, image, engine.run);
   const readOne = async (rel: string): Promise<string | null> => (await read([rel]))[rel] ?? null;
   const seeded = credRel ? await readOne(credRel) : null;
   const stored = existing?.identity;
@@ -114,6 +104,7 @@ async function signInAndStore(
     image,
     volume,
     writeLog: (line) => log.write(line),
+    docker: engine.run,
   });
   // The pty echoes what is typed, so the raw stream would log the code. Once
   // a code is sent, hold the stream back and write it with every code sent so
@@ -133,11 +124,13 @@ async function signInAndStore(
   const readIdentity = async (): Promise<AccountLoginIdentity | undefined> => {
     const reader = a.runtime.accountIdentity;
     if (!reader) return undefined;
-    return reader.parse(await dockerVolumeFileReader(volume, image)(reader.files));
+    return reader.parse(await read(reader.files));
   };
+  const command = engine.loginCommand(binding.dockerArgv, volume);
   const res = await runAgentLogin({
     spec: binding.spec,
     dockerArgv: binding.dockerArgv,
+    ...(command ? { command } : {}),
     writeRaw: (chunk) => {
       if (held === null) log.raw(chunk);
       else held += chunk;
@@ -237,6 +230,11 @@ async function signInAndStore(
     if (!cap.written && cap.reason !== 'unchanged') {
       throw new Error(`the store kept its login (${cap.reason}); nothing was changed`);
     }
+    // Boxes on an engine without account volumes (a control box's) are
+    // seeded from the store and reached by the fan-out: the store is all.
+    if (!engine.hostsAccountVolumes) {
+      return { ...(cap.identity ? { identity: cap.identity } : {}) };
+    }
     // The login is stored: what follows only brings the account's volume up
     // to date, and a failure there must not undo the sign-in or skip the
     // fan-out. The volume is what a new box on the account seeds from (an
@@ -259,16 +257,18 @@ async function signInAndStore(
     );
     return { ...(cap.identity ? { identity: cap.identity } : {}) };
   }
-  if (!(await storeDefaultLogin(a.id, image, content))) {
+  if (!(await storeDefaultLogin(a.id, image, content, { volume: engine.hostsAccountVolumes }))) {
     throw new Error('the sign-in left no new login; nothing was changed');
   }
-  // Every default box mounts this volume live: drop only the cached profile,
-  // never its API-key answers. Best effort: the login is already stored.
-  await bestEffort(
-    `resetting the profile in ${target}`,
-    async () => a.runtime.resetAccountVolume?.(target, image, { profileOnly: true }),
-    (line) => log.write(line),
-  );
+  if (engine.hostsAccountVolumes) {
+    // Every default box mounts this volume live: drop only the cached profile,
+    // never its API-key answers. Best effort: the login is already stored.
+    await bestEffort(
+      `resetting the profile in ${target}`,
+      async () => a.runtime.resetAccountVolume?.(target, image, { profileOnly: true }),
+      (line) => log.write(line),
+    );
+  }
   // A control box's custody copy is stale now (no-op without one).
   await syncAgentCredentialsIfChanged().catch((err: unknown) =>
     log.write(`custody sync failed: ${err instanceof Error ? err.message : String(err)}`),
@@ -287,11 +287,12 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
     log.write(`worker pid=${String(process.pid)} for session ${id}`);
     const committing = { value: false };
     const scratch: { value: string | null } = { value: null };
+    let engine: SigninEngine | null = null;
     /** Set once the worker is wrapping up, so a cancel's forced exit does not cut it short. */
     let ending = false;
     const dropScratch = async (): Promise<void> => {
-      if (!scratch.value) return;
-      const removed = await removeDockerVolume(scratch.value).catch(() => false);
+      if (!scratch.value || !engine) return;
+      const removed = await engine.removeVolume(scratch.value).catch(() => false);
       if (!removed) log.write(`could not remove the scratch volume ${scratch.value}`);
     };
     let cancelWaiting: string | null = null;
@@ -346,7 +347,9 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
     try {
       if (!req) throw new Error('internal: the session has no request');
       if (!a) throw new Error(`${req.agent} has no sign-in`);
+      engine = await resolveSigninEngine();
       const done = await signInAndStore(a, req, {
+        engine,
         setState,
         sessionId: id,
         log,

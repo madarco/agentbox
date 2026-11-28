@@ -43,6 +43,7 @@ import {
 import {
   accountLoginView,
   createAccountLoginBackend,
+  remoteScratchVolumes,
   signinScratchSession,
 } from '../lib/backend/account-login';
 
@@ -482,6 +483,39 @@ describe('review #529', () => {
     expect(removed).not.toContain(`agentbox-claude-config-acct-work-signin-${liveSession}`);
     expect(removed).not.toContain('unrelated-volume');
     expect(removed).not.toContain('app-signin-postgresdata');
+  });
+
+  it("sweeps a control box's engine through its docker", async () => {
+    const calls: string[][] = [];
+    const removed: string[] = [];
+    const run = (argv: string[]) => {
+      calls.push(argv);
+      return Promise.resolve({
+        exitCode: 0,
+        stdout: argv[1] === 'ls' ? 'agentbox-claude-config-signin-0123456789abcdef\n' : '',
+        stderr: '',
+      });
+    };
+    const scratch = remoteScratchVolumes(run, (r, volume) => {
+      expect(r).toBe(run);
+      removed.push(volume);
+      return Promise.resolve(true);
+    });
+    await expect(scratch.list()).resolves.toEqual([
+      'agentbox-claude-config-signin-0123456789abcdef',
+    ]);
+    await scratch.remove('agentbox-claude-config-signin-0123456789abcdef');
+    expect(calls).toEqual([['volume', 'ls', '-q', '--filter', 'name=-signin-']]);
+    expect(removed).toEqual(['agentbox-claude-config-signin-0123456789abcdef']);
+    // A volume still held is left for the next sweep (the sweep catches it).
+    const held = remoteScratchVolumes(run, () => Promise.resolve(false));
+    await expect(held.remove('x')).rejects.toThrow(/could not remove x/);
+    // An engine it cannot reach lists nothing to remove (the sweep catches it).
+    const down = remoteScratchVolumes(
+      () => Promise.resolve({ exitCode: 255, stdout: '', stderr: 'ssh: connect refused' }),
+      () => Promise.resolve(true),
+    );
+    await expect(down.list()).rejects.toThrow(/connect refused/);
   });
 
   it('the sweep only matches the scratch volumes the worker mints', () => {
