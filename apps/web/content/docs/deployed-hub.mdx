@@ -20,7 +20,7 @@ It's the same `@agentbox/relay` core you already run locally — the relay daemo
 
 Because a laptop-built docker box defeats the point of a control box, once one is configured
 `docker` and `remote-docker` are **gated off** (`hub.mode=auto`): `create --provider
-  docker` is refused, docker drops out of the provider pickers / `doctor` / `prepare`, and any docker
+  docker` is refused, docker drops out of the provider pickers / `doctor` / `prepare` and the hub's provider list (web UI and tray, which list Remote Docker first), and any docker
 boxes you already have show as **inactive** in `agentbox ls` (still there, so you can `destroy`
 them by name). With a control box configured, boxes are built by the control box and **local docker
 on that machine is not supported** — use a cloud provider, or share a real docker engine with the
