@@ -1506,6 +1506,7 @@ export async function claudeSessionInfo(
 export async function resetVolumeAccountState(
   volume: string,
   image: string,
+  opts: { profileOnly?: boolean } = {},
 ): Promise<'reset' | 'removed' | 'absent'> {
   // A file jq cannot parse (corrupt, truncated) is removed instead of failing
   // every re-login of the account: the caller seeds a fresh one.
@@ -1514,7 +1515,7 @@ export async function resetVolumeAccountState(
     // Only a file jq cannot PARSE is removed; a failed write (full disk)
     // fails the reset and keeps the file.
     'if ! jq -e . "$f" >/dev/null 2>&1; then rm -f "$f" && echo RESET=removed; exit 0; fi; ' +
-    `jq '${accountStateJqDelete()}' "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chown 1000:1000 "$f" && echo RESET=reset`;
+    `jq '${accountStateJqDelete(opts)}' "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chown 1000:1000 "$f" && echo RESET=reset`;
   const res = await execa('docker', [
     'run',
     '--rm',

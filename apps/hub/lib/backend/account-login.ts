@@ -112,6 +112,15 @@ function defaultSpawnWorker(session: string): number | undefined {
   return child.pid;
 }
 
+/**
+ * The session a scratch volume belongs to, or null when the name is not one
+ * the sign-in worker minted (`agentbox-…-signin-<16 hex>`): the sweep must
+ * never touch a user's own volume that merely contains `-signin-`. Pure.
+ */
+export function signinScratchSession(name: string): string | null {
+  return /^agentbox-[a-z0-9._-]+-signin-([0-9a-f]{16})$/.exec(name)?.[1] ?? null;
+}
+
 /** The client view of a session (pure). */
 export function accountLoginView(
   session: string,
@@ -262,7 +271,7 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
   async function sweepScratchVolumes(): Promise<void> {
     const names = await scratch.list().catch(() => [] as string[]);
     for (const name of names) {
-      const session = /-signin-([a-z0-9]{8,32})$/.exec(name)?.[1];
+      const session = signinScratchSession(name);
       if (!session || isLive(session)) continue;
       await scratch.remove(name).catch(() => undefined);
     }

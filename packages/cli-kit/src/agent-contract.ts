@@ -243,7 +243,17 @@ export interface AgentRuntime {
    * login left there that the new one must not inherit (claude's cached
    * profile). Absent = nothing to drop.
    */
-  resetAccountVolume?(volume: string, image: string): Promise<void>;
+  resetAccountVolume?(
+    volume: string,
+    image: string,
+    o?: {
+      /**
+       * Only the cached profile (claude's `oauthAccount`): for a volume every
+       * default box mounts live, whose API-key answers must stay.
+       */
+      profileOnly?: boolean;
+    },
+  ): Promise<void>;
   /**
    * Whether `<agent> login` needs a terminal. `always` for a flow that prompts
    * (opencode's provider picker); `interactive-only` when the guided flow needs

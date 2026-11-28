@@ -62,6 +62,9 @@ describe('accountStateJqDelete', () => {
     expect(prog).toContain('.primaryApiKey');
     expect(prog).not.toMatch(/'/);
   });
+  it('profileOnly drops the cached profile alone (the shared default volume)', () => {
+    expect(accountStateJqDelete({ profileOnly: true })).toBe('del(.oauthAccount)');
+  });
 });
 
 describe('stripAuthSettings (Phase 3 must-fix)', () => {

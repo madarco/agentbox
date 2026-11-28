@@ -303,8 +303,8 @@ export const claudeRuntime: AgentRuntime = {
 
   signIn: (image, extraArgs, o) => signInToClaude(image, extraArgs, o),
   loginBinding: (o) => claudeLoginBinding(o),
-  resetAccountVolume: async (volume, image) => {
-    await resetVolumeAccountState(volume, image);
+  resetAccountVolume: async (volume, image, o) => {
+    await resetVolumeAccountState(volume, image, o);
   },
   loginNeedsTty: 'interactive-only',
   loginCommand: { options: addClaudeLoginOptions, run: runClaudeLoginCommand },

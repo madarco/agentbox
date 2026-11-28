@@ -29,7 +29,12 @@ import {
 } from '@agentbox/sandbox-core';
 import { captureVolumeLogin, dockerVolumeFileReader, ensureImage } from '@agentbox/sandbox-docker';
 import { agentLoginSpec } from '../agents/command/login.js';
-import { removeDockerVolume, storeDefaultLogin } from '../lib/login-fanout.js';
+import {
+  bestEffort,
+  removeDockerVolume,
+  storeDefaultLogin,
+  writeVolumeFileAtomic,
+} from '../lib/login-fanout.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 
 type StatePatch = Partial<Omit<AccountLoginWorkerState, 'updatedAt' | 'pid'>>;
@@ -232,16 +237,38 @@ async function signInAndStore(
     if (!cap.written && cap.reason !== 'unchanged') {
       throw new Error(`the store kept its login (${cap.reason}); nothing was changed`);
     }
-    // The account volume's cached profile (claude's `oauthAccount`) is the
-    // previous login's; drop it so the next turn writes the new one's, as a
-    // sign-in straight into the volume used to.
-    await a.runtime.resetAccountVolume?.(target, image);
+    // The login is stored: what follows only brings the account's volume up
+    // to date, and a failure there must not undo the sign-in or skip the
+    // fan-out. The volume is what a new box on the account seeds from (an
+    // existing credential there is never overwritten by the seed), so the new
+    // login goes in now, atomically; the fan-out only reaches existing boxes.
+    const logLine = (line: string): void => log.write(line);
+    if (credRel) {
+      await bestEffort(
+        `writing the login into ${target}`,
+        () => writeVolumeFileAtomic(target, image, credRel, content),
+        logLine,
+      );
+    }
+    // Its cached profile (claude's `oauthAccount`) is the previous login's;
+    // drop it so the next turn writes the new one's.
+    await bestEffort(
+      `resetting the profile in ${target}`,
+      async () => a.runtime.resetAccountVolume?.(target, image),
+      logLine,
+    );
     return { ...(cap.identity ? { identity: cap.identity } : {}) };
   }
   if (!(await storeDefaultLogin(a.id, image, content))) {
     throw new Error('the sign-in left no new login; nothing was changed');
   }
-  await a.runtime.resetAccountVolume?.(target, image);
+  // Every default box mounts this volume live: drop only the cached profile,
+  // never its API-key answers. Best effort: the login is already stored.
+  await bestEffort(
+    `resetting the profile in ${target}`,
+    async () => a.runtime.resetAccountVolume?.(target, image, { profileOnly: true }),
+    (line) => log.write(line),
+  );
   // A control box's custody copy is stale now (no-op without one).
   await syncAgentCredentialsIfChanged().catch((err: unknown) =>
     log.write(`custody sync failed: ${err instanceof Error ? err.message : String(err)}`),

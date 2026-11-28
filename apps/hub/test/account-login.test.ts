@@ -40,7 +40,11 @@ import {
   upsertAccount,
   writeAccountLoginState,
 } from '@agentbox/sandbox-core';
-import { accountLoginView, createAccountLoginBackend } from '../lib/backend/account-login';
+import {
+  accountLoginView,
+  createAccountLoginBackend,
+  signinScratchSession,
+} from '../lib/backend/account-login';
 
 let dir: string;
 let renews: string[];
@@ -462,6 +466,7 @@ describe('review #529', () => {
             'agentbox-claude-config-acct-work-signin-0123456789abcdef',
             `agentbox-claude-config-acct-work-signin-${liveSession}`,
             'unrelated-volume',
+            'app-signin-postgresdata',
           ]),
         remove: (name) => {
           removed.push(name);
@@ -476,6 +481,21 @@ describe('review #529', () => {
     expect(removed).toContain('agentbox-claude-config-acct-work-signin-0123456789abcdef');
     expect(removed).not.toContain(`agentbox-claude-config-acct-work-signin-${liveSession}`);
     expect(removed).not.toContain('unrelated-volume');
+    expect(removed).not.toContain('app-signin-postgresdata');
+  });
+
+  it('the sweep only matches the scratch volumes the worker mints', () => {
+    expect(signinScratchSession('agentbox-claude-config-acct-work-signin-0123456789abcdef')).toBe(
+      '0123456789abcdef',
+    );
+    expect(signinScratchSession('agentbox-codex-config-signin-0123456789abcdef')).toBe(
+      '0123456789abcdef',
+    );
+    // A user's own volumes that merely contain `-signin-`.
+    expect(signinScratchSession('app-signin-postgresdata')).toBeNull();
+    expect(signinScratchSession('myapp-signin-0123456789abcdef')).toBeNull();
+    expect(signinScratchSession('agentbox-x-signin-postgresdata')).toBeNull();
+    expect(signinScratchSession('agentbox-x-signin-0123456789ABCDEF')).toBeNull();
   });
 
   it('sameLoginIdentity: email first, then org; unknown is not a mismatch', () => {

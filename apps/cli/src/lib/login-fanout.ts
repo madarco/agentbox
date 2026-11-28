@@ -56,9 +56,77 @@ export async function readDefaultVolumeLogin(agent: string, image: string): Prom
 }
 
 /**
+ * The shell script that writes stdin to `/dst/<rel>` atomically: a temp file
+ * beside it, owned and moded, then renamed over it. A box reading the file
+ * (claude re-reads it before every request) never sees half a login. Pure.
+ */
+export function atomicVolumeWriteScript(rel: string): string {
+  if (!/^[A-Za-z0-9._/-]+$/.test(rel) || rel.split('/').some((p) => p === '' || p === '..')) {
+    throw new Error(`refusing to write an unsafe volume path: ${rel}`);
+  }
+  const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '';
+  return [
+    'set -e',
+    ...(dir ? [`mkdir -p '/dst/${dir}'`] : []),
+    `t='/dst/${rel}.tmp.'$$`,
+    'cat > "$t"',
+    'chown 1000:1000 "$t"',
+    'chmod 600 "$t"',
+    `mv -f "$t" '/dst/${rel}'`,
+  ].join('; ');
+}
+
+/** Write `content` into a docker volume's `rel` atomically (see {@link atomicVolumeWriteScript}). */
+export async function writeVolumeFileAtomic(
+  volume: string,
+  image: string,
+  rel: string,
+  content: string,
+): Promise<void> {
+  const r = await execa(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '-i',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/dst`,
+      image,
+      'sh',
+      '-c',
+      atomicVolumeWriteScript(rel),
+    ],
+    { input: content, reject: false },
+  );
+  if (r.exitCode !== 0) throw new Error(`could not write ${rel} into ${volume}`);
+}
+
+/**
+ * Run a step after a login is already stored: its failure is logged, never
+ * thrown, so the sign-in still ends signed in and is fanned out.
+ */
+export async function bestEffort(
+  what: string,
+  fn: () => Promise<unknown>,
+  log: (line: string) => void,
+): Promise<boolean> {
+  try {
+    await fn();
+    return true;
+  } catch (err) {
+    log(
+      `${what} failed (the login is stored): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return false;
+  }
+}
+
+/**
  * Store a freshly signed-in default login: into the agent's shared volume
- * (what later default boxes seed from) and the default login's backup (what
- * the fan-out pushes). False when `content` is not a real login.
+ * (what later default boxes seed from), atomically, and the default login's
+ * backup (what the fan-out pushes). False when `content` is not a real login.
  */
 export async function storeDefaultLogin(
   agent: string,
@@ -67,11 +135,7 @@ export async function storeDefaultLogin(
 ): Promise<boolean> {
   const spec = resolveAgentSpec(agent);
   if (!spec.credential || !isRealAgentCredential(spec.id, content)) return false;
-  await volumeSettingsTarget(spec.dockerVolume, image, spec.dockerVolume).writeText(
-    spec.credential.boxRelPath,
-    content,
-    { mode: 0o600 },
-  );
+  await writeVolumeFileAtomic(spec.dockerVolume, image, spec.credential.boxRelPath, content);
   // The person just signed this login in: it replaces the stored one.
   if ((await readCredentialBackup(spec.id)) !== content) {
     await writeCredentialBackup(spec.id, content);
