@@ -100,11 +100,12 @@ export interface CredentialsFanoutDeps {
    */
   boxAccountFor?: (boxId: string, agent: CredentialAgentKind) => Promise<string | undefined>;
   /**
-   * The machine a box was built for (its registration `originMachineId`): a
-   * named account belongs to that machine's store, so its custody copy is keyed
-   * by it. Default: this relay's own machine.
+   * This relay's own machine id, the `<machine>` a named account's custody copy
+   * is filed under. The account came from THIS machine's store (on a remote
+   * hub, a PC's account imported into it), never from the box's origin PC
+   * (#444 (b)). Default: the machine-id file.
    */
-  originMachineFor?: (boxId: string) => Promise<string | undefined>;
+  machineId?: () => string | undefined;
 }
 
 /**
@@ -159,7 +160,7 @@ export class CredentialsFanout {
   ) => Promise<void>;
   private readonly backupPathFor?: (agent: CredentialAgentKind) => string;
   private readonly accountBackupPathFor: (agent: CredentialAgentKind, account: string) => string;
-  private readonly originMachineFor: (boxId: string) => Promise<string | undefined>;
+  private readonly machineId: () => string | undefined;
   private readonly accountKindFor: (
     agent: CredentialAgentKind,
     account: string,
@@ -203,7 +204,7 @@ export class CredentialsFanout {
       });
     this.custody = deps.custody ?? null;
     this.boxAccountFor = deps.boxAccountFor ?? stateBoxAccount;
-    this.originMachineFor = deps.originMachineFor ?? (() => Promise.resolve(undefined));
+    this.machineId = deps.machineId ?? tryGetMachineId;
   }
 
   /**
@@ -268,7 +269,7 @@ export class CredentialsFanout {
       await chmod(dirname(backupPath), 0o700).catch(() => {});
     }
     await writeCredentialBackup(agent, content, { backupPath });
-    await this.recordInCustody(agent, account, content, sourceBoxId);
+    await this.recordInCustody(agent, account, content);
     const label = isDefault ? agent : `${agent} account '${account}'`;
     this.log(
       `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
@@ -294,7 +295,6 @@ export class CredentialsFanout {
     agent: CredentialAgentKind,
     account: string,
     content: string,
-    sourceBoxId: string,
   ): Promise<void> {
     if (!this.custody) return;
     try {
@@ -304,9 +304,7 @@ export class CredentialsFanout {
       // is the write to custody -- the copy every later create seeds from -- so
       // it checks rather than trusting its caller.
       if (!spec.credential) return;
-      const machine = isDefaultAccount(account)
-        ? undefined
-        : ((await this.originMachineFor(sourceBoxId).catch(() => undefined)) ?? tryGetMachineId());
+      const machine = isDefaultAccount(account) ? undefined : this.machineId();
       await this.custody.put(
         accountCustodyPath(agent, account, spec.credential.boxRelPath, machine),
         Buffer.from(content, 'utf8'),

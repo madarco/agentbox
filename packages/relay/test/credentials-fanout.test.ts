@@ -67,7 +67,8 @@ describe('CredentialsFanout', () => {
       accountBackupPathFor: (agent, account) => join(dir, 'credentials', agent, `${account}.json`),
       accountKindFor: () => Promise.resolve('login'),
       custody: { put },
-      originMachineFor: () => Promise.resolve('11111111-2222-3333-4444-555555555555'),
+      // The hub's own machine, not the box's origin PC (#444 (b)).
+      machineId: () => '11111111-2222-3333-4444-555555555555',
       boxAccountFor: (boxId, agent) =>
         Promise.resolve(boxId === 'box-work' && agent === 'claude' ? 'work' : undefined),
     });

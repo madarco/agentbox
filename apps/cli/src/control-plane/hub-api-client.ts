@@ -586,6 +586,29 @@ export interface HubApiAccount {
   /** Absent from an older hub. */
   auth?: { state: 'ok' | 'expiring' | 'revoked'; since?: string; box?: string; detail?: string };
   default?: { global?: boolean; project?: boolean };
+  /** The PC accounts imported into this hub account (a remote hub; llm-accounts Phase 9). */
+  importedFrom?: Array<{ machine: string; machineLabel?: string; id: string }>;
+}
+
+/** One login or key a PC hands a remote hub (`POST /api/v1/accounts/import`). */
+export interface HubApiAccountImportItem {
+  agent: string;
+  /** This PC's own name (`default` for the agent's own login). */
+  id: string;
+  kind: 'login' | 'setup-token' | 'api-key';
+  identity?: { email?: string; org?: string; plan?: string };
+  secret: string;
+  machine: string;
+  machineLabel?: string;
+  force?: boolean;
+}
+
+export interface HubApiAccountImportResult {
+  agent: string;
+  id: string;
+  hubId?: string;
+  action: 'created' | 'merged' | 'updated' | 'kept' | 'renamed' | 'removed' | 'refused';
+  reason: string;
 }
 
 /** Where a new box's account for one agent comes from (`GET /accounts/default`). */
@@ -602,6 +625,8 @@ export interface HubApiAccountList {
   /** Absent from an older hub, or when the config can't be read (`defaultsError`). */
   defaults?: Record<string, HubApiAccountDefault>;
   defaultsError?: string;
+  /** The hub machine's id (its own named logins sit under it in custody). */
+  machine?: string;
 }
 
 export interface HubApiCheckoutReport {
@@ -2214,6 +2239,19 @@ export class HubApiClient {
   }): Promise<HubApiAccount> {
     const res = await this.request<{ account: HubApiAccount }>('POST', '/accounts', body);
     return res.account;
+  }
+
+  /**
+   * Import this PC's logins and keys into the hub's store (a remote hub owns
+   * its subscriptions). An older hub answers 404 (`not_found`).
+   */
+  async importAccounts(items: HubApiAccountImportItem[]): Promise<HubApiAccountImportResult[]> {
+    const res = await this.request<{ results: HubApiAccountImportResult[] }>(
+      'POST',
+      '/accounts/import',
+      { items },
+    );
+    return res.results ?? [];
   }
 
   /** Set (or with `account: null` clear) an agent's default account in one config layer. */

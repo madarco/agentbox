@@ -506,6 +506,30 @@ export async function runAgentCreate(
       }
     })());
 
+  /**
+   * The account NAMES for a create a remote hub runs (llm-accounts Phase 9):
+   * the hub resolves them against its own accounts, which this PC may not
+   * hold, so this PC's store is not checked here.
+   */
+  let hubAccountsPromise: Promise<Record<string, string>> | undefined;
+  const hubAccountNames = (): Promise<Record<string, string>> =>
+    (hubAccountsPromise ??= (async () => {
+      try {
+        const lenders = agentSourceIds(await modelAuth());
+        const r = await resolveBoxAccounts({
+          agents: [a.spec.id, ...lenders],
+          flags: parseAccountFlags(opts.account, a.spec.id),
+          config: cfgLoaded,
+          loginOnly: lenders,
+          verify: false,
+        });
+        for (const w of r.warnings) log.warn(w);
+        return r.accounts;
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err), 1);
+      }
+    })());
+
   if (opts.initialPrompt && opts.initialPrompt.length > 0) {
     // Captured as a const so the narrowing survives into the status-line
     // callback below (TS drops property narrowing inside a closure).
@@ -529,12 +553,12 @@ export async function runAgentCreate(
     // Before the routing round trip, so the question is answered at a bare
     // terminal on either branch — and so a refused source costs no box.
     const borrowCredentials = await modelAuth();
-    const accounts = await boxAccounts();
     // Route the background run to the control box when configured — the worker
     // creates the box AND starts the agent with the prompt (laptop off). Local
     // creds aren't needed for the hub path (custody seeds them).
     const iRouting = await routing();
     if (iRouting.where === 'hub') {
+      const accounts = await hubAccountNames();
       const hubOpts = buildHubCreateOpts({
         providerName,
         ...(remoteHost ? { remoteHost } : {}),
@@ -638,6 +662,7 @@ export async function runAgentCreate(
       if (err instanceof MissingAgentCredsError) fail(err.message);
       throw err;
     }
+    const accounts = await boxAccounts();
     const maxRunningOverride = parseMaxOption('--max-running', opts.maxRunning);
     const maxWorkingOverride = parseMaxOption('--max-working', opts.maxWorking);
     // Carry gate runs here on the host (same gate as the foreground path); the
@@ -778,7 +803,9 @@ export async function runAgentCreate(
   }
 
   const modelAuthSources = await modelAuth();
-  const accounts = await boxAccounts();
+  // Names only for now: a create the remote hub runs resolves them against the
+  // hub's accounts; one built here checks this PC's store (`boxAccounts`).
+  await hubAccountNames();
 
   // Host-tool gate (agentbox.yaml's `tools:` block): a committed yaml can
   // only REQUEST host CLIs; the grant is the host's decision. Never blocks.
@@ -843,6 +870,7 @@ export async function runAgentCreate(
     if (route.where === 'hub' && preflight.hubIncompatible) {
       if (opts.viaHub) log.warn(a.text.hubIncompatibleReason);
     } else if (route.where === 'hub') {
+      const accounts = await hubAccountNames();
       const hubOpts = buildHubCreateOpts({
         providerName,
         ...(remoteHost ? { remoteHost } : {}),
@@ -936,6 +964,8 @@ export async function runAgentCreate(
     // Cloud sign-in offer: capture a host login to ~/.agentbox so the per-box
     // push seeds it (the docker offer only seeds via the shared volume). Placed
     // after the hub route on purpose — see `offerSignIn`.
+    // Built here: the account must be one this PC holds.
+    const accounts = await boxAccounts();
     // A missing llm.proxyUrl fails before the sign-in offer.
     await localLlmProxy();
     if (a.signInOfferTiming === 'before-create') await offerSignIn();
@@ -1016,6 +1046,7 @@ export async function runAgentCreate(
     await offerPortless();
   }
 
+  const dockerAccounts = await boxAccounts();
   // host-snapshot default off: explicit flag/config wins.
   const useSnapshot =
     opts.hostSnapshot === false
@@ -1048,7 +1079,7 @@ export async function runAgentCreate(
       carry: carryEntries,
       ...(modelAuthSources.length > 0 ? { borrowCredentials: modelAuthSources } : {}),
       ...(skillSelection ? { skills: skillSelection } : {}),
-      ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+      ...(Object.keys(dockerAccounts).length > 0 ? { accounts: dockerAccounts } : {}),
       ...(await localLlmProxy()),
       vnc: { enabled: cfg.box.vnc },
       ...(persistent !== undefined ? { persistent } : {}),

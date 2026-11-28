@@ -13,10 +13,11 @@
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { mkdir, readdir, rm } from 'node:fs/promises';
-import { hostname, tmpdir } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { parseProviderSpec, tryGetMachineId } from '@agentbox/config';
+import { loadEffectiveConfig, parseProviderSpec, tryGetMachineId } from '@agentbox/config';
+import { createAccountImporter, resolveHubCreateAccounts } from './backend/account-import.js';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -36,6 +37,8 @@ import {
 // lean control-plane surface the Next app imports.
 import { recordActivity, timelineSink } from '@agentbox/relay';
 import {
+  accountDefaults,
+  agentSourceIds,
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
@@ -125,12 +128,13 @@ export async function seedHostBackupsFromCustody(
 }
 
 /**
- * The NAMED accounts' secrets, from custody `agents/<agent>/accounts/<id>/<file>`
- * into the account store's `credentials/<agent>/<id>.json` (llm-accounts
- * Phase 4) — newest-wins, exactly like the default login above, so a box's
- * refreshed account login is never replaced by an older pushed copy. Rows
- * (`accounts.json`) do not travel yet; until Phase 5 this seeds the secret a
- * box on that account (created with the row present) reads.
+ * The NAMED accounts' secrets, from custody
+ * `agents/<agent>/accounts/<this machine>/<id>/<file>` into the account store's
+ * `credentials/<agent>/<id>.json` — newest-wins, exactly like the default login
+ * above, so a box's refreshed account login is never replaced by an older
+ * copy. The rows are the store's own: on a remote hub, the accounts PCs
+ * imported (`POST /api/v1/accounts/import`, llm-accounts Phase 9), whose
+ * logins the import and the relay mirror under this hub's machine id.
  */
 async function seedAccountSecretsFromCustody(
   custody: Pick<FsCustodyStore, 'get' | 'list'>,
@@ -186,6 +190,42 @@ async function seedAccountSecretsFromCustody(
       }
     }
   }
+}
+
+/**
+ * The named accounts of a worker create, as hub ids (Phase 9 Selection): the
+ * client's names, else this hub's global `<agent>.account`, else `default`.
+ * Throws the reason when one cannot be seeded.
+ */
+export async function resolveWorkerAccounts(o: {
+  agentId: string | undefined;
+  names: Readonly<Record<string, string>> | undefined;
+  borrowCredentials: readonly string[];
+  requesterMachine: string | undefined;
+}): Promise<Record<string, string>> {
+  const lenders = agentSourceIds(o.borrowCredentials);
+  const agents = o.agentId ? [o.agentId, ...lenders] : lenders;
+  if (agents.length === 0) return {};
+  const cfg = await loadEffectiveConfig(homedir()).catch(() => null);
+  const hubDefaults: Record<string, string | undefined> = {};
+  for (const [agent, d] of Object.entries(
+    accountDefaults(
+      agents,
+      cfg
+        ? { layers: { ...cfg.layers, project: { ...cfg.layers.project, values: {} } } }
+        : undefined,
+    ),
+  )) {
+    if (d.global) hubDefaults[agent] = d.global;
+  }
+  return resolveHubCreateAccounts({
+    agents,
+    ...(o.names ? { names: o.names } : {}),
+    loginOnly: lenders,
+    ...(o.requesterMachine ? { requesterMachine: o.requesterMachine } : {}),
+    hubDefaults,
+    imports: await createAccountImporter({ machineId: () => tryGetMachineId() }).readImports(),
+  });
 }
 
 /**
@@ -317,9 +357,22 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
 
   if (opts.mockCreate) {
     // Offline path: skip lease/clone/provider entirely, return a synthetic id.
-    return (request, jobId) => {
-      log(`[mock] created box for job ${jobId} (${request.provider} ${request.repoUrl})`);
-      return Promise.resolve({ boxId: `mock-${jobId.slice(0, 8)}` });
+    return async (request, jobId) => {
+      // The account resolution still runs, so the offline smoke fails a job on
+      // an account this hub cannot seed exactly as a real create does.
+      const accounts = await resolveWorkerAccounts({
+        agentId: request.agent ? resolveCreateAgentSpec(request.agent)?.id : undefined,
+        names: request.opts?.accounts,
+        borrowCredentials: request.opts?.borrowCredentials ?? [],
+        requesterMachine: request.requester?.machineId,
+      });
+      const named = Object.entries(accounts)
+        .map(([a, id]) => `${a}=${id}`)
+        .join(', ');
+      log(
+        `[mock] created box for job ${jobId} (${request.provider} ${request.repoUrl})${named ? ` accounts: ${named}` : ''}`,
+      );
+      return { boxId: `mock-${jobId.slice(0, 8)}` };
     };
   }
 
@@ -397,6 +450,23 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       // Seed agent creds from custody just before create, so provider.create's
       // seed step reads a logged-in host backup.
       await seedHostBackupsFromCustody(custody, log);
+      // The accounts the box runs on, resolved against THIS hub's store (the
+      // logins and keys PCs imported into it; llm-accounts Phase 9) BEFORE
+      // anything is built: a name the hub cannot seed fails the job here, so a
+      // box never starts signed out on an account it was recorded as.
+      const accounts = await resolveWorkerAccounts({
+        agentId: agentSpec?.id,
+        names: createOpts?.accounts,
+        borrowCredentials: createOpts?.borrowCredentials ?? [],
+        requesterMachine: requester?.machineId,
+      });
+      if (Object.keys(accounts).length > 0) {
+        log(
+          `accounts: ${Object.entries(accounts)
+            .map(([a, id]) => `${a}=${id}`)
+            .join(', ')}`,
+        );
+      }
       // Likewise the base image: the deploy seeds `prepared/<provider>.json`
       // into custody, but the provider's baked-or-not gate only reads local
       // prepared-state — so without this a fresh control box refuses to create.
@@ -463,10 +533,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.borrowCredentials?.length
           ? { borrowCredentials: createOpts.borrowCredentials }
           : {}),
-        // Resolved at enqueue against this machine's account store.
-        ...(createOpts?.accounts && Object.keys(createOpts.accounts).length > 0
-          ? { accounts: createOpts.accounts }
-          : {}),
+        // The HUB's ids (a PC's own name for an account it imported is mapped).
+        ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
         // Resolved at enqueue against this hub's own address.
         ...(createOpts?.llmProxy ? { llmProxy: createOpts.llmProxy } : {}),
         // Everything provider-shaped comes from the machine that HAS the project

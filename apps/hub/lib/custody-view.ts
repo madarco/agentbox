@@ -30,10 +30,17 @@ export interface AgentCredSummary {
   /** Agent id (second path segment under `agents/`). */
   agent: string;
   label: string;
+  /** Files of the agent's own (default) login, `agents/<agent>/<file>`. */
   count: number;
   size: number;
   /** Epoch ms of the most recent write across this agent's entries, or 0. */
   lastUpdate: number;
+  /**
+   * Named-account objects (`agents/<agent>/accounts/…`), counted apart: they are
+   * not the agent's login, so a hub holding only those gives a default box none
+   * (#442).
+   */
+  accounts: number;
 }
 
 /**
@@ -41,22 +48,24 @@ export interface AgentCredSummary {
  * logins will a box created on this control box receive?". Pure.
  */
 export function summarizeAgentCredentials(entries: CustodyEntry[]): AgentCredSummary[] {
-  const byAgent = new Map<string, CustodyEntry[]>();
+  const byAgent = new Map<string, { own: CustodyEntry[]; accounts: number }>();
   for (const e of entries) {
-    const [scope, agent] = e.path.split('/');
+    const [scope, agent, third] = e.path.split('/');
     if (scope !== 'agents' || !agent) continue;
-    const list = byAgent.get(agent);
-    if (list) list.push(e);
-    else byAgent.set(agent, [e]);
+    let slot = byAgent.get(agent);
+    if (!slot) byAgent.set(agent, (slot = { own: [], accounts: 0 }));
+    if (third === 'accounts' && e.path.split('/').length > 3) slot.accounts++;
+    else slot.own.push(e);
   }
   return [...byAgent.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([agent, list]) => ({
+    .map(([agent, { own, accounts }]) => ({
       agent,
       label: CUSTODY_AGENT_LABELS[agent] ?? agent,
-      count: list.length,
-      size: list.reduce((n, e) => n + e.size, 0),
-      lastUpdate: list.reduce((max, e) => Math.max(max, Date.parse(e.updatedAt) || 0), 0),
+      count: own.length,
+      size: own.reduce((n, e) => n + e.size, 0),
+      lastUpdate: own.reduce((max, e) => Math.max(max, Date.parse(e.updatedAt) || 0), 0),
+      accounts,
     }));
 }
 

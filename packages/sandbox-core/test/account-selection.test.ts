@@ -72,6 +72,22 @@ describe('parseAccountFlags', () => {
 });
 
 describe('resolveBoxAccounts', () => {
+  it('verify:false returns the chosen names without reading the store (a remote hub resolves them)', async () => {
+    const r = await resolveBoxAccounts({
+      agents: ['claude', 'codex'],
+      flags: { claude: 'only_on_the_hub' },
+      config: layers({ global: { codex: { account: 'default' } } }),
+      store: { ...store, path: join(dir, 'missing', 'accounts.json') },
+      verify: false,
+    });
+    // An explicit `default` travels too, so the hub can tell it from "no choice".
+    expect(r.accounts).toEqual({ claude: 'only_on_the_hub', codex: 'default' });
+    expect(
+      (await resolveBoxAccounts({ agents: ['claude'], config: layers(), store, verify: false }))
+        .accounts,
+    ).toEqual({});
+  });
+
   it('flag > project > global > default, named accounts only', async () => {
     const cfg = layers({
       project: { claude: { account: 'ci' } },

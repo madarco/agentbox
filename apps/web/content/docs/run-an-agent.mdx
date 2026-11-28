@@ -184,10 +184,14 @@ the login out.
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
 secret 0600 under `~/.agentbox/credentials/`. The hub's **Settings → Subscriptions** page shows
 the same list, each card named by the account with its login's email and plan,
-and lets you add a setup token or API key, remove one, and pick the default. `agentbox credentials` always asks this machine's own hub,
-even when a remote control box is configured. Named logins are copied to your
-control box keyed by this machine, so two computers' `work` accounts never mix;
-setup tokens and API keys stay on the machine.
+and lets you add a setup token or API key, remove one, and pick the default.
+
+With a [remote hub](/docs/deployed-hub) the subscriptions belong to the **hub**,
+not to the computer that signed them in: every computer, the web UI and the
+menu-bar app see one list, and any of them can create a box on any entry. See
+[subscriptions on a remote hub](/docs/deployed-hub#subscriptions-on-a-remote-hub).
+`agentbox credentials` then shows and changes the hub's list; `agentbox
+credentials --local` shows this computer's own store, which its docker boxes use.
 
 ### Choosing the account a box runs on
 
@@ -202,6 +206,8 @@ agentbox credentials use claude --clear        # drop this project's setting
 
 `credentials use` writes the `<agent>.account` config key (refusing an account
 that does not exist), so `agentbox config set claude.account work` still works.
+With a remote hub it still writes this computer's config (that is what a create
+from here sends), and checks the name against the hub's list.
 The global default can also be picked with **Make default** on the hub's
 Subscriptions page. `agentbox list` shows each box's account in the SUBSCRIPTION
 column (`default`, or `claude/work`).

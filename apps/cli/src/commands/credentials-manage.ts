@@ -5,10 +5,13 @@
  * the accounts as selectable rows under the add/defaults actions; every action
  * is also a subcommand for scripts. An account has one name, its id.
  *
- * Every action drives the LOCAL hub's `/api/v1/accounts` (the store is per
- * machine, so a configured remote control box is not asked). Signing a login
- * in is the one step that is not an API call: the agent's own OAuth flow runs
- * in a throwaway container here, as `agentbox <agent> login` does.
+ * Every action drives a hub's `/api/v1/accounts`. With a remote hub configured
+ * that is the REMOTE hub (llm-accounts Phase 9: on a remote hub a subscription
+ * belongs to the hub, and every PC sees one list); `--local` keeps this PC's
+ * own store, which its docker boxes use. Signing a login in is the one step
+ * that is not an API call: the agent's own OAuth flow runs in a throwaway
+ * container here, as `agentbox <agent> login` does, and the login is then
+ * imported into the remote hub.
  */
 import { cancel, confirm, isCancel, log, note, outro, select, spinner, text } from '@clack/prompts';
 import {
@@ -18,7 +21,9 @@ import {
   normalizeAccountName,
 } from '@agentbox/core';
 import { tableSelect } from '@agentbox/cli-kit';
-import { resolveAgentSpec } from '@agentbox/sandbox-core';
+import { homedir } from 'node:os';
+import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
+import { accountDefaults, resolveAgentSpec } from '@agentbox/sandbox-core';
 import { withHubClient } from '../control-plane/with-hub.js';
 import type {
   HubApiAccount,
@@ -44,7 +49,52 @@ import {
 
 type Kind = HubApiAccount['kind'];
 
-const LOCAL = { preferLocal: true } as const;
+/** `credentials --local`: this PC's own store, even with a remote hub configured. */
+let localOnly = false;
+export function setCredentialsLocal(local: boolean): void {
+  localOnly = local;
+}
+
+/** Which hub the commands drive: the configured remote one, unless `--local`. */
+function hubOpts(): { preferLocal: boolean } {
+  return { preferLocal: localOnly };
+}
+
+/**
+ * Whether the accounts are a REMOTE hub's (not this PC's store): a remote hub
+ * is configured, `--local` was not given, and the hub is not exposed from
+ * this very machine (whose store it is).
+ */
+async function onRemoteHub(): Promise<boolean> {
+  if (localOnly) return false;
+  const { resolveHubTarget } = await import('./hub.js');
+  const t = await resolveHubTarget(undefined);
+  return t.mode === 'remote' && t.onThisMachine !== true;
+}
+
+/**
+ * This PC's logins and keys into the remote hub (after a sign-in here), one
+ * line per change. A no-op without a remote hub.
+ */
+async function pushToRemoteHub(agent: string): Promise<void> {
+  const { resolveCustodyApiTarget } = await import('./control-plane.js');
+  const target = await resolveCustodyApiTarget(undefined, { quiet: true, remoteOnly: true });
+  if (!target?.apiKey) return;
+  const { collectAccountImportItems, importAccountsToHub, describeImportResult } =
+    await import('../control-plane/credential-import.js');
+  const results = await importAccountsToHub(
+    { url: target.url, apiKey: target.apiKey },
+    await collectAccountImportItems({ only: agent }),
+  );
+  if (!results) {
+    // An older hub: the custody push the login flow already ran is all it takes.
+    return;
+  }
+  for (const r of results) {
+    const line = describeImportResult(r);
+    if (line) log.info(`hub: ${line}`);
+  }
+}
 
 export function fail(err: unknown): never {
   log.error(err instanceof Error ? err.message : String(err));
@@ -66,11 +116,53 @@ function agentId(name: string): string {
  */
 /** The list; a config the hub can't read is a warning (no default marks then). */
 async function loadList(project?: string): Promise<HubApiAccountList | undefined> {
-  const list = await withHubClient(LOCAL, (client) =>
-    client.listAccounts(project ? { project } : {}),
+  const remote = await onRemoteHub();
+  // A remote hub has no folder of this PC: its defaults are its own global
+  // ones. What a create from here sends is THIS PC's config, so show that.
+  const list = await withHubClient(hubOpts(), (client) =>
+    client.listAccounts(project && !remote ? { project } : {}),
   );
+  if (list && remote) return withLocalDefaults(list, project);
   if (list?.defaultsError) log.warn(`${list.defaultsError}; defaults are not shown`);
   return list;
+}
+
+/** The list with `defaults` and each account's `default` from this PC's config. */
+async function withLocalDefaults(
+  list: HubApiAccountList,
+  project: string | undefined,
+): Promise<HubApiAccountList> {
+  let cfg: Awaited<ReturnType<typeof loadEffectiveConfig>>;
+  try {
+    cfg = await loadEffectiveConfig(project ?? homedir());
+  } catch (err) {
+    const defaultsError = `cannot read the config: ${err instanceof Error ? err.message : String(err)}`;
+    log.warn(`${defaultsError}; defaults are not shown`);
+    const { defaults: _drop, ...rest } = list;
+    void _drop;
+    return { ...rest, defaultsError };
+  }
+  const layers = project
+    ? cfg.layers
+    : { ...cfg.layers, project: { ...cfg.layers.project, values: {} } };
+  const defaults = accountDefaults(
+    list.agents.map((a) => a.id),
+    { layers },
+  );
+  return {
+    ...list,
+    defaults,
+    accounts: list.accounts.map((a) => {
+      const d = defaults[a.agent];
+      const isDefault = {
+        ...((d?.global ?? 'default') === a.id && d ? { global: true } : {}),
+        ...(d?.project === a.id ? { project: true } : {}),
+      };
+      const { default: _old, ...rest } = a;
+      void _old;
+      return Object.keys(isDefault).length > 0 ? { ...rest, default: isDefault } : rest;
+    }),
+  };
 }
 
 // ---- list ------------------------------------------------------------------
@@ -132,7 +224,7 @@ async function addPasted(
   const token = await readPastedSecret(replace ? `new ${noun}` : noun);
   if (token === null) return false;
   if (!token) throw new Error(`no ${noun} given`);
-  const stored = await withHubClient(LOCAL, (client) =>
+  const stored = await withHubClient(hubOpts(), (client) =>
     client.addPastedAccount({
       agent,
       id,
@@ -168,6 +260,9 @@ async function addLogin(
     account: { id },
     extra: loginExtra(opts),
   });
+  if (opts.code !== undefined || (!opts.headless && process.stdin.isTTY)) {
+    if (await onRemoteHub()) await pushToRemoteHub(agent);
+  }
 }
 
 function loginExtra(opts: Pick<AddOpts, 'headless' | 'code'>): Record<string, unknown> {
@@ -270,6 +365,12 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
     if (!(await addPasted(agent, id, account.kind, true))) process.exitCode = 1;
     return;
   }
+  const remote = await onRemoteHub();
+  // On a remote hub the sign-in still happens here, under THIS PC's name for
+  // the account (the hub may know it by another: a suffixed id, or default).
+  const { tryGetMachineId } = await import('@agentbox/config');
+  const mine = tryGetMachineId();
+  const localId = remote ? (account.importedFrom?.find((f) => f.machine === mine)?.id ?? id) : id;
   if (!opts.skipSignIn) {
     const spec = agentLoginSpec(agent);
     if (!spec) throw new Error(`${agent} has no login`);
@@ -281,7 +382,7 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
       opts.code === undefined &&
       (opts.headless === true || !process.stdin.isTTY);
     await runAgentLogin(spec, [], {
-      ...(isDefaultAccount(id) ? {} : { account: { id } }),
+      ...(isDefaultAccount(localId) ? {} : { account: { id: localId } }),
       // Finishing through `renew` again is what pushes the new login out.
       extra: {
         ...loginExtra(opts),
@@ -290,7 +391,9 @@ export async function renewCommand(ref: string, opts: RenewOpts): Promise<void> 
     });
     if (startsOnly) return;
   }
-  await fanOutLogin(agent, id);
+  // The new login into the hub (newer, so it wins), then the hub fans it out.
+  if (remote) await pushToRemoteHub(agent);
+  await fanOutLogin(agent, id, hubOpts());
 }
 
 // ---- rm / label / switch ----------------------------------------------------
@@ -328,7 +431,7 @@ export async function removeCommand(ref: string, opts: { yes?: boolean }): Promi
   }
   // The hub refuses while a box still records the account, and removes the
   // account's docker volume with it.
-  await withHubClient(LOCAL, async (client) => {
+  await withHubClient(hubOpts(), async (client) => {
     const r = await client.removeAccount(agent, id);
     log.success(
       r.volumeRemoved
@@ -348,7 +451,7 @@ export async function removeCommand(ref: string, opts: { yes?: boolean }): Promi
 export async function switchCommand(box: string, ref: string): Promise<void> {
   const { agent: name, id } = parseAccountRef(ref);
   const agent = agentId(name);
-  await withHubClient(LOCAL, async (client) => {
+  await withHubClient(hubOpts(), async (client) => {
     const r = await client.switchBoxAccount(box, { agent, account: id });
     const how = r.restarted ? ' (agent restarted)' : r.how === 'file' ? ' (no restart)' : '';
     log.success(`${r.agent} in ${box} moved from '${r.from}' to '${r.to}'${how}`);
@@ -412,7 +515,32 @@ async function setDefault(
   scope: 'global' | 'project',
   project: string,
 ): Promise<void> {
-  await withHubClient(LOCAL, async (client) => {
+  if (await onRemoteHub()) {
+    // This PC's own config, because it is what a create from here sends; the
+    // name is checked against the hub's list, which resolves it.
+    const key = `${agent}.account`;
+    const cwd = scope === 'project' ? project : homedir();
+    if (account === null) {
+      await unsetConfigValue(scope, key, cwd);
+    } else {
+      if (!isDefaultAccount(account)) {
+        const list = await loadList();
+        if (!list) return;
+        if (!list.accounts.some((a) => a.agent === agent && a.id === account)) {
+          throw new Error(`no ${agent}/${account} on the hub (see \`agentbox credentials\`)`);
+        }
+      }
+      await setConfigValue(scope, key, account, cwd);
+    }
+    const where = scope === 'global' ? 'every project' : 'this project';
+    log.success(
+      account === null
+        ? `cleared the ${scope} ${agent} account on this PC`
+        : `new ${agent} boxes from this PC in ${where} use ${agent}/${account}`,
+    );
+    return;
+  }
+  await withHubClient(hubOpts(), async (client) => {
     const defaults = await client.setAccountDefault({
       agent,
       account,
@@ -584,7 +712,7 @@ async function tuiAccount(
 }
 
 export async function runCredentialsTui(): Promise<void> {
-  await withHubClient(LOCAL, async (client) => {
+  await withHubClient(hubOpts(), async (client) => {
     let cursorAt: string | undefined;
     try {
       for (;;) {

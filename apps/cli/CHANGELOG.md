@@ -13,6 +13,12 @@ CLI, not the raw commits.
 
 ### Added
 
+- **Subscriptions on a remote hub belong to the hub.** Every computer's named
+  logins, setup tokens and API keys are imported into the hub's own list, so any
+  enrolled computer, the web UI and the tray can create a box on any of them; one
+  subscription signed in on two computers becomes one account, and a create the hub
+  cannot sign in now fails before the box is built instead of starting signed out.
+
 - **Skills library in the hub.** The hub keeps one library of skills, seeded
   from your PC and managed with `agentbox skills` or the hub's Skills page. It
   is delivered to every box of every provider in each agent's own skill folder.
