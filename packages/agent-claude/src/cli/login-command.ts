@@ -253,7 +253,11 @@ async function prepareAccountVolume(account: LoginAccount, image: string): Promi
   const volume = claudeAccountVolume(account);
   await ensureClaudeVolume({ volume }, { syncFromHost: true, image, account: account.id });
   // A re-login of this account must not inherit the previous login's profile.
-  await resetVolumeAccountState(volume, image);
+  // A corrupt `_claude.json` was removed instead: seed a fresh one (the seed
+  // is write-once, so it only fills the gap).
+  if ((await resetVolumeAccountState(volume, image)) === 'removed') {
+    await ensureClaudeVolume({ volume }, { syncFromHost: true, image, account: account.id });
+  }
 }
 
 /** Declared BEFORE the factory's `--interactive`, which is the order help prints. */
@@ -320,15 +324,21 @@ export async function runClaudeLoginCommand(
     // so every later box (shared or isolate) is seeded. A named account signs
     // in against its own volume instead and is captured into the account store.
     const volume = account ? claudeAccountVolume(account) : undefined;
+    // A first login that does not complete must not leave its volume behind.
+    const dropOrphan = async (): Promise<void> => {
+      if (account && volume) await host.dropOrphanAccountVolume?.({ account, volume });
+    };
     const res = await signInToClaude(image, args, {
       passthrough: mode === 'interactive',
       ...(volume ? { volume } : {}),
     });
     if (res.cancelled) {
+      await dropOrphan();
       outro('sign-in cancelled');
       process.exit(1);
     }
     if (!res.ok) {
+      await dropOrphan();
       log.error(res.error ?? 'login failed');
       // A login method whose output we can't recognize (an exotic `-- --sso`
       // shape) never reaches a prompt; the passthrough still drives it.
@@ -338,7 +348,12 @@ export async function runClaudeLoginCommand(
       process.exit(1);
     }
     if (account && volume) {
-      await host.captureAccountLogin({ account, volume, image });
+      try {
+        await host.captureAccountLogin({ account, volume, image });
+      } catch (err) {
+        await dropOrphan();
+        throw err;
+      }
       return;
     }
     outro('signed in — credentials saved for future boxes');

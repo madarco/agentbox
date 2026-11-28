@@ -19,7 +19,7 @@
 
 import { execa } from 'execa';
 import { chmod, mkdir } from 'node:fs/promises';
-import { tryGetMachineId } from '@agentbox/config';
+import { tryGetMachineId, withFileLock } from '@agentbox/config';
 import { dirname } from 'node:path';
 import {
   accountCustodyPath,
@@ -39,6 +39,7 @@ import {
   writeCredentialBackup,
   type CredentialAgentKind,
   readAccounts,
+  withAccountsLock,
   readState,
 } from '@agentbox/sandbox-core';
 
@@ -99,12 +100,15 @@ export interface CredentialsFanoutDeps {
    * for `default`. Override for tests; default: `~/.agentbox/state.json`.
    */
   boxAccountFor?: (boxId: string, agent: CredentialAgentKind) => Promise<string | undefined>;
+  /** Run under the accounts lock. Override for tests; default: the store's lock. */
+  accountsLock?: <T>(fn: () => Promise<T>) => Promise<T>;
   /**
-   * The machine a box was built for (its registration `originMachineId`): a
-   * named account belongs to that machine's store, so its custody copy is keyed
-   * by it. Default: this relay's own machine.
+   * This relay's own machine id, the `<machine>` a named account's custody copy
+   * is filed under. The account came from THIS machine's store (on a remote
+   * hub, a PC's account imported into it), never from the box's origin PC
+   * (#444 (b)). Default: the machine-id file.
    */
-  originMachineFor?: (boxId: string) => Promise<string | undefined>;
+  machineId?: () => string | undefined;
 }
 
 /**
@@ -122,6 +126,27 @@ export async function stateBoxAccount(boxId: string, agent: string): Promise<str
   }
   const box = state.boxes.find((b) => b.id === boxId);
   return namedAccounts(box?.accounts)?.[agent];
+}
+
+/**
+ * The account `agent` runs on in box `boxId`: the box's REGISTRATION first,
+ * then `state.json`. A registration store that fails to answer is not "no
+ * registration" (#442 review): the update is unverifiable, so it can never
+ * route a named box's login into the default account. An absent registration
+ * (a docker box the PC hub never registered) falls through to `state.json`.
+ */
+export async function registrationBoxAccount(
+  store: { getBox(boxId: string): Promise<{ accounts?: Record<string, string> } | undefined> },
+  boxId: string,
+  agent: string,
+): Promise<string | undefined> {
+  let reg: { accounts?: Record<string, string> } | undefined;
+  try {
+    reg = await store.getBox(boxId);
+  } catch {
+    return UNVERIFIABLE_ACCOUNT;
+  }
+  return namedAccounts(reg?.accounts)?.[agent] ?? (await stateBoxAccount(boxId, agent));
 }
 
 /** How long after a switch a mismatched login is taken for a refresh race. */
@@ -159,7 +184,7 @@ export class CredentialsFanout {
   ) => Promise<void>;
   private readonly backupPathFor?: (agent: CredentialAgentKind) => string;
   private readonly accountBackupPathFor: (agent: CredentialAgentKind, account: string) => string;
-  private readonly originMachineFor: (boxId: string) => Promise<string | undefined>;
+  private readonly machineId: () => string | undefined;
   private readonly accountKindFor: (
     agent: CredentialAgentKind,
     account: string,
@@ -180,6 +205,7 @@ export class CredentialsFanout {
     boxId: string,
     agent: CredentialAgentKind,
   ) => Promise<LastSwitch | undefined>;
+  private readonly accountsLock: <T>(fn: () => Promise<T>) => Promise<T>;
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly chains = new Map<string, Promise<void>>();
 
@@ -202,8 +228,9 @@ export class CredentialsFanout {
         return path;
       });
     this.custody = deps.custody ?? null;
+    this.accountsLock = deps.accountsLock ?? ((fn) => withAccountsLock(fn));
     this.boxAccountFor = deps.boxAccountFor ?? stateBoxAccount;
-    this.originMachineFor = deps.originMachineFor ?? (() => Promise.resolve(undefined));
+    this.machineId = deps.machineId ?? tryGetMachineId;
   }
 
   /**
@@ -243,10 +270,46 @@ export class CredentialsFanout {
     sourceBoxId: string,
   ): Promise<CredentialsHandleResult> {
     const isDefault = isDefaultAccount(account);
-    // Only a LOGIN account takes a login. A pasted-kind account's secret is
-    // its token (a login there would replace it and break every box on it),
-    // and an account the store no longer has must not be re-created by a
-    // late update (`credentials rm` already removed it).
+    // Read, gate and write under the credential's own lock, the one a hub's
+    // account import takes too (llm-accounts Phase 9): neither may land an
+    // older token over one the other wrote between its read and its write. A
+    // named account's row check and its write are also one step under the
+    // accounts lock, so an `accounts rm` cannot land between them and leave a
+    // secret with no row. The credential lock is the outer one, the order the
+    // import takes them in.
+    const lockPath =
+      (isDefault ? this.backupPathFor?.(agent) : this.accountBackupPathFor(agent, account)) ??
+      resolveAgentSpec(agent).credential?.hostBackup;
+    const store = () =>
+      isDefault
+        ? this.storeLogin(agent, account, content, sourceBoxId)
+        : this.accountsLock(() => this.storeLogin(agent, account, content, sourceBoxId));
+    const stored = lockPath ? await withFileLock(lockPath, store) : await store();
+    if (!stored.accepted) return stored;
+    const verdict = stored;
+    await this.recordInCustody(agent, account, content);
+    const label = isDefault ? agent : `${agent} account '${account}'`;
+    this.log(
+      `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
+    );
+    this.schedule(agent, account, sourceBoxId);
+    return { accepted: true, reason: verdict.reason };
+  }
+
+  /**
+   * Gate `content` against the account's stored copy and write it when it wins.
+   * Only a LOGIN account takes a login: a pasted-kind account's secret is its
+   * token (a login there would replace it and break every box on it), and an
+   * account the store no longer has must not be re-created by a late update
+   * (`credentials rm` already removed it).
+   */
+  private async storeLogin(
+    agent: CredentialAgentKind,
+    account: string,
+    content: string,
+    sourceBoxId: string,
+  ): Promise<CredentialsHandleResult> {
+    const isDefault = isDefaultAccount(account);
     if (!isDefault) {
       const kind = await this.accountKindFor(agent, account).catch(() => undefined);
       if (kind !== 'login') {
@@ -268,12 +331,6 @@ export class CredentialsFanout {
       await chmod(dirname(backupPath), 0o700).catch(() => {});
     }
     await writeCredentialBackup(agent, content, { backupPath });
-    await this.recordInCustody(agent, account, content, sourceBoxId);
-    const label = isDefault ? agent : `${agent} account '${account}'`;
-    this.log(
-      `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
-    );
-    this.schedule(agent, account, sourceBoxId);
     return { accepted: true, reason: verdict.reason };
   }
 
@@ -294,7 +351,6 @@ export class CredentialsFanout {
     agent: CredentialAgentKind,
     account: string,
     content: string,
-    sourceBoxId: string,
   ): Promise<void> {
     if (!this.custody) return;
     try {
@@ -304,9 +360,7 @@ export class CredentialsFanout {
       // is the write to custody -- the copy every later create seeds from -- so
       // it checks rather than trusting its caller.
       if (!spec.credential) return;
-      const machine = isDefaultAccount(account)
-        ? undefined
-        : ((await this.originMachineFor(sourceBoxId).catch(() => undefined)) ?? tryGetMachineId());
+      const machine = isDefaultAccount(account) ? undefined : this.machineId();
       await this.custody.put(
         accountCustodyPath(agent, account, spec.credential.boxRelPath, machine),
         Buffer.from(content, 'utf8'),

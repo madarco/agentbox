@@ -463,17 +463,20 @@ function pullRootFor(
 export async function pullFlatConfigViaTransport(
   agent: AgentId,
   t: SyncTransport,
-  opts: { hostHome?: string; dryRun?: boolean } = {},
+  opts: { hostHome?: string; dryRun?: boolean; excludeCredential?: boolean } = {},
 ): Promise<{ newItems: string[] }> {
   const spec = resolveAgentSpec(agent);
   const hostHome = opts.hostHome ?? homedir();
   const groups: Record<string, { dir: string; items: readonly string[] }> = {};
+  const credentialFile = opts.excludeCredential ? spec.credential?.boxRelPath : undefined;
   const roots: Record<string, { boxDir: string; hostDir: string }> = {};
   for (const item of spec.pull?.items ?? []) {
     const root = pullRootFor(spec, item.group, hostHome);
     if (!root) continue;
     roots[item.group] = root;
-    groups[item.group] = { dir: root.boxDir, items: item.names };
+    const names = credentialFile ? item.names.filter((n) => n !== credentialFile) : item.names;
+    if (names.length === 0) continue;
+    groups[item.group] = { dir: root.boxDir, items: names };
   }
   // Categories hang off the DEFAULT root and are addressed as `<cat>/<child>`.
   // An agent that declares none is completely unaffected by this block.
@@ -524,6 +527,7 @@ export async function pullFlatConfigViaTransport(
     if (!root) continue;
     const rel = entry.group in categories ? `${entry.group}/${entry.name}` : entry.name;
     if (seeded.has(rel)) continue;
+    if (credentialFile && entry.group === defaultGroup && rel === credentialFile) continue;
     const host = join(root.hostDir, entry.name);
     if (await pathExists(host)) continue; // additive
     pending.push({

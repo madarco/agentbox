@@ -36,6 +36,7 @@ import {
   removeCommand,
   renewCommand,
   runCredentialsTui,
+  setCredentialsLocal,
   switchCommand,
   useCommand,
   type AddOpts,
@@ -273,6 +274,22 @@ async function pushCredentialToCustody(
     const { resolveCustodyApiTarget } = await import('./control-plane.js');
     const target = await resolveCustodyApiTarget(undefined, { quiet: true, remoteOnly: true });
     if (!target) return;
+    // A hub that owns its subscriptions takes it through its import route,
+    // newest-wins on its side (llm-accounts Phase 9); an older hub, the custody PUT.
+    if (target.apiKey) {
+      const { collectAccountImportItems, importAccountsToHub, describeImportResult } =
+        await import('../control-plane/credential-import.js');
+      const all = await collectAccountImportItems({ only: agent });
+      const items = all ? all.filter((i) => i.id === account) : null;
+      const results = await importAccountsToHub({ url: target.url, apiKey: target.apiKey }, items);
+      if (results) {
+        for (const r of results) {
+          const line = describeImportResult(r);
+          if (line) process.stdout.write(`control box: ${line}\n`);
+        }
+        return;
+      }
+    }
     const { CustodyClient, planCredentialPush } =
       await import('../control-plane/custody-client.js');
     const client = new CustodyClient(target);
@@ -311,8 +328,15 @@ export const credentialsCommand = new Command('credentials')
     'Subscriptions and keys per agent (logins, setup tokens, API keys): list, add, renew, make default, move a box. Bare on a terminal: an interactive menu',
   )
   .option('--json', 'print the list as JSON (no menu)')
+  .option(
+    '--local',
+    "this PC's own store (its docker boxes) instead of the remote hub's subscriptions",
+  )
   // Without it the parent swallows a subcommand's own options (`list --json`).
   .enablePositionalOptions()
+  .hook('preAction', (cmd) => {
+    setCredentialsLocal((cmd.opts() as { local?: boolean }).local === true);
+  })
   .action(async (opts: { json?: boolean }) => {
     if (!opts.json && credentialsInteractive()) await runCredentialsTui();
     else await listCommand(opts).catch(fail);

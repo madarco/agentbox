@@ -13,6 +13,12 @@ CLI, not the raw commits.
 
 ### Added
 
+- **Subscriptions on a remote hub belong to the hub.** Every computer's named
+  logins, setup tokens and API keys are imported into the hub's own list, so any
+  enrolled computer, the web UI and the tray can create a box on any of them; one
+  subscription signed in on two computers becomes one account, and a create the hub
+  cannot sign in now fails before the box is built instead of starting signed out.
+
 - **Skills library in the hub.** The hub keeps one library of skills, seeded
   from your PC and managed with `agentbox skills` or the hub's Skills page. It
   is delivered to every box of every provider in each agent's own skill folder.
@@ -95,6 +101,27 @@ CLI, not the raw commits.
   it from your PC when it is empty, and never replace one already set. A
   project with no complete identity gets a warning saying the box will commit
   as the hub default.
+
+- **Accounts on docker and cloud:**
+  - `claude --resume` finds a session started on another account: docker boxes
+    share one `agentbox-claude-projects` volume, which each new box keeps up to
+    date with the sessions older boxes wrote.
+  - A first sign-in that fails no longer leaves an orphan volume behind.
+  - A damaged `_claude.json` no longer blocks a re-login.
+  - A re-login no longer loses the account's email.
+  - A pasted token never appears on a `docker` command line or in a cloud
+    sandbox's create env.
+  - A Daytona box on a named login gets the account's newest login.
+
+- **Accounts:** `agentbox credentials` lists `default` when the agent is signed
+  in but no box backed its login up yet. It names a damaged `accounts.json`
+  instead of hiding every named account. A setup token or API key saved as
+  `default` gets a message that points to a name and `credentials use`. Skills,
+  prompts and plugins pulled from a default box now reach boxes on named
+  accounts too. `download codex` keeps a named box's `auth.json` in the box.
+  `agent remove` can delete an unregistered agent's accounts. A docker session
+  whose box registry can't be read no longer forwards your host's API key.
+
 - **A remote hub no longer lists "Docker (local)"**, which it has no engine for;
   its own engine is the Remote Docker host `hub`, now listed first. A PC pointed
   at a remote hub hides local docker the same way.

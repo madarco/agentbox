@@ -13,10 +13,16 @@
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { mkdir, readdir, rm } from 'node:fs/promises';
-import { hostname, tmpdir } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { parseProviderSpec, tryGetMachineId } from '@agentbox/config';
+import {
+  loadEffectiveConfig,
+  parseProviderSpec,
+  tryGetMachineId,
+  withFileLock,
+} from '@agentbox/config';
+import { createAccountImporter, resolveHubCreateAccounts } from './backend/account-import.js';
 import {
   cloneRepoWithLfs,
   drainCreateJobs,
@@ -36,13 +42,18 @@ import {
 // lean control-plane surface the Next app imports.
 import { recordActivity, timelineSink } from '@agentbox/relay';
 import {
+  accountDefaults,
+  agentSourceIds,
   AGENT_SYNC_SPECS,
   boxNameBasisFromOriginUrl,
   boxSshDirForProvider,
   decodePastedSecret,
   readCredentialBackup,
+  resolveHostCredentialFile,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
+  withAccountsLock,
+  readAccounts,
   STATE_DIR,
 } from '@agentbox/sandbox-core';
 import {
@@ -54,6 +65,7 @@ import {
   ACCOUNTS_CUSTODY_SEGMENT,
   accountIdProblem,
   accountSecretPath,
+  findAccount,
   isDefaultAccount,
   resolveAgentLauncher,
   toQueueKind,
@@ -109,13 +121,19 @@ export async function seedHostBackupsFromCustody(
       // custody's hours-old copy. Claude's OAuth refresh ROTATES the refresh
       // token, so an older blob isn't merely expired — it is dead, and the box
       // cannot recover from it. Same newest-wins rule the fanout applies.
-      const existing = await readCredentialBackup(spec.id);
-      const verdict = shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+      // Under the credential's own lock, the one the relay's fan-out and the
+      // account import take: a rotation landing between this read and this
+      // write must not be replaced by custody's older copy.
+      const verdict = await withFileLock(spec.credential.hostBackup, async () => {
+        const existing = await readCredentialBackup(spec.id);
+        const v = shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        if (v.accept) await writeCredentialBackup(spec.id, incoming);
+        return v;
+      });
       if (!verdict.accept) {
         log(`kept the local ${spec.id} credentials (custody copy ${verdict.reason})`);
         continue;
       }
-      await writeCredentialBackup(spec.id, incoming);
       log(`seeded ${spec.id} credentials from custody (${verdict.reason})`);
     } catch (err) {
       log(
@@ -126,12 +144,13 @@ export async function seedHostBackupsFromCustody(
 }
 
 /**
- * The NAMED accounts' secrets, from custody `agents/<agent>/accounts/<id>/<file>`
- * into the account store's `credentials/<agent>/<id>.json` (llm-accounts
- * Phase 4) — newest-wins, exactly like the default login above, so a box's
- * refreshed account login is never replaced by an older pushed copy. Rows
- * (`accounts.json`) do not travel yet; until Phase 5 this seeds the secret a
- * box on that account (created with the row present) reads.
+ * The NAMED accounts' secrets, from custody
+ * `agents/<agent>/accounts/<this machine>/<id>/<file>` into the account store's
+ * `credentials/<agent>/<id>.json` — newest-wins, exactly like the default login
+ * above, so a box's refreshed account login is never replaced by an older
+ * copy. The rows are the store's own: on a remote hub, the accounts PCs
+ * imported (`POST /api/v1/accounts/import`, llm-accounts Phase 9), whose
+ * logins the import and the relay mirror under this hub's machine id.
  */
 async function seedAccountSecretsFromCustody(
   custody: Pick<FsCustodyStore, 'get' | 'list'>,
@@ -153,9 +172,15 @@ async function seedAccountSecretsFromCustody(
     }
     for (const entry of entries) {
       const parts = entry.path.split('/');
-      // agents / <agent> / accounts / <machine> / <id> / <file>
+      // agents / <agent> / accounts / <machine> / <id> / <file…> — a plugin's
+      // `boxRelPath` may itself hold a `/`, so the file is the whole tail.
       const id = parts[4];
-      if (parts.length !== 6 || parts[3] !== machine || parts[5] !== cred.boxRelPath || !id) {
+      if (
+        parts.length < 6 ||
+        parts[3] !== machine ||
+        parts.slice(5).join('/') !== cred.boxRelPath ||
+        !id
+      ) {
         continue;
       }
       if (accountIdProblem(id) !== null || isDefaultAccount(id)) continue;
@@ -165,20 +190,39 @@ async function seedAccountSecretsFromCustody(
         if (!found) continue;
         const incoming = found.data.toString('utf8');
         const backupPath = accountSecretPath(spec, id, stateDir)!;
-        const existing = await readCredentialBackup(spec.id, { backupPath });
-        // A pasted token has no expiry to order by: the latest push wins. A
-        // login gets the same newest-wins gate as the default above.
-        const verdict = decodePastedSecret(incoming)
-          ? existing === incoming
-            ? { accept: false, reason: 'unchanged' }
-            : { accept: true, reason: 'pasted secret changed' }
-          : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+        // Same credential lock and gate as the default above, with the accounts
+        // lock inside it (the order the account import takes them in), so an
+        // `accounts rm` cannot land between the row check and the write.
+        const verdict = await withFileLock(backupPath, () =>
+          withAccountsLock(
+            async () => {
+              // Only an account this machine's store still has: a secret for a
+              // removed account (`accounts rm` just ran) must not come back.
+              const row = findAccount(
+                await readAccounts({ path: join(stateDir, 'accounts.json'), stateDir }),
+                spec.id,
+                id,
+              );
+              if (!row) return { accept: false, reason: 'no such account in this store' };
+              const existing = await readCredentialBackup(spec.id, { backupPath });
+              // A pasted token has no expiry to order by: the latest push wins. A
+              // login gets the same newest-wins gate as the default above.
+              const v = decodePastedSecret(incoming)
+                ? existing === incoming
+                  ? { accept: false, reason: 'unchanged' }
+                  : { accept: true, reason: 'pasted secret changed' }
+                : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+              if (v.accept) await writeCredentialBackup(spec.id, incoming, { backupPath });
+              return v;
+            },
+            { path: join(stateDir, 'accounts.json') },
+          ),
+        );
         if (!verdict.accept) {
           log(`kept the local ${label} credentials (custody copy ${verdict.reason})`);
           continue;
         }
-        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
-        await writeCredentialBackup(spec.id, incoming, { backupPath });
         log(`seeded ${label} credentials from custody (${verdict.reason})`);
       } catch (err) {
         log(
@@ -187,6 +231,75 @@ async function seedAccountSecretsFromCustody(
       }
     }
   }
+}
+
+/** A provider whose box seeds the default login from a docker config volume too. */
+function isDockerShaped(provider: string | undefined): boolean {
+  if (!provider) return false;
+  const { name } = parseProviderSpec(provider);
+  return name === 'docker' || name === 'remote-docker';
+}
+
+/**
+ * The named accounts of a worker create, as hub ids (Phase 9 Selection): the
+ * client's names, else this hub's global `<agent>.account`, else `default`.
+ * Throws the reason when one cannot be seeded.
+ */
+export async function resolveWorkerAccounts(o: {
+  agentId: string | undefined;
+  names: Readonly<Record<string, string>> | undefined;
+  borrowCredentials: readonly string[];
+  requesterMachine: string | undefined;
+  /**
+   * The hub starts the agent itself (a prompt, or a web create): a box on
+   * `default` with no hub login would fail its first turn, so it is refused.
+   * A cold create (the PC attaches) may still sign in inside the box.
+   */
+  startsSession?: boolean;
+  /** The create's provider spec (`hetzner`, `docker:<host>`, …). */
+  provider?: string;
+  /** Where a "no default login, cannot tell" warning goes. */
+  log?: (line: string) => void;
+}): Promise<Record<string, string>> {
+  const lenders = agentSourceIds(o.borrowCredentials);
+  const agents = o.agentId ? [o.agentId, ...lenders] : lenders;
+  if (agents.length === 0) return {};
+  const cfg = await loadEffectiveConfig(homedir()).catch(() => null);
+  const hubDefaults: Record<string, string | undefined> = {};
+  for (const [agent, d] of Object.entries(
+    accountDefaults(
+      agents,
+      cfg
+        ? { layers: { ...cfg.layers, project: { ...cfg.layers.project, values: {} } } }
+        : undefined,
+    ),
+  )) {
+    if (d.global) hubDefaults[agent] = d.global;
+  }
+  // A box that takes its model auth from an env key needs no login of its own.
+  const envAuth = o.borrowCredentials.some((id) => id.startsWith('env:'));
+  const checkDefault = o.startsSession === true && !envAuth;
+  return resolveHubCreateAccounts({
+    agents,
+    ...(o.names ? { names: o.names } : {}),
+    loginOnly: lenders,
+    ...(o.requesterMachine ? { requesterMachine: o.requesterMachine } : {}),
+    hubDefaults,
+    imports: await createAccountImporter({ machineId: () => tryGetMachineId() }).readImports(),
+    ...(checkDefault
+      ? {
+          // Every source a create seeds the default login from that this hub
+          // can read: the backup and the agent's own host login file.
+          defaultLogin: async (agent: string) =>
+            (await resolveHostCredentialFile(agent).catch(() => null))?.text ?? null,
+          // A docker-shaped box also falls back to the agent's config volume,
+          // which cannot be read from here: warn instead of refusing.
+          ...(isDockerShaped(o.provider)
+            ? { warnNoDefaultLogin: (m: string) => (o.log ?? (() => {}))(`warning: ${m}`) }
+            : {}),
+        }
+      : {}),
+  });
 }
 
 /**
@@ -318,15 +431,46 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
 
   if (opts.mockCreate) {
     // Offline path: skip lease/clone/provider entirely, return a synthetic id.
-    return (request, jobId) => {
-      log(`[mock] created box for job ${jobId} (${request.provider} ${request.repoUrl})`);
-      return Promise.resolve({ boxId: `mock-${jobId.slice(0, 8)}` });
+    return async (request, jobId) => {
+      // The account resolution still runs, so the offline smoke fails a job on
+      // an account this hub cannot seed exactly as a real create does.
+      const accounts = await resolveWorkerAccounts({
+        agentId: request.agent ? resolveCreateAgentSpec(request.agent)?.id : undefined,
+        names: request.opts?.accounts,
+        borrowCredentials: request.opts?.borrowCredentials ?? [],
+        requesterMachine: request.requester?.machineId,
+        startsSession: Boolean(request.prompt) || request.startAgent === true,
+        provider: request.provider,
+        log,
+      });
+      const named = Object.entries(accounts)
+        .map(([a, id]) => `${a}=${id}`)
+        .join(', ');
+      log(
+        `[mock] created box for job ${jobId} (${request.provider} ${request.repoUrl})${named ? ` accounts: ${named}` : ''}`,
+      );
+      return { boxId: `mock-${jobId.slice(0, 8)}` };
     };
   }
 
   const extraInboundCidrs = opts.adminCidr ? [opts.adminCidr] : undefined;
 
   return makeControlPlaneCreateBox({
+    // Before the lease and the clone: a box whose account this hub cannot seed
+    // fails here at no cost. The logins are seeded from custody first, so a
+    // default login pushed since the last create counts.
+    preflight: async (request) => {
+      await seedHostBackupsFromCustody(custody, log);
+      return resolveWorkerAccounts({
+        agentId: request.agent ? resolveCreateAgentSpec(request.agent)?.id : undefined,
+        names: request.opts?.accounts,
+        borrowCredentials: request.opts?.borrowCredentials ?? [],
+        requesterMachine: request.requester?.machineId,
+        startsSession: Boolean(request.prompt) || request.startAgent === true,
+        provider: request.provider,
+        log,
+      });
+    },
     /**
      * Resolve a clone URL the worker can authenticate with.
      *
@@ -363,6 +507,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
     cloneRepo: (authedUrl, repoUrl, dest, branch) =>
       cloneRepoWithLfs(runGit, authedUrl, toHttpsUrl(repoUrl), dest, branch, log),
     createBox: async ({
+      preflight,
       workspacePath,
       name,
       repoUrl,
@@ -397,7 +542,30 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
       if (mod.ensureCredentials) await mod.ensureCredentials();
       // Seed agent creds from custody just before create, so provider.create's
       // seed step reads a logged-in host backup.
-      await seedHostBackupsFromCustody(custody, log);
+      // The logins were seeded from custody and the accounts resolved against
+      // THIS hub's store (the logins and keys PCs imported into it; Phase 9)
+      // by the preflight, before the lease and the clone: a name the hub cannot
+      // seed failed the job there. A caller without one (a test) does it here.
+      let accounts = preflight as Record<string, string> | undefined;
+      if (!accounts) {
+        await seedHostBackupsFromCustody(custody, log);
+        accounts = await resolveWorkerAccounts({
+          agentId: agentSpec?.id,
+          names: createOpts?.accounts,
+          borrowCredentials: createOpts?.borrowCredentials ?? [],
+          requesterMachine: requester?.machineId,
+          startsSession: Boolean(prompt) || startAgent === true,
+          provider,
+          log,
+        });
+      }
+      if (Object.keys(accounts).length > 0) {
+        log(
+          `accounts: ${Object.entries(accounts)
+            .map(([a, id]) => `${a}=${id}`)
+            .join(', ')}`,
+        );
+      }
       // Likewise the base image: the deploy seeds `prepared/<provider>.json`
       // into custody, but the provider's baked-or-not gate only reads local
       // prepared-state — so without this a fresh control box refuses to create.
@@ -464,10 +632,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         ...(createOpts?.borrowCredentials?.length
           ? { borrowCredentials: createOpts.borrowCredentials }
           : {}),
-        // Resolved at enqueue against this machine's account store.
-        ...(createOpts?.accounts && Object.keys(createOpts.accounts).length > 0
-          ? { accounts: createOpts.accounts }
-          : {}),
+        // The HUB's ids (a PC's own name for an account it imported is mapped).
+        ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
         // Resolved at enqueue against this hub's own address.
         ...(createOpts?.llmProxy ? { llmProxy: createOpts.llmProxy } : {}),
         // The requester's identity, else this hub's default. This machine's own

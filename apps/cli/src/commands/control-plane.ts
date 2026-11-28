@@ -112,6 +112,13 @@ import {
   type UploadItem,
 } from '../control-plane/custody-client.js';
 import { HubApiClient, HubApiError, type HubApiJob } from '../control-plane/hub-api-client.js';
+import {
+  collectAccountImportItems,
+  describeImportResult,
+  importAccountsToHub,
+  importChanged,
+  pullNamedLoginsFromHub,
+} from '../control-plane/credential-import.js';
 import { hubApiTargetFrom, withHubClient } from '../control-plane/with-hub.js';
 import { loadControlPlaneEnv } from '../control-plane/env-file.js';
 import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
@@ -1420,7 +1427,10 @@ const credentialsPushSub = new Command('push')
     '--agent <id>',
     'push only one agent, e.g. claude (run `agentbox config list` or see the registry for the full set)',
   )
-  .option('--force', 'upload even when the stored copy is the same or newer')
+  .option(
+    '--force',
+    'bring back an account removed on the hub (an older hub without the import route: upload even when its copy is the same or newer; a current hub always keeps the newer login)',
+  )
   .action(async (opts: { url?: string; agent?: string; force?: boolean }) => {
     try {
       const target = await resolveCustodyApiTarget(opts.url);
@@ -1435,6 +1445,28 @@ const credentialsPushSub = new Command('push')
         );
         process.exitCode = 1;
         return;
+      }
+      if (target.apiKey) {
+        const imported = await importAccountsToHub(
+          { url: target.url, apiKey: target.apiKey },
+          await collectAccountImportItems({
+            ...(only ? { only } : {}),
+            ...(opts.force ? { force: true } : {}),
+          }),
+        );
+        if (imported) {
+          if (imported.length === 0) log.info('Nothing to push.');
+          for (const r of imported) {
+            const line = describeImportResult(r);
+            if (line) log.info(line);
+          }
+          const changed = imported.filter(importChanged).length;
+          if (imported.some((r) => r.action === 'refused')) process.exitCode = 1;
+          log.success(
+            `Pushed ${String(changed)} item(s), the hub kept ${String(imported.length - changed)}.`,
+          );
+          return;
+        }
       }
       const items = await collectAgentCredentialUploads(only);
       const client = new CustodyClient(target);
@@ -1471,13 +1503,41 @@ const credentialsPullSub = new Command('pull')
         if (opts.agent && spec.id !== opts.agent) continue;
         const cred = spec.credential;
         if (!cred) continue;
-        const data = await client.get(`agents/${spec.id}/${cred.boxRelPath}`);
+        // One agent the hub does not know (a hidden or plugin agent this CLI
+        // has and the hub's registry lacks: custody refuses the path) must not
+        // stop the pull of every other login.
+        const data = await client
+          .get(`agents/${spec.id}/${cred.boxRelPath}`)
+          .catch((err: unknown) => {
+            if (err instanceof HubApiError && err.status === 400) return null;
+            throw err;
+          });
         if (data === null) continue;
         await mkdir(dirname(cred.hostBackup), { recursive: true });
         await writeFile(cred.hostBackup, data, { mode: 0o600 });
         await chmod(cred.hostBackup, 0o600);
         log.info(`pulled ${spec.id} credentials → ${cred.hostBackup}`);
         pulled++;
+      }
+      // This PC's named logins as the hub holds them (a hub box's refresh
+      // revoked the PC's copy). Needs the hub's account list: an API key.
+      if (target.apiKey) {
+        try {
+          const list = await new HubApiClient({
+            url: target.url,
+            apiKey: target.apiKey,
+          }).listAccounts();
+          const named = await pullNamedLoginsFromHub({
+            list,
+            get: (p) => client.get(p),
+            ...(opts.agent ? { only: opts.agent } : {}),
+          });
+          for (const n of named.pulled) log.info(`pulled ${n} from the hub`);
+          for (const n of named.kept) log.info(`${n}: this PC's copy is current`);
+          pulled += named.pulled.length;
+        } catch (err) {
+          log.warn(`named logins not pulled: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
       if (pulled === 0) log.info('No agent credentials in custody to pull.');
       else log.success(`Pulled ${String(pulled)} agent credential set(s).`);
@@ -2736,6 +2796,36 @@ async function syncAgentCredentials(
         );
       }
       return 0;
+    }
+    // A hub that owns its subscriptions (Phase 9) takes every login and key
+    // through its import route and decides newest-wins itself; an older hub
+    // (404) or a PC with only the admin token falls through to custody.
+    if (target.apiKey) {
+      const imported = await importAccountsToHub(
+        {
+          url: target.url,
+          apiKey: target.apiKey,
+          fetchImpl: deadlineFetch(AbortSignal.timeout(CREDENTIAL_SYNC_FETCH_MS)),
+        },
+        await collectAccountImportItems(),
+      );
+      if (imported) {
+        const changed = imported.filter(importChanged);
+        if (opts.announce) {
+          if (imported.length === 0) {
+            log.info(
+              'No host agent logins to push yet — sign in with `agentbox claude login`, then `agentbox hub credentials push`.',
+            );
+          } else if (changed.length === 0) {
+            log.info('Agent logins already up to date on the control box.');
+          }
+          for (const r of imported) {
+            const line = describeImportResult(r);
+            if (line) log.info(line);
+          }
+        }
+        return changed.length;
+      }
     }
     const items = await collectAgentCredentialUploads();
     if (items.length === 0) {

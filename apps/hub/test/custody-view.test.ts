@@ -26,6 +26,16 @@ describe('summarizeAgentCredentials', () => {
     expect(claude.lastUpdate).toBe(Date.parse('2026-07-28T12:00:00.000Z'));
   });
 
+  it("counts named-account objects apart from the agent's own login (#442)", () => {
+    const summary = summarizeAgentCredentials([
+      entry('agents/claude/accounts/mac-1/second/.credentials.json', 300),
+      entry('agents/claude/accounts/second/.credentials.json', 300),
+    ]);
+    expect(summary).toEqual([
+      expect.objectContaining({ agent: 'claude', count: 0, size: 0, lastUpdate: 0, accounts: 2 }),
+    ]);
+  });
+
   it('falls back to the raw id for an unknown agent and returns [] when empty', () => {
     expect(summarizeAgentCredentials([])).toEqual([]);
     const summary = summarizeAgentCredentials([entry('agents/gemini/creds.json')]);

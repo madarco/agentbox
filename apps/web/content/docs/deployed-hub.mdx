@@ -754,13 +754,31 @@ Custody is the control box's copy of what a box needs. Two kinds travel by diffe
 - **Agent logins** (Claude / Codex / OpenCode) — the _box's_ logins, so hub-created boxes are signed in. This is what `credentials push` moves.
 
 ```bash
-agentbox hub credentials push        # host agent logins → custody (hub boxes log in)
-agentbox hub credentials pull         # custody → ~/.agentbox backups (e.g. a box refreshed a token)
+agentbox hub credentials push        # this computer's logins and keys → the hub (hub boxes log in)
+agentbox hub credentials pull         # the hub's copies → ~/.agentbox (e.g. a box refreshed a token)
 agentbox hub secrets push [--project]  # a project's .env → custody
 agentbox hub custody list [prefix]   # manifest (paths + hashes; values never leave the box)
 ```
 
 You rarely run `credentials push` by hand: **`agentbox hub setup` pushes your agent logins to the control box on its own** once the deploy is healthy (and reports what went up), so the first hub-created box is never launched signed-out. After that, the push repeats itself **only when a login actually changes** — after `agentbox claude login` refreshes a token, and before _any_ cloud create routed to the hub (`agentbox create`, and `agentbox claude|codex|opencode`). Every push is content-hashed, so an unchanged one sends nothing and stays silent. A push also never replaces a **newer** login: a hub box that refreshed claude's or codex's token has revoked your computer's older copy, so the control box keeps its own (compared by when each token expires). `credentials push` is still there for the manual case, and its `--force` pushes your copy regardless.
+
+### Subscriptions on a remote hub
+
+On a remote hub a subscription belongs to the **hub**, not to the computer that signed it in. Every push hands the hub this computer's default login, each named login (`agentbox credentials add claude/work --login`) and each setup token or API key, and the hub keeps them in its own account store. Every enrolled computer, the web **Subscriptions** page and the menu-bar app then see the same list, and any of them can create a box on any entry:
+
+```bash
+agentbox credentials                        # the hub's list (--local: this computer's own)
+agentbox claude --account work              # resolved on the hub
+agentbox credentials rm claude/work         # removes it from the hub and from custody
+```
+
+- **One subscription, one account.** Two computers signed in to the same subscription (the same Claude or ChatGPT account, read off the login itself, or the same email) become one hub account, whatever each called it. A named login that is the subscription the hub's own default login already runs on goes into that default.
+- **Same name, different subscription.** It is never overwritten: the second one is added with a suffix (`work_2`), and the push says so. `--account work` from that computer still means its own `work`; from anywhere else, `work` is the first one.
+- **The hub's copy is the live one.** A hub box that renews a login copies it to that account's other boxes, and the hub never takes back an older copy from a computer (whose copy that renewal signed out). Logins are ordered by when their access token expires (Codex's included), so a computer's stale copy never replaces a fresher one. Run `agentbox hub credentials pull` to bring the hub's current logins back to this computer, and `agentbox credentials renew claude/work` to sign in again here and push the new login to every box on it.
+- **A shared setup token or API key has one owner.** When two computers push the same token it becomes one hub account, and after that only the computer whose push last set it can change it by pushing a new one, so an old copy on the other computer never puts the old token back. A token replaced on the hub itself (`agentbox credentials add claude/ci --replace` with the hub configured, or the Subscriptions page) is changed by no push.
+- **Each computer pushes only its own accounts.** A computer signed in with its own device token (`agentbox hub login`) cannot import accounts as another computer; the hub answers `403`.
+- **Removed on the hub stays removed.** After `credentials rm` against the hub, the next automatic push from a computer that still holds the account does not bring it back; `agentbox hub credentials push --force` does.
+- **A create never starts signed out.** A box whose account the hub cannot seed (it does not have it, or has no login for it) fails before anything is cloned or built, with the reason. So does a box the hub starts the agent in itself (a background `-i` run, a web-UI create) on the default account when the hub holds no login for that agent; a box you attach to from your computer can still be signed in from inside. With no account chosen, a create uses the hub's own default (**Make default** on the Subscriptions page), then the default login.
 
 Custody also keeps itself current from the other direction: a Claude refresh **rotates the refresh token**, so the moment a box refreshes, every older copy is dead rather than merely expired. When a hub-created box refreshes its own token, the control box records the new one in custody, and a create never replaces a credential with an older one. That combination is what keeps a box you create hours later from coming up signed-out.
 

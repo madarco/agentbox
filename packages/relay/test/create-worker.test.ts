@@ -163,6 +163,26 @@ describe('makeControlPlaneCreateBox', () => {
     expect(lines.some((l) => l.includes('cloning'))).toBe(true);
   });
 
+  it('a preflight refusal fails the job before anything is leased or cloned (#528 review)', async () => {
+    const leased: string[] = [];
+    const { deps, created } = harness({
+      preflight: () => Promise.reject(new Error("no claude account 'x' on this hub")),
+      leaseRemoteUrl: (u) => {
+        leased.push(u);
+        return Promise.resolve(u);
+      },
+    });
+    await expect(makeControlPlaneCreateBox(deps)(request, 'job-p')).rejects.toThrow(/no claude/);
+    expect(leased).toEqual([]);
+    expect(created).toEqual([]);
+  });
+
+  it("hands the preflight's result to createBox, so the work is done once", async () => {
+    const { deps, created } = harness({ preflight: () => Promise.resolve({ claude: 'work' }) });
+    await makeControlPlaneCreateBox(deps)(request, 'job-q');
+    expect(created[0]!.preflight).toEqual({ claude: 'work' });
+  });
+
   it('falls back to the worker-wide log when no per-job logger exists', async () => {
     const shared: string[] = [];
     const { deps } = harness({ log: (l) => shared.push(l) });

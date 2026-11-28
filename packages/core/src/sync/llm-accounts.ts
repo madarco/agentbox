@@ -211,6 +211,16 @@ export function accountConfigVolume(baseVolume: string, account: string): string
 }
 
 /**
+ * The docker volume an agent's session transcripts live in across ALL its
+ * accounts (`agentbox-claude-config` -> `agentbox-claude-projects`), mounted
+ * over the transcripts dir of the default and every named account volume so a
+ * session can be resumed on another account. Never removed by `prune`.
+ */
+export function sharedProjectsVolume(baseVolume: string): string {
+  return `${baseVolume.replace(/-config$/, '')}-projects`;
+}
+
+/**
  * Subpath of the shared cloud credentials volume (Daytona) for one account.
  * `default` keeps the agent's `credential.cloudSubpath` (`claude/`); a named
  * account gets a SIBLING, `claude-acct-work/`. Never a child: a default box
@@ -229,12 +239,31 @@ export interface LegacyAccountSlot {
   createdAt: string;
 }
 
+/** Longest identity field kept; an email or org name is far shorter. */
+export const IDENTITY_FIELD_MAX = 120;
+
+/**
+ * An identity field as it may be shown: control characters (a terminal escape
+ * in an org name read off a login) removed, whitespace collapsed, capped at
+ * {@link IDENTITY_FIELD_MAX}. Every surface (CLI tables, the API, the web)
+ * reads identities through {@link migrateAccountsFile}, so this is the one
+ * boundary. Pure.
+ */
+export function cleanIdentityField(value: string): string {
+  const flat = value
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return flat.length > IDENTITY_FIELD_MAX ? `${flat.slice(0, IDENTITY_FIELD_MAX - 3)}...` : flat;
+}
+
 function parseIdentity(raw: unknown): LlmAccountIdentity | undefined {
   if (raw === null || typeof raw !== 'object') return undefined;
   const r = raw as Record<string, unknown>;
   const out: LlmAccountIdentity = {};
   for (const key of ['email', 'org', 'plan'] as const) {
-    if (typeof r[key] === 'string' && r[key].length > 0) out[key] = r[key];
+    const v = typeof r[key] === 'string' ? cleanIdentityField(r[key]) : '';
+    if (v.length > 0) out[key] = v;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

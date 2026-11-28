@@ -17,7 +17,11 @@ import {
   runClaudeLogin,
 } from '@agentbox/agent-claude/cli';
 import { resolveAgentSpec } from '@agentbox/sandbox-core';
-import { captureVolumeLogin, dockerVolumeFileReader } from '@agentbox/sandbox-docker';
+import {
+  captureVolumeLogin,
+  dockerVolumeFileReader,
+  dropOrphanAccountVolume,
+} from '@agentbox/sandbox-docker';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 import {
   readLoginRequest,
@@ -119,11 +123,15 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
           phase: 'error',
           error: `could not store the account: ${(err as Error).message}`,
         });
+        await dropOrphanAccountVolume('claude', req.account.id, volume);
         log.close();
         process.exit(1);
       }
     } else if (result.ok) {
       await syncAgentCredentialsIfChanged();
+    } else if (req.account && volume) {
+      // A first login that did not complete must not leave its volume behind.
+      await dropOrphanAccountVolume('claude', req.account.id, volume);
     }
 
     log.close();

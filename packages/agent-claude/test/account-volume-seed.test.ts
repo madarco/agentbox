@@ -25,7 +25,8 @@ writeFileSync(
   }),
 );
 
-const { ensureClaudeVolume } = await import('../src/docker-sync.js');
+const { buildClaudeMounts, ensureClaudeVolume, usesSharedProjects } =
+  await import('../src/docker-sync.js');
 
 let overlay: Record<string, unknown> | null;
 let settingsOverlay: Record<string, unknown> | null;
@@ -40,6 +41,7 @@ beforeEach(() => {
   overlay = null;
   settingsOverlay = null;
   seedScript = '';
+  migrations = [];
   execaMock.mockReset();
   execaMock.mockImplementation((_cmd: string, argv: string[]) => {
     // `test -e /dst/_claude.json`: the volume has none yet, so it gets seeded.
@@ -62,10 +64,17 @@ beforeEach(() => {
       }
     }
     const sh = argv.indexOf('-c');
-    if (sh !== -1 && argv[sh - 1] === 'sh') seedScript = argv[sh + 1] ?? '';
+    if (sh !== -1 && argv[sh - 1] === 'sh') {
+      const script = argv[sh + 1] ?? '';
+      // The shared-projects migration runs after the seed; keep the seed's.
+      if (script.includes('/src/projects/ /dst/')) migrations.push(argv);
+      else seedScript = script;
+    }
     return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
   });
 });
+
+let migrations: string[][] = [];
 
 describe('seeding a named account volume (llm-accounts Phase 2)', () => {
   it("excludes the host's login and strips the host's account state", async () => {
@@ -94,5 +103,73 @@ describe('seeding a named account volume (llm-accounts Phase 2)', () => {
     if (overlay) expect(overlay).toHaveProperty('oauthAccount');
     // Default volume: settings are unchanged (no overlay written for them).
     expect(settingsOverlay).toBeNull();
+  });
+});
+
+describe('the shared projects volume (--resume across accounts)', () => {
+  it('copies a shared or named volume on every create (rsync --update), never an isolated one', async () => {
+    migrations = [];
+    for (const volume of [
+      'agentbox-claude-config-acct-other',
+      'agentbox-claude-config-acct-other',
+      'agentbox-claude-config-b1234abcd',
+    ]) {
+      await ensureClaudeVolume({ volume }, { syncFromHost: false, image: 'img' });
+    }
+    // Twice: a pre-upgrade box keeps appending to the config volume's own dir.
+    expect(migrations).toHaveLength(2);
+    const argv = migrations[0]!;
+    expect(argv).toContain('agentbox-claude-projects:/dst');
+    expect(argv).toContain('agentbox-claude-config-acct-other:/src:ro');
+    // A newer source (an appended transcript) wins; a newer shared copy stays.
+    expect(argv.join(' ')).toContain('rsync -a --update --chown=1000:1000');
+    // A config volume's old memory/ is never copied over the shared one.
+    expect(argv.join(' ')).toContain("--exclude='/*/memory/'");
+    expect(argv.join(' ')).toContain('chown 1000:1000 /dst');
+  });
+
+  it('a failed copy fails the create', async () => {
+    execaMock.mockImplementation((_cmd: string, argv: string[]) =>
+      Promise.resolve(
+        argv.join(' ').includes('/src/projects/ /dst/')
+          ? { exitCode: 1, stdout: '', stderr: 'rsync: boom' }
+          : { exitCode: 0, stdout: '', stderr: '' },
+      ),
+    );
+    await expect(
+      ensureClaudeVolume(
+        { volume: 'agentbox-claude-config' },
+        { syncFromHost: false, image: 'img' },
+      ),
+    ).rejects.toThrow(/agentbox-claude-projects.*rsync: boom/);
+  });
+
+  it('writes the legacy memory rekey into the shared projects volume, not the hidden dir', async () => {
+    await ensureClaudeVolume(
+      { volume: 'agentbox-claude-config' },
+      { syncFromHost: true, image: 'img', hostWorkspace: '/w/proj' },
+    );
+    // Into the shared projects volume, which is where those boxes read.
+    expect(seedScript).not.toContain('/dst/projects/-workspace/memory');
+    expect(seedScript).toContain('/dst-projects/-workspace/memory');
+    await ensureClaudeVolume(
+      { volume: 'agentbox-claude-config-b1234abcd' },
+      { syncFromHost: true, image: 'img', hostWorkspace: '/w/proj' },
+    );
+    expect(seedScript).toContain('/dst/projects/-workspace/memory');
+  });
+
+  it('mounts it over ~/.claude/projects for the default and named volumes only', () => {
+    const mount = 'agentbox-claude-projects:/home/vscode/.claude/projects';
+    expect(buildClaudeMounts({ volume: 'agentbox-claude-config' }, {}).extraVolumes).toContain(
+      mount,
+    );
+    expect(
+      buildClaudeMounts({ volume: 'agentbox-claude-config-acct-other' }, {}).extraVolumes,
+    ).toContain(mount);
+    expect(
+      buildClaudeMounts({ volume: 'agentbox-claude-config-b1234abcd' }, {}).extraVolumes,
+    ).not.toContain(mount);
+    expect(usesSharedProjects('agentbox-claude-config-b1234abcd')).toBe(false);
   });
 });

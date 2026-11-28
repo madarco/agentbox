@@ -485,10 +485,24 @@ function AgentCredRow({ a }: { a: AgentCredSummary }) {
         <Icons.key />
       </span>
       <span className="text-[13px] font-medium">{a.label}</span>
-      <Badge>
-        {a.count} file{a.count === 1 ? '' : 's'}
-      </Badge>
-      <span className="font-mono text-[11px] text-[var(--faint)]">{fmtBytes(a.size)}</span>
+      {a.count > 0 ? (
+        <Badge>
+          {a.count} file{a.count === 1 ? '' : 's'}
+        </Badge>
+      ) : (
+        <span className="text-[12px] text-muted-foreground">no default login</span>
+      )}
+      {a.accounts > 0 ? (
+        <Link
+          href="/settings/subscriptions"
+          className="text-[12px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        >
+          + {a.accounts} named subscription file{a.accounts === 1 ? '' : 's'}
+        </Link>
+      ) : null}
+      {a.count > 0 ? (
+        <span className="font-mono text-[11px] text-[var(--faint)]">{fmtBytes(a.size)}</span>
+      ) : null}
       {a.lastUpdate > 0 ? (
         <span className="ml-auto font-mono text-[11px] text-[var(--faint)]">
           updated <Ago ms={a.lastUpdate} />

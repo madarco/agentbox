@@ -14,16 +14,24 @@ import {
 import { volumeSettingsTarget } from '@agentbox/sandbox-docker';
 import { withHubClient } from '../control-plane/with-hub.js';
 
-/** Push `agent`/`id`'s stored login to every box on the account, through the local hub. */
-export async function fanOutLogin(agent: string, id: string): Promise<void> {
+/**
+ * Push `agent`/`id`'s stored login to every box on the account, through the
+ * local hub (or, with `preferLocal: false`, the configured remote hub, which
+ * owns its subscriptions).
+ */
+export async function fanOutLogin(
+  agent: string,
+  id: string,
+  opts: { preferLocal: boolean } = { preferLocal: true },
+): Promise<void> {
   const s = spinner();
   s.start(`pushing ${agent}/${id} to its boxes`);
-  const r = await withHubClient({ preferLocal: true }, (client) =>
-    client.renewAccount(agent, id),
-  ).catch((err: unknown) => {
-    s.stop('fan-out failed');
-    throw err;
-  });
+  const r = await withHubClient(opts, (client) => client.renewAccount(agent, id)).catch(
+    (err: unknown) => {
+      s.stop('fan-out failed');
+      throw err;
+    },
+  );
   if (!r) {
     s.stop('fan-out failed');
     return;

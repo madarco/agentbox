@@ -1281,7 +1281,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Accounts'],
           summary: "List this machine's LLM accounts",
           description:
-            "The named LLM accounts of the machine whose store this hub owns (`~/.agentbox/accounts.json`), plus the agents that can hold them and each agent's default for new boxes. A remote control box lists its own store. Never a secret.",
+            "The named LLM accounts of the machine whose store this hub owns (`~/.agentbox/accounts.json`), plus the agents that can hold them and each agent's default for new boxes. A remote control box lists its own store, which holds the logins and keys PCs imported into it (`POST /accounts/import`). Never a secret.",
           parameters: [
             {
               name: 'project',
@@ -1403,6 +1403,20 @@ export function buildOpenApi(): Record<string, unknown> {
                                 project: { type: 'boolean', enum: [true] },
                               },
                             },
+                            importedFrom: {
+                              type: 'array',
+                              description:
+                                "The PC accounts imported into this hub account (a remote hub owns its subscriptions): each PC machine id, its label, and the PC's own name for it. Absent when nothing was imported.",
+                              items: {
+                                type: 'object',
+                                properties: {
+                                  machine: { type: 'string' },
+                                  machineLabel: { type: 'string' },
+                                  id: { type: 'string' },
+                                },
+                                required: ['machine', 'id'],
+                              },
+                            },
                           },
                           required: ['agent', 'id', 'kind', 'hasSecret', 'boxes', 'auth'],
                         },
@@ -1430,6 +1444,11 @@ export function buildOpenApi(): Record<string, unknown> {
                         type: 'string',
                         description:
                           'Set instead of `defaults` (and no account carries `default`) when the hub cannot read the config.',
+                      },
+                      storeError: {
+                        type: 'string',
+                        description:
+                          "Set when the machine's `accounts.json` exists but cannot be trusted (not JSON, an unknown version). The message names the file; only the `default` accounts are listed, and every add or remove is refused until the file is fixed or moved aside.",
                       },
                     },
                     required: ['accounts', 'agents'],
@@ -1477,6 +1496,105 @@ export function buildOpenApi(): Record<string, unknown> {
             '401': errorResponse,
             '404': errorResponse,
             '409': errorResponse,
+          },
+        },
+      },
+      '/accounts/import': {
+        post: {
+          tags: ['Accounts'],
+          summary: "Import a PC's logins and keys into this hub",
+          description:
+            "On a remote hub a subscription belongs to the hub: every PC sees and creates on the same list. A PC sends each of its logins and keys; the hub decides per item. A login of the same identity (email) as a hub login merges into it; the item's earlier import (same `machine` + `id`) updates that account; an id taken by another subscription gets a suffixed id (`second_2`), and a create from that PC naming its own id still resolves to it. A login's secret is newest-wins (an older copy is `kept`, never written over a refreshed one). `default` goes into the hub's own default login. An account removed on the hub answers `removed` until the item is sent with `force`. The secret is never echoed back.",
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    items: {
+                      type: 'array',
+                      maxItems: 64,
+                      items: {
+                        type: 'object',
+                        properties: {
+                          agent: { type: 'string' },
+                          id: {
+                            type: 'string',
+                            description: "The PC's own name (`default` for the agent's own login)",
+                          },
+                          kind: { type: 'string', enum: ['login', 'setup-token', 'api-key'] },
+                          identity: {
+                            type: 'object',
+                            properties: {
+                              email: { type: 'string' },
+                              org: { type: 'string' },
+                              plan: { type: 'string' },
+                            },
+                          },
+                          secret: {
+                            type: 'string',
+                            writeOnly: true,
+                            description:
+                              'The login file, or the `{kind, token}` encoding of a pasted kind',
+                          },
+                          machine: { type: 'string', description: "The PC's machine id" },
+                          machineLabel: { type: 'string' },
+                          force: {
+                            type: 'boolean',
+                            description: 'Bring back an account removed on the hub',
+                          },
+                        },
+                        required: ['agent', 'id', 'kind', 'secret', 'machine'],
+                      },
+                    },
+                  },
+                  required: ['items'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: '`{ results: [{agent, id, hubId?, action, reason}] }`, one per item',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            agent: { type: 'string' },
+                            id: { type: 'string' },
+                            hubId: { type: 'string' },
+                            action: {
+                              type: 'string',
+                              enum: [
+                                'created',
+                                'merged',
+                                'updated',
+                                'kept',
+                                'renamed',
+                                'removed',
+                                'refused',
+                              ],
+                            },
+                            reason: { type: 'string' },
+                          },
+                          required: ['agent', 'id', 'action', 'reason'],
+                        },
+                      },
+                    },
+                    required: ['results'],
+                  },
+                },
+              },
+            },
+            '400': errorResponse,
+            '401': errorResponse,
           },
         },
       },

@@ -28,6 +28,13 @@ export interface AgentPullOptions {
   dryRun?: boolean;
   /** Host home to pull into. Overridable for tests. */
   hostHome?: string;
+  /**
+   * Leave the agent's login file (`credential.boxRelPath`) behind. Set for a
+   * box on a NAMED account: its login is that account's, and the host has no
+   * login of its own to protect, so an additive pull would make it the host's
+   * default.
+   */
+  excludeCredential?: boolean;
 }
 
 export interface AgentPullResult {
