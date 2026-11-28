@@ -1393,6 +1393,11 @@ export function buildOpenApi(): Record<string, unknown> {
                         description:
                           'Set instead of `defaults` (and no account carries `default`) when the hub cannot read the config.',
                       },
+                      storeError: {
+                        type: 'string',
+                        description:
+                          "Set when the machine's `accounts.json` exists but cannot be trusted (not JSON, an unknown version). The message names the file; only the `default` accounts are listed, and every add or remove is refused until the file is fixed or moved aside.",
+                      },
                     },
                     required: ['accounts', 'agents'],
                   },

@@ -66,7 +66,7 @@ async function loadWeekTokens(): Promise<Map<string, number> | null> {
 }
 
 export default function SubscriptionsPage() {
-  const { accounts, agents, error } = useAccounts();
+  const { accounts, agents, error, storeError } = useAccounts();
   const [weekTokens, setWeekTokens] = useState<Map<string, number> | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -165,6 +165,11 @@ export default function SubscriptionsPage() {
         <>
           {actionError ? (
             <div className="mt-4 font-mono text-xs text-red-400">{actionError}</div>
+          ) : null}
+          {storeError ? (
+            <div className="mt-4 font-mono text-xs text-amber-400">
+              {storeError}. Only the default logins are listed.
+            </div>
           ) : null}
 
           {accounts.length === 0 ? (

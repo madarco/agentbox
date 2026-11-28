@@ -627,6 +627,8 @@ export interface HubApiAccountList {
   defaultsError?: string;
   /** The hub machine's id (its own named logins sit under it in custody). */
   machine?: string;
+  /** `accounts.json` cannot be trusted (the message names the file); only the `default`s are listed. */
+  storeError?: string;
 }
 
 export interface HubApiCheckoutReport {
@@ -1130,14 +1132,7 @@ export interface HubApiUsageSharePosted {
 }
 
 export type HubApiUsageDimension =
-  | 'day'
-  | 'agent'
-  | 'account'
-  | 'box'
-  | 'project'
-  | 'host'
-  | 'model'
-  | 'session';
+  'day' | 'agent' | 'account' | 'box' | 'project' | 'host' | 'model' | 'session';
 
 export interface HubApiUsageTotals {
   inputTokens: number;

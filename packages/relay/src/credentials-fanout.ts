@@ -125,6 +125,27 @@ export async function stateBoxAccount(boxId: string, agent: string): Promise<str
   return namedAccounts(box?.accounts)?.[agent];
 }
 
+/**
+ * The account `agent` runs on in box `boxId`: the box's REGISTRATION first,
+ * then `state.json`. A registration store that fails to answer is not "no
+ * registration" (#442 review): the update is unverifiable, so it can never
+ * route a named box's login into the default account. An absent registration
+ * (a docker box the PC hub never registered) falls through to `state.json`.
+ */
+export async function registrationBoxAccount(
+  store: { getBox(boxId: string): Promise<{ accounts?: Record<string, string> } | undefined> },
+  boxId: string,
+  agent: string,
+): Promise<string | undefined> {
+  let reg: { accounts?: Record<string, string> } | undefined;
+  try {
+    reg = await store.getBox(boxId);
+  } catch {
+    return UNVERIFIABLE_ACCOUNT;
+  }
+  return namedAccounts(reg?.accounts)?.[agent] ?? (await stateBoxAccount(boxId, agent));
+}
+
 /** How long after a switch a mismatched login is taken for a refresh race. */
 export const SWITCH_RACE_WINDOW_MS = 10 * 60_000;
 

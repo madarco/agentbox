@@ -35,6 +35,8 @@ export interface AccountsSnapshot {
   accounts: Account[] | null;
   agents: AgentKinds[];
   error: string | null;
+  /** The machine's `accounts.json` cannot be trusted; only the defaults are listed. */
+  storeError?: string;
 }
 
 const POLL_MS = 60_000;
@@ -69,10 +71,16 @@ export function refreshAccounts(): Promise<void> {
       const body = (await r.json().catch(() => ({}))) as {
         accounts?: Account[];
         agents?: AgentKinds[];
+        storeError?: string;
         error?: { message?: string };
       };
       if (!r.ok) throw new Error(body.error?.message ?? `request failed (${String(r.status)})`);
-      emit({ accounts: body.accounts ?? [], agents: body.agents ?? [], error: null });
+      emit({
+        accounts: body.accounts ?? [],
+        agents: body.agents ?? [],
+        error: null,
+        ...(body.storeError ? { storeError: body.storeError } : {}),
+      });
     } catch (err) {
       emit({ ...snapshot, error: err instanceof Error ? err.message : String(err) });
     } finally {

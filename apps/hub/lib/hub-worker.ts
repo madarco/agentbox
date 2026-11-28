@@ -167,9 +167,15 @@ async function seedAccountSecretsFromCustody(
     }
     for (const entry of entries) {
       const parts = entry.path.split('/');
-      // agents / <agent> / accounts / <machine> / <id> / <file>
+      // agents / <agent> / accounts / <machine> / <id> / <file…> — a plugin's
+      // `boxRelPath` may itself hold a `/`, so the file is the whole tail.
       const id = parts[4];
-      if (parts.length !== 6 || parts[3] !== machine || parts[5] !== cred.boxRelPath || !id) {
+      if (
+        parts.length < 6 ||
+        parts[3] !== machine ||
+        parts.slice(5).join('/') !== cred.boxRelPath ||
+        !id
+      ) {
         continue;
       }
       if (accountIdProblem(id) !== null || isDefaultAccount(id)) continue;

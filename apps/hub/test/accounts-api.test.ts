@@ -336,3 +336,29 @@ describe('Box.subscriptions', () => {
     expect(subscriptionsOf({})).toBeUndefined();
   });
 });
+
+describe('GET /api/v1/accounts: the default login and a corrupt store', () => {
+  it("lists default from the agent's own login file when it was never backed up", async () => {
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    mkdirSync(join(HOME, '.claude'), { recursive: true });
+    writeFileSync(join(HOME, '.claude', '.credentials.json'), LOGIN);
+    try {
+      const r = await backend().listAccounts();
+      expect(r.accounts.find((a) => a.agent === 'claude' && a.id === 'default')).toMatchObject({
+        kind: 'login',
+        hasSecret: true,
+      });
+    } finally {
+      rmSync(join(HOME, '.claude'), { recursive: true, force: true });
+    }
+  });
+
+  it('reports an untrustworthy accounts.json by name instead of hiding its accounts', async () => {
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(dir, 'accounts.json'), '{not json');
+    const r = await backend().listAccounts();
+    expect(r.storeError).toContain(join(dir, 'accounts.json'));
+    expect(r.storeError).toContain('.bak');
+    expect(r.accounts.some((a) => a.id === 'work')).toBe(false);
+  });
+});

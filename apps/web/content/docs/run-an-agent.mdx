@@ -145,7 +145,12 @@ one. Your host's login and its cached profile are never copied into it, so each
 account shows its own email and plan. A setup token or API key is read from a
 hidden prompt, or from stdin without a terminal (`… --setup-token < token.txt`).
 It is never read from the command line, which would leave it in your shell
-history.
+history. A pipe that sends the token and never closes is fine: the read ends
+once a full line has arrived and the pipe goes quiet.
+
+`default` is always the agent's own login, so a setup token or API key needs a
+name (`credentials add claude/ci --setup-token`). To have new boxes use it, make
+it the default with `agentbox credentials use claude/ci --global`.
 
 An account has one **name**, which is also how you refer to it (`claude/work`).
 A new name is lowercased and runs of spaces or `-` become `_`: `credentials add
@@ -182,7 +187,12 @@ with `agentbox credentials renew claude/work --code <CODE>`, which then pushes
 the login out.
 
 Accounts are stored on this machine, in `~/.agentbox/accounts.json`, with each
-secret 0600 under `~/.agentbox/credentials/`. The hub's **Settings → Subscriptions** page shows
+secret 0600 under `~/.agentbox/credentials/`. The `default` row appears as soon
+as the agent is signed in on this machine, including a login only the agent's
+own file holds (`~/.claude/.credentials.json`) that no box has backed up yet. If
+`accounts.json` is damaged, the list, `credentials list --json` (`storeError`)
+and the Subscriptions page name the file. Only the default logins are shown,
+and every change is refused until you fix the file or move it aside. The hub's **Settings → Subscriptions** page shows
 the same list, each card named by the account with its login's email and plan,
 and lets you add a setup token or API key, remove one, and pick the default.
 
@@ -456,7 +466,11 @@ demo                 agentbox-agent-demo@0.1.0 (agent API v1)
 
 A path works too, for a package you are developing: `agentbox agent add ./my-agent`.
 `agentbox agent remove <package>` unregisters it (it does not uninstall the npm
-package).
+package). When its agents have named accounts, it asks whether to delete them
+too (rows, secrets and their docker volumes); it refuses while a box still uses
+one. `--purge-accounts` or
+`--keep-accounts` answers without a prompt; kept accounts are hidden until the
+package is added again.
 
 An agent package exports one thing — an `agentSpec` describing where its config
 lives on the host and in the box, how to install it, and what it can do:
