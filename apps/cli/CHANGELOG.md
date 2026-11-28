@@ -92,7 +92,9 @@ CLI, not the raw commits.
   `user.name`/`user.email`. Creates from the hub's web UI or the tray use the
   hub's default commit identity, set on Settings → General
   (`git.identity.name`/`git.identity.email`). `hub login` and `hub setup` fill
-  it from your PC when it is empty, and never replace one already set.
+  it from your PC when it is empty, and never replace one already set. A
+  project with no complete identity gets a warning saying the box will commit
+  as the hub default.
 - **A remote hub no longer lists "Docker (local)"**, which it has no engine for;
   its own engine is the Remote Docker host `hub`, now listed first. A PC pointed
   at a remote hub hides local docker the same way.

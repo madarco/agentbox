@@ -57,7 +57,7 @@ export interface HubCreateOptsInput {
    */
   projectRoot?: string;
   /** Test seam for reading the identity; defaults to `git -C <projectRoot> config`. */
-  readGitIdentity?: (projectRoot: string) => GitIdentity | undefined;
+  readGitIdentity?: (projectRoot: string) => { identity: GitIdentity } | { problem: string };
   flags: HubCreateFlags;
   /** Values the caller already resolved through its own gates. */
   resolved?: {
@@ -102,16 +102,32 @@ function gitConfigValue(dir: string, key: string): string | undefined {
 }
 
 /**
- * The project's effective committer identity, or undefined when either half is
- * missing or would be refused by the hub (a create must not fail over a stray
- * character in a name: the box then gets the hub's default instead).
+ * The project's effective committer identity, or why there is none: a half is
+ * missing, or a value the hub would refuse (a newline, say). Never throws: a
+ * create must not fail over the identity, it warns and the box takes the
+ * hub's default instead.
  */
-export function readProjectGitIdentity(projectRoot: string): GitIdentity | undefined {
-  const parsed = parseGitIdentity({
-    name: gitConfigValue(projectRoot, 'user.name'),
-    email: gitConfigValue(projectRoot, 'user.email'),
-  });
-  return parsed.ok ? parsed.value : undefined;
+export function readProjectGitIdentity(
+  projectRoot: string,
+): { identity: GitIdentity } | { problem: string } {
+  const name = gitConfigValue(projectRoot, 'user.name');
+  const email = gitConfigValue(projectRoot, 'user.email');
+  if (!name || !email) {
+    return {
+      problem: `no ${!name && !email ? 'user.name or user.email' : !name ? 'user.name' : 'user.email'}`,
+    };
+  }
+  const parsed = parseGitIdentity({ name, email }, 'git identity');
+  return parsed.ok ? { identity: parsed.value } : { problem: parsed.error };
+}
+
+/** Said when a hub-routed create carries no identity, so nobody commits as someone else unawares. */
+export function missingGitIdentityWarning(problem: string): string {
+  return (
+    `This project has no complete git identity (${problem}), so the box will commit as the hub's ` +
+    'default identity (Settings > General on the hub), or as the generic agentbox one if the hub has none. ' +
+    'Set user.name and user.email (`git config --global`, or in this repo) to commit as yourself.'
+  );
 }
 
 interface UnportableRow {
@@ -211,9 +227,11 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
   const location = typeof sizing.location === 'string' ? sizing.location : undefined;
   const inbound = typeof sizing.inbound === 'string' ? sizing.inbound : undefined;
 
-  const gitIdentity = input.projectRoot
+  const identityRead = input.projectRoot
     ? (input.readGitIdentity ?? readProjectGitIdentity)(input.projectRoot)
     : undefined;
+  const gitIdentity =
+    identityRead && 'identity' in identityRead ? identityRead.identity : undefined;
 
   const opts: HubWireCreateOpts = {
     // Absent means "the control box decides", so only what was actually asked
@@ -249,6 +267,9 @@ export function buildHubCreateOpts(input: HubCreateOptsInput): HubCreateOpts {
   const warnings = UNPORTABLE.filter(
     (row) => row.asked(flags) && (row.applies?.(target) ?? true),
   ).map((row) => `${row.why(target)} Ignored for a control-box create.`);
+  if (identityRead && 'problem' in identityRead) {
+    warnings.push(missingGitIdentityWarning(identityRead.problem));
+  }
 
   return { opts, warnings };
 }

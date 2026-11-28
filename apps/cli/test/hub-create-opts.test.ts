@@ -1,6 +1,6 @@
 import type { EffectiveConfig } from '@agentbox/config';
 import { describe, expect, it } from 'vitest';
-import { buildHubCreateOpts } from '../src/lib/hub-create-opts.js';
+import { buildHubCreateOpts, readProjectGitIdentity } from '../src/lib/hub-create-opts.js';
 import { edgeLlmProxyMode } from '../src/lib/llm-proxy-flag.js';
 
 // Only the `box` slice is read; cast a minimal shape through unknown.
@@ -154,15 +154,47 @@ describe("the requester's committer identity", () => {
     }
   });
 
-  it('sends none when the project has no complete identity', () => {
-    const { opts } = buildHubCreateOpts({
+  it('sends none, and warns, when the project has no complete identity', () => {
+    // Silently falling back would let a second user of a shared hub commit as
+    // whoever enrolled first.
+    const { opts, warnings } = buildHubCreateOpts({
       providerName: 'hetzner',
       cfg: makeCfg(),
       flags: {},
       projectRoot: '/nowhere',
-      readGitIdentity: () => undefined,
+      readGitIdentity: () => ({ problem: 'no user.email' }),
     });
     expect('gitIdentity' in opts).toBe(false);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('no complete git identity (no user.email)');
+    expect(warnings[0]).toContain("hub's default identity");
+  });
+
+  it('names the missing half and refuses a value the hub would reject', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const repo = mkdtempSync(join(tmpdir(), 'agentbox-hub-gitid-'));
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+    const prev = { g: process.env.GIT_CONFIG_GLOBAL, s: process.env.GIT_CONFIG_SYSTEM };
+    process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+    process.env.GIT_CONFIG_SYSTEM = '/dev/null';
+    try {
+      execFileSync('git', ['init', '-q', repo], { env });
+      execFileSync('git', ['-C', repo, 'config', 'user.name', 'Ada'], { env });
+      expect(readProjectGitIdentity(repo)).toEqual({ problem: 'no user.email' });
+      execFileSync('git', ['-C', repo, 'config', 'user.email', 'ada@example.com\u0007'], { env });
+      expect(readProjectGitIdentity(repo)).toMatchObject({
+        problem: expect.stringMatching(/control/),
+      });
+    } finally {
+      if (prev.g === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = prev.g;
+      if (prev.s === undefined) delete process.env.GIT_CONFIG_SYSTEM;
+      else process.env.GIT_CONFIG_SYSTEM = prev.s;
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it('also rides a docker:<alias> create', () => {
@@ -172,7 +204,7 @@ describe("the requester's committer identity", () => {
       cfg: makeCfg(),
       flags: {},
       projectRoot: '/p',
-      readGitIdentity: () => ({ name: 'Ada', email: 'ada@example.com' }),
+      readGitIdentity: () => ({ identity: { name: 'Ada', email: 'ada@example.com' } }),
     });
     expect(opts.gitIdentity).toEqual({ name: 'Ada', email: 'ada@example.com' });
   });

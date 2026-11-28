@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SyncContext } from '@agentbox/core';
 
-// execa is mocked so the tests never touch a real docker daemon.
+// `docker` is mocked so the tests never touch a daemon; the host-side
+// `git config --file ~/.gitconfig` read goes to the real git.
 const { execaMock } = vi.hoisted(() => ({ execaMock: vi.fn() }));
 vi.mock('execa', () => ({ execa: execaMock }));
+const realExeca = (await vi.importActual<typeof import('execa')>('execa')).execa;
 
 const { makeDockerSync } = await import('../src/sync/docker-sync.js');
 
@@ -32,35 +34,75 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), 'agentbox-docker-gitid-'));
   lines = [];
   execaMock.mockReset();
-  execaMock.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+  execaMock.mockImplementation((cmd: string, args: string[], opts: object) =>
+    cmd === 'git'
+      ? realExeca(cmd, args, opts)
+      : Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+  );
 });
 afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
+/** The `docker exec` argv lists, ignoring the host-side git reads. */
+const dockerCalls = (): string[][] =>
+  execaMock.mock.calls.filter((c) => c[0] === 'docker').map((c) => c[1] as string[]);
+
 describe('docker seedGitIdentity', () => {
-  it('writes both halves globally when the building machine has no ~/.gitconfig', async () => {
+  it('writes both halves to the box ~/.gitconfig when the machine has none to mount', async () => {
     await makeDockerSync({ container: 'box1' }).seedGitIdentity(ctx());
-    // One call and no probe: an identity already in the box came from another
-    // create (a checkpoint), so it must not be mistaken for this machine's.
-    expect(execaMock).toHaveBeenCalledTimes(1);
-    const argv = execaMock.mock.calls[0]?.[1] as string[];
-    expect(argv).toContain('box1');
+    // One write and no probe of the box: whatever it holds came from another
+    // create (a checkpoint), so it is overwritten rather than trusted.
+    expect(dockerCalls()).toHaveLength(1);
+    const argv = dockerCalls()[0]!;
+    expect(argv.slice(0, 4)).toEqual(['exec', '--user', 'vscode', 'box1']);
     expect(argv.join(' ')).toContain('git config --global user.name');
     expect(argv.slice(-2)).toEqual(['Ada Lovelace', 'ada@example.com']);
     expect(lines.join('\n')).toContain('(from the requesting machine)');
   });
 
-  it('keeps the bind-mounted ~/.gitconfig and writes nothing when the machine has one', async () => {
-    await writeFile(join(home, '.gitconfig'), '[user]\n\tname = Host\n');
+  it('keeps a mounted ~/.gitconfig that holds a complete identity', async () => {
+    await writeFile(
+      join(home, '.gitconfig'),
+      '[user]\n\tname = Host\n\temail = host@example.com\n',
+    );
     await makeDockerSync({ container: 'box1' }).seedGitIdentity(ctx());
-    expect(execaMock).not.toHaveBeenCalled();
+    expect(dockerCalls()).toHaveLength(0);
     expect(lines.join('\n')).toContain('bind-mounted ~/.gitconfig');
   });
 
-  it('does nothing without a resolved identity', async () => {
+  it('writes at system level when the mounted ~/.gitconfig has only a credential helper', async () => {
+    // What `gh auth setup-git` leaves on a hub: a ~/.gitconfig with no user.*.
+    await writeFile(join(home, '.gitconfig'), '[credential]\n\thelper = !gh auth git-credential\n');
+    await makeDockerSync({ container: 'box1' }).seedGitIdentity(ctx());
+    const argv = dockerCalls()[0]!;
+    expect(argv.slice(0, 4)).toEqual(['exec', '--user', 'root', 'box1']);
+    expect(argv.join(' ')).toContain('git config --system user.name');
+    expect(argv.slice(-2)).toEqual(['Ada Lovelace', 'ada@example.com']);
+  });
+
+  it('says so when the mounted file sets only one half, which outranks the written one', async () => {
+    await writeFile(join(home, '.gitconfig'), '[user]\n\tname = Host\n');
+    await makeDockerSync({ container: 'box1' }).seedGitIdentity(ctx());
+    expect(dockerCalls()[0]!.join(' ')).toContain('--system');
+    expect(lines.join('\n')).toContain('sets only one of user.name / user.email');
+  });
+
+  it("writes the generic identity when none resolved, so a checkpoint's owner is never kept", async () => {
     await makeDockerSync({ container: 'box1' }).seedGitIdentity(ctx({ gitIdentity: undefined }));
-    expect(execaMock).not.toHaveBeenCalled();
+    const argv = dockerCalls()[0]!;
+    expect(argv.join(' ')).toContain('--global');
+    expect(argv.slice(-2)).toEqual(['agentbox', 'agentbox@users.noreply.github.com']);
+    expect(lines.join('\n')).toContain('(from the agentbox fallback)');
+  });
+
+  it('writes nothing and says nothing when the mount decides and nothing was requested', async () => {
+    await writeFile(
+      join(home, '.gitconfig'),
+      '[user]\n\tname = Host\n\temail = host@example.com\n',
+    );
+    await makeDockerSync({ container: 'box1' }).seedGitIdentity(ctx({ gitIdentity: undefined }));
+    expect(dockerCalls()).toHaveLength(0);
     expect(lines).toEqual([]);
   });
 });

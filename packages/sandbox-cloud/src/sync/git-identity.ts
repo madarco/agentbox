@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { gitIdentitySourceLabel } from '@agentbox/core';
+import { GIT_IDENTITY_FALLBACK, gitIdentitySourceLabel } from '@agentbox/core';
 import type { CloudBackend, CloudHandle, ResolvedGitIdentity } from '@agentbox/core';
 import { bashScript, quoteShellArg } from '../shell.js';
 
@@ -15,15 +15,12 @@ export interface SeedGitIdentityOptions {
   onLog?: (line: string) => void;
 }
 
-/** Generic fallback so a box always has a usable committer identity. */
-const FALLBACK_NAME = 'agentbox';
-const FALLBACK_EMAIL = 'agentbox@users.noreply.github.com';
-
 /**
  * Configure a git committer identity inside a cloud box.
  *
  * Docker boxes bind-mount the host `~/.gitconfig`, so they inherit the user's
- * identity for free. Cloud boxes (vercel/hetzner/daytona) can't bind-mount and
+ * identity when that file holds one (see the docker sync's seedGitIdentity for
+ * the rest). Cloud boxes (vercel/hetzner/daytona) can't bind-mount and
  * otherwise have *no* identity — which breaks any in-box commit: the agent's
  * own `git commit`, and the merge commit `agentbox git pull` writes. We mirror
  * the Docker behavior here: author as the host user when their identity is
@@ -82,8 +79,8 @@ export async function resolveBoxGitIdentity(
   const hostName = await readHostGitConfig('user.name', opts.hostRepo);
   const hostEmail = await readHostGitConfig('user.email', opts.hostRepo);
   return {
-    name: hostName ?? FALLBACK_NAME,
-    email: hostEmail ?? FALLBACK_EMAIL,
+    name: hostName ?? GIT_IDENTITY_FALLBACK.name,
+    email: hostEmail ?? GIT_IDENTITY_FALLBACK.email,
     source: gitIdentitySourceLabel(hostName || hostEmail ? 'host' : 'fallback'),
   };
 }

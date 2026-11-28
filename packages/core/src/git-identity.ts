@@ -22,6 +22,12 @@ export interface ResolvedGitIdentity extends GitIdentity {
 
 export const GIT_IDENTITY_MAX_LENGTH = 256;
 
+/** The generic identity a box gets when nothing else resolves, so commits never fail. */
+export const GIT_IDENTITY_FALLBACK: GitIdentity = {
+  name: 'agentbox',
+  email: 'agentbox@users.noreply.github.com',
+};
+
 /**
  * Why `value` cannot be a `user.name` / `user.email`, or null when it can. The
  * value lands in `git config` inside the box, so a newline or other control

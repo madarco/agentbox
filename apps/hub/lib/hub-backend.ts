@@ -240,7 +240,7 @@ import { createLimitsSource } from './backend/account-limits';
 import { custodyIdentityFromRegistration } from './boxes/seed-slug';
 import { createProjectCustodySlugs } from './backend/project-custody';
 import { controlPlaneCreateRequest } from './boxes/control-plane-create';
-import { createGitIdentityBackend } from './backend/git-identity';
+import { createGitIdentity, createGitIdentityBackend } from './backend/git-identity';
 import { createProjectDir } from './boxes/create-project';
 import { isHubWorkerClone, registrationProjectKey } from './boxes/project-key';
 
@@ -2919,6 +2919,7 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         } catch (err) {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
+        const gitIdentity = await createGitIdentity(o.gitIdentity);
         // The hub egress proxy (llm-accounts Phase 7): the mode is the client's
         // or the project's; port and URL are THIS hub's (global config only).
         let llmProxy: LlmProxyRecord | undefined;
@@ -3019,11 +3020,11 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
             borrowCredentials: gated.borrowCredentials,
             ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
             ...(llmProxy ? { llmProxy } : {}),
-            // The requester's identity only: this path builds from a folder on
-            // THIS machine, whose own effective git config (repo-local override
-            // included) is the right fallback, so the hub default — meant for
-            // clones nobody's config describes — does not apply here.
-            ...(o.gitIdentity ? { gitIdentity: { ...o.gitIdentity, source: 'request' } } : {}),
+            // Same precedence as the worker's clones: the requester's, then the
+            // hub default; the folder's own effective git config (repo-local
+            // override included) and the fallback come after, in the provider.
+            // A web or tray create from a folder here sends none.
+            ...(gitIdentity ? { gitIdentity } : {}),
             // Restore only. Not reachable from the wire — `parseCreateBox` does
             // not accept it — so a plain create cannot ask the worker to push an
             // arbitrary directory into a box's agent config dir.

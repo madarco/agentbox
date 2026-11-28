@@ -32,6 +32,7 @@ import {
   accountSecretPath,
   dryRunProviderSync,
   findAccount,
+  GIT_IDENTITY_FALLBACK,
   gitIdentitySourceLabel,
   SYNC_DRYRUN_ENV,
 } from '@agentbox/core';
@@ -91,6 +92,16 @@ export interface DockerSyncHandle {
 function hostSourceLabel(spec: AgentSyncSpec): string {
   const paths = spec.staticPaths.map((sp) => `~/${sp.hostHomeRel.join('/')}`);
   return paths.length > 0 ? paths.join(' + ') : `~/.${spec.id}`;
+}
+
+/** How much of a committer identity a host git config file sets itself. */
+async function hostFileIdentity(file: string): Promise<'full' | 'partial' | 'none'> {
+  let set = 0;
+  for (const key of ['user.name', 'user.email']) {
+    const r = await execa('git', ['config', '--file', file, key], { reject: false });
+    if (r.exitCode === 0 && (r.stdout ?? '').trim().length > 0) set++;
+  }
+  return set === 2 ? 'full' : set === 1 ? 'partial' : 'none';
 }
 
 function requireCreateHandle(handle: DockerSyncHandle, op: string): { image: string } {
@@ -241,30 +252,39 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
     },
 
     // Docker bind-mounts the building machine's ~/.gitconfig (read-only) when it
-    // has one, and the box authors as that machine's user. A resolved identity
-    // applies only when there is no such mount (a hub with no ~/.gitconfig, where
-    // every commit would otherwise fail with "Committer identity unknown"). Then
-    // both halves are written, always: an identity a checkpoint carried over
-    // belongs to whoever that box was built for, not to this request.
+    // exists. Precedence, highest first: that file's own identity, if it holds a
+    // complete one; else the resolved identity (requester, then hub default);
+    // else the generic agentbox one. Written whenever the mounted file does not
+    // decide it, because the box may carry a previous owner's identity from a
+    // checkpoint and must never commit as them. A repo-local override in the
+    // shared .git/config still wins over all of it, as on the host.
     async seedGitIdentity(ctx: SyncContext): Promise<void> {
-      const want = ctx.gitIdentity;
-      if (!want) return;
-      if (existsSync(join(ctx.hostHome, '.gitconfig'))) {
-        ctx.onLog(
-          "git: keeping this machine's bind-mounted ~/.gitconfig identity (a docker box shares the building machine's git config)",
-        );
+      const mountedFile = join(ctx.hostHome, '.gitconfig');
+      const mounted = existsSync(mountedFile);
+      const fromMount = mounted ? await hostFileIdentity(mountedFile) : 'none';
+      if (fromMount === 'full') {
+        if (ctx.gitIdentity) {
+          ctx.onLog(
+            "git: keeping this machine's bind-mounted ~/.gitconfig identity (a docker box shares the building machine's git config)",
+          );
+        }
         return;
       }
+      const want = ctx.gitIdentity ?? { ...GIT_IDENTITY_FALLBACK, source: 'fallback' as const };
+      // A mounted file with no user.* (a credential helper only) is read-only
+      // and outranks nothing at system level, so the identity goes there; with
+      // no mount, the box's own ~/.gitconfig takes it.
+      const scope = mounted ? '--system' : '--global';
       const r = await execa(
         'docker',
         [
           'exec',
           '--user',
-          'vscode',
+          mounted ? 'root' : 'vscode',
           handle.container,
           'sh',
           '-c',
-          'git config --global user.name "$1" && git config --global user.email "$2"',
+          `git config ${scope} user.name "$1" && git config ${scope} user.email "$2"`,
           'sh',
           want.name,
           want.email,
@@ -280,6 +300,11 @@ export function makeDockerSync(handle: DockerSyncHandle): ProviderSync {
       ctx.onLog(
         `git: configured committer identity ${want.name} <${want.email}> (from ${gitIdentitySourceLabel(want.source)})`,
       );
+      if (fromMount === 'partial') {
+        ctx.onLog(
+          "git: this machine's bind-mounted ~/.gitconfig sets only one of user.name / user.email, and that half outranks the one above; set both there (or neither)",
+        );
+      }
     },
 
     async seedEnvFiles(ctx: SyncContext, patterns: string[]): Promise<{ copied: number }> {

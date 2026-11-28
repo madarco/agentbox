@@ -190,6 +190,7 @@ export type {
 } from './skill-bindings.js';
 export type { GitIdentity, GitIdentitySource, ResolvedGitIdentity } from './git-identity.js';
 export {
+  GIT_IDENTITY_FALLBACK,
   GIT_IDENTITY_MAX_LENGTH,
   gitIdentityFieldProblem,
   gitIdentitySourceLabel,

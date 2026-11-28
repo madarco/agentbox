@@ -19,9 +19,12 @@ import {
   gitIdentityFieldProblem as browserRule,
   parseCreateBox,
 } from '../app/(dashboard)/api/v1/lib/validate';
-import { createGitIdentityBackend, readHubGitIdentity } from '../lib/backend/git-identity';
+import {
+  createGitIdentity,
+  createGitIdentityBackend,
+  readHubGitIdentity,
+} from '../lib/backend/git-identity';
 import { controlPlaneCreateRequest } from '../lib/boxes/control-plane-create';
-import { workerGitIdentity } from '../lib/hub-worker';
 
 const ADA = { name: 'Ada Lovelace', email: 'ada@example.com' };
 const TEAM = { name: 'Team Bot', email: 'bot@example.com' };
@@ -105,16 +108,26 @@ describe('the hub default (GET/PUT /api/v1/settings/git-identity)', () => {
   });
 });
 
-describe('the identity a worker-built box gets', () => {
+describe('the identity a hub-built box gets', () => {
+  it('is resolved the same way on both hub create paths (clones and folders on the hub)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = (f: string) => readFileSync(join(__dirname, '..', 'lib', f), 'utf8');
+    // The folder path once forwarded only the request's identity, so a web or
+    // tray create from a project folder on the hub skipped the hub default.
+    expect(src('hub-backend.ts')).toContain('await createGitIdentity(o.gitIdentity)');
+    expect(src('hub-worker.ts')).toContain('await createGitIdentity(createOpts?.gitIdentity)');
+  });
+
   it("is the requester's when the request carries one", async () => {
-    expect(await workerGitIdentity(ADA, () => Promise.resolve(TEAM))).toEqual({
+    expect(await createGitIdentity(ADA, () => Promise.resolve(TEAM))).toEqual({
       ...ADA,
       source: 'request',
     });
   });
 
   it('is the hub default when the request carries none (a web or tray create)', async () => {
-    expect(await workerGitIdentity(undefined, () => Promise.resolve(TEAM))).toEqual({
+    expect(await createGitIdentity(undefined, () => Promise.resolve(TEAM))).toEqual({
       ...TEAM,
       source: 'hub-default',
     });
@@ -123,11 +136,11 @@ describe('the identity a worker-built box gets', () => {
   it("reads the hub's configured default by default", async () => {
     const backend = createGitIdentityBackend({ cwd: HOME });
     await backend.setHubGitIdentity({ identity: TEAM });
-    expect(await workerGitIdentity(undefined)).toEqual({ ...TEAM, source: 'hub-default' });
+    expect(await createGitIdentity(undefined)).toEqual({ ...TEAM, source: 'hub-default' });
     await backend.setHubGitIdentity({ identity: null });
   });
 
   it("is left to the provider (this machine's git config, then the fallback) when neither is set", async () => {
-    expect(await workerGitIdentity(undefined, () => Promise.resolve(undefined))).toBeUndefined();
+    expect(await createGitIdentity(undefined, () => Promise.resolve(undefined))).toBeUndefined();
   });
 });

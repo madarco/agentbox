@@ -6,7 +6,12 @@
 // Stored in THIS machine's global config, like `accounts.onLimit`.
 import { homedir } from 'node:os';
 import { loadEffectiveConfig, setConfigValue, unsetConfigValue } from '@agentbox/config';
-import { parseGitIdentity, type GitIdentity } from '@agentbox/core';
+import {
+  parseGitIdentity,
+  resolveCreateGitIdentity,
+  type GitIdentity,
+  type ResolvedGitIdentity,
+} from '@agentbox/core';
 import type { GitIdentityBackend, GitIdentityView } from '../boxes/backend-types';
 
 /**
@@ -18,6 +23,19 @@ export async function readHubGitIdentity(cwd = homedir()): Promise<GitIdentity |
   const id = cfg?.effective.git?.identity;
   const parsed = parseGitIdentity({ name: id?.name, email: id?.email });
   return parsed.ok ? parsed.value : undefined;
+}
+
+/**
+ * The identity a hub-built box commits as, on every hub create path (the
+ * worker's clones and folders on this machine alike): the requester's, else
+ * this hub's default. Undefined leaves the provider to the building folder's
+ * effective git config and then the generic fallback.
+ */
+export async function createGitIdentity(
+  requested: GitIdentity | undefined,
+  readDefault: () => Promise<GitIdentity | undefined> = () => readHubGitIdentity(),
+): Promise<ResolvedGitIdentity | undefined> {
+  return resolveCreateGitIdentity(requested, requested ? undefined : await readDefault());
 }
 
 // Writes are two config keys plus an `ifUnset` check: serialized so two PCs

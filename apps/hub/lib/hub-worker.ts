@@ -56,13 +56,10 @@ import {
   accountSecretPath,
   isDefaultAccount,
   resolveAgentLauncher,
-  resolveCreateGitIdentity,
   toQueueKind,
-  type GitIdentity,
   type ResolvedCarryEntry,
-  type ResolvedGitIdentity,
 } from '@agentbox/core';
-import { readHubGitIdentity } from './backend/git-identity.js';
+import { createGitIdentity } from './backend/git-identity.js';
 import { hydratePreparedFromCustody } from './prepared-hydrate.js';
 import { HUB_WORKER_CLONE_PREFIX } from './boxes/project-key.js';
 import { createStartsSession, resolveCreateAgentSpec } from './boxes/create-agent.js';
@@ -314,18 +311,6 @@ function makeJobLogger(log: (line: string) => void): (jobId: string) => (line: s
   };
 }
 
-/**
- * The identity a worker-built box commits as: the requester's, else this hub's
- * `git.identity.*` default. Undefined leaves the provider to this machine's own
- * git config and then the generic fallback.
- */
-export async function workerGitIdentity(
-  requested: GitIdentity | undefined,
-  readDefault: () => Promise<GitIdentity | undefined> = () => readHubGitIdentity(),
-): Promise<ResolvedGitIdentity | undefined> {
-  return resolveCreateGitIdentity(requested, requested ? undefined : await readDefault());
-}
-
 /** Build the worker's `CreateBoxFn` (exported for the offline smoke/tests). */
 export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
   const { log } = opts;
@@ -489,7 +474,7 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         // git config is the hub's, not the user's, so it only comes after both
         // (the provider reads it when this is absent).
         ...(await (async () => {
-          const gitIdentity = await workerGitIdentity(createOpts?.gitIdentity);
+          const gitIdentity = await createGitIdentity(createOpts?.gitIdentity);
           return gitIdentity ? { gitIdentity } : {};
         })()),
         // Everything provider-shaped comes from the machine that HAS the project
