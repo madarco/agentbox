@@ -391,6 +391,10 @@ export {
   ACCOUNTS_FILE,
   AccountsFileError,
   accountProblem,
+  accountsFileProblem,
+  purgeAgentAccounts,
+  storedAccountIds,
+  defaultLoginPaths,
   decodePastedSecret,
   encodePastedSecret,
   findLegacyAccountSlots,
@@ -421,7 +425,13 @@ export { parseSkillFrontmatter } from './skills/frontmatter.js';
 export type { SkillFrontmatter } from './skills/frontmatter.js';
 export { isSecretFileName, scanSkillFiles, shannonEntropy } from './skills/scan.js';
 export type { SecretFinding } from './skills/scan.js';
-export { readSkillTree, SkillTooLargeError, treeHash, type SkillHashCache, type SkillHashEntry } from './skills/tree.js';
+export {
+  readSkillTree,
+  SkillTooLargeError,
+  treeHash,
+  type SkillHashCache,
+  type SkillHashEntry,
+} from './skills/tree.js';
 export { assertSafePath, readTar, SkillTarError, writeTar } from './skills/tar.js';
 export { SKILL_PROPOSAL_LIMITS } from './skills/proposal-limits.js';
 export {

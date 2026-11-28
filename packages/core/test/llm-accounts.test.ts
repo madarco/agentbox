@@ -8,7 +8,9 @@ import {
   accountSecretPath,
   agentAccountKinds,
   agentIdProblem,
+  cleanIdentityField,
   DEFAULT_ACCOUNT_ID,
+  IDENTITY_FIELD_MAX,
   findAccount,
   migrateAccountsFile,
   normalizeAccountName,
@@ -220,6 +222,26 @@ describe('migrateAccountsFile', () => {
       ],
     };
     expect(migrateAccountsFile(raw, []).accounts[0]!.identity).toEqual({ email: 'a@b.c' });
+  });
+
+  it('strips control characters and caps identity fields (#444 c)', () => {
+    const raw = {
+      accounts: [
+        {
+          agent: 'claude',
+          id: 'work',
+          kind: 'login',
+          createdAt: 't',
+          identity: { email: 'a@b.c\u001b[2J', org: 'x'.repeat(500), plan: '\u0007\n' },
+        },
+      ],
+    };
+    const identity = migrateAccountsFile(raw, []).accounts[0]!.identity!;
+    expect(identity.email).toBe('a@b.c [2J');
+    expect(identity.org).toHaveLength(IDENTITY_FIELD_MAX);
+    expect(identity.org!.endsWith('...')).toBe(true);
+    expect(identity.plan).toBeUndefined();
+    expect(cleanIdentityField('  Acme\tInc\u009b ')).toBe('Acme Inc');
   });
 
   it('tolerates a non-object or wrong-shape file', () => {

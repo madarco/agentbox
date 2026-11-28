@@ -37,10 +37,56 @@ export async function captureAccountLogin(
   }
 }
 
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Uint8Array));
-  return Buffer.concat(chunks).toString('utf8');
+/**
+ * Read a secret off a pipe. Ends at EOF, or once a full line has arrived and
+ * the pipe then stays quiet for `idleMs`: a driver that writes the token and
+ * never closes its end would otherwise hang the command forever. A pipe that
+ * sends nothing within `firstByteMs` is an error rather than a hang.
+ */
+export function readSecretFromStream(
+  stream: NodeJS.ReadableStream,
+  opts: { idleMs?: number; firstByteMs?: number } = {},
+): Promise<string> {
+  const idleMs = opts.idleMs ?? 1_500;
+  const firstByteMs = opts.firstByteMs ?? 120_000;
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (err?: Error): void => {
+      if (timer) clearTimeout(timer);
+      stream.removeListener('data', onData);
+      stream.removeListener('end', onEnd);
+      stream.removeListener('error', onError);
+      stream.pause();
+      if (err) reject(err);
+      else resolve(Buffer.concat(chunks).toString('utf8'));
+    };
+    const onData = (chunk: Buffer | string): void => {
+      chunks.push(Buffer.from(chunk));
+      if (timer) clearTimeout(timer);
+      if (Buffer.concat(chunks).includes(0x0a)) timer = setTimeout(() => finish(), idleMs);
+    };
+    const onEnd = (): void => finish();
+    const onError = (err: Error): void => finish(err);
+    timer = setTimeout(
+      () =>
+        finish(
+          new Error(
+            'no secret on stdin: pipe it in (`... < token.txt`) or run on a terminal for a hidden prompt',
+          ),
+        ),
+      firstByteMs,
+    );
+    stream.on('data', onData);
+    stream.once('end', onEnd);
+    stream.once('error', onError);
+    stream.resume();
+  });
+}
+
+function readStdin(): Promise<string> {
+  // Destroyed after: a still-open pipe would otherwise keep the process alive.
+  return readSecretFromStream(process.stdin).finally(() => process.stdin.destroy());
 }
 
 export const PASTED_KIND_NOUN: Record<Exclude<LlmAccountKind, 'login'>, string> = {

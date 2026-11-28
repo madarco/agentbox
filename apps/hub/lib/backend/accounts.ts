@@ -1,8 +1,9 @@
-// Named LLM accounts on a hub create (docs/llm-accounts-plan.md, Phase 3).
-// Resolved HERE, against this machine's account store and the project's config
-// (never the repo's agentbox.yaml): the box's agent plus every borrowed lender,
-// whose account must be a login. A remote control box has no account store yet
-// (Phase 5), so a named account is refused there with a message naming it.
+// Named LLM accounts (docs/llm-accounts-plan.md): resolution on a hub create
+// and the `/api/v1/accounts` list. Resolved HERE, against THIS machine's
+// account store and the project's config (never the repo's agentbox.yaml): the
+// box's agent plus every borrowed lender, whose account must be a login. A
+// remote control box resolves against its own store, which holds no PC's
+// accounts, so a PC's named account is refused there with a message naming it.
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -42,6 +43,7 @@ import type { LimitsSource } from './account-limits';
 import type { HistoryAccountAuth } from './history';
 import {
   accountDefaults,
+  accountsFileProblem,
   AGENT_SYNC_SPECS,
   boxesOnAccount,
   encodePastedSecret,
@@ -325,7 +327,11 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       id: account.id,
       kind: account.kind,
       ...(account.identity ? { identity: account.identity } : {}),
-      hasSecret: (await readAccountSecret(account.agent, account.id, store)) !== null,
+      // A `default` row exists only when a real login was found (the backup or
+      // the agent's own file), and its secret may be either.
+      hasSecret:
+        isDefaultAccount(account.id) ||
+        (await readAccountSecret(account.agent, account.id, store)) !== null,
       boxes: on.map((b) => b.name),
       ...(limits ? { limits } : {}),
       auth: accountAuthState(account, ev, written, now()),
@@ -445,7 +451,10 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
       return { ok: true, value: await policy() };
     },
     async listAccounts(opts = {}) {
-      const { accounts } = await readAccounts(store);
+      const [{ accounts }, storeError] = await Promise.all([
+        readAccounts(store),
+        accountsFileProblem(store),
+      ]);
       const all = await boxes().catch(() => []);
       const project =
         opts.project && !(await projectProblem(opts.project)) ? opts.project : undefined;
@@ -465,6 +474,7 @@ export function createAccountBackend(deps: AccountBackendDeps = {}): AccountBack
         accounts: views,
         agents,
         ...(defaults ? { defaults } : { defaultsError: defaultsError! }),
+        ...(storeError ? { storeError } : {}),
         ...(machine ? { machine } : {}),
       };
     },

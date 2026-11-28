@@ -6,6 +6,7 @@ import {
   boxAccount,
   makeStagingDir,
   planPropagateTargets,
+  stagedItemsCarryCredential,
   propagateStagedSettings,
   readState,
   removeStagingDir,
@@ -97,9 +98,11 @@ export async function runPropagateStep(opts: {
     scope,
     projectRoot: sourceBox.projectRoot,
     excludeVolume,
-    // Within the source box's account: a pulled item set can carry the
-    // agent's login (codex's `auth.json`), which must never cross accounts.
-    account: boxAccount(sourceBox, agent),
+    // A set carrying the agent's login (codex's `auth.json`) stays within the
+    // source box's account; a login-free one reaches boxes on every account.
+    ...(stagedItemsCarryCredential(agent, opts.items)
+      ? { account: boxAccount(sourceBox, agent) }
+      : {}),
   });
   if (plan.dockerVolumes.length === 0 && plan.cloudBoxes.length === 0) {
     log.info('no other target boxes in scope');

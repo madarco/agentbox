@@ -25,6 +25,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { allAgentSpecs } from '@agentbox/agent-registry';
 import { withFileLock } from '@agentbox/config';
@@ -95,34 +96,51 @@ export class AccountsFileError extends Error {
   ) {
     super(
       `${path}: ${reason}. Refusing to rewrite it, which would drop every named account in it; ` +
-        'fix or move the file and retry',
+        `fix it, or move it aside (\`mv ${path} ${path}.bak\`) and add the accounts again`,
     );
     this.name = 'AccountsFileError';
   }
 }
 
 /**
- * The legacy single-slot logins on this host: every agent whose
- * `credential.hostBackup` holds a real credential (by that spec's own
- * `realShape`). A placeholder or garbage file is not a login.
+ * Where an agent's `default` login can be read on this host, in order: the
+ * legacy backup (`credential.hostBackup`), then the agent's own login file
+ * (`~/.claude/.credentials.json`) — the same two `resolveHostCredential` seeds
+ * a default box from, so a host that has signed in but never run a box still
+ * lists its `default`.
+ */
+export function defaultLoginPaths(spec: AgentSyncSpec, home: string = homedir()): string[] {
+  const cred = spec.credential;
+  if (!cred) return [];
+  const source = spec.staticPaths?.[0];
+  return [
+    ...(cred.hostBackup ? [cred.hostBackup] : []),
+    ...(source ? [join(home, ...source.hostHomeRel, cred.boxRelPath)] : []),
+  ];
+}
+
+/**
+ * The legacy single-slot logins on this host: every agent with a real
+ * credential (by that spec's own `realShape`) at one of its
+ * {@link defaultLoginPaths}. A placeholder or garbage file is not a login.
  */
 export async function findLegacyAccountSlots(
   specs: readonly AgentSyncSpec[] = allAgentSpecs(),
 ): Promise<LegacyAccountSlot[]> {
   const slots = await Promise.all(
     specs.map(async (spec): Promise<LegacyAccountSlot | null> => {
-      const cred = spec.credential;
-      if (!cred?.hostBackup) return null;
-      try {
-        const [text, st] = await Promise.all([
-          readFile(cred.hostBackup, 'utf8'),
-          stat(cred.hostBackup),
-        ]);
-        if (!isRealCredentialShape(cred.realShape, text)) return null;
-        return { agent: spec.id, createdAt: st.mtime.toISOString() };
-      } catch {
-        return null; // absent or unreadable: no legacy login for this agent
+      const realShape = spec.credential?.realShape;
+      for (const path of defaultLoginPaths(spec)) {
+        try {
+          const [text, st] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
+          if (isRealCredentialShape(realShape, text)) {
+            return { agent: spec.id, createdAt: st.mtime.toISOString() };
+          }
+        } catch {
+          // absent or unreadable: try the next place
+        }
       }
+      return null;
     }),
   );
   return slots.filter((s): s is LegacyAccountSlot => s !== null);
@@ -177,6 +195,22 @@ export async function readAccounts(opts: AccountStoreOptions = {}): Promise<Acco
   const o = resolveOpts(opts);
   const [read, legacy] = await Promise.all([readRaw(o.path), findLegacyAccountSlots(o.specs)]);
   return viewOf(read.ok ? read.raw : undefined, legacy, o.specs);
+}
+
+/**
+ * Why `accounts.json` cannot be trusted, as the message a mutation would throw
+ * (naming the file), or null when it is fine or absent. Reads still list the
+ * `default`s from their own files, so a listing shows this as a warning
+ * instead of hiding every named account in silence.
+ */
+export async function accountsFileProblem(opts: AccountStoreOptions = {}): Promise<string | null> {
+  const o = resolveOpts(opts);
+  try {
+    const read = await readRaw(o.path);
+    return read.ok ? null : new AccountsFileError(o.path, read.reason).message;
+  } catch (err) {
+    return `${o.path}: ${err instanceof Error ? err.message : String(err)}`;
+  }
 }
 
 async function writeAtomic(path: string, content: string): Promise<void> {
@@ -303,6 +337,58 @@ export async function removeAccount(
     const next = rows.filter((r) => !sameRow(r, spec.id, id, canonical));
     if (secret) await rm(secret, { force: true });
     return { rows: next, result: next.length !== rows.length };
+  });
+}
+
+/**
+ * The stored account ids of agents this process may no longer know (an agent
+ * package being unregistered), read straight off the file's rows. An
+ * untrustworthy file reads as none.
+ */
+export async function storedAccountIds(
+  agents: readonly string[],
+  opts: Pick<AccountStoreOptions, 'path'> = {},
+): Promise<{ agent: string; id: string }[]> {
+  const read = await readRaw(opts.path ?? ACCOUNTS_FILE);
+  if (!read.ok || read.raw === undefined) return [];
+  const out: { agent: string; id: string }[] = [];
+  for (const row of (read.raw as AccountsFile).accounts as unknown[]) {
+    const r = row as { agent?: unknown; id?: unknown } | null;
+    if (typeof r?.agent === 'string' && typeof r.id === 'string' && agents.includes(r.agent)) {
+      out.push({ agent: r.agent, id: r.id });
+    }
+  }
+  return out;
+}
+
+/**
+ * Drop every account row of `agents` and their secrets
+ * (`credentials/<agent>/`), under the accounts lock. For an agent package
+ * being unregistered: its rows are hidden from every read once the registry
+ * no longer has it, but a mutation passes them through, so they would stay on
+ * disk with their secrets forever. Returns the rows removed.
+ */
+export async function purgeAgentAccounts(
+  agents: readonly string[],
+  opts: AccountStoreOptions = {},
+): Promise<{ agent: string; id: string }[]> {
+  const o = resolveOpts(opts);
+  for (const a of agents) {
+    const problem = agentIdProblem(a);
+    if (problem) throw new Error(problem);
+  }
+  return editRows(o, async (rows) => {
+    const removed: { agent: string; id: string }[] = [];
+    const next = rows.filter((row) => {
+      const r = row as { agent?: unknown; id?: unknown } | null;
+      if (typeof r?.agent !== 'string' || !agents.includes(r.agent)) return true;
+      removed.push({ agent: r.agent, id: String(r.id) });
+      return false;
+    });
+    for (const a of agents) {
+      await rm(join(o.stateDir, 'credentials', a), { recursive: true, force: true });
+    }
+    return { rows: next, result: removed };
   });
 }
 
@@ -439,7 +525,9 @@ export function resolveLoginAccount(
   if (id === undefined || id === '' || isDefaultAccount(id)) {
     if (kind !== 'login') {
       throw new Error(
-        `${kind === 'api-key' ? 'an API key' : 'a setup token'} needs a named account: add --account <name> (the default account is the agent's login)`,
+        `${kind === 'api-key' ? 'an API key' : 'a setup token'} needs a name: the default account is ${spec.id}'s own login. ` +
+          `Save it as \`agentbox credentials add ${spec.id}/<name> --${kind}\`, then make it the default with ` +
+          `\`agentbox credentials use ${spec.id}/<name> --global\``,
       );
     }
     return null;

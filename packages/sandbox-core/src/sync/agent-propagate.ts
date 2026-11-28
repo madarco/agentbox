@@ -36,6 +36,18 @@ export interface StagedItem {
   kind: 'dir' | 'file';
 }
 
+/**
+ * Whether a staged set holds `agent`'s login file (`credential.boxRelPath`), or
+ * a directory above it. Such a set must stay within the source box's account;
+ * a login-free set (skills, prompts, config) can go to every box. Pure apart
+ * from the registry lookup.
+ */
+export function stagedItemsCarryCredential(agent: AgentId, items: readonly StagedItem[]): boolean {
+  const rel = resolveAgentSpec(agent).credential?.boxRelPath;
+  if (!rel) return false;
+  return items.some((i) => i.rel === rel || rel.startsWith(`${i.rel.replace(/\/+$/, '')}/`));
+}
+
 /** A pulled settings set staged host-side, ready to propagate to targets. */
 export interface StagedSettings {
   agent: AgentId;

@@ -8,6 +8,7 @@ import {
   propagateStagedSettings,
   transportSettingsTarget,
   type SettingsTarget,
+  stagedItemsCarryCredential,
 } from '../src/index.js';
 
 // The three `<agent>StagedItems` mappers moved to their agent packages; their
@@ -232,6 +233,18 @@ describe('planPropagateTargets', () => {
       scope: 'all',
     });
     expect(plan.dockerVolumes.map((v) => v.volume)).toEqual(['agentbox-opencode-config-y']);
+  });
+});
+
+describe('stagedItemsCarryCredential', () => {
+  const file = (rel: string) => ({ rel, label: rel, kind: 'file' as const });
+  it("is true only when the set holds the agent's login file", () => {
+    expect(stagedItemsCarryCredential('codex', [file('config.toml'), file('auth.json')])).toBe(
+      true,
+    );
+    expect(stagedItemsCarryCredential('codex', [file('config.toml'), file('prompts')])).toBe(false);
+    expect(stagedItemsCarryCredential('claude', [file('skills/foo')])).toBe(false);
+    expect(stagedItemsCarryCredential('pi', [file('settings.json')])).toBe(false);
   });
 });
 

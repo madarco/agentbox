@@ -25,6 +25,9 @@ import {
 } from '@agentbox/agent-registry';
 import type { AgentSyncSpec } from '@agentbox/core';
 import { confirm, log } from '@agentbox/cli-kit';
+import { accountConfigVolume, isDefaultAccount } from '@agentbox/core';
+import { purgeAgentAccounts, storedAccountIds } from '@agentbox/sandbox-core';
+import { execa } from 'execa';
 import { resolvePackage } from './plugin.js';
 
 /** Names a plugin may not claim: every built-in id AND every built-in alias. */
@@ -144,15 +147,49 @@ export const agentPluginCommands = (): Command[] => {
   const remove = new Command('remove')
     .alias('rm')
     .argument('<package>', 'package name to unregister')
+    .option(
+      '--purge-accounts',
+      "also delete the package's agents' named accounts: their rows, secrets and docker volumes",
+    )
+    .option('--keep-accounts', "keep the package's agents' named accounts (for a re-add)")
     .description('unregister an agent package (does not uninstall it)')
-    .action(async (packageName: string) => {
-      if (!(await removeAgentPluginRecord(packageName))) {
-        process.stderr.write(`no registered agent package named "${packageName}"\n`);
-        process.exitCode = 1;
-        return;
-      }
-      log.success(`unregistered ${packageName}`);
-    });
+    .action(
+      async (packageName: string, opts: { purgeAccounts?: boolean; keepAccounts?: boolean }) => {
+        const record = readAgentRegistrySync().agents.find((r) => r.packageName === packageName);
+        const specs = Object.values(record?.specs ?? {});
+        const stored = await storedAccountIds(specs.map((s) => s.id)).catch(() => []);
+        let purge = opts.purgeAccounts === true;
+        if (stored.length > 0 && !purge && !opts.keepAccounts && process.stdin.isTTY) {
+          const ok = await confirm({
+            message: `Also delete its ${String(stored.length)} named account(s) (${stored.map((a) => `${a.agent}/${a.id}`).join(', ')}) and their secrets?`,
+            initialValue: false,
+          });
+          purge = ok === true;
+        }
+        if (!(await removeAgentPluginRecord(packageName))) {
+          process.stderr.write(`no registered agent package named "${packageName}"\n`);
+          process.exitCode = 1;
+          return;
+        }
+        log.success(`unregistered ${packageName}`);
+        if (stored.length === 0) return;
+        if (!purge) {
+          log.info(
+            `kept ${String(stored.length)} named account(s) of its agents in ~/.agentbox/accounts.json (hidden until the package is added again); delete them with \`agentbox agent rm ${packageName} --purge-accounts\` before unregistering next time`,
+          );
+          return;
+        }
+        const removed = await purgeAgentAccounts(specs.map((s) => s.id));
+        for (const a of removed) {
+          const spec = specs.find((s) => s.id === a.agent);
+          if (!spec?.dockerVolume || isDefaultAccount(a.id)) continue;
+          await execa('docker', ['volume', 'rm', accountConfigVolume(spec.dockerVolume, a.id)], {
+            reject: false,
+          });
+        }
+        log.success(`deleted ${String(removed.length)} named account(s) and their secrets`);
+      },
+    );
 
   return [add, list, remove];
 };

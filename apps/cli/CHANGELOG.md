@@ -87,6 +87,15 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Accounts:** `agentbox credentials` lists `default` when the agent is signed
+  in but no box backed its login up yet. It names a damaged `accounts.json`
+  instead of hiding every named account. A setup token or API key saved as
+  `default` gets a message that points to a name and `credentials use`. Settings
+  pulled from a default box now reach boxes on named accounts when they carry no
+  login. `download codex` keeps a named box's `auth.json` in the box.
+  `agent remove` can delete an unregistered agent's accounts. A docker session
+  whose box registry can't be read no longer forwards your host's API key.
+
 - **A remote hub no longer lists "Docker (local)"**, which it has no engine for;
   its own engine is the Remote Docker host `hub`, now listed first. A PC pointed
   at a remote hub hides local docker the same way.

@@ -21,18 +21,35 @@ import {
   type AccountEnvPolicy,
 } from '@agentbox/sandbox-core';
 
-/** The account env policy of `agent` in the box running as `container`. */
+/**
+ * The account env policy of `agent` in the box running as `container`.
+ *
+ * Fails CLOSED on the suppress half: when the box registry (or the account
+ * store) cannot be read, the box may be on a named account, so none of the
+ * agent's account keys are forwarded — a host API key must not bill a named
+ * subscription. Nothing is injected either; the agent then asks to log in, and
+ * a relaunch once the file reads again fixes it.
+ */
 export async function sessionAccountPolicy(
   agent: string,
   container: string,
+  read: typeof readState = readState,
 ): Promise<AccountEnvPolicy> {
+  let spec;
   try {
-    const state = await readState();
-    const box = state.boxes.find((b) => dockerField(b, 'container') === container);
-    const account = boxAccount(box, agent);
-    return await accountEnvPolicy(resolveAgentSpec(agent), account);
+    spec = resolveAgentSpec(agent);
   } catch {
-    return NO_ACCOUNT_ENV;
+    return NO_ACCOUNT_ENV; // not an agent this build knows: it has no account keys
+  }
+  try {
+    const state = await read();
+    const box = state.boxes.find((b) => dockerField(b, 'container') === container);
+    return await accountEnvPolicy(spec, boxAccount(box, agent));
+  } catch {
+    const suppress = Object.values(spec.accountEnv ?? {}).filter(
+      (k): k is string => typeof k === 'string',
+    );
+    return { inject: {}, suppress };
   }
 }
 
