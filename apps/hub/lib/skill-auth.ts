@@ -17,7 +17,8 @@ export function skillContentReadAuthorized(
 }
 
 /**
- * Who may compare, pull or send skills with a machine (`/api/v1/skill-machines`).
+ * Who may pull or send skills with a machine (`/api/v1/skill-machines`); compare
+ * goes through {@link skillMachineCompareAuthorized}, which adds one exception.
  * Stricter than reading content: these act ON a PC (read its skill dirs, write
  * into `~/.agents/skills`), and the hub's own machine runs them with no confirm.
  * So only the owner — a signed-in session, the admin token, or loopback on a

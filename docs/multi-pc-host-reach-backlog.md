@@ -201,7 +201,10 @@ for teams PCs must never hold it (device tokens only).
   `X-Agentbox-Admin-Token`, and the tray sends just its Bearer (`hub target --json`), which
   on an enrolled PC is the device token, so its skills row stayed "Not compared". A device
   token may now compare its own machine (`skillMachineCompareAuthorized`: the token's
-  device == `{id}`); another machine, and pull/send, stay owner-only.
+  device == `{id}`); another machine, and pull/send, stay owner-only. Still open: a tray
+  on a PC that never enrolled sends the plain API key, which compare still refuses (its
+  row stays "Not compared"); `hub setup` now enrolls the operator PC, and other PCs
+  enroll with `hub login`, so this is only a never-enrolled PC.
 
 ## From the real-Hetzner sign-off of #429 / #432, noted, not fixed
 
