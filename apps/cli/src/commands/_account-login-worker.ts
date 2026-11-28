@@ -74,12 +74,28 @@ async function signInAndStore(
     ...(named ? { volume } : {}),
     writeLog: (line) => log.write(line),
   });
+  // The pty echoes what is typed, so the raw stream would log the code. Once
+  // a code is sent, hold the stream back and write it with every code sent so
+  // far masked, at the next phase change (an echo split over chunks included).
+  const sent: string[] = [];
+  let held: string | null = null;
+  const flush = (): void => {
+    if (held === null) return;
+    let text = held;
+    for (const c of sent) text = text.split(c).join('[redacted]');
+    log.raw(text);
+    held = null;
+  };
   const res = await runAgentLogin({
     spec: binding.spec,
     dockerArgv: binding.dockerArgv,
-    writeRaw: (chunk) => log.raw(chunk),
+    writeRaw: (chunk) => {
+      if (held === null) log.raw(chunk);
+      else held += chunk;
+    },
     writeLog: (line) => log.write(line),
     onPhase: (phase, u) => {
+      if (phase !== 'exchanging') flush();
       // `done` is not ours to report yet: the login is not stored.
       if (phase === 'done' || phase === 'error') return;
       if (phase === 'starting' || phase === 'exchanging') {
@@ -102,12 +118,25 @@ async function signInAndStore(
         ...(u?.lastError ? { lastError: u.lastError } : {}),
       });
     },
-    getInput: () => takeAccountLoginCode(sessionId),
+    getInput: () => {
+      const code = takeAccountLoginCode(sessionId);
+      if (code) {
+        sent.push(code);
+        held ??= '';
+      }
+      return code;
+    },
     verify: binding.verify,
     ...(binding.finalize ? { finalize: binding.finalize } : {}),
     signal,
   });
-  if (!res.ok) throw new Error(res.unsupported ?? res.error ?? 'sign-in failed');
+  flush();
+  if (!res.ok) {
+    // The core's error quotes the last lines of the stream, the echo included.
+    let error = res.unsupported ?? res.error ?? 'sign-in failed';
+    for (const c of sent) error = error.split(c).join('[redacted]');
+    throw new Error(error);
+  }
 
   if (named) {
     const cap = await captureVolumeLogin({

@@ -66,6 +66,11 @@ describe('CLAUDE_LOGIN_SPEC.detect', () => {
   });
   it('treats a rejection as retryable input', () => {
     expect(CLAUDE_LOGIN_SPEC.invalidInputPattern?.test('That code is invalid')).toBe(true);
+    expect(
+      CLAUDE_LOGIN_SPEC.invalidInputPattern?.test(
+        "That doesn't look like the full code. Copy all of it, including the # in the middle.",
+      ),
+    ).toBe(true);
   });
 });
 
