@@ -488,6 +488,33 @@ export const daytonaBackend: CloudBackend = {
             );
           }
         }
+        // An explicit region (`--location` / `box.daytonaRegion`) can disagree
+        // with the snapshot: a linux-vm base runs only in us-east-1, and a
+        // snapshot lists the regions it was built in (`regionIds`; a container
+        // base baked against the account default reported ["us"] from every
+        // client, measured 2026-11-28). Refuse here with the fix rather than
+        // let the create fail as "snapshot missing" or "no runners".
+        if (snapshotName && req.location && req.location.length > 0) {
+          if (sandboxClass === 'linux-vm' && region !== DAYTONA_VM_REGION) {
+            throw new Error(
+              `daytona: the base is a linux-vm snapshot, which runs only in ${DAYTONA_VM_REGION}, ` +
+                `but region '${region}' was asked for. Drop --location (or box.daytonaRegion), or ` +
+                `re-bake as a container: \`agentbox config set box.daytonaClass container\` then ` +
+                `\`agentbox prepare --provider daytona --force\`.`,
+            );
+          }
+          const regionIds = await client.snapshot
+            .get(snapshotName)
+            .then((snap) => (snap as { regionIds?: unknown }).regionIds)
+            .catch(() => undefined);
+          if (Array.isArray(regionIds) && regionIds.length > 0 && !regionIds.includes(region)) {
+            throw new Error(
+              `daytona: base snapshot '${snapshotName}' exists in ${regionIds.join(', ')}, not in ` +
+                `'${region}'. Create without --location, or bake one there: ` +
+                `\`agentbox prepare --provider daytona --location ${region} --force\`.`,
+            );
+          }
+        }
         // The image path builds a Dockerfile through Daytona's declarative
         // builder, which is CONTAINER-ONLY. Falling through to it when the user
         // asked for a VM would hand them a container box that silently can't

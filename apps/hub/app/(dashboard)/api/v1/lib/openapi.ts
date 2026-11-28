@@ -8291,11 +8291,18 @@ export function buildOpenApi(): Record<string, unknown> {
             },
             regions: {
               type: 'array',
+              description:
+                'Locations to offer in a create picker, most common first. Each key is a literal --location value for THIS backend (hetzner location, DigitalOcean region slug, Daytona region); there is no cross-provider grammar. Absent = the provider has no location knob. A picker defaults to sending no location (the configured or provider placement, failover allowed), never to regions[0]; a chosen one goes as opts.location with opts.locationPinned: true.',
               items: {
                 type: 'object',
                 properties: { key: { type: 'string' }, label: { type: 'string' } },
                 required: ['key', 'label'],
               },
+            },
+            regionHint: {
+              type: 'string',
+              description:
+                'Placeholder for a free-text location. Its PRESENCE is what says `regions` is an open list — offer a custom-value field only when there is a hint for it.',
             },
             hasCredentials: {
               type: 'boolean',

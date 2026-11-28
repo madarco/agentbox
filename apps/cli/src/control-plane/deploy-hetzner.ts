@@ -15,6 +15,7 @@ import {
   updateControlPlaneOnHetzner,
   type ControlPlaneDestroyResult,
 } from '@agentbox/sandbox-hetzner';
+import { defaultSizeFor, VPS_DEFAULTS } from './vps-placement.js';
 
 /**
  * CLI wrapper for the Hetzner control-plane deploy: precheck the token, run the
@@ -34,6 +35,10 @@ export interface HetznerDeployOptions {
    * a recycled address can arrive already at the per-hostname cap.
    */
   domain?: string;
+  /** Hetzner location (default nbg1). */
+  location?: string;
+  /** Hetzner server type (default cx23). */
+  serverType?: string;
   log: (line: string) => void;
   /**
    * Fired once the VPS exists, before the build + healthz poll. Lets the caller
@@ -70,22 +75,28 @@ export async function runHetznerDeploy(opts: HetznerDeployOptions): Promise<{ ur
     throw new Error('no HCLOUD_TOKEN configured — run `agentbox hetzner login` first');
   }
   const envContent = await readFile(opts.envPath, 'utf8');
+  const location = opts.location ?? VPS_DEFAULTS.hetzner.location;
+  const placement = { location, size: opts.serverType ?? defaultSizeFor('hetzner', location) };
   const result = await deployControlPlaneToHetzner({
     envContent,
     source: opts.source,
     ...(opts.domain ? { domain: opts.domain } : {}),
+    // Always forwarded, so the record below is what was actually requested.
+    location: placement.location,
+    serverType: placement.size,
     onLog: opts.log,
     onProvisioned: async (info) => {
       const record: ControlPlaneDeployRecord = {
         provider: 'hetzner',
         source: opts.source,
+        ...placement,
         ...info,
       };
       opts.onProvisioned?.(record);
       await persistDeployRecord(record);
     },
   });
-  await persistDeployRecord({ provider: 'hetzner', source: opts.source, ...result });
+  await persistDeployRecord({ provider: 'hetzner', source: opts.source, ...placement, ...result });
   return { url: result.url };
 }
 

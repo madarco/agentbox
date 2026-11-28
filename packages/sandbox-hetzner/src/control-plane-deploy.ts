@@ -63,6 +63,10 @@ export interface ControlPlaneHetznerDeployResult {
   sshKeyDir: string;
 }
 
+/** The control box's default server type: also the floor it is known to run on. */
+export const CONTROL_PLANE_DEFAULT_SERVER_TYPE = 'cx23';
+export const CONTROL_PLANE_DEFAULT_LOCATION = 'nbg1';
+
 const REMOTE_APP_DIR = '/opt/agentbox/apps/hub';
 // The monorepo checkout cloud-init makes in source mode — the parent of
 // REMOTE_APP_DIR, and what `hub update --ref` re-checks-out. Absent entirely in
@@ -759,17 +763,17 @@ export async function deployControlPlaneToHetzner(
 
   log(
     source.kind === 'package'
-      ? `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
-      : `provisioning ${opts.serverType ?? 'cx23'} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
+      ? `provisioning ${opts.serverType ?? CONTROL_PLANE_DEFAULT_SERVER_TYPE} VPS (hub from npm: @madarco/agentbox@${source.spec})…`
+      : `provisioning ${opts.serverType ?? CONTROL_PLANE_DEFAULT_SERVER_TYPE} VPS (hub from source: ${source.repoUrl}@${source.repoRef})…`,
   );
   const { server } = await withHetznerRetry(
     { method: 'createServer', retryOnAmbiguous: false, attemptTimeoutMs: 120_000 },
     () =>
       client.createServer({
         name,
-        server_type: opts.serverType ?? 'cx23',
+        server_type: opts.serverType ?? CONTROL_PLANE_DEFAULT_SERVER_TYPE,
         image: opts.serverImage ?? 'ubuntu-24.04',
-        location: opts.location ?? 'nbg1',
+        location: opts.location ?? CONTROL_PLANE_DEFAULT_LOCATION,
         user_data: controlPlaneCloudInit({
           sshPubkey: key.publicKey,
           // Package mode needs no repo on the VPS at all.

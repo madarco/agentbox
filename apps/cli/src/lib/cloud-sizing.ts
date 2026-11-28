@@ -15,7 +15,7 @@ export const SIZE_OPTION = {
 export const LOCATION_OPTION = {
   flags: '--location <name>',
   description:
-    'Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.',
+    'Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Daytona: us, eu, us-east-1 (overrides box.daytonaRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.',
 } as const;
 
 /** `--size` / `--location` as typed (trimmed); a key is absent when not given. */
@@ -40,7 +40,7 @@ export function locationIgnoredWarning(
   location: string | undefined,
 ): string | null {
   if (!location?.trim() || providerTakesLocation(providerName)) return null;
-  return `--location applies to providers with datacenters/regions (hetzner, digitalocean); ignored for provider ${providerName}`;
+  return `--location applies to providers with datacenters/regions (hetzner, digitalocean, daytona); ignored for provider ${providerName}`;
 }
 
 /** Per-create overrides from the CLI; each wins over the resolved config value. */
@@ -98,7 +98,7 @@ export interface CloudSizingFlags {
  *   it can push the deadline forward while the agent is working).
  * - **daytona**: `timeoutMs` (auto-stop inactivity window, same keepalive rail
  *   as e2b), `sandboxClass` (`linux-vm` | `container`) and `location` (region).
- *   `location` carries only an EXPLICIT `box.daytonaRegion` — the class-derived
+ *   `location` carries only an EXPLICIT `--location` or `box.daytonaRegion` — the class-derived
  *   region (`linux-vm` ⇒ `us-east-1`, the only region with VM runners) is left
  *   to the backend, which derives it from the class it actually boots. That's
  *   the class the base snapshot was BAKED as, which is not always the one asked
@@ -195,8 +195,9 @@ export function cloudSizingProviderOptions(
     // a linux-vm bake fell back to a container). Pre-deriving `us-east-1` here
     // sent container-base lookups to the one region with no container runners,
     // where the snapshot reads as missing.
+    // A typed `--location` (set above via the declared `regions`) wins over it.
     const region = (cfg.box.daytonaRegion ?? '').trim();
-    if (region.length > 0) out.location = region;
+    if (out.location === undefined && region.length > 0) out.location = region;
   }
   return out;
 }

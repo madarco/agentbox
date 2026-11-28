@@ -71,6 +71,8 @@ export {
   type ControlPlaneCloudInitOptions,
 } from './cloud-init.js';
 export {
+  CONTROL_PLANE_DEFAULT_REGION,
+  CONTROL_PLANE_DEFAULT_SIZE,
   deployControlPlaneToDigitalOcean,
   updateControlPlaneOnDigitalOcean,
   destroyControlPlaneOnDigitalOcean,

@@ -51,8 +51,9 @@ import { sshExec, waitForSsh } from './ssh-cli.js';
 // Stock image the control-plane Droplet boots from. Same slug the box/prepare
 // paths use — DigitalOcean spells Ubuntu 24.04 `ubuntu-24-04-x64`.
 const STOCK_IMAGE_SLUG = 'ubuntu-24-04-x64';
-const DEFAULT_SIZE = 's-2vcpu-4gb';
-const DEFAULT_REGION = 'nyc3';
+/** The control box's default Droplet size: also the floor it is known to run on. */
+export const CONTROL_PLANE_DEFAULT_SIZE = 's-2vcpu-4gb';
+export const CONTROL_PLANE_DEFAULT_REGION = 'nyc3';
 
 // The monorepo checkout cloud-init makes in source mode — what `hub update --ref`
 // re-checks-out. Absent entirely in package mode.
@@ -157,8 +158,8 @@ export async function deployControlPlaneToDigitalOcean(
   const key = await mintSshKey(keyDir, `agentbox-control-plane-${stamp}`);
   const knownHosts = join(keyDir, 'known_hosts');
 
-  const size = opts.size ?? DEFAULT_SIZE;
-  const region = opts.region ?? DEFAULT_REGION;
+  const size = opts.size ?? CONTROL_PLANE_DEFAULT_SIZE;
+  const region = opts.region ?? CONTROL_PLANE_DEFAULT_REGION;
   log(
     source.kind === 'package'
       ? `provisioning ${size} Droplet in ${region} (hub from npm: @madarco/agentbox@${source.spec})…`
@@ -177,7 +178,9 @@ export async function deployControlPlaneToDigitalOcean(
         user_data: controlPlaneCloudInit({
           sshPubkey: key.publicKey,
           // Package mode needs no repo on the droplet at all.
-          ...(source.kind === 'source' ? { repo: { url: source.repoUrl, ref: source.repoRef } } : {}),
+          ...(source.kind === 'source'
+            ? { repo: { url: source.repoUrl, ref: source.repoRef } }
+            : {}),
         }),
         tags: [tag, 'agentbox'],
         ipv6: false,
@@ -195,7 +198,8 @@ export async function deployControlPlaneToDigitalOcean(
     { deadlineMs: PROVISION_DROPLET_DEADLINE_MS, intervalMs: 3_000, maxIntervalMs: 10_000 },
   );
   const ip = publicIpv4(droplet);
-  if (!ip) throw new Error(`digitalocean: droplet ${String(dropletId)} came up without a public IPv4`);
+  if (!ip)
+    throw new Error(`digitalocean: droplet ${String(dropletId)} came up without a public IPv4`);
 
   const domain = opts.domain ?? `${ip}.sslip.io`;
   const url = `https://${domain}`;
@@ -227,7 +231,10 @@ export async function deployControlPlaneToDigitalOcean(
       ? 'waiting for cloud-init (Docker)…'
       : 'waiting for cloud-init (Docker + repo clone)…',
   );
-  await sshExec(target, 'cloud-init status --wait || true', { timeoutMs: 12 * 60_000, onLine: log });
+  await sshExec(target, 'cloud-init status --wait || true', {
+    timeoutMs: 12 * 60_000,
+    onLine: log,
+  });
 
   await applyControlPlaneConfig({
     target,
@@ -370,8 +377,9 @@ export async function destroyControlPlaneOnDigitalOcean(opts: {
   const warnings: string[] = [];
   // Built lazily: a record with nothing to delete must not demand a token it will
   // never use (makeDigitalOceanClient throws when the token is empty).
-  let lazyClient: Pick<DigitalOceanClient, 'deleteDroplet' | 'deleteFirewall' | 'deleteTag'> | undefined =
-    opts.client;
+  let lazyClient:
+    | Pick<DigitalOceanClient, 'deleteDroplet' | 'deleteFirewall' | 'deleteTag'>
+    | undefined = opts.client;
   const client = (): Pick<DigitalOceanClient, 'deleteDroplet' | 'deleteFirewall' | 'deleteTag'> =>
     (lazyClient ??= makeDigitalOceanClient());
   let serverDeleted = false;
@@ -383,7 +391,9 @@ export async function destroyControlPlaneOnDigitalOcean(opts: {
       await client().deleteDroplet(opts.serverId);
       serverDeleted = true;
     } catch (e) {
-      warnings.push(`droplet ${String(opts.serverId)}: ${e instanceof Error ? e.message : String(e)}`);
+      warnings.push(
+        `droplet ${String(opts.serverId)}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 

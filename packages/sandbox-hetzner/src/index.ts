@@ -77,6 +77,8 @@ export {
 } from './cloud-init.js';
 export {
   applyControlPlaneConfig,
+  CONTROL_PLANE_DEFAULT_LOCATION,
+  CONTROL_PLANE_DEFAULT_SERVER_TYPE,
   deployControlPlaneToHetzner,
   destroyControlPlaneOnHetzner,
   updateControlPlaneOnHetzner,

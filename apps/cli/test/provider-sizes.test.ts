@@ -19,6 +19,7 @@ import { DIGITALOCEAN_DEFAULT_SIZE } from '@agentbox/sandbox-digitalocean';
 import { DEFAULT_CPU, DEFAULT_MEMORY_MB, parseE2bSize } from '@agentbox/sandbox-e2b';
 import { HETZNER_DEFAULT_SERVER_TYPE } from '@agentbox/sandbox-hetzner';
 import { parseVercelVcpus, VERCEL_DEFAULT_VCPUS } from '@agentbox/sandbox-vercel';
+import { VPS_DEFAULTS } from '../src/control-plane/vps-placement.js';
 
 function descriptor(name: string) {
   const d = PROVIDERS.find((p) => p.name === name);
@@ -120,5 +121,42 @@ describe('declared provider sizes', () => {
       (p) => p.name,
     );
     expect([...baked].sort()).toEqual(['daytona', 'e2b']);
+  });
+});
+
+describe('declared provider regions', () => {
+  function regionsOf(name: string): readonly { key: string; label: string }[] {
+    return (
+      (descriptor(name) as { regions?: readonly { key: string; label: string }[] }).regions ?? []
+    );
+  }
+
+  it('the location providers declare regions; the rest have no location knob', () => {
+    for (const name of ['hetzner', 'digitalocean', 'daytona']) {
+      expect(regionsOf(name).length, name).toBeGreaterThan(1);
+    }
+    for (const name of ['docker', 'vercel', 'e2b', 'remote-docker']) {
+      expect(regionsOf(name), name).toEqual([]);
+    }
+  });
+
+  it('keys are unique slugs and labels non-empty', () => {
+    for (const p of PROVIDERS) {
+      const regions = regionsOf(p.name);
+      expect(new Set(regions.map((r) => r.key)).size, p.name).toBe(regions.length);
+      for (const r of regions) {
+        expect(r.key, `${p.name}/${r.key}`).toMatch(/^[a-z0-9-]+$/);
+        expect(r.label.trim().length, `${p.name}/${r.key}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it.each([
+    ['hetzner', VPS_DEFAULTS.hetzner.location],
+    ['digitalocean', VPS_DEFAULTS.digitalocean.location],
+  ])('%s lists its default location first and labels it', (name, expected) => {
+    expect(regionsOf(name)[0]?.key).toBe(expected);
+    const marked = regionsOf(name).filter((r) => r.label.includes('(default)'));
+    expect(marked.map((r) => r.key)).toEqual([expected]);
   });
 });

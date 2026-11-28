@@ -43,7 +43,8 @@ Daytona offers two sandbox classes. `box.daytonaClass` selects one; changing it 
   Daytona runs VM sandboxes in **`us-east-1` only** — it's the sole region with VM runners. Choosing
   `linux-vm` therefore pins your boxes to US-East, and needs an org Daytona has authorized. If you
   need EU data residency or lower EU latency, stay on `container` and pick a region with
-  `box.daytonaRegion`.
+  `box.daytonaRegion`, or per box with `--location eu` (a typed `--location` wins over the config
+  key).
 </Callout>
 
 ## Idle boxes pause themselves
