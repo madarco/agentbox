@@ -63,6 +63,10 @@ CLI, not the raw commits.
   `--location`/`--size` for the control box. Hetzner creates move to another
   location when the first is out of capacity, and a box's default size follows
   its location (cx types are EU-only).
+- **Settings shows how the hub reaches GitHub.** The Git access card says
+  whether boxes push through your PC, through the GitHub token copied at
+  `hub setup` (and which account it is, or that GitHub rejects it), or through
+  a GitHub App, replacing a card that always said "not available".
 - **LLM egress through the hub** (`llm.proxy: forward`, `--llm-proxy`): a box's
   model traffic leaves from the hub's IP.
 - **Several PCs on one hub.**
@@ -96,9 +100,16 @@ CLI, not the raw commits.
 - **A signed-in owner session can read skill content**, so the update diff and
   the editor work on a password-protected hub.
 - **A pushed login never replaces a newer one held by the hub.**
+- **Hub forms open in a dialog.** Signing in a new account, adding a setup
+  token or API key, the commit identity, provider credentials and approving a
+  device no longer sit inline in the page, and every dropdown has the same
+  style.
 
 ### Fixed
 
+- **Signing in from the web on a control box works.** It failed with
+  `spawn docker ENOENT`; the sign-in now runs on the control box's own docker
+  engine.
 - The `agentbox credentials` menu comes back after a cancelled or failed sign-in
   instead of exiting.
 - **A box created or cloned through a remote hub commits as you**, not as the
