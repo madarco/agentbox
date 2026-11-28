@@ -309,7 +309,7 @@ describe('CredentialsFanout — custody write-back', () => {
     const runs: string[] = [];
     const fanout = new CredentialsFanout({
       log: () => {},
-      debounceMs: 100,
+      debounceMs: 60_000, // never fires mid-test; flush() drops it
       runPropagate: async (agent, box, account) => void runs.push(`${agent}:${box}:${account}`),
       runRepush: async (agent, box, account) => void repushes.push(`${agent}:${box}:${account}`),
       // box-b and box-d left `work` 5 s ago; box-c switched long ago.
