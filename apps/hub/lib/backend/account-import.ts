@@ -895,10 +895,18 @@ export async function resolveHubCreateAccounts(o: {
   store?: AccountStoreOptions;
   imports?: AccountImportsFile;
   /**
-   * The hub's own (default) login of an agent, or null. A box on `default`
-   * with none starts signed out, so that is refused too. Absent: not checked.
+   * The hub's own (default) login of an agent, or null: every source a create
+   * seeds the default from that this hub can read (the backup, the agent's own
+   * host login file). A box on `default` with none starts signed out, so that
+   * is refused too. Absent: not checked.
    */
   defaultLogin?: (agent: string) => Promise<string | null>;
+  /**
+   * Set when a source the hub cannot read here may still hold the login (a
+   * docker-shaped box falls back to the agent's config volume): no login
+   * found is then this warning, not a refusal.
+   */
+  warnNoDefaultLogin?: (message: string) => void;
 }): Promise<Record<string, string>> {
   const names = o.names ?? {};
   for (const agent of Object.keys(names)) {
@@ -932,9 +940,9 @@ export async function resolveHubCreateAccounts(o: {
       if (o.defaultLogin && spec.credential && agentAccountKinds(spec).length > 0) {
         const text = await o.defaultLogin(spec.id);
         if (text === null || !isRealAgentCredential(spec.id, text)) {
-          throw new Error(
-            `this hub has no ${spec.id} login (the default account), so a box on it would start signed out: push one (\`agentbox hub credentials push\`), or pick a named account`,
-          );
+          const message = `this hub has no ${spec.id} login (the default account), so a box on it would start signed out: push one (\`agentbox hub credentials push\`), or pick a named account`;
+          if (!o.warnNoDefaultLogin) throw new Error(message);
+          o.warnNoDefaultLogin(`${message} (unless the agent's config volume holds one)`);
         }
       }
       continue;

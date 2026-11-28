@@ -49,6 +49,7 @@ import {
   boxSshDirForProvider,
   decodePastedSecret,
   readCredentialBackup,
+  resolveHostCredentialFile,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
   STATE_DIR,
@@ -213,6 +214,13 @@ async function seedAccountSecretsFromCustody(
   }
 }
 
+/** A provider whose box seeds the default login from a docker config volume too. */
+function isDockerShaped(provider: string | undefined): boolean {
+  if (!provider) return false;
+  const { name } = parseProviderSpec(provider);
+  return name === 'docker' || name === 'remote-docker';
+}
+
 /**
  * The named accounts of a worker create, as hub ids (Phase 9 Selection): the
  * client's names, else this hub's global `<agent>.account`, else `default`.
@@ -229,6 +237,10 @@ export async function resolveWorkerAccounts(o: {
    * A cold create (the PC attaches) may still sign in inside the box.
    */
   startsSession?: boolean;
+  /** The create's provider spec (`hetzner`, `docker:<host>`, …). */
+  provider?: string;
+  /** Where a "no default login, cannot tell" warning goes. */
+  log?: (line: string) => void;
 }): Promise<Record<string, string>> {
   const lenders = agentSourceIds(o.borrowCredentials);
   const agents = o.agentId ? [o.agentId, ...lenders] : lenders;
@@ -255,7 +267,19 @@ export async function resolveWorkerAccounts(o: {
     ...(o.requesterMachine ? { requesterMachine: o.requesterMachine } : {}),
     hubDefaults,
     imports: await createAccountImporter({ machineId: () => tryGetMachineId() }).readImports(),
-    ...(checkDefault ? { defaultLogin: (agent: string) => readCredentialBackup(agent) } : {}),
+    ...(checkDefault
+      ? {
+          // Every source a create seeds the default login from that this hub
+          // can read: the backup and the agent's own host login file.
+          defaultLogin: async (agent: string) =>
+            (await resolveHostCredentialFile(agent).catch(() => null))?.text ?? null,
+          // A docker-shaped box also falls back to the agent's config volume,
+          // which cannot be read from here: warn instead of refusing.
+          ...(isDockerShaped(o.provider)
+            ? { warnNoDefaultLogin: (m: string) => (o.log ?? (() => {}))(`warning: ${m}`) }
+            : {}),
+        }
+      : {}),
   });
 }
 
@@ -397,6 +421,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         borrowCredentials: request.opts?.borrowCredentials ?? [],
         requesterMachine: request.requester?.machineId,
         startsSession: Boolean(request.prompt) || request.startAgent === true,
+        provider: request.provider,
+        log,
       });
       const named = Object.entries(accounts)
         .map(([a, id]) => `${a}=${id}`)
@@ -422,6 +448,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
         borrowCredentials: request.opts?.borrowCredentials ?? [],
         requesterMachine: request.requester?.machineId,
         startsSession: Boolean(request.prompt) || request.startAgent === true,
+        provider: request.provider,
+        log,
       });
     },
     /**
@@ -508,6 +536,8 @@ export function makeHubCreateBox(opts: HubWorkerOptions): CreateBoxFn {
           borrowCredentials: createOpts?.borrowCredentials ?? [],
           requesterMachine: requester?.machineId,
           startsSession: Boolean(prompt) || startAgent === true,
+          provider,
+          log,
         });
       }
       if (Object.keys(accounts).length > 0) {
