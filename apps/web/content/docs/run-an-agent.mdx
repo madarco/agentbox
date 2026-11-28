@@ -191,8 +191,10 @@ You can also sign in from the hub itself, with no terminal on the PC. On
 the box where it was seen failing. **Renew** opens a dialog: open the page it
 shows and approve, then paste the code back (claude) or enter the one-time code
 on the device page (codex). The new login replaces the stored one and is pushed
-to every box on the account. **Add a login** works the same way for a new
-account. The sign-in runs on the hub's machine, so on a remote control box it
+to every box on the account. **Sign in with a new account** (at the top of the
+page) works the same way for a new account: pick the agent and a name, and the
+same sign-in dialog follows. **Add a setup token or API key** opens a dialog to
+paste one under a name. The sign-in runs on the hub's machine, so on a remote control box it
 signs in that box's own store. The tray uses the same `/api/v1/accounts/{agent}/{id}/login`
 routes (see [the API reference](/docs/api)).
 

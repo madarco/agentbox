@@ -2,8 +2,8 @@
 
 // Devices page — the PCs enrolled on this hub with `agentbox hub login`, and the
 // enrollment codes waiting for the owner. PURE REST CLIENT over /api/v1/devices:
-// approve or deny a code (the one `hub login` printed is highlighted when the
-// page is opened from its link), rename or revoke a device.
+// approve or deny a code (the approve dialog opens filled in when the page is
+// opened from the `hub login` link), rename or revoke a device.
 //
 // Approval is by code, never by a click on a listed row (RFC 8628's rule):
 // anyone who can reach the hub can open a code labelled like your laptop, so the
@@ -16,7 +16,17 @@ import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogBody,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogIcon,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { EmptyBox } from '../../boxes/components/empty-box';
 import { SectionLabel } from '../../boxes/components/section-label';
 
@@ -61,7 +71,9 @@ export default function DevicesPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [typed, setTyped] = useState('');
+  // The approve dialog's code (null = closed); a `?code=` link opens it filled in.
+  const [approving, setApproving] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<Device | null>(null);
   const [origin, setOrigin] = useState('');
 
   const load = useCallback(async () => {
@@ -80,7 +92,7 @@ export default function DevicesPage() {
 
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get('code');
-    if (code) setTyped(normalizeCode(code));
+    if (code) setApproving(normalizeCode(code));
     setOrigin(window.location.origin);
     void load();
     // A code opened on the PC shows up here within a few seconds without a reload.
@@ -88,14 +100,17 @@ export default function DevicesPage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const act = async (key: string, fn: () => Promise<unknown>): Promise<void> => {
+  /** True when `fn` succeeded. */
+  const act = async (key: string, fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(key);
     setActionError(null);
     try {
       await fn();
       await load();
+      return true;
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -113,15 +128,21 @@ export default function DevicesPage() {
     );
   };
 
-  const rename = (d: Device) => {
-    const label = window.prompt('Device name', d.label);
-    if (!label || label === d.label) return;
-    void act(`rename:${d.id}`, () =>
+  const rename = (d: Device, label: string) =>
+    act(`rename:${d.id}`, () =>
       api(`/${encodeURIComponent(d.id)}`, { method: 'PATCH', body: JSON.stringify({ label }) }),
     );
+
+  // Drop a `?code=` the dialog was opened from, so a reload does not reopen it.
+  const closeApprove = () => {
+    setApproving(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('code')) {
+      url.searchParams.delete('code');
+      window.history.replaceState(window.history.state, '', url);
+    }
   };
 
-  const match = pending.find((p) => p.userCode === normalizeCode(typed));
   const active = devices?.filter((d) => !d.revokedAt) ?? [];
   const revoked = devices?.filter((d) => d.revokedAt) ?? [];
 
@@ -145,42 +166,26 @@ export default function DevicesPage() {
         <div className="mt-8 text-sm text-muted-foreground">Loading…</div>
       ) : (
         <>
-          {actionError ? (
+          {/* An open dialog shows its own error. */}
+          {actionError && approving === null && !renaming ? (
             <div className="mt-4 font-mono text-xs text-red-400">{actionError}</div>
           ) : null}
 
           <SectionLabel>Approve a computer</SectionLabel>
-          <Card className="p-4 px-5">
-            <div className="text-[13px] text-muted-foreground">
+          <Card className="flex items-center gap-4 p-4 px-5 max-sm:flex-wrap">
+            <div className="min-w-0 flex-1 text-[13px] text-muted-foreground">
               Enter the code `agentbox hub login` printed on the computer you want to add.
             </div>
-            <form
-              className="mt-3 flex items-center gap-2 max-sm:flex-wrap"
-              onSubmit={(ev) => {
-                ev.preventDefault();
-                if (match) void decide(match.userCode, 'approve');
+            <Button
+              size="sm"
+              disabled={busy !== null}
+              onClick={() => {
+                setActionError(null);
+                setApproving('');
               }}
             >
-              <Input
-                value={typed}
-                onChange={(ev) => setTyped(ev.target.value)}
-                placeholder="XXXX-XXXX"
-                className="w-40 font-mono uppercase tracking-wider"
-                autoComplete="off"
-              />
-              <Button type="submit" size="sm" disabled={busy !== null || !match}>
-                <Icons.check /> Approve
-              </Button>
-            </form>
-            {match ? (
-              <div className="mt-3 text-[13px]">
-                <PendingDetails p={match} />
-              </div>
-            ) : normalizeCode(typed).length === 9 ? (
-              <div className="mt-3 text-[12px] text-red-400">
-                No waiting code matches. It may have expired; run `hub login` again.
-              </div>
-            ) : null}
+              <Icons.check /> Approve a computer
+            </Button>
           </Card>
 
           <SectionLabel
@@ -243,7 +248,15 @@ export default function DevicesPage() {
               <div>No device is enrolled yet.</div>
             </EmptyBox>
           ) : (
-            <DeviceList devices={active} busy={busy} onRename={rename} onRevoke={revoke} />
+            <DeviceList
+              devices={active}
+              busy={busy}
+              onRename={(d) => {
+                setActionError(null);
+                setRenaming(d);
+              }}
+              onRevoke={revoke}
+            />
           )}
 
           {revoked.length > 0 ? (
@@ -254,7 +267,173 @@ export default function DevicesPage() {
           ) : null}
         </>
       )}
+      {/* Opened only once the waiting codes are loaded, so a `?code=` link never
+          flashes "no waiting code matches" for a valid code. */}
+      {approving !== null && devices ? (
+        <ApproveDialog
+          initial={approving}
+          pending={pending}
+          busy={busy !== null}
+          error={actionError}
+          onClose={() => {
+            closeApprove();
+            setActionError(null);
+          }}
+          onApprove={async (userCode) => {
+            if (await decide(userCode, 'approve')) closeApprove();
+          }}
+        />
+      ) : null}
+      {renaming ? (
+        <RenameDialog
+          device={renaming}
+          busy={busy !== null}
+          error={actionError}
+          onClose={() => {
+            setRenaming(null);
+            setActionError(null);
+          }}
+          onRename={async (label) => {
+            if (await rename(renaming, label)) setRenaming(null);
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function ApproveDialog({
+  initial,
+  pending,
+  busy,
+  error,
+  onClose,
+  onApprove,
+}: {
+  initial: string;
+  pending: Pending[];
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onApprove: (userCode: string) => Promise<void>;
+}) {
+  const [typed, setTyped] = useState(initial);
+  const match = pending.find((p) => p.userCode === normalizeCode(typed));
+  return (
+    <Dialog onClose={busy ? () => {} : onClose}>
+      <DialogHeader>
+        <DialogIcon>
+          <Icons.host />
+        </DialogIcon>
+        <div>
+          <DialogTitle>Approve a computer</DialogTitle>
+          <DialogDescription>the code `agentbox hub login` printed</DialogDescription>
+        </div>
+      </DialogHeader>
+      <form
+        onSubmit={(ev) => {
+          ev.preventDefault();
+          if (match) void onApprove(match.userCode);
+        }}
+      >
+        <DialogBody className="flex flex-col gap-3">
+          <div>
+            <Label htmlFor="device-code">Code</Label>
+            <Input
+              id="device-code"
+              value={typed}
+              onChange={(ev) => setTyped(ev.target.value)}
+              placeholder="XXXX-XXXX"
+              className="font-mono uppercase tracking-wider"
+              autoComplete="off"
+              autoFocus
+              disabled={busy}
+            />
+          </div>
+          {match ? (
+            <div className="rounded-lg border border-border bg-background p-3 text-[13px]">
+              <PendingDetails p={match} />
+            </div>
+          ) : normalizeCode(typed).length === 9 ? (
+            <div className="text-[12px] text-red-400">
+              No waiting code matches. It may have expired; run `hub login` again.
+            </div>
+          ) : (
+            <div className="text-[12px] text-muted-foreground">
+              Approve only a code you can read on your own screen.
+            </div>
+          )}
+          {error ? <div className="font-mono text-xs text-red-400">{error}</div> : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={busy || !match}>
+            <Icons.check /> {busy ? 'Approving…' : 'Approve'}
+          </Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
+  );
+}
+
+function RenameDialog({
+  device,
+  busy,
+  error,
+  onClose,
+  onRename,
+}: {
+  device: Device;
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onRename: (label: string) => Promise<void>;
+}) {
+  const [label, setLabel] = useState(device.label);
+  const next = label.trim();
+  return (
+    <Dialog onClose={busy ? () => {} : onClose}>
+      <DialogHeader>
+        <DialogIcon>
+          <Icons.pencil />
+        </DialogIcon>
+        <div>
+          <DialogTitle>Rename device</DialogTitle>
+          <DialogDescription>{device.id}</DialogDescription>
+        </div>
+      </DialogHeader>
+      <form
+        onSubmit={(ev) => {
+          ev.preventDefault();
+          if (next && next !== device.label) void onRename(next);
+        }}
+      >
+        <DialogBody className="flex flex-col gap-3">
+          <div>
+            <Label htmlFor="device-label">Name</Label>
+            <Input
+              id="device-label"
+              value={label}
+              onChange={(ev) => setLabel(ev.target.value)}
+              autoComplete="off"
+              autoFocus
+              disabled={busy}
+            />
+          </div>
+          {error ? <div className="font-mono text-xs text-red-400">{error}</div> : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={busy || !next || next === device.label}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
   );
 }
 

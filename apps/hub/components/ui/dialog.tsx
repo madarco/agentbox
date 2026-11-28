@@ -1,7 +1,7 @@
 'use client';
 
 import type { HTMLAttributes, ReactNode } from 'react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { Icons } from '@/components/icons';
 
@@ -16,6 +16,9 @@ export function Dialog({
   className?: string;
   children: ReactNode;
 }) {
+  // A backdrop click closes only when the press also started on the backdrop:
+  // a text selection dragged out of a field must not throw the form away.
+  const downOnBackdrop = useRef(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -27,7 +30,13 @@ export function Dialog({
   return (
     <div
       className="anim-fade fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/50 p-6 backdrop-blur-[2px]"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        downOnBackdrop.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && downOnBackdrop.current) onClose();
+        downOnBackdrop.current = false;
+      }}
     >
       <div
         role="dialog"
@@ -36,7 +45,6 @@ export function Dialog({
           'anim-pop relative m-auto w-full max-w-[500px] rounded-2xl border border-border bg-card shadow-[0_40px_80px_-30px_rgba(20,24,30,.5)]',
           className,
         )}
-        onClick={(e) => e.stopPropagation()}
       >
         {children}
         <button
