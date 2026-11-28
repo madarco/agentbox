@@ -253,7 +253,7 @@
       },
       {
         "flags": "--location <name>",
-        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Daytona: us, eu, us-east-1 (overrides box.daytonaRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -777,7 +777,7 @@
       },
       {
         "flags": "--location <name>",
-        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Daytona: us, eu, us-east-1 (overrides box.daytonaRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -1084,7 +1084,7 @@
       },
       {
         "flags": "--location <name>",
-        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Daytona: us, eu, us-east-1 (overrides box.daytonaRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -1543,7 +1543,7 @@
       },
       {
         "flags": "--location <name>",
-        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Daytona: us, eu, us-east-1 (overrides box.daytonaRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
@@ -2039,7 +2039,7 @@
       },
       {
         "flags": "--location <name>",
-        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
+        "description": "Datacenter/region for the new box, on providers that have one. Hetzner: nbg1, fsn1, hel1, ash, hil, sin (overrides box.hetznerLocation; a --location given here pins the box, while a configured location fails over to another location in the same zone when Hetzner has no capacity). DigitalOcean: nyc3, sfo3, ams3, fra1, ... (overrides box.digitaloceanRegion). Daytona: us, eu, us-east-1 (overrides box.daytonaRegion). Also community providers that declare regions. Ignored, with a warning, on other providers.",
         "defaultValue": null,
         "mandatory": false,
         "negate": false
