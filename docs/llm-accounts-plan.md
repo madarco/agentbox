@@ -748,11 +748,12 @@ it) and still refuses a named create (it cannot use a PC's account; see the
 custody design below).
 
 1. **`/api/v1/accounts`** (backend slice `apps/hub/lib/backend/accounts.ts`):
-   `GET` → `{ accounts: [{agent, id, label?, kind, identity?, hasSecret,
-   boxes: string[]}], agents: [{id, name, kinds}] }` (no secrets, ever);
-   `POST` `{agent, id, kind: 'api-key'|'setup-token', token, label?}` for the
-   pasteable kinds (a `login` is interactive: `agentbox <agent> login
-   --account`); `PATCH /accounts/{agent}/{id}` `{label}`; `DELETE
+   `GET` → `{ accounts: [{agent, id, kind, identity?, hasSecret,
+   boxes: string[]}], agents: [{id, kinds}] }` (no secrets, ever; the label
+   was dropped in credentials Phase 1b, see `credentials-tui-plan.md`);
+   `POST` `{agent, id, kind: 'api-key'|'setup-token', token}` for the
+   pasteable kinds (a `login` is interactive: `agentbox credentials add
+   <agent>/<id> --login`); `DELETE
    /accounts/{agent}/{id}` (409 while a box records it; removes the secret and
    the docker volume).
 2. **`Box.accountsInfo`**: `[{agent, account, label?, kind?}]` next to the raw

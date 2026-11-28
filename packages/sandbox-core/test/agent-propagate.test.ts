@@ -8,6 +8,7 @@ import {
   propagateStagedSettings,
   transportSettingsTarget,
   type SettingsTarget,
+  stagedItemsAreAccountBound,
 } from '../src/index.js';
 
 // The three `<agent>StagedItems` mappers moved to their agent packages; their
@@ -232,6 +233,21 @@ describe('planPropagateTargets', () => {
       scope: 'all',
     });
     expect(plan.dockerVolumes.map((v) => v.volume)).toEqual(['agentbox-opencode-config-y']);
+  });
+});
+
+describe('stagedItemsAreAccountBound', () => {
+  const file = (rel: string) => ({ rel, label: rel, kind: 'file' as const });
+  const dir = (rel: string) => ({ rel, label: rel, kind: 'dir' as const });
+  it('binds the login and root config files; nested content goes everywhere', () => {
+    expect(stagedItemsAreAccountBound('codex', [file('auth.json')])).toBe(true);
+    expect(stagedItemsAreAccountBound('codex', [file('config.toml')])).toBe(true);
+    expect(stagedItemsAreAccountBound('codex', [dir('prompts')])).toBe(false);
+    expect(
+      stagedItemsAreAccountBound('claude', [dir('skills/foo'), dir('plugins/cache/m/p')]),
+    ).toBe(false);
+    // No named accounts: never bound.
+    expect(stagedItemsAreAccountBound('pi', [file('settings.json')])).toBe(false);
   });
 });
 

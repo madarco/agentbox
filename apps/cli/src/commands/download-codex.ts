@@ -7,6 +7,7 @@ import { parsePropagateFlag, runPropagateStep } from './_agent-propagate.js';
 import { handleLifecycleError } from './_errors.js';
 import { PROPOSE_FLAG_HELP, runSkillProposeStep } from './_skill-propose-step.js';
 import { codexStagedItems } from '@agentbox/agent-codex';
+import { namedAccounts } from '@agentbox/core';
 
 interface DownloadCodexOpts {
   yes?: boolean;
@@ -48,8 +49,12 @@ export const downloadCodexCommand = new Command('codex')
         propose: opts.propose,
         dryRun: opts.dryRun,
       });
+      // A box on a named account holds THAT account's auth.json; pulled into a
+      // host with none it would become the host's default login.
+      const named = namedAccounts(box.accounts)?.['codex'] !== undefined;
+      if (named) log.info(`${box.name} runs on a named codex account: auth.json stays in the box`);
       const pull = (dryRun: boolean): Promise<{ newItems: string[] }> =>
-        agentPull('codex', transport, { dryRun });
+        agentPull('codex', transport, { dryRun, ...(named ? { excludeCredential: true } : {}) });
 
       const preview = await pull(true);
 

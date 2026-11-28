@@ -5,52 +5,84 @@
 Live list of open items found while building [`llm-accounts-plan.md`](./llm-accounts-plan.md).
 Newest phase last.
 
+## Closed in the 2026-11-28 sweep: listings and safety
+
+Fixed (`fix/accounts-backlog`):
+
+- **`default` listed from the agent's own login** too (`defaultLoginPaths`:
+  the backup, then `~/.claude/.credentials.json`), so a host that signed in but
+  never ran a box shows it, with `hasSecret`. A macOS keychain-only claude login
+  still has no file to find.
+- **`default` as a pasted kind** stays refused, by design: `default` IS the
+  agent's login file. The message (CLI and `POST /api/v1/accounts`) now says to
+  save it under a name and make that the default with `credentials use
+  <agent>/<name> --global`.
+- **A corrupt `accounts.json`** is reported by `GET /api/v1/accounts` as
+  `storeError` (the file named, `mv … .bak` suggested), warned by `credentials`
+  and shown on the Subscriptions page. Mutations already named it (#444).
+- **(#444 c)** The label was dropped in #501; the remaining free text, the
+  identity read off a login, is stripped of control characters and capped at
+  120 characters where every surface reads it (`migrateAccountsFile`).
+- **(#444 e)** The stale comments (`hub-worker.ts`, `backend/accounts.ts`, the
+  accounts route) and the plan's `GET /accounts` shape are corrected; the CLI
+  `accounts.ts` header went with the file in #499.
+- **Plugin agent rows and secrets**: `agent remove` asks (or takes
+  `--purge-accounts` / `--keep-accounts`) and deletes the rows, the
+  `credentials/<agent>/` secrets and the `-acct-` volumes.
+- **`sessionAccountPolicy` fails closed** on the suppress half: an unreadable
+  registry forwards none of the agent's account keys.
+- **(#442) A registration-store error** is `UNVERIFIABLE_ACCOUNT`
+  (`registrationBoxAccount`); only an absent registration falls through to
+  `state.json`.
+- **`download codex <named-box>`** leaves `auth.json` in the box
+  (`AgentPullOptions.excludeCredential`).
+- **Settings from a default box reach named boxes** when the set holds only
+  nested content (skills, prompts, plugins); the login file and any root config
+  file (codex's `config.toml`) stay within the source box's account
+  (`stagedItemsAreAccountBound`).
+- **A stdin pipe that never closes** no longer hangs a pasted secret: the read
+  ends once a full line has arrived and 1.5 s pass with no more data, and fails
+  after 2 minutes with nothing at all.
+- **A plugin credential whose `boxRelPath` contains `/`** is seeded from
+  custody (`parts.slice(5).join('/')`).
+
+Already done by later PRs:
+
+- (#444 a) in-use list deduped by box id, and `GET /api/v1/accounts` reads the
+  secrets in parallel through one `view()`: #482.
+- (#444 d) `/api/v1` cookie writes need a same-origin `Origin` /
+  `Sec-Fetch-Site` and a JSON body: #456.
+- An `api-key` account's docker volume with the key pre-approved, and re-seeding
+  passing `account` to `ensureVolume`: #437.
+- `accounts default` became `credentials use [--global]`: #499.
+- `credentials rm` removes the account's docker volume: #444.
+
+Not fixed:
+
+- **`status` reads the account store locally**: `status` is a docker-local
+  inspect that does not use the hub at all, and the box and its store are on
+  the same machine; switch it when `status` moves behind the hub.
+- **Dropping the legacy `~/.agentbox/<agent>-credentials.json` for `default`**:
+  not safe. That path is not an unreleased accounts detail. It is the login
+  backup every released version (0.10 onward) writes and seeds boxes from, and
+  the docker credential mirror, the relay fan-out, custody pushes and `hub
+  credentials pull` all read it. Moving it would sign every existing install out
+  of its boxes, or need the alias layer the project rules forbid.
+
 ## From Phase 1 (account model + store)
 
-- **`default` row only when the legacy backup is real.** A user who has never
-  run a box has a login in `~/.claude/.credentials.json` but no
-  `~/.agentbox/claude-credentials.json`, so `readAccounts` lists no `default`.
-  Selection still resolves `default` (it always does), so only listings are
-  affected. Phase 2/5 listings should consider `resolveHostCredential`'s tool-path
-  fallback, or say "not backed up yet".
-- **`default` cannot be a pasted kind.** `accountProblem` refuses `default` with
-  `setup-token`/`api-key`, because its secret path is the legacy login file.
-  Phase 2 decides what `agentbox claude login --setup-token` without `--account`
-  does (suggest a name, or give `default` a second path).
-- **Removing a named account does not touch its docker volume or custody
-  object.** `removeAccount` drops the row and the host secret only; Phase 2
-  (`agentbox accounts rm`) must also drop `<volume>-acct-<id>` and refuse while
-  a box records the account.
-- **Rows of an uninstalled plugin agent** are hidden from reads but kept on
-  disk (mutations pass rows they cannot validate through), along with their
-  secret files under `~/.agentbox/credentials/<agent>/`. `agent rm` should
-  offer to clean both.
 - **Phase 3: `prune --all` would reap per-account docker volumes.**
   `packages/sandbox-docker/src/lifecycle.ts` (~895-925) builds `expectedVolumes`
   from each spec's base `dockerVolume` plus surviving boxes' volumes, and
   `agentbox-claude-config-acct-work` matches the `agentbox-` prefix. When Phase 3
   creates those volumes, add `accountConfigVolume(spec.dockerVolume, a.id)` for
   every `readAccounts()` row to the expected set.
-- **A corrupt `accounts.json` blocks mutations** (`AccountsFileError`) until the
-  user fixes or moves it; reads still show the `default`s. Phase 2's
-  `agentbox accounts` should print the error's path and suggest
-  `mv accounts.json accounts.json.bak`. Rebuilding rows from the files under
-  `credentials/<agent>/` is possible, but the kind/label metadata is lost.
 - **Plan's open Phase 0 items** (second OAuth login, codex symlink-on-refresh,
   revocation timing) are unchanged and still gate the docker storage choice for
   codex.
 
 ## From Phase 2 (logins)
 
-- **Phase 3: an `api-key` account has no docker volume yet.** Its volume must be
-  seeded at box create with `_claude.json` `customApiKeyResponses.approved`
-  holding the key's last 20 characters (Phase 0 (a′)), and it must never hold an
-  OAuth `.credentials.json`. `stripAccountState` already keeps the host's
-  stored answer out of a named volume.
-- **Phase 3: `agentbox accounts default <agent>/<name>`** writes
-  `<agent>.account`, which Phase 3 introduces; deferred with it.
-- **Re-seeding a named volume on every box create** (Phase 3) must pass
-  `account` to `ensureVolume`, or the host's login is rsynced into it.
 - **Renaming an account id** is not offered: the docker volume, Daytona subpath
   and custody path all derive from it. A rename would be a copy + remove.
 - **`accounts rm` does not touch custody.** Named accounts never reach custody
@@ -58,9 +90,6 @@ Newest phase last.
 - **Not live-run in Phase 2:** a named OAuth login end to end (it needs a second
   real account) and a named-volume seed against a real image (the seed is
   covered by a docker-mocked test). Steps for the coordinator are in the PR.
-- **A pasted secret read from a stdin pipe that never closes hangs** (a driver
-  that is not a TTY and never sends EOF). Feed the secret with `< file` or a
-  closed pipe; a read timeout is an option if it bites.
 
 ## From the #433 review
 
@@ -120,18 +149,12 @@ rides the relay registration and the hub `Box` payload; `checkpoint
 
 - ~~Settings propagate skips named boxes too (#437-8)~~ — Phase 4 scopes it to
   the source box's account instead (a pulled set can carry codex's `auth.json`).
-  Settings pulled from a default box still do not reach named boxes; a
-  login-free item set could go everywhere.
-- **`agentbox download codex <named-box>`** copies the box's `auth.json`
-  (account B) into the host's `~/.codex` when the host has none, where it
-  becomes the default login. Skip `auth.json` for a named box.
+  Since the 2026-11-28 sweep a set of only skills, prompts or plugins goes to
+  every account.
 - **Provider SDK republish**: community providers on the published SDK (an old
   inlined `createCloudProvider`) ignore `req.accounts` — the box comes up on the
   default login. Additive: `CreateBoxRequest.accounts`, `BoxRecord.accounts`,
   `AgentSyncSpec.accountEnv`.
-- **`sessionAccountPolicy` fails open** to no policy when `state.json` cannot be
-  read at session start (the host key is forwarded). Rare (atomic writes);
-  consider failing closed for the suppress half.
 
 ## From Phase 4 (fan-out per account)
 
@@ -169,11 +192,6 @@ with no recorded volume instead of falling back to the shared default volume.
   Phase 5 consumes these objects: key them by owner/device (or carry the
   account identity), decide whether pasted secrets travel at all, and delete
   them on `accounts rm`.
-- **A registration-store error reads as the default account** (already on
-  nightly): `server.ts` maps a `store.getBox` rejection to undefined and falls
-  through to `state.json`. Map it to `UNVERIFIABLE_ACCOUNT`, so a box missing
-  from `state.json` too fails closed instead of routing a named login to the
-  default.
 - **The hub System page counts named-account custody objects as the agent's
   login** (`custody-view.ts` `summarizeAgentCredentials` groups by
   `agents/<agent>/`): a PC with only a named claude account shows Claude as
@@ -198,12 +216,6 @@ with no recorded volume instead of falling back to the shared default volume.
   `Box.accounts` / `Box.accountsInfo` and `/api/v1/accounts` are ready for it.
 - **No docs figure for the Accounts page** yet; capture one per
   `apps/web/images.md` with the next screenshot round.
-- **`agentbox status` reads the account store locally** for its ACCOUNTS
-  labels instead of the hub's `Box.accountsInfo`; same data, two lookups
-  (Phase 5 review). Switch it when `status` moves behind the hub.
-- **`GET /api/v1/accounts` reads each secret sequentially** to set
-  `hasSecret`, and the list and single-account views build the shape twice.
-  Small; `Promise.all` over one `view()` when it matters.
 
 ## From the #444 review
 
@@ -211,9 +223,6 @@ Fixed in #444: the `POST` / `PATCH` / `DELETE /api/v1/accounts…` routes now
 answer a store failure (a corrupt `accounts.json`) with the error envelope
 naming the file, like `GET`, instead of a bare 500.
 
-- **(a) The in-use list shows a docker box twice**: `hub-backend.ts` (~2162)
-  feeds the accounts slice `state.json` boxes AND relay registrations, so a
-  docker box present in both is named twice in `boxes`. Dedupe by box id.
 - **(b) MUST FIX before "accounts resolve against the requester's machine":**
   `credentials-fanout.ts` (~251) files a hub-side box's refreshed account login
   under the box's ORIGIN machine id, although the account itself came from the
@@ -221,18 +230,6 @@ naming the file, like `GET`, instead of a bare 500.
   machine id (or drop the update) until per-machine account lists exist. Same
   root cause: the hub accepts a remote PC's `--account` against its OWN store
   (the Phase 3 resolution), which only works because a remote hub has no rows.
-- **(c) API labels have no length or control-character limit**, and the CLI
-  prints them raw (`agentbox accounts`, `status`). Cap the length and strip
-  control characters at the API boundary.
-- **(d) All of `/api/v1`**: a page on another `localhost` port can send a
-  `text/plain`, cookie-authenticated `POST` (a "simple" request: no CORS
-  preflight), because the gate checks neither `Content-Type` nor `Origin`.
-  Require `application/json` or a same-origin `Origin` on writes.
-- **(e) Stale text**: comments in `hub-worker.ts` (~127-133, the account seed),
-  `apps/hub/lib/backend/accounts.ts` (lines 1-5, still "a remote control box
-  has no account store yet (Phase 5)"), the `apps/cli/src/commands/accounts.ts`
-  header; and the plan says `GET /accounts` returns `agents [{id, name,
-  kinds}]` while the code returns `{id, kinds}`.
 - **(f) `custody-client.ts` (~311) reads the machine id before the account
   loop**, so a failure reading it also skips the DEFAULT-login push. Read it
   lazily inside the loop (or catch it), so the default push never depends on it.

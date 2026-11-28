@@ -128,12 +128,12 @@ export async function seedHostBackupsFromCustody(
 }
 
 /**
- * The NAMED accounts' secrets, from custody `agents/<agent>/accounts/<id>/<file>`
- * into the account store's `credentials/<agent>/<id>.json` (llm-accounts
- * Phase 4) — newest-wins, exactly like the default login above, so a box's
- * refreshed account login is never replaced by an older pushed copy. Rows
- * (`accounts.json`) do not travel yet; until Phase 5 this seeds the secret a
- * box on that account (created with the row present) reads.
+ * THIS machine's named accounts' secrets, from custody
+ * `agents/<agent>/accounts/<machine>/<id>/<file>` into the account store's
+ * `credentials/<agent>/<id>.json` — newest-wins, exactly like the default login
+ * above, so a box's refreshed account login is never replaced by an older
+ * pushed copy. Rows (`accounts.json`) do not travel: this only refreshes the
+ * secret of an account this machine's store already has a row for.
  */
 async function seedAccountSecretsFromCustody(
   custody: Pick<FsCustodyStore, 'get' | 'list'>,
@@ -155,9 +155,15 @@ async function seedAccountSecretsFromCustody(
     }
     for (const entry of entries) {
       const parts = entry.path.split('/');
-      // agents / <agent> / accounts / <machine> / <id> / <file>
+      // agents / <agent> / accounts / <machine> / <id> / <file…> — a plugin's
+      // `boxRelPath` may itself hold a `/`, so the file is the whole tail.
       const id = parts[4];
-      if (parts.length !== 6 || parts[3] !== machine || parts[5] !== cred.boxRelPath || !id) {
+      if (
+        parts.length < 6 ||
+        parts[3] !== machine ||
+        parts.slice(5).join('/') !== cred.boxRelPath ||
+        !id
+      ) {
         continue;
       }
       if (accountIdProblem(id) !== null || isDefaultAccount(id)) continue;
