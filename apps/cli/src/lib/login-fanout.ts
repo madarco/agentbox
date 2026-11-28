@@ -46,6 +46,21 @@ export async function readDefaultVolumeLogin(agent: string, image: string): Prom
     .catch(() => null);
 }
 
+/** Put `content` back as the default login in its shared volume (an undone sign-in). */
+export async function restoreDefaultVolumeLogin(
+  agent: string,
+  image: string,
+  content: string,
+): Promise<void> {
+  const spec = resolveAgentSpec(agent);
+  if (!spec.credential) return;
+  await volumeSettingsTarget(spec.dockerVolume, image, spec.dockerVolume).writeText(
+    spec.credential.boxRelPath,
+    content,
+    { mode: 0o600 },
+  );
+}
+
 /**
  * After a sign-in of the default login: when its shared volume now holds a
  * different, real login than `before`, the sign-in completed (a headless start

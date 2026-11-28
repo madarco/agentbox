@@ -8,49 +8,60 @@ import type { CredentialsDeadEvent, HistoryIngestSink } from '@agentbox/core';
 
 /** Mirrors `CREDENTIALS_DEAD_EVENT` in @agentbox/ctl. */
 export const CREDENTIALS_DEAD_EVENT = 'credentials-dead';
+/**
+ * Mirrors `CREDENTIALS_ALIVE_EVENT` in @agentbox/ctl: the box holds a real
+ * login (after a reported wipe, or on ctl's first read). Its own event, so a
+ * relay that does not know it ignores it rather than reading a refusal.
+ */
+export const CREDENTIALS_ALIVE_EVENT = 'credentials-alive';
 
-/** The event's payload, or null when it is not one. Pure. */
+/**
+ * A `credentials-dead` (`{ schema: 1, agent, wipedAt }`) or `credentials-alive`
+ * (`{ schema: 1, agent, at }`) payload, or null when it is not one. Pure.
+ */
 export function parseCredentialsDead(
   payload: unknown,
-): { agent: string; wipedAt: string; alive: boolean } | null {
+  alive = false,
+): { agent: string; at: string; alive: boolean } | null {
   if (payload === null || typeof payload !== 'object') return null;
   const p = payload as Record<string, unknown>;
   if (p['schema'] !== 1) return null;
   const agent = p['agent'];
-  const wipedAt = p['wipedAt'];
+  const at = alive ? p['at'] : p['wipedAt'];
   if (typeof agent !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(agent)) return null;
-  if (typeof wipedAt !== 'string' || !Number.isFinite(Date.parse(wipedAt))) return null;
-  return {
-    agent,
-    wipedAt: new Date(Date.parse(wipedAt)).toISOString(),
-    alive: p['alive'] === true,
-  };
+  if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return null;
+  return { agent, at: new Date(Date.parse(at)).toISOString(), alive };
 }
 
 /**
- * Hand a box's `credentials-dead` event to the hub's auth evidence. Returns
- * the verdict for the relay's log line. Never throws.
+ * Hand a box's `credentials-dead` / `credentials-alive` event to the hub's
+ * auth evidence. The box's own time is clamped to `now`: a box clock ahead
+ * must not date its evidence past a later renew. Returns the verdict for the
+ * relay's log line. Never throws.
  */
 export async function handleCredentialsDead(
   sink: HistoryIngestSink | undefined,
   box: { boxId: string; name?: string },
   payload: unknown,
+  opts: { alive?: boolean; now?: number } = {},
 ): Promise<{ recorded: boolean; reason: string }> {
-  const parsed = parseCredentialsDead(payload);
+  const parsed = parseCredentialsDead(payload, opts.alive === true);
   if (!parsed) return { recorded: false, reason: 'invalid payload' };
   if (!sink?.recordCredentialsDead) return { recorded: false, reason: 'no hub auth evidence here' };
+  const now = opts.now ?? Date.now();
+  const ts = Date.parse(parsed.at) > now ? new Date(now).toISOString() : parsed.at;
   const e: CredentialsDeadEvent = {
     boxId: box.boxId,
     ...(box.name ? { boxName: box.name } : {}),
     agent: parsed.agent,
-    ts: parsed.wipedAt,
+    ts,
     ...(parsed.alive ? { alive: true } : {}),
   };
   try {
     await sink.recordCredentialsDead(e);
     return {
       recorded: true,
-      reason: `${parsed.agent} ${parsed.alive ? 'signed in again' : 'wiped'} at ${parsed.wipedAt}`,
+      reason: `${parsed.agent} ${parsed.alive ? 'holds a real login' : 'wiped'} at ${ts}`,
     };
   } catch (err) {
     return { recorded: false, reason: err instanceof Error ? err.message : String(err) };

@@ -65,6 +65,8 @@ export function SignInDialog({
   const [code, setCode] = useState('');
   const [sending, setSending] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // Set by "Use this login anyway" after an identity mismatch.
+  const [replace, setReplace] = useState(false);
   const finished = useRef(false);
   const live = view ? LIVE.has(view.state) : failure === null;
 
@@ -73,12 +75,17 @@ export function SignInDialog({
     let gone = false;
     setView(null);
     setFailure(null);
-    call(base, { method: 'POST', body: JSON.stringify({ mode }) })
+    call(base, {
+      method: 'POST',
+      body: JSON.stringify({ mode, ...(replace ? { replace: true } : {}) }),
+    })
       .then((v) => {
         // Closed while the start was still answering: cancel what it started.
         if (gone) {
           if (v.state === 'starting' || v.state.startsWith('awaiting')) {
-            void call(base, { method: 'DELETE' }).catch(() => undefined);
+            void call(`${base}?session=${encodeURIComponent(v.session)}`, {
+              method: 'DELETE',
+            }).catch(() => undefined);
           }
           return;
         }
@@ -90,7 +97,7 @@ export function SignInDialog({
     return () => {
       gone = true;
     };
-  }, [base, mode, attempt]);
+  }, [base, mode, attempt, replace]);
 
   // Follow it while it runs. A failed poll (a blip, a hub restart) is shown
   // and retried: the sign-in itself goes on regardless.
@@ -124,7 +131,10 @@ export function SignInDialog({
     // Leaving mid-way cancels the login container rather than leaving it waiting
     // (with no view yet, the start's own answer cancels it; see above).
     if (view && (view.state === 'starting' || view.state.startsWith('awaiting'))) {
-      void call(base, { method: 'DELETE' }).catch(() => undefined);
+      // Only this dialog's sign-in: another client's for the same account stays.
+      void call(`${base}?session=${encodeURIComponent(view.session)}`, {
+        method: 'DELETE',
+      }).catch(() => undefined);
     }
     onClose();
   }, [base, view, onClose]);
@@ -243,6 +253,22 @@ export function SignInDialog({
                   : 'No box runs on this account yet.'}
             </div>
           </div>
+        ) : view.mismatch ? (
+          <div className="flex flex-col gap-1.5">
+            <div>
+              The browser signed in{' '}
+              <span className="font-mono">{identityText(view.mismatch.signedIn)}</span>, but{' '}
+              <span className="font-mono">
+                {agent}/{account}
+              </span>{' '}
+              is <span className="font-mono">{identityText(view.mismatch.stored)}</span>. Nothing
+              was changed.
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Sign in again with the right account, or replace this account&apos;s login with the
+              other one (its boxes will run on it).
+            </div>
+          </div>
         ) : (
           <div className="font-mono text-xs text-red-400">{view.error ?? 'the sign-in failed'}</div>
         )}
@@ -253,6 +279,18 @@ export function SignInDialog({
         ) : null}
       </DialogBody>
       <DialogFooter>
+        {view?.mismatch ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setReplace(true);
+              setAttempt((n) => n + 1);
+            }}
+          >
+            Sign in and replace
+          </Button>
+        ) : null}
         {!live && view?.state !== 'done' ? (
           <Button size="sm" variant="ghost" onClick={() => setAttempt((n) => n + 1)}>
             <Icons.refresh /> Try again
@@ -264,6 +302,10 @@ export function SignInDialog({
       </DialogFooter>
     </Dialog>
   );
+}
+
+function identityText(i: { email?: string; org?: string; plan?: string }): string {
+  return [i.email ?? i.org, i.plan].filter(Boolean).join(', ') || 'another account';
 }
 
 function Step({ n, children }: { n: number; children: ReactNode }) {

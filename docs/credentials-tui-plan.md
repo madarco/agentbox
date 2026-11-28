@@ -160,6 +160,17 @@ and a "Make default" action on every other account card (the `PUT` route).
   `captureDefaultLogin`. On `signed-in` the hub runs the renew fan-out, so
   running boxes get the new login. Restart-safe: a session that reached
   `signed-in` with no hub watching is fanned out on the next read.
+- **Identity.** A renew whose browser signed in another identity (email, else
+  org) than the account holds stores nothing and ends `error` with
+  `mismatch: { stored, signedIn }` (the default volume gets its previous login
+  back); `replace: true` stores it anyway. Checked before claude's finalize
+  copies the default login into the backup.
+- **Safety.** Only a pid whose command line names `_account-login-worker
+  <session>` is ever signalled (a restarted control box can reuse an old pid).
+  A cancel while a code is being exchanged or the login stored waits for it
+  to finish (and be fanned out). The fan-out watcher starts on start, on a
+  code submit and on any read, and waits through a worker that has not
+  written its state yet.
 - **Where it runs.** Always the hub's own machine and store: the PC's on a
   local hub, the control box's on a remote one (it has docker and the CLI).
 - **Web.** Settings → Subscriptions: a `Revoked` badge from `auth.state` (and
@@ -194,9 +205,12 @@ the contract below (also in the PR body).
   after a real login came back in between. A post the relay did not take is
   retried next tick. A ctl restart re-reports the same `wipedAt`, which is
   idempotent. When a real login comes back after a reported wipe (the
-  fan-out repaired the box), it posts the same event with `alive: true`,
-  recorded as that box's newest working reply, so an idle repaired box does
-  not keep the account `revoked`.
+  fan-out repaired the box), and on the watcher's first real read (a ctl
+  restart forgets a wipe it reported), it posts `credentials-alive`
+  `{ schema: 1, agent, at }`, recorded as that box's newest working reply, so
+  an idle repaired box does not keep the account `revoked`. A redundant one is
+  a no-op (the newest time wins). The relay clamps both events' box time to
+  its own receive time.
 - **Relay** (`packages/relay/src/credentials-dead.ts`): a host relay hands it
   to the hub's history sink (`HistoryIngestSink.recordCredentialsDead`, direct
   POST for docker boxes, the cloud poller for cloud boxes); a box-mode relay

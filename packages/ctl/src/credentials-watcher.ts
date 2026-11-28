@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import type { PostOutcome, RelayClient } from './relay-client.js';
-import { CREDENTIALS_DEAD_EVENT, CREDENTIALS_UPDATED_EVENT } from './types.js';
+import {
+  CREDENTIALS_ALIVE_EVENT,
+  CREDENTIALS_DEAD_EVENT,
+  CREDENTIALS_UPDATED_EVENT,
+} from './types.js';
 import type { AgentId } from '@agentbox/core';
 
 /**
@@ -139,6 +143,8 @@ export class CredentialsWatcher {
   private readonly lastPosted = new Map<string, string>();
   /** Agents whose wiped login the relay has; cleared when a real one returns. */
   private readonly deadReported = new Set<string>();
+  /** Agents whose real login the relay has heard of since this watcher started. */
+  private readonly aliveReported = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
 
   constructor(opts: CredentialsWatcherOptions) {
@@ -211,42 +217,40 @@ export class CredentialsWatcher {
           this.lastMtime.set(file.agent, st.mtimeMs);
           continue;
         }
-        if (this.deadReported.has(file.agent)) {
-          // The box holds a real login again (a fan-out repaired it): clear the
-          // dead evidence, or the account reads revoked until this box's next turn.
-          const back = await this.relay.post(
-            CREDENTIALS_DEAD_EVENT,
+        const hash = createHash('sha256').update(text).digest('hex');
+        if (this.lastPosted.get(file.agent) !== hash) {
+          const outcome = await this.relay.post(
+            CREDENTIALS_UPDATED_EVENT,
             {
               schema: 1,
               agent: file.agent,
-              wipedAt: new Date(st.mtimeMs).toISOString(),
-              alive: true,
+              contentBase64: Buffer.from(text, 'utf8').toString('base64'),
+              capturedAt: new Date().toISOString(),
             },
             { timeoutMs: this.postTimeoutMs },
           );
+          // Leave both maps untouched on a retryable failure: the next tick re-reads
+          // the same file and tries again until the relay actually has it.
+          if (isRetryablePostFailure(outcome)) continue;
+          this.lastPosted.set(file.agent, hash);
+        }
+        if (this.deadReported.has(file.agent) || !this.aliveReported.has(file.agent)) {
+          // The box holds a real login (a fan-out repaired it, or a restart
+          // forgot a wipe it reported): clear the dead evidence, or the account
+          // reads revoked until this box's next turn. Dated by the file, so a
+          // refusal seen after this login was written still stands.
+          const back = await this.relay.post(
+            CREDENTIALS_ALIVE_EVENT,
+            { schema: 1, agent: file.agent, at: new Date(st.mtimeMs).toISOString() },
+            { timeoutMs: this.postTimeoutMs },
+          );
+          // The mtime stays unrecorded, so the next tick retries (the update is
+          // not re-sent: its hash is already posted).
           if (isRetryablePostFailure(back)) continue;
           this.deadReported.delete(file.agent);
+          this.aliveReported.add(file.agent);
         }
-        const hash = createHash('sha256').update(text).digest('hex');
-        if (this.lastPosted.get(file.agent) === hash) {
-          this.lastMtime.set(file.agent, st.mtimeMs);
-          continue;
-        }
-        const outcome = await this.relay.post(
-          CREDENTIALS_UPDATED_EVENT,
-          {
-            schema: 1,
-            agent: file.agent,
-            contentBase64: Buffer.from(text, 'utf8').toString('base64'),
-            capturedAt: new Date().toISOString(),
-          },
-          { timeoutMs: this.postTimeoutMs },
-        );
-        // Leave both maps untouched on a retryable failure: the next tick re-reads
-        // the same file and tries again until the relay actually has it.
-        if (isRetryablePostFailure(outcome)) continue;
         this.lastMtime.set(file.agent, st.mtimeMs);
-        this.lastPosted.set(file.agent, hash);
       } catch {
         // Missing file / transient read error — try again next tick.
       }

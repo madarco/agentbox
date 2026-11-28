@@ -1598,6 +1598,11 @@ export interface AccountLoginView {
   lastError?: string;
   error?: string;
   identity?: AccountIdentity;
+  /**
+   * With `error`: the browser signed in another identity than the account
+   * holds; nothing was stored. Start again with `replace: true` to store it.
+   */
+  mismatch?: { stored: AccountIdentity; signedIn: AccountIdentity };
   /** With `done`: the fan-out to the account's boxes. */
   renew?: AccountRenewView & { error?: string };
   startedAt: string;
@@ -1605,7 +1610,11 @@ export interface AccountLoginView {
 }
 
 export interface AccountLoginBackend {
-  /** Body `{ mode?: 'add' | 'renew' }`; a new name is normalized like `POST /accounts`. */
+  /**
+   * Body `{ mode?: 'add' | 'renew', replace?: boolean }`; a new name is
+   * normalized like `POST /accounts`. `replace` stores a login of another
+   * identity than the account's (refused otherwise).
+   */
   startAccountLogin(
     agent: string,
     id: string,
@@ -1622,7 +1631,12 @@ export interface AccountLoginBackend {
     id: string,
     input: unknown,
   ): Promise<AccountResult<AccountLoginView>>;
-  cancelAccountLogin(agent: string, id: string): Promise<AccountResult<AccountLoginView>>;
+  /** `session`: cancel only that sign-in (another client's stays). */
+  cancelAccountLogin(
+    agent: string,
+    id: string,
+    session?: string,
+  ): Promise<AccountResult<AccountLoginView>>;
 }
 
 /** An agent that can hold named accounts, and which kinds. */

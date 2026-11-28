@@ -213,11 +213,18 @@ export const CREDENTIALS_UPDATED_EVENT = 'credentials-updated';
 
 /**
  * Relay event type: a watched agent login turned into its signed-out shape
- * (claude's wiped tokens). Payload `{ schema: 1, agent, wipedAt, alive? }`
- * (`alive: true`: a real login is back after a reported wipe), never the
- * file's contents. Mirrored in `packages/relay/src/credentials-fanout.ts`.
+ * (claude's wiped tokens). Payload `{ schema: 1, agent, wipedAt }`, never the
+ * file's contents. Mirrored in `packages/relay/src/credentials-dead.ts`.
  */
 export const CREDENTIALS_DEAD_EVENT = 'credentials-dead';
+
+/**
+ * Relay event type: a watched agent login holds a real login, sent after a
+ * reported wipe and on the watcher's first real read (a ctl restart forgets
+ * what it reported). Payload `{ schema: 1, agent, at }` (`at` = the file's
+ * mtime). A redundant one changes nothing hub-side.
+ */
+export const CREDENTIALS_ALIVE_EVENT = 'credentials-alive';
 
 export type CtlRequest =
   | { op: 'status' }

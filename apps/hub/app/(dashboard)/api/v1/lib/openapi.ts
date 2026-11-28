@@ -1534,7 +1534,14 @@ export function buildOpenApi(): Record<string, unknown> {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { mode: { type: 'string', enum: ['add', 'renew'] } },
+                  properties: {
+                    mode: { type: 'string', enum: ['add', 'renew'] },
+                    replace: {
+                      type: 'boolean',
+                      description:
+                        'Store the login even when the browser signed in another identity than the account holds (otherwise the session ends `error` with `mismatch`).',
+                    },
+                  },
                 },
               },
             },
@@ -1542,7 +1549,7 @@ export function buildOpenApi(): Record<string, unknown> {
           responses: {
             '200': {
               description:
-                '`{ session, agent, account, mode, state, url?, userCode?, input?, lastError?, error?, identity?, renew?, startedAt, updatedAt }`; `state` is `starting | awaiting-code | awaiting-approval | exchanging | pushing | done | error`',
+                '`{ session, agent, account, mode, state, url?, userCode?, input?, lastError?, error?, mismatch?, identity?, renew?, startedAt, updatedAt }`; `state` is `starting | awaiting-code | awaiting-approval | exchanging | pushing | done | error`',
             },
             '400': errorResponse,
             '401': errorResponse,
@@ -1565,6 +1572,15 @@ export function buildOpenApi(): Record<string, unknown> {
         delete: {
           tags: ['Accounts'],
           summary: 'Cancel the sign-in in flight',
+          parameters: [
+            {
+              name: 'session',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' },
+              description: "Only this sign-in (another client's stays).",
+            },
+          ],
           responses: {
             '200': { description: 'the session, `error: cancelled`' },
             '401': errorResponse,

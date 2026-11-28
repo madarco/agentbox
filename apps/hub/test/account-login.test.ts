@@ -1,5 +1,13 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +28,11 @@ import {
   AGENT_SYNC_SPECS,
   accountLoginRootDir,
   isAccountLoginCancelled,
+  isAccountLoginWorker,
+  loginWorkerAlive,
+  readAccountLoginRequest,
+  removeAccountLoginSession,
+  sameLoginIdentity,
   writeAccountLoginCode,
   readAccountLoginState,
   takeAccountLoginCode,
@@ -82,6 +95,8 @@ function backend(spawnWorker: (s: string) => number | undefined = fakeWorker) {
     startWaitMs: 2_000,
     codeWaitMs: 2_000,
     pollMs: 10,
+    // The fakes run in this process: any live pid is "the worker".
+    isWorker: (pid) => loginWorkerAlive(pid),
   });
 }
 
@@ -217,14 +232,28 @@ describe('hub-driven sign-in (POST/GET …/login, …/login/code)', () => {
     expect(renews).toEqual([]);
   });
 
-  it('cancel stops the worker', async () => {
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      stdio: 'ignore',
-    });
-    stops.push(() => child.kill('SIGKILL'));
-    const b = backend((s) => {
-      writeAccountLoginState(s, { phase: 'awaiting-code', url: 'https://x', pid: child.pid! }, dir);
-      return child.pid;
+  it('cancel stops the worker (identified by its command line)', async () => {
+    let child: ReturnType<typeof spawn> | undefined;
+    const b = createAccountLoginBackend({
+      renew: () => Promise.resolve({ ok: true, value: { pushed: 0, failed: 0, output: [] } }),
+      spawnWorker: (s) => {
+        child = spawn(
+          process.execPath,
+          ['-e', 'setInterval(() => {}, 1000)', '_account-login-worker', s],
+          { stdio: 'ignore' },
+        );
+        stops.push(() => child!.kill('SIGKILL'));
+        writeAccountLoginState(
+          s,
+          { phase: 'awaiting-code', url: 'https://x', pid: child.pid! },
+          dir,
+        );
+        return child.pid;
+      },
+      store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
+      stateDir: dir,
+      startWaitMs: 2_000,
+      pollMs: 10,
     });
     await b.startAccountLogin('claude', 'work', {});
     const r = await b.cancelAccountLogin('claude', 'work');
@@ -286,6 +315,119 @@ describe('hub-driven sign-in: lookups, boot and cancel', () => {
     await b.cancelAccountLogin('claude', 'work');
     expect(isAccountLoginCancelled(r.ok ? r.value.session : '', dir)).toBe(true);
   }, 15_000);
+});
+
+describe('review #529', () => {
+  it('fans out after a code submit even when the worker wrote its state late and nobody polls', async () => {
+    const b = backend((s) => {
+      // The first state lands after start() has returned and the watcher began.
+      setTimeout(() => fakeWorker(s), 150);
+      return process.pid;
+    });
+    // The watcher starts at spawn, while the session has no state yet.
+    const r = await b.startAccountLogin('claude', 'work', {});
+    // No GET from here on: only the code submit.
+    await waitUntil(async () => {
+      const st = readAccountLoginState(r.ok ? r.value.session : '', dir);
+      return st?.phase === 'awaiting-code';
+    });
+    await b.submitAccountLoginCode('claude', 'work', { code: CODE });
+    await waitUntil(() => Promise.resolve(renews.length > 0));
+    expect(renews).toEqual(['claude/work']);
+  });
+
+  it("a pid that is not this session's worker is never signalled, and reads as stopped", async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'ignore',
+    });
+    stops.push(() => child.kill('SIGKILL'));
+    const b = createAccountLoginBackend({
+      renew: () => Promise.resolve({ ok: true, value: { pushed: 0, failed: 0, output: [] } }),
+      spawnWorker: (s) => {
+        // A stale state whose pid now belongs to an unrelated process.
+        writeAccountLoginState(
+          s,
+          { phase: 'awaiting-code', url: 'https://x', pid: child.pid! },
+          dir,
+        );
+        return child.pid;
+      },
+      store: { path: join(dir, 'accounts.json'), stateDir: dir, specs: AGENT_SYNC_SPECS },
+      stateDir: dir,
+      startWaitMs: 200,
+      pollMs: 10,
+    });
+    const r = await b.startAccountLogin('claude', 'work', {});
+    expect(r.ok && r.value.state).toBe('error');
+    await new Promise((res) => setTimeout(res, 100));
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBeNull();
+  });
+
+  it('isAccountLoginWorker matches only a worker for that session', () => {
+    const child = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)', '_account-login-worker', 'abcdef0123456789'],
+      { stdio: 'ignore' },
+    );
+    stops.push(() => child.kill('SIGKILL'));
+    expect(isAccountLoginWorker(child.pid!, 'abcdef0123456789')).toBe(true);
+    expect(isAccountLoginWorker(child.pid!, 'ffffffffffffffff')).toBe(false);
+    expect(isAccountLoginWorker(process.pid, 'abcdef0123456789')).toBe(false);
+  });
+
+  it('cancel with a session leaves another session of the account alone', async () => {
+    const b = backend();
+    const r = await b.startAccountLogin('claude', 'work', {});
+    const other = await b.cancelAccountLogin('claude', 'work', 'ffffffffffffffff');
+    expect(other).toMatchObject({ ok: false, code: 'not_found' });
+    expect(isAccountLoginCancelled(r.ok ? r.value.session : '', dir)).toBe(false);
+    expect(await b.cancelAccountLogin('claude', 'work', 'NOT-AN-ID')).toMatchObject({
+      ok: false,
+      code: 'invalid_request',
+    });
+  });
+
+  it('start takes replace (a boolean) into the request; a mismatch is shown on error', async () => {
+    const b = backend();
+    expect(await b.startAccountLogin('claude', 'work', { replace: 'yes' })).toMatchObject({
+      ok: false,
+      code: 'invalid_request',
+    });
+    const r = await b.startAccountLogin('claude', 'work', { replace: true });
+    expect(readAccountLoginRequest(r.ok ? r.value.session : '', dir)?.replace).toBe(true);
+    const v = accountLoginView(
+      's',
+      { agent: 'claude', account: 'work', mode: 'renew', createdAt: 't0' },
+      {
+        phase: 'error',
+        error: 'this signed in b@x, but claude/work is a@x',
+        mismatch: { stored: { email: 'a@x' }, signedIn: { email: 'b@x' } },
+        pid: 1,
+        updatedAt: 't1',
+      },
+      null,
+    );
+    expect(v.mismatch).toEqual({ stored: { email: 'a@x' }, signedIn: { email: 'b@x' } });
+  });
+
+  it('sameLoginIdentity: email first, then org; unknown is not a mismatch', () => {
+    expect(sameLoginIdentity({ email: 'A@x.com' }, { email: 'a@x.com' })).toBe(true);
+    expect(sameLoginIdentity({ email: 'a@x.com' }, { email: 'b@x.com' })).toBe(false);
+    expect(sameLoginIdentity({ org: 'o1' }, { org: 'o2' })).toBe(false);
+    expect(sameLoginIdentity(undefined, { email: 'b@x.com' })).toBe(true);
+    expect(sameLoginIdentity({ email: 'a@x.com' }, { org: 'o1' })).toBe(true);
+  });
+
+  it('removing a session removes its worker log too', () => {
+    const logs = join(dir, 'logs');
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'account-login-abcdef0123456789.log'), 'x');
+    writeAccountLoginCode('abcdef0123456789', 'c', dir);
+    removeAccountLoginSession('abcdef0123456789', dir);
+    expect(existsSync(join(logs, 'account-login-abcdef0123456789.log'))).toBe(false);
+    expect(existsSync(join(accountLoginRootDir(dir), 'abcdef0123456789'))).toBe(false);
+  });
 });
 
 describe('takeAccountLoginCode', () => {

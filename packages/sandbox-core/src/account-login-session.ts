@@ -29,6 +29,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { STATE_DIR } from './state.js';
 
@@ -39,6 +40,14 @@ export interface AccountLoginRequest {
   account: string;
   mode: AccountLoginMode;
   createdAt: string;
+  /** Store the login even when it signs in another identity than the account's. */
+  replace?: boolean;
+}
+
+export interface AccountLoginIdentity {
+  email?: string;
+  org?: string;
+  plan?: string;
 }
 
 /**
@@ -66,7 +75,12 @@ export interface AccountLoginWorkerState {
   /** Why the session ended, with phase `error`. */
   error?: string;
   /** Who signed in (display only), with `signed-in`. */
-  identity?: { email?: string; org?: string; plan?: string };
+  identity?: AccountLoginIdentity;
+  /**
+   * With `error`: the browser signed in another identity than the account
+   * holds, so nothing was stored. Start again with `replace` to store it anyway.
+   */
+  mismatch?: { stored: AccountLoginIdentity; signedIn: AccountLoginIdentity };
   pid: number;
   updatedAt: string;
 }
@@ -224,12 +238,59 @@ export function listAccountLoginSessions(stateDir?: string): string[] {
   }
 }
 
+/** The session dir and the worker's command log (`logs/account-login-<id>.log`). */
 export function removeAccountLoginSession(id: string, stateDir?: string): void {
-  try {
-    rmSync(accountLoginDir(id, stateDir), { recursive: true, force: true });
-  } catch {
-    /* best effort */
+  const logs = join(stateDir ?? STATE_DIR, 'logs');
+  for (const path of [
+    accountLoginDir(id, stateDir),
+    join(logs, `account-login-${id}.log`),
+    join(logs, `account-login-${id}.log.prev`),
+  ]) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
   }
+}
+
+/**
+ * Whether `pid` is THIS session's worker, not just any live process: after a
+ * restart (a container's pid namespace starts over) a stale pid can belong to
+ * the relay or a create job, which must never be signalled. Linux reads
+ * `/proc/<pid>/cmdline`, elsewhere `ps -o command=`.
+ */
+export function isAccountLoginWorker(pid: number, session: string): boolean {
+  if (!loginWorkerAlive(pid)) return false;
+  let cmd: string | null = null;
+  try {
+    cmd = readFileSync(`/proc/${String(pid)}/cmdline`, 'utf8')
+      .split('\0')
+      .join(' ');
+  } catch {
+    try {
+      cmd = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      cmd = null;
+    }
+  }
+  return cmd !== null && cmd.includes('_account-login-worker') && cmd.includes(session);
+}
+
+/**
+ * Same identity, as far as both sides say: the email when both carry one, else
+ * the org. Unknown on either side is not a mismatch (display data only).
+ */
+export function sameLoginIdentity(
+  a: AccountLoginIdentity | undefined,
+  b: AccountLoginIdentity | undefined,
+): boolean {
+  if (a?.email && b?.email) return a.email.toLowerCase() === b.email.toLowerCase();
+  if (a?.org && b?.org) return a.org === b.org;
+  return true;
 }
 
 /** Whether a session's worker still runs (sync; EPERM still means it exists). */

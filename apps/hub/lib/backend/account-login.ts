@@ -24,7 +24,7 @@ import {
   isAccountLoginId,
   isTerminalLoginPhase,
   listAccountLoginSessions,
-  loginWorkerAlive,
+  isAccountLoginWorker,
   readAccountLoginRenew,
   readAccountLoginRequest,
   readAccountLoginState,
@@ -61,6 +61,11 @@ export interface AccountLoginDeps {
   codeWaitMs?: number;
   pollMs?: number;
   now?: () => number;
+  /**
+   * Whether `pid` is this session's worker (tests); default: its command line
+   * names `_account-login-worker <session>`, so a reused pid is never signalled.
+   */
+  isWorker?: (pid: number, session: string) => boolean;
 }
 
 /** A finished session is kept this long for `GET` to report it, then reaped. */
@@ -107,6 +112,7 @@ export function accountLoginView(
     ...(st?.lastError ? { lastError: st.lastError } : {}),
     ...(phase === 'error' && st?.error ? { error: st.error } : {}),
     ...(st?.identity ? { identity: st.identity } : {}),
+    ...(phase === 'error' && st?.mismatch ? { mismatch: st.mismatch } : {}),
     ...(renew
       ? {
           renew: {
@@ -131,6 +137,16 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
   const codeWaitMs = deps.codeWaitMs ?? 30_000;
   /** Sessions this hub process is watching (fan-out on `signed-in`). */
   const watching = new Set<string>();
+  const isWorker = deps.isWorker ?? isAccountLoginWorker;
+  /** Signal the session's worker, only when the pid is still that worker. */
+  const signal = (session: string, pid: number, sig: NodeJS.Signals): void => {
+    if (pid <= 0 || !isWorker(pid, session)) return;
+    try {
+      process.kill(pid, sig);
+    } catch {
+      /* already gone */
+    }
+  };
 
   const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -153,7 +169,7 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       );
       return readAccountLoginState(session, stateDir);
     }
-    if (isTerminalLoginPhase(st.phase) || loginWorkerAlive(st.pid)) return st;
+    if (isTerminalLoginPhase(st.phase) || isWorker(st.pid, session)) return st;
     const error = 'the sign-in stopped before it finished';
     writeAccountLoginState(session, { ...st, phase: 'error', error }, stateDir);
     return readAccountLoginState(session, stateDir);
@@ -211,11 +227,7 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
         if (stuckFor > 0) {
           // Asked first; a worker that ignored it for two more minutes is killed.
           writeAccountLoginCancel(s, stateDir);
-          try {
-            process.kill(st.pid, stuckFor > 2 * 60_000 ? 'SIGKILL' : 'SIGTERM');
-          } catch {
-            /* already gone */
-          }
+          signal(s, st.pid, stuckFor > 2 * 60_000 ? 'SIGKILL' : 'SIGTERM');
         }
       } else if (age > KEEP_FINISHED_MS && !watching.has(s)) {
         removeAccountLoginSession(s, stateDir);
@@ -235,7 +247,14 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       try {
         for (;;) {
           const st = stateOf(session);
-          if (!st || st.phase === 'error') return;
+          // No state yet: the worker is still booting (stateOf turns one that
+          // never writes into an error after WORKER_BOOT_MS, which ends this).
+          if (!st) {
+            if (!readAccountLoginRequest(session, stateDir)) return;
+            await sleep(pollMs);
+            continue;
+          }
+          if (st.phase === 'error') return;
           if (st.phase === 'signed-in') break;
           await sleep(pollMs);
         }
@@ -292,7 +311,10 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
     async startAccountLogin(agent, rawId, input) {
       const spec = resolveSpec(agent);
       if (typeof spec === 'string') return { ok: false, code: 'not_found', error: spec };
-      const body = (input ?? {}) as { mode?: unknown };
+      const body = (input ?? {}) as { mode?: unknown; replace?: unknown };
+      if (body.replace !== undefined && typeof body.replace !== 'boolean') {
+        return { ok: false, code: 'invalid_request', error: 'replace must be a boolean' };
+      }
       if (body.mode !== undefined && body.mode !== 'add' && body.mode !== 'renew') {
         return { ok: false, code: 'invalid_request', error: 'mode must be "add" or "renew"' };
       }
@@ -340,7 +362,17 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
 
       const session = randomBytes(8).toString('hex');
       const createdAt = new Date(now()).toISOString();
-      writeAccountLoginRequest(session, { agent: spec.id, account: id, mode, createdAt }, stateDir);
+      writeAccountLoginRequest(
+        session,
+        {
+          agent: spec.id,
+          account: id,
+          mode,
+          createdAt,
+          ...(body.replace === true ? { replace: true } : {}),
+        },
+        stateDir,
+      );
       try {
         spawnWorker(session);
       } catch (err) {
@@ -366,7 +398,9 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       if (!s || !v || v.agent !== agent || v.account !== id) {
         return { ok: false, code: 'not_found', error: `no sign-in for ${agent}/${id}` };
       }
-      if (v.state === 'pushing') watch(s);
+      // Restart-safe and client-independent: any live session is watched, so
+      // the fan-out runs even if nobody polls after the code is taken.
+      if (v.state !== 'done' && v.state !== 'error') watch(s);
       return { ok: true, value: v };
     },
 
@@ -398,6 +432,8 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       }
       const before = v.updatedAt;
       writeAccountLoginCode(s, code, stateDir);
+      // The fan-out must not depend on a client polling to `pushing`.
+      watch(s);
       // The verdict: stored (pushing/done), refused (back to awaiting-code
       // with a lastError), or failed.
       const out = await waitFor(
@@ -412,18 +448,23 @@ export function createAccountLoginBackend(deps: AccountLoginDeps): AccountLoginB
       return { ok: true, value: out ?? v };
     },
 
-    async cancelAccountLogin(rawAgent, rawId) {
+    async cancelAccountLogin(rawAgent, rawId, session) {
+      if (session !== undefined && !isAccountLoginId(session)) {
+        return { ok: false, code: 'invalid_request', error: 'bad session id' };
+      }
       const { agent, id } = keyOf(rawAgent, rawId);
-      const s = sessionsOf(agent, id).find(isLive);
+      // With a session, only that one: closing one client's dialog must not
+      // cancel the sign-in another client is in the middle of.
+      const s = session
+        ? sessionsOf(agent, id).includes(session) && isLive(session)
+          ? session
+          : undefined
+        : sessionsOf(agent, id).find(isLive);
       if (!s)
         return { ok: false, code: 'not_found', error: `no sign-in in flight for ${agent}/${id}` };
       writeAccountLoginCancel(s, stateDir);
       const st = readAccountLoginState(s, stateDir);
-      try {
-        if (st && st.pid > 0) process.kill(st.pid, 'SIGTERM');
-      } catch {
-        /* already gone */
-      }
+      if (st) signal(s, st.pid, 'SIGTERM');
       const v = await waitFor(s, (x) => x.state === 'error' || x.state === 'done', 5_000);
       return { ok: true, value: v ?? viewOf(s)! };
     },

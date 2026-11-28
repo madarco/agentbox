@@ -18,6 +18,9 @@ import { openCommandLog, runAgentLogin, type AgentCliSpec } from '@agentbox/cli-
 import {
   isAccountLoginCancelled,
   readAccountLoginRequest,
+  sameLoginIdentity,
+  type AccountLoginIdentity,
+  type AccountLoginRequest,
   readAccounts,
   resolveAgentSpec,
   takeAccountLoginCode,
@@ -26,21 +29,45 @@ import {
 } from '@agentbox/sandbox-core';
 import { captureVolumeLogin, dockerVolumeFileReader, ensureImage } from '@agentbox/sandbox-docker';
 import { agentLoginSpec } from '../agents/command/login.js';
-import { captureDefaultLogin, readDefaultVolumeLogin } from '../lib/login-fanout.js';
+import {
+  captureDefaultLogin,
+  readDefaultVolumeLogin,
+  restoreDefaultVolumeLogin,
+} from '../lib/login-fanout.js';
 import { syncAgentCredentialsIfChanged } from './control-plane.js';
 
 type StatePatch = Partial<Omit<AccountLoginWorkerState, 'updatedAt' | 'pid'>>;
 
+/** The browser signed in another identity than the account holds. */
+class IdentityMismatchError extends Error {
+  constructor(
+    readonly account: string,
+    readonly mismatch: NonNullable<AccountLoginWorkerState['mismatch']>,
+  ) {
+    const who = (i: AccountLoginIdentity): string => i.email ?? i.org ?? 'another account';
+    super(
+      `this signed in ${who(mismatch.signedIn)}, but ${account} is ${who(mismatch.stored)}; nothing was changed (start again with replace to store it anyway)`,
+    );
+  }
+}
+
+interface WorkerContext {
+  setState: (patch: StatePatch) => void;
+  sessionId: string;
+  log: ReturnType<typeof openCommandLog>;
+  signal: AbortSignal;
+  /** Set while a cancel must wait: a code is being exchanged, or the login is being stored. */
+  committing: { value: boolean };
+}
+
 /** Sign the account in and store it. Throws a message for the session's `error`. */
 async function signInAndStore(
   a: AgentCliSpec,
-  account: string,
-  mode: 'add' | 'renew',
-  setState: (patch: StatePatch) => void,
-  sessionId: string,
-  log: ReturnType<typeof openCommandLog>,
-  signal: AbortSignal,
+  req: AccountLoginRequest,
+  ctx: WorkerContext,
 ): Promise<StatePatch> {
+  const { account, mode } = req;
+  const { setState, sessionId, log, signal } = ctx;
   const named = !isDefaultAccount(account);
   if (named && a.runtime.supportsAccountLogin !== true) {
     // A runtime that ignores the volume would sign the owner's shared login in
@@ -89,6 +116,19 @@ async function signInAndStore(
     log.raw(text);
     held = null;
   };
+  // Who the browser signed in, read before anything is stored (claude's
+  // finalize copies the default login into the backup): a renew that picked
+  // another account in the browser must not re-identify this one.
+  const readIdentity = async (): Promise<AccountLoginIdentity | undefined> => {
+    const reader = a.runtime.accountIdentity;
+    if (!reader) return undefined;
+    const read = dockerVolumeFileReader(volume, image);
+    const files: Record<string, string | null> = {};
+    for (const rel of reader.files) files[rel] = await read(rel);
+    return reader.parse(files);
+  };
+  const stored = existing?.identity;
+  let mismatch: NonNullable<AccountLoginWorkerState['mismatch']> | undefined;
   const res = await runAgentLogin({
     spec: binding.spec,
     dockerArgv: binding.dockerArgv,
@@ -99,6 +139,7 @@ async function signInAndStore(
     writeLog: (line) => log.write(line),
     onPhase: (phase, u) => {
       if (phase !== 'exchanging') flush();
+      ctx.committing.value = phase === 'exchanging';
       // `done` is not ours to report yet: the login is not stored.
       if (phase === 'done' || phase === 'error') return;
       if (phase === 'starting' || phase === 'exchanging') {
@@ -130,7 +171,14 @@ async function signInAndStore(
       return code;
     },
     verify: binding.verify,
-    ...(binding.finalize ? { finalize: binding.finalize } : {}),
+    finalize: async () => {
+      const signedIn = await readIdentity().catch(() => undefined);
+      if (stored && signedIn && !sameLoginIdentity(stored, signedIn) && req.replace !== true) {
+        mismatch = { stored, signedIn };
+        return {};
+      }
+      return (await binding.finalize?.()) ?? {};
+    },
     signal,
   });
   flush();
@@ -140,6 +188,14 @@ async function signInAndStore(
     for (const c of sent) error = error.split(c).join('[redacted]');
     throw new Error(error);
   }
+  if (mismatch) {
+    // The default volume is what later default boxes seed from: put the
+    // previous login back (a named volume is reset before its next sign-in).
+    if (!named && before !== null) await restoreDefaultVolumeLogin(a.id, image, before);
+    throw new IdentityMismatchError(`${a.id}/${account}`, mismatch);
+  }
+  // From here the login is being stored: a cancel waits for it.
+  ctx.committing.value = true;
 
   if (named) {
     const cap = await captureVolumeLogin({
@@ -170,9 +226,14 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
   .action(async (id: string) => {
     const log = openCommandLog(`account-login-${id}`);
     log.write(`worker pid=${String(process.pid)} for session ${id}`);
+    const committing = { value: false };
+    let cancelWaiting: string | null = null;
     let cur: Omit<AccountLoginWorkerState, 'updatedAt'> = { phase: 'starting', pid: process.pid };
     const setState = (patch: StatePatch): void => {
       cur = { ...cur, ...patch, pid: process.pid };
+      if (cancelWaiting !== null && patch.phase?.startsWith('awaiting')) {
+        queueMicrotask(() => cancel(cancelWaiting!));
+      }
       // A rejected code is shown once; the next phase change clears it.
       if (patch.lastError === undefined && 'phase' in patch) delete cur.lastError;
       writeAccountLoginState(id, cur);
@@ -182,6 +243,13 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
     const abort = new AbortController();
     const cancel = (why: string): void => {
       if (abort.signal.aborted) return;
+      if (committing.value) {
+        // A code in exchange or a login being stored finishes (and is fanned
+        // out); a refused code brings the sign-in back to a cancellable phase.
+        if (cancelWaiting === null) log.write(`${why}; finishing the sign-in first`);
+        cancelWaiting = why;
+        return;
+      }
       log.write(`${why}; cancelling`);
       abort.abort();
       // The login itself ends on the abort at once. The image build and the
@@ -207,7 +275,13 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
     try {
       if (!req) throw new Error('internal: the session has no request');
       if (!a) throw new Error(`${req.agent} has no sign-in`);
-      const done = await signInAndStore(a, req.account, req.mode, setState, id, log, abort.signal);
+      const done = await signInAndStore(a, req, {
+        setState,
+        sessionId: id,
+        log,
+        signal: abort.signal,
+        committing,
+      });
       setState({ phase: 'signed-in', ...done });
       code = 0;
     } catch (err) {
@@ -217,7 +291,11 @@ export const accountLoginWorkerCommand = new Command('_account-login-worker')
           ? err.message
           : String(err);
       log.write(`failed: ${message}`);
-      setState({ phase: 'error', error: message });
+      setState({
+        phase: 'error',
+        error: message,
+        ...(err instanceof IdentityMismatchError ? { mismatch: err.mismatch } : {}),
+      });
     }
     log.close();
     process.exit(code);

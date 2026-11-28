@@ -106,7 +106,11 @@ import {
   CredentialsFanout,
   registrationBoxAccount,
 } from './credentials-fanout.js';
-import { CREDENTIALS_DEAD_EVENT, handleCredentialsDead } from './credentials-dead.js';
+import {
+  CREDENTIALS_ALIVE_EVENT,
+  CREDENTIALS_DEAD_EVENT,
+  handleCredentialsDead,
+} from './credentials-dead.js';
 import type {
   HistoryIngestSink,
   HistoryMemorySink,
@@ -1297,10 +1301,15 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
       }
       // A signed-out login (no secret in it): auth evidence on the box's account.
       // In box mode it rides the ring to the host poller, like the update above.
-      if (body.type === CREDENTIALS_DEAD_EVENT && mode !== 'box') {
-        const verdict = await handleCredentialsDead(opts.history, reg, body.payload);
+      if (
+        (body.type === CREDENTIALS_DEAD_EVENT || body.type === CREDENTIALS_ALIVE_EVENT) &&
+        mode !== 'box'
+      ) {
+        const verdict = await handleCredentialsDead(opts.history, reg, body.payload, {
+          alive: body.type === CREDENTIALS_ALIVE_EVENT,
+        });
         log(
-          `credentials-dead box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
+          `${body.type} box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
         );
         send(res, 202, { ok: true, recorded: verdict.recorded });
         return;
@@ -2195,10 +2204,12 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
                   );
                   continue;
                 }
-                if (ev.type === CREDENTIALS_DEAD_EVENT) {
-                  const verdict = await handleCredentialsDead(opts.history, reg, ev.payload);
+                if (ev.type === CREDENTIALS_DEAD_EVENT || ev.type === CREDENTIALS_ALIVE_EVENT) {
+                  const verdict = await handleCredentialsDead(opts.history, reg, ev.payload, {
+                    alive: ev.type === CREDENTIALS_ALIVE_EVENT,
+                  });
                   log(
-                    `credentials-dead box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
+                    `${ev.type} box=${reg.boxId} recorded=${String(verdict.recorded)} (${verdict.reason})`,
                   );
                   continue;
                 }

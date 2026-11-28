@@ -11,7 +11,11 @@ import {
   isWipedCredentialText,
   WATCHED_CREDENTIALS,
 } from '../src/credentials-watcher.js';
-import { CREDENTIALS_DEAD_EVENT, CREDENTIALS_UPDATED_EVENT } from '../src/types.js';
+import {
+  CREDENTIALS_ALIVE_EVENT,
+  CREDENTIALS_DEAD_EVENT,
+  CREDENTIALS_UPDATED_EVENT,
+} from '../src/types.js';
 
 const CLAUDE_BLOB = JSON.stringify({
   claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: 123 },
@@ -19,14 +23,31 @@ const CLAUDE_BLOB = JSON.stringify({
 
 const DELIVERED: PostOutcome = { ok: true, status: 202 };
 
-/** `outcomes` is consumed one per call; once exhausted every post is delivered. */
+/**
+ * `outcomes` is consumed one per call; once exhausted every post is delivered.
+ * `credentials-alive` goes to its own spy (always delivered, no outcome
+ * consumed) so `post` counts what the other tests are about.
+ */
 function fakeRelay(outcomes: PostOutcome[] = []): {
   relay: RelayClient;
   post: ReturnType<typeof vi.fn>;
+  alive: ReturnType<typeof vi.fn>;
 } {
   const queue = [...outcomes];
-  const post = vi.fn(() => Promise.resolve(queue.shift() ?? DELIVERED));
-  return { relay: { enabled: true, post } as unknown as RelayClient, post };
+  const post = vi.fn((...call: [string, unknown, unknown?]) => {
+    void call;
+    return Promise.resolve(queue.shift() ?? DELIVERED);
+  });
+  const alive = vi.fn((...call: [string, unknown]) => {
+    void call;
+    return Promise.resolve(DELIVERED);
+  });
+  const relay = {
+    enabled: true,
+    post: (type: string, payload: unknown, opts?: unknown) =>
+      type === CREDENTIALS_ALIVE_EVENT ? alive(type, payload) : post(type, payload, opts),
+  };
+  return { relay: relay as unknown as RelayClient, post, alive };
 }
 
 /**
@@ -318,6 +339,7 @@ describe('CredentialsWatcher credentials-dead', () => {
     new CredentialsWatcher({ relay, files: [{ agent: 'claude', path, shape: 'claude-oauth' }] });
   const deadPosts = (post: ReturnType<typeof vi.fn>): unknown[][] =>
     post.mock.calls.filter((c) => c[0] === CREDENTIALS_DEAD_EVENT);
+  const alivePosts = (alive: ReturnType<typeof vi.fn>): unknown[][] => alive.mock.calls;
 
   it('reports a wiped login once, with its mtime and no contents', async () => {
     await writeFile(path, WIPED_BLOB);
@@ -340,7 +362,7 @@ describe('CredentialsWatcher credentials-dead', () => {
   });
 
   it('reports again after a real login came back in between', async () => {
-    const { relay, post } = fakeRelay();
+    const { relay, post, alive } = fakeRelay();
     const w = watcher(relay);
     await writeFile(path, WIPED_BLOB);
     await utimes(path, 1_700_000_000, 1_700_000_000);
@@ -351,11 +373,29 @@ describe('CredentialsWatcher credentials-dead', () => {
     await writeFile(path, WIPED_BLOB);
     await utimes(path, 1_700_000_200, 1_700_000_200);
     await w.scan();
-    // wipe, back alive, wipe again
-    expect(deadPosts(post)).toHaveLength(3);
-    expect((deadPosts(post)[1]![1] as Record<string, unknown>).alive).toBe(true);
-    expect(deadPosts(post)[2]![1]).not.toHaveProperty('alive');
+    expect(deadPosts(post)).toHaveLength(2);
+    // The real login in between cleared it.
+    expect(alivePosts(alive)).toHaveLength(1);
+    expect(alivePosts(alive)[0]![1]).toEqual({
+      schema: 1,
+      agent: 'claude',
+      at: new Date(1_700_000_100_000).toISOString(),
+    });
     expect(post.mock.calls.filter((c) => c[0] === CREDENTIALS_UPDATED_EVENT)).toHaveLength(1);
+  });
+
+  it('reports a real login on its first read, so a restart clears a wipe it forgot', async () => {
+    await writeFile(path, CLAUDE_BLOB);
+    await utimes(path, 1_700_000_000, 1_700_000_000);
+    const { relay, alive } = fakeRelay();
+    const w = watcher(relay);
+    await w.scan();
+    expect(alivePosts(alive)).toHaveLength(1);
+    // Once per watcher: a refreshed real login is not reported again.
+    await writeFile(path, CLAUDE_BLOB.replace('"r"', '"r2"'));
+    await utimes(path, 1_700_000_100, 1_700_000_100);
+    await w.scan();
+    expect(alivePosts(alive)).toHaveLength(1);
   });
 
   it('retries a report the relay did not take', async () => {

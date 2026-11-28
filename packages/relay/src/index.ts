@@ -85,6 +85,7 @@ export {
   type CredentialsHandleResult,
 } from './credentials-fanout.js';
 export {
+  CREDENTIALS_ALIVE_EVENT,
   CREDENTIALS_DEAD_EVENT,
   handleCredentialsDead,
   parseCredentialsDead,
