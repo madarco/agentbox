@@ -7,8 +7,10 @@ import { execa } from 'execa';
 import { agentSettingsFor } from '@agentbox/config';
 import type { AgentSettings, LoopbackEndpoint } from '@agentbox/core';
 import {
+  ACCOUNT_NAME_INFIX,
   DOCKER_HOST_ALIAS,
   findAccount,
+  sharedProjectsVolume,
   LIVE_DATABASE_EXCLUDES,
   requireAgentCredential,
 } from '@agentbox/core';
@@ -46,6 +48,7 @@ import { findUnsyncableSymlinks } from '@agentbox/sandbox-core';
 import {
   buildTermSafeTmuxExec,
   buildTmuxSessionArgs,
+  dockerEnvByName,
   CONTAINER_USER,
   ensureVolume,
   volumeExists,
@@ -256,6 +259,70 @@ async function seedDefaultClaudeJson(
  * whenever the rsync actually executed.
  */
 export async function ensureClaudeVolume(
+  spec: ClaudeConfigSpec,
+  opts: EnsureClaudeVolumeOptions,
+): Promise<EnsureClaudeVolumeResult> {
+  const result = await ensureClaudeVolumeSeeded(spec, opts);
+  if (usesSharedProjects(spec.volume)) await migrateProjectsToShared(spec.volume, opts.image);
+  return result;
+}
+
+/** The volume every account's boxes keep `~/.claude/projects` (sessions) in. */
+export const CLAUDE_PROJECTS_VOLUME = sharedProjectsVolume(SHARED_CLAUDE_VOLUME);
+
+/**
+ * Whether a box on `volume` mounts {@link CLAUDE_PROJECTS_VOLUME} over its
+ * `~/.claude/projects`: the shared default volume and every named account's,
+ * so `claude --resume` finds a session started on another account. An
+ * `--isolate-claude-config` box keeps its own, which is the point of it.
+ */
+export function usesSharedProjects(volume: string): boolean {
+  return (
+    volume === SHARED_CLAUDE_VOLUME ||
+    volume.startsWith(`${SHARED_CLAUDE_VOLUME}${ACCOUNT_NAME_INFIX}`)
+  );
+}
+
+/**
+ * One-time per source volume: copy the sessions a config volume already holds
+ * in its own `projects/` into {@link CLAUDE_PROJECTS_VOLUME}, never over a file
+ * already there. Mounting the shared volume hides the old dir, so without this
+ * every existing session would vanish from `--resume`. The old dir is left in
+ * place (a rollback finds it), and a marker file per source volume makes a
+ * later create skip the copy. Best-effort: a failure leaves no marker and is
+ * retried next time.
+ */
+export async function migrateProjectsToShared(volume: string, image: string): Promise<boolean> {
+  const script =
+    'm="/dst/.agentbox-migrated-$1"; [ -e "$m" ] && { echo MIGRATED=skip; exit 0; }; ' +
+    'if [ -d /src/projects ]; then cp -a -n /src/projects/. /dst/ || exit 1; fi; ' +
+    // Once per source volume, so the recursive chown is paid once: claude in
+    // the box (uid 1000) must be able to append to every copied session.
+    'chown -R 1000:1000 /dst && touch "$m" && echo MIGRATED=yes';
+  const res = await execa(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '--user',
+      '0',
+      '-v',
+      `${volume}:/src:ro`,
+      '-v',
+      `${CLAUDE_PROJECTS_VOLUME}:/dst`,
+      image,
+      'sh',
+      '-c',
+      script,
+      'sh',
+      volume,
+    ],
+    { reject: false },
+  );
+  return res.exitCode === 0 && /MIGRATED=yes/.test(res.stdout ?? '');
+}
+
+async function ensureClaudeVolumeSeeded(
   spec: ClaudeConfigSpec,
   opts: EnsureClaudeVolumeOptions,
 ): Promise<EnsureClaudeVolumeResult> {
@@ -564,7 +631,12 @@ export function buildClaudeMounts(
     if (typeof v === 'string' && v.length > 0) env[k] = v;
   }
   return {
-    extraVolumes: [`${spec.volume}:${CONTAINER_CLAUDE_DIR}`],
+    extraVolumes: [
+      `${spec.volume}:${CONTAINER_CLAUDE_DIR}`,
+      ...(usesSharedProjects(spec.volume)
+        ? [`${CLAUDE_PROJECTS_VOLUME}:${CONTAINER_CLAUDE_DIR}/projects`]
+        : []),
+    ],
     env,
     volumeName: spec.volume,
   };
@@ -1086,11 +1158,14 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
     process.env,
     await sessionAccountPolicy('claude', opts.container),
   );
+  // Values by name, off the argv: they include API keys and a pasted
+  // account's token (#437-6).
+  const byName = dockerEnvByName(envFlags);
   const result = await execa(
     'docker',
     [
       'exec',
-      ...envFlags,
+      ...byName.argv,
       '--user',
       CONTAINER_USER,
       opts.container,
@@ -1102,7 +1177,7 @@ export async function startClaudeSession(opts: StartClaudeSessionOptions): Promi
       cmd,
       ...buildTmuxSessionArgs(sessionName),
     ],
-    { reject: false },
+    { reject: false, env: byName.env },
   );
   if (result.exitCode === 0) return;
   const stderr = (result.stderr ?? '').toString();
@@ -1409,11 +1484,18 @@ export async function claudeSessionInfo(
  * write-once, so without this a re-login keeps the previous login's cached
  * profile, and a fresh `profileFetchedAt` keeps it on display (Phase 0, (a)).
  */
-export async function resetVolumeAccountState(volume: string, image: string): Promise<void> {
+export async function resetVolumeAccountState(
+  volume: string,
+  image: string,
+): Promise<'reset' | 'removed' | 'absent'> {
+  // A file jq cannot parse (corrupt, truncated) is removed instead of failing
+  // every re-login of the account: the caller seeds a fresh one.
   const script =
-    'f=/dst/_claude.json; [ -f "$f" ] || exit 0; ' +
-    `jq '${accountStateJqDelete()}' "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chown 1000:1000 "$f"`;
-  await execa('docker', [
+    'f=/dst/_claude.json; [ -f "$f" ] || { echo RESET=absent; exit 0; }; ' +
+    `if jq '${accountStateJqDelete()}' "$f" > "$f.tmp" 2>/dev/null; then ` +
+    'mv "$f.tmp" "$f" && chown 1000:1000 "$f" && echo RESET=reset; ' +
+    'else rm -f "$f" "$f.tmp" && echo RESET=removed; fi';
+  const res = await execa('docker', [
     'run',
     '--rm',
     '--user',
@@ -1425,6 +1507,8 @@ export async function resetVolumeAccountState(volume: string, image: string): Pr
     '-c',
     script,
   ]);
+  const m = /RESET=(reset|removed|absent)/.exec(res.stdout ?? '');
+  return (m?.[1] as 'reset' | 'removed' | 'absent' | undefined) ?? 'reset';
 }
 
 /**

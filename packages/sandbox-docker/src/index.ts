@@ -20,6 +20,7 @@ export {
   buildTmuxConfigShellSnippet,
   buildTmuxSessionArgs,
   tmuxSessionEnvArgs,
+  dockerEnvByName,
   CONTAINER_USER,
   hostRsyncStep,
   TERM_FALLBACK_SNIPPET,
@@ -437,6 +438,9 @@ export {
 export {
   captureVolumeLogin,
   dockerVolumeFileReader,
+  dropOrphanAccountVolume,
+  mergeAccountIdentity,
+  readDockerVolumeFiles,
   type AccountIdentityReader,
   type CaptureVolumeLoginOptions,
   type CaptureVolumeLoginResult,

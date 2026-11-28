@@ -306,6 +306,26 @@ export async function removeAccount(
   });
 }
 
+/**
+ * Run `fn` under the accounts lock (the one every store mutation takes). For a
+ * writer outside this module — the relay's fan-out, the custody seed — whose
+ * row check and secret write must be one step, so an `accounts rm` cannot land
+ * between them and leave a secret with no row. Not re-entrant: `fn` must not
+ * call a store mutation.
+ */
+export function withAccountsLock<T>(
+  fn: () => Promise<T>,
+  opts: Pick<AccountStoreOptions, 'path'> = {},
+): Promise<T> {
+  return withFileLock(opts.path ?? ACCOUNTS_FILE, fn);
+}
+
+/** Decides whether `incoming` may replace `existing` (null when there is none). */
+export type AccountSecretGate = (
+  incoming: string,
+  existing: string | null,
+) => { accept: boolean; reason: string };
+
 export interface WriteAccountSecretResult {
   path: string;
   written: boolean;
@@ -330,7 +350,10 @@ export async function writeAccountSecret(
   agent: string,
   id: string,
   content: string,
-  opts: AccountStoreOptions = {},
+  opts: AccountStoreOptions & {
+    /** A login's freshness gate. Default: the agent's `freshness` rule. */
+    gate?: AccountSecretGate;
+  } = {},
 ): Promise<WriteAccountSecretResult> {
   const o = resolveOpts(opts);
   if (isDefaultAccount(id)) {
@@ -351,11 +374,9 @@ export async function writeAccountSecret(
         throw new Error(`not a usable '${spec.id}' login credential`);
       }
       const existing = await readFile(path, 'utf8').catch(() => null);
-      const gate = shouldAcceptCredentialBlob(
-        spec.credential?.freshness?.jsonPath,
-        content,
-        existing,
-      );
+      const gate = opts.gate
+        ? opts.gate(content, existing)
+        : shouldAcceptCredentialBlob(spec.credential?.freshness?.jsonPath, content, existing);
       if (!gate.accept) return { path, written: false, reason: gate.reason };
       await writeSecretAtomic(path, content);
       return { path, written: true, reason: gate.reason };

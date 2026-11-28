@@ -10,6 +10,7 @@ import {
   buildNoVncUrl,
   normalizeAgentStatus,
   registrationFromRecord,
+  sharedProjectsVolume,
 } from '@agentbox/core';
 import type { AgentActivityState, AgentQuestionPayload, AgentStatusMap } from '@agentbox/core';
 import type { BoxStatus } from '@agentbox/ctl';
@@ -931,6 +932,9 @@ export async function pruneBoxes(opts: PruneOptions = {}): Promise<PruneResult> 
       // box references it. From the registry, so a new agent is covered without
       // an edit here.
       ...AGENT_SYNC_SPECS.map((spec) => spec.dockerVolume),
+      // Session transcripts shared by every account's boxes (claude --resume
+      // across accounts): user history, never an orphan.
+      ...AGENT_SYNC_SPECS.map((spec) => sharedProjectsVolume(spec.dockerVolume)),
       // The shared agents-config volume — holds the cross-agent ~/.agents skills.
       SHARED_AGENTS_VOLUME,
       // Shared across boxes: downloaded IDE extensions. Same reasoning.

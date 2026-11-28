@@ -39,6 +39,7 @@ import {
   writeCredentialBackup,
   type CredentialAgentKind,
   readAccounts,
+  withAccountsLock,
   readState,
 } from '@agentbox/sandbox-core';
 
@@ -99,6 +100,8 @@ export interface CredentialsFanoutDeps {
    * for `default`. Override for tests; default: `~/.agentbox/state.json`.
    */
   boxAccountFor?: (boxId: string, agent: CredentialAgentKind) => Promise<string | undefined>;
+  /** Run under the accounts lock. Override for tests; default: the store's lock. */
+  accountsLock?: <T>(fn: () => Promise<T>) => Promise<T>;
   /**
    * The machine a box was built for (its registration `originMachineId`): a
    * named account belongs to that machine's store, so its custody copy is keyed
@@ -180,6 +183,7 @@ export class CredentialsFanout {
     boxId: string,
     agent: CredentialAgentKind,
   ) => Promise<LastSwitch | undefined>;
+  private readonly accountsLock: <T>(fn: () => Promise<T>) => Promise<T>;
   private readonly pending = new Map<string, NodeJS.Timeout>();
   private readonly chains = new Map<string, Promise<void>>();
 
@@ -202,6 +206,7 @@ export class CredentialsFanout {
         return path;
       });
     this.custody = deps.custody ?? null;
+    this.accountsLock = deps.accountsLock ?? ((fn) => withAccountsLock(fn));
     this.boxAccountFor = deps.boxAccountFor ?? stateBoxAccount;
     this.originMachineFor = deps.originMachineFor ?? (() => Promise.resolve(undefined));
   }
@@ -243,10 +248,37 @@ export class CredentialsFanout {
     sourceBoxId: string,
   ): Promise<CredentialsHandleResult> {
     const isDefault = isDefaultAccount(account);
-    // Only a LOGIN account takes a login. A pasted-kind account's secret is
-    // its token (a login there would replace it and break every box on it),
-    // and an account the store no longer has must not be re-created by a
-    // late update (`credentials rm` already removed it).
+    // A named account's row check and its write are one step under the
+    // accounts lock, so an `accounts rm` cannot land between them and leave a
+    // secret with no row (the store's own writer takes the same lock).
+    const stored = await (isDefault
+      ? this.storeLogin(agent, account, content, sourceBoxId)
+      : this.accountsLock(() => this.storeLogin(agent, account, content, sourceBoxId)));
+    if (!stored.accepted) return stored;
+    const verdict = stored;
+    await this.recordInCustody(agent, account, content, sourceBoxId);
+    const label = isDefault ? agent : `${agent} account '${account}'`;
+    this.log(
+      `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
+    );
+    this.schedule(agent, account, sourceBoxId);
+    return { accepted: true, reason: verdict.reason };
+  }
+
+  /**
+   * Gate `content` against the account's stored copy and write it when it wins.
+   * Only a LOGIN account takes a login: a pasted-kind account's secret is its
+   * token (a login there would replace it and break every box on it), and an
+   * account the store no longer has must not be re-created by a late update
+   * (`credentials rm` already removed it).
+   */
+  private async storeLogin(
+    agent: CredentialAgentKind,
+    account: string,
+    content: string,
+    sourceBoxId: string,
+  ): Promise<CredentialsHandleResult> {
+    const isDefault = isDefaultAccount(account);
     if (!isDefault) {
       const kind = await this.accountKindFor(agent, account).catch(() => undefined);
       if (kind !== 'login') {
@@ -268,12 +300,6 @@ export class CredentialsFanout {
       await chmod(dirname(backupPath), 0o700).catch(() => {});
     }
     await writeCredentialBackup(agent, content, { backupPath });
-    await this.recordInCustody(agent, account, content, sourceBoxId);
-    const label = isDefault ? agent : `${agent} account '${account}'`;
-    this.log(
-      `credentials: accepted ${label} update from box ${sourceBoxId} (${verdict.reason}); fan-out in ${String(this.debounceMs)}ms`,
-    );
-    this.schedule(agent, account, sourceBoxId);
     return { accepted: true, reason: verdict.reason };
   }
 

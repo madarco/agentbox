@@ -218,9 +218,17 @@ A box on a named account gets exactly that account's auth:
 - A **login** account runs on its own config volume (docker) or its own slice of
   the credentials volume (Daytona), seeded with your host's settings, skills and
   plugins but never your host's login, profile or `settings.json` API key.
+  On docker, Claude's conversations are kept apart from the login: every
+  account's boxes share one `agentbox-claude-projects` volume, so
+  `claude --resume` in a box on `claude/work` finds a session started on
+  `default`. The first box after upgrading copies each volume's existing
+  sessions in once; `--isolate-claude-config` boxes keep their own.
 - A **setup token** or **API key** account reaches the agent as
   `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` (codex: `OPENAI_API_KEY`), and
   an API-key account is pre-approved so Claude never asks whether to use it.
+  It never appears on a `docker` command line. On a cloud box it is kept out of
+  the sandbox's create env (which the provider's console shows) and written only
+  to the box's 0600 agent env file.
 - The host's own `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and
   `OPENAI_API_KEY` are **not** forwarded into it, so they cannot take over.
 

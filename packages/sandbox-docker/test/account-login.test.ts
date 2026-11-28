@@ -15,8 +15,8 @@ const login = (expiresAt: number): string =>
 
 const reader =
   (files: Record<string, string>): VolumeFileReader =>
-  (rel) =>
-    Promise.resolve(files[rel] ?? null);
+  (rels) =>
+    Promise.resolve(Object.fromEntries(rels.map((r) => [r, files[r] ?? null])));
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'agentbox-acct-login-'));
@@ -133,5 +133,30 @@ describe('captureVolumeLogin', () => {
       }),
     ).rejects.toThrow(/setup-token account/);
     expect((await readAccounts(store)).accounts[0]!.kind).toBe('setup-token');
+  });
+});
+
+describe('captureVolumeLogin re-login identity', () => {
+  it('keeps the stored email when the new login reads a plan only', async () => {
+    await upsertAccount(
+      {
+        agent: 'claude',
+        id: 'work',
+        kind: 'login',
+        createdAt: 't',
+        identity: { email: 'w@x.io', plan: 'pro' },
+      },
+      store,
+    );
+    const res = await captureVolumeLogin({
+      spec,
+      account: { id: 'work' },
+      read: reader({ '.credentials.json': login(500) }),
+      identity: { files: ['.credentials.json'], parse: () => ({ plan: 'max' }) },
+      store,
+    });
+    expect(res.identity).toEqual({ email: 'w@x.io', plan: 'max' });
+    const row = (await readAccounts(store)).accounts.find((a) => a.id === 'work');
+    expect(row?.identity).toEqual({ email: 'w@x.io', plan: 'max' });
   });
 });

@@ -24,6 +24,7 @@ import {
   removeAccount,
   upsertAccount,
   writeAccountSecret,
+  withAccountsLock,
   type AccountStoreOptions,
 } from '../src/llm-accounts.js';
 
@@ -449,5 +450,46 @@ describe('pastedSecretProblem', () => {
     expect(pastedSecretProblem('')).toMatch(/empty/);
     expect(pastedSecretProblem('two words here and more')).toMatch(/whitespace/);
     expect(pastedSecretProblem('short')).toMatch(/too short/);
+  });
+});
+
+describe('writeAccountSecret gate and withAccountsLock', () => {
+  it('a caller gate replaces the freshness rule (an identity check, say)', async () => {
+    await upsertAccount(acct({ kind: 'login' }), opts);
+    const blob = (exp: number) =>
+      JSON.stringify({ claudeAiOauth: { accessToken: 'a', refreshToken: 'r', expiresAt: exp } });
+    expect((await writeAccountSecret('claude', 'work', blob(1), opts)).written).toBe(true);
+    const r = await writeAccountSecret('claude', 'work', blob(9), {
+      ...opts,
+      gate: () => ({ accept: false, reason: 'another login' }),
+    });
+    expect(r).toMatchObject({ written: false, reason: 'another login' });
+  });
+
+  it('serializes with store mutations on the same file', async () => {
+    const order: string[] = [];
+    await Promise.all([
+      withAccountsLock(
+        async () => {
+          order.push('lock-start');
+          await new Promise((r) => setTimeout(r, 30));
+          order.push('lock-end');
+        },
+        { path: opts.path! },
+      ),
+      (async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        await upsertAccount(acct(), opts);
+        order.push('upsert');
+      })(),
+    ]);
+    expect(order).toEqual(['lock-start', 'lock-end', 'upsert']);
+  });
+});
+
+describe('sharedProjectsVolume', () => {
+  it('derives the projects volume from the config volume', async () => {
+    const { sharedProjectsVolume } = await import('@agentbox/core');
+    expect(sharedProjectsVolume('agentbox-claude-config')).toBe('agentbox-claude-projects');
   });
 });

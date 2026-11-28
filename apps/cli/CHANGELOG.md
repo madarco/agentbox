@@ -87,6 +87,19 @@ CLI, not the raw commits.
 
 ### Fixed
 
+- **Accounts on docker and cloud:**
+  - `claude --resume` finds a session started on another account: docker boxes
+    share one `agentbox-claude-projects` volume, and existing sessions are
+    copied in once.
+  - A first sign-in that fails no longer leaves an orphan volume behind.
+  - A damaged `_claude.json` no longer blocks a re-login.
+  - A re-login no longer loses the account's email.
+  - A pasted token never appears on a `docker` command line or in a cloud
+    sandbox's create env.
+  - A Daytona box on a named login gets the account's newest login.
+  - A codex login refreshed in a named box's volume is saved back at the next
+    create.
+
 - **A remote hub no longer lists "Docker (local)"**, which it has no engine for;
   its own engine is the Remote Docker host `hub`, now listed first. A PC pointed
   at a remote hub hides local docker the same way.

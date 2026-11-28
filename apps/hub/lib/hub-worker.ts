@@ -43,6 +43,7 @@ import {
   readCredentialBackup,
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
+  withAccountsLock,
   STATE_DIR,
 } from '@agentbox/sandbox-core';
 import {
@@ -164,20 +165,30 @@ async function seedAccountSecretsFromCustody(
         if (!found) continue;
         const incoming = found.data.toString('utf8');
         const backupPath = accountSecretPath(spec, id, stateDir)!;
-        const existing = await readCredentialBackup(spec.id, { backupPath });
-        // A pasted token has no expiry to order by: the latest push wins. A
-        // login gets the same newest-wins gate as the default above.
-        const verdict = decodePastedSecret(incoming)
-          ? existing === incoming
-            ? { accept: false, reason: 'unchanged' }
-            : { accept: true, reason: 'pasted secret changed' }
-          : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+        // Read, gate and write under the accounts lock, like every other
+        // writer of an account secret, so they cannot interleave.
+        const verdict = await withAccountsLock(
+          async () => {
+            const existing = await readCredentialBackup(spec.id, { backupPath });
+            // A pasted token has no expiry to order by: the latest push wins. A
+            // login gets the same newest-wins gate as the default above.
+            const v = decodePastedSecret(incoming)
+              ? existing === incoming
+                ? { accept: false, reason: 'unchanged' }
+                : { accept: true, reason: 'pasted secret changed' }
+              : shouldAcceptCredentialUpdate(spec.id, incoming, existing);
+            if (v.accept) {
+              await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+              await writeCredentialBackup(spec.id, incoming, { backupPath });
+            }
+            return v;
+          },
+          { path: join(stateDir, 'accounts.json') },
+        );
         if (!verdict.accept) {
           log(`kept the local ${label} credentials (custody copy ${verdict.reason})`);
           continue;
         }
-        await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
-        await writeCredentialBackup(spec.id, incoming, { backupPath });
         log(`seeded ${label} credentials from custody (${verdict.reason})`);
       } catch (err) {
         log(
