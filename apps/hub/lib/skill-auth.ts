@@ -17,7 +17,8 @@ export function skillContentReadAuthorized(
 }
 
 /**
- * Who may compare, pull or send skills with a machine (`/api/v1/skill-machines`).
+ * Who may pull or send skills with a machine (`/api/v1/skill-machines`); compare
+ * goes through {@link skillMachineCompareAuthorized}, which adds one exception.
  * Stricter than reading content: these act ON a PC (read its skill dirs, write
  * into `~/.agents/skills`), and the hub's own machine runs them with no confirm.
  * So only the owner — a signed-in session, the admin token, or loopback on a
@@ -29,4 +30,18 @@ export function skillMachineActAuthorized(
 ): boolean {
   if (args.actor.kind === 'session') return true;
   return custodyByteReadAuthorized({ ...args, providedTokenIsDevice: false });
+}
+
+/**
+ * Who may run the read-only comparison with machine `machineId`: everyone
+ * {@link skillMachineActAuthorized} allows, plus that machine's own device
+ * token. A PC asking about itself learns only its own skill dirs next to the
+ * library metadata its token can already read (the tray's skills row does
+ * this). Another machine stays owner-only, and so do pull and send.
+ */
+export function skillMachineCompareAuthorized(
+  args: Parameters<typeof skillMachineActAuthorized>[0] & { machineId: string },
+): boolean {
+  if (args.actor.kind === 'device' && args.actor.deviceId === args.machineId) return true;
+  return skillMachineActAuthorized(args);
 }

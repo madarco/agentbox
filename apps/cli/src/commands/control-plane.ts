@@ -2798,9 +2798,10 @@ export async function syncAgentCredentialsIfChanged(url?: string): Promise<void>
 async function finalizeControlBoxState(url: string | undefined): Promise<void> {
   // The shared keys in control-plane.env stay on this (the operator's) machine.
   // Every other computer enrolls with its own revocable token instead.
-  const hubUrl =
-    url ??
-    (await loadEffectiveConfig(process.cwd()).catch(() => null))?.effective.relay.controlPlaneUrl;
+  const configuredUrl =
+    (await loadEffectiveConfig(process.cwd()).catch(() => null))?.effective.relay.controlPlaneUrl ??
+    undefined;
+  const hubUrl = url ?? configuredUrl;
   if (hubUrl) {
     log.info(
       `To use this hub from another computer, run \`agentbox hub login ${hubUrl}\` there and approve it on ${hubUrl.replace(/\/+$/, '')}/settings/devices — don't copy ~/.agentbox/control-plane.`,
@@ -2835,6 +2836,61 @@ async function finalizeControlBoxState(url: string | undefined): Promise<void> {
   } catch (err) {
     log.warn(
       `could not set up the control box's docker engine as a target: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  // `url` is undefined only for a hub exposed on this machine: nothing to enroll on.
+  if (url) await enrollThisMachine(url, configuredUrl);
+}
+
+/**
+ * Enroll this (the operator's) machine as a device on the control box, so the
+ * hub can reach it over host-reach like any other PC (the skills comparison
+ * needs that). Best-effort: a failure prints the manual command.
+ */
+async function enrollThisMachine(
+  deployUrl: string,
+  configuredUrl: string | undefined,
+): Promise<void> {
+  const url = deployUrl.replace(/\/+$/, '');
+  // The device token is presented only to the URL it was saved under, matched
+  // against relay.controlPlaneUrl. Enrolling under another name for the same hub
+  // would rotate a working token into one this CLI never uses.
+  if ((configuredUrl ?? '').replace(/\/+$/, '') !== url) {
+    log.info(
+      `relay.controlPlaneUrl is not ${url}, so this computer is not enrolled there. Run \`agentbox hub login ${url}\` to enroll it.`,
+    );
+    return;
+  }
+  try {
+    const [{ enrollOperatorDevice }, { readOwnerCredentials }, { controlBoxIsThisMachine }] =
+      await Promise.all([
+        import('../control-plane/enroll-operator.js'),
+        import('../control-plane/owner-credentials.js'),
+        import('../control-plane/remote-hub.js'),
+      ]);
+    const res = await enrollOperatorDevice({
+      url,
+      owner: readOwnerCredentials(),
+      controlBoxIsThisMachine: await controlBoxIsThisMachine(),
+    });
+    const d = res.decision;
+    if (res.enrolled) {
+      log.success(`Enrolled this computer on the control box as ${res.enrolled.label}.`);
+    } else if (d.action === 'revoked') {
+      log.warn(
+        `This computer (${d.label}) is revoked on ${url}, so setup leaves it revoked. ` +
+          `Run \`agentbox hub login ${url}\` to enroll it again.`,
+      );
+    } else if (d.action === 'skip' && d.reason === 'no-owner-credentials') {
+      log.warn(
+        `Could not enroll this computer on the control box: ${ENV_PATH} lacks the API key or ` +
+          `admin token. Run \`agentbox hub login ${url}\`.`,
+      );
+    }
+  } catch (err) {
+    log.warn(
+      `Could not enroll this computer on the control box (${err instanceof Error ? err.message : String(err)}). ` +
+        `Run \`agentbox hub login ${url}\` and approve it on ${url}/settings/devices.`,
     );
   }
 }

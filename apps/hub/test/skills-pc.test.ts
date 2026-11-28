@@ -12,7 +12,7 @@ import {
   parseExport,
   type PcReach,
 } from '../lib/backend/skills-pc';
-import { skillMachineActAuthorized } from '../lib/skill-auth';
+import { skillMachineActAuthorized, skillMachineCompareAuthorized } from '../lib/skill-auth';
 import {
   rowMoves,
   statusLabel,
@@ -353,6 +353,38 @@ describe('who may act on a machine', () => {
   it('a token hub: loopback only', () => {
     expect(skillMachineActAuthorized({ ...base, mode: 'token', isLoopback: true })).toBe(true);
     expect(skillMachineActAuthorized({ ...base, mode: 'token' })).toBe(false);
+  });
+});
+
+describe('who may compare with a machine', () => {
+  const base = {
+    mode: 'password' as const,
+    adminToken: 'admin-secret',
+    providedToken: '',
+    isLoopback: false,
+    machineId: 'pc-1',
+  };
+  const device = (deviceId: string) => ({ kind: 'device' as const, deviceId });
+
+  it("lets a device compare its own machine (the tray's skills row)", () => {
+    expect(skillMachineCompareAuthorized({ ...base, actor: device('pc-1') })).toBe(true);
+  });
+  it('refuses a device comparing another machine', () => {
+    expect(skillMachineCompareAuthorized({ ...base, actor: device('pc-2') })).toBe(false);
+  });
+  it('keeps pull and send owner-only for that same device', () => {
+    expect(skillMachineActAuthorized({ ...base, actor: device('pc-1') })).toBe(false);
+  });
+  it('still lets the owner compare any machine', () => {
+    expect(
+      skillMachineCompareAuthorized({
+        ...base,
+        actor: { kind: 'api-key' },
+        providedToken: 'admin-secret',
+      }),
+    ).toBe(true);
+    expect(skillMachineCompareAuthorized({ ...base, actor: { kind: 'session' } })).toBe(true);
+    expect(skillMachineCompareAuthorized({ ...base, actor: { kind: 'api-key' } })).toBe(false);
   });
 });
 

@@ -179,13 +179,35 @@ for teams PCs must never hold it (device tokens only).
   admin token when the machine has it and otherwise point at the web Devices page.
   A device revoking or renaming itself is unchanged.
 
+- **The operator PC loses `hub devices approve` once it enrolls (fixed 2026-11-28,
+  `fix/setup-enrolls-operator`).** From #422: its device token shadowed the API key in
+  `resolveHubTarget`, and `loadControlPlaneEnv` had put the device token into
+  `AGENTBOX_RELAY_ADMIN_TOKEN` too, so approve answered 403 ("only the hub owner").
+  `hub devices approve|revoke|rename` now read the API key and admin token from
+  `control-plane.env` (`ownerCredentialsFor`) and send both, only to the hub the
+  deploy record names (or one on this machine).
+- **The operator PC was never a device (fixed 2026-11-28, same branch).** `hub setup`
+  / `hub deploy` / `hub update` left the deploying machine on the shared keys, so
+  `GET /api/v1/skill-machines` was empty and the Skills page could not compare with
+  it. `finalizeControlBoxState` now enrolls it (`enrollOperatorDevice`), approving
+  the code with its own API key + admin token; skipped for `hub expose`, a no-op
+  when already enrolled, a revoked machine stays revoked, and skipped when
+  `relay.controlPlaneUrl` names another URL (the token is matched against it). A failed
+  approve withdraws its code. No local hub restart: the running relay's poller already
+  names this machine in `X-Agentbox-Device`.
+
+- **The tray could not compare skills once its machine enrolled (fixed 2026-11-28, same
+  branch).** `/api/v1/skill-machines/{id}/compare` took only a session or
+  `X-Agentbox-Admin-Token`, and the tray sends just its Bearer (`hub target --json`), which
+  on an enrolled PC is the device token, so its skills row stayed "Not compared". A device
+  token may now compare its own machine (`skillMachineCompareAuthorized`: the token's
+  device == `{id}`); another machine, and pull/send, stay owner-only. Still open: a tray
+  on a PC that never enrolled sends the plain API key, which compare still refuses (its
+  row stays "Not compared"); `hub setup` now enrolls the operator PC, and other PCs
+  enroll with `hub login`, so this is only a never-enrolled PC.
+
 ## From the real-Hetzner sign-off of #429 / #432, noted, not fixed
 
-- **The operator PC loses `hub devices approve` once it enrolls.** Its device token
-  shadows the API key in `resolveHubTarget` (`apps/cli/src/commands/hub-devices.ts`),
-  so approve answers 403 ("only the hub owner"). Workaround: approve on the web
-  Devices page, or POST `/api/v1/devices/approve` with the API key **and** the admin
-  token (the API key alone no longer approves, see Fixed above). From #422.
 - **`hub login` blip.** A PC's first `hub login` ended in `fetch failed`; it did not
   reproduce on retry.
 - **Poller noise for hub-built boxes.** The hub logs `[cloud-poller <id>] poll error:

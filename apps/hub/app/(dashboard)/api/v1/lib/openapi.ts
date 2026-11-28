@@ -6167,7 +6167,7 @@ export function buildOpenApi(): Record<string, unknown> {
           tags: ['Skills'],
           summary: 'Compare the skills library with a machine',
           description:
-            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`, or `skipped` for a name marked never-sync (`/skill-skips`; never counted in `outOfSync`). When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the owner: a session or the admin token (an enrolled device's token is refused).",
+            "Asks that machine's relay for the skills in its agent skill dirs (with tree hashes) and lines them up with the library by name: `same`, `differs` (`newer` says which side changed last), `local-only`, `hub-only`, or `skipped` for a name marked never-sync (`/skill-skips`; never counted in `outOfSync`). When the machine can't be asked (offline, failed), `error` says why and every library skill is listed as `unknown`. `agents` names the agents whose PC skill dirs the skill came from; delivery to boxes is unaffected. Nothing about the machine is stored. It names the machine's paths and secret-scan hits, so it needs the owner (a session or the admin token), or the device token of that same machine: an enrolled computer may compare itself, never another one.",
           responses: {
             '200': {
               description: 'The comparison',
@@ -6176,7 +6176,8 @@ export function buildOpenApi(): Record<string, unknown> {
               },
             },
             '403': {
-              description: 'Not the owner session or admin token (a device token is refused)',
+              description:
+                "Not the owner session or admin token, nor that machine's own device token",
             },
             '404': { description: 'No such machine' },
           },
