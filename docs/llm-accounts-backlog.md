@@ -319,11 +319,13 @@ Fixed (`fix/accounts-backlog-docker`):
   keeps writing its own `projects/` until it is recreated; those later writes
   are not copied again.
 - **An orphan `-acct-` volume after a failed first login** is removed
-  (`dropOrphanAccountVolume`, only when the store has no row) on cancel,
+  (`dropOrphanAccountVolume`, only when the store has no row, retrying a few seconds while the aborted
+  login container still holds it) on cancel,
   failure and capture error, in the generic login, claude's login and the
   headless worker.
 - **`resetVolumeAccountState`** removes a `_claude.json` that `jq` cannot parse,
-  and the login re-seeds it, instead of failing every re-login.
+  and the login re-seeds it, instead of failing every re-login. A failed write
+  (full disk) still fails the reset and keeps the file.
 - **A re-login keeps the email and org** when the new identity lacks them
   (`mergeAccountIdentity`).
 - **`dockerVolumeFileReader` reads every file in one container** (a base64
@@ -331,21 +333,32 @@ Fixed (`fix/accounts-backlog-docker`):
   docker volume …"), not "the login did not leave a credential".
 - **Pasted secrets off the docker argv (#437-6).** `dockerEnvByName` turns `-e
   KEY=VALUE` into `-e KEY`, with the value in the docker CLI's env, for `docker
-  run` (create) and the claude and codex session `docker exec`.
+  run` (create) and every agent's session `docker exec` (claude, codex,
+  opencode, pi). Only secret-named keys (`KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL`)
+  move, so a box's `DOCKER_HOST` or `PATH` never reconfigures the host's docker
+  client. The sync transport's `docker exec -e` (no secrets today) is unchanged.
 - **A cloud box's pasted token is out of the sandbox create env.** It goes only
   to the 0600 agent env file that every launcher sources
-  (`cloudAccountAuthority`). Not fixed on docker: the token stays in the
+  (`cloudAccountAuthority`). A create whose env file cannot be written then
+  fails (and tears the sandbox down) instead of handing over a box with no auth. Not fixed on docker: the token stays in the
   container env, because whoever can `docker inspect` the container can also
   `docker exec` into it and read the agent's env, so it is no tighter boundary.
-- **Named docker mirror and codex mirror-back.** One generic
-  `syncNamedAccountCredential` for every agent replaces claude's root `cp -a`
-  into `~/.agentbox` and codex's one-way seed. The volume's login goes to the
-  store through `writeAccountSecret` (shape, freshness and identity gate, under
-  the accounts lock), and the store seeds the volume over stdin when the volume
-  is empty or older.
+- **Named docker mirror.** One generic `syncNamedAccountCredential` for every
+  agent replaces claude's root `cp -a` into `~/.agentbox` and codex's one-way
+  seed. The volume's login goes to the store through `writeAccountSecret`
+  (shape, freshness and identity gate, under the accounts lock), and the store
+  seeds the volume over stdin when the volume is empty or older.
+- **Codex named volume → store** is now superseded: since the hot-switch work
+  (#502) every docker box has its own credential file, so a codex refresh
+  reaches the store through the relay route, and the account volume is no longer
+  the live copy. An agent with no freshness rule (codex) only fills a store that
+  has no login yet from its volume. Mirroring "newer" from the volume can't be
+  decided without a freshness field and would let a stale volume replace a
+  re-login.
 - **Three writers of `credentials/<agent>/<id>.json`.** The relay's named
   write and the custody seed now run under `withAccountsLock`, the lock the
-  store's own writer and `accounts rm` take.
+  store's own writer and `accounts rm` take. The custody seed also checks the
+  account's row first, so it never brings back a removed account's secret.
 - **Daytona's account subpath seeded once.** With the marker present, a named
   login is reconciled newest-wins with the account's stored copy
   (`reconcileAgentCredentials`), as a wake does.

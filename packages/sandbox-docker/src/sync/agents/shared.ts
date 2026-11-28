@@ -103,9 +103,13 @@ function tmuxConfigSubcommands(sessionName: string): readonly (readonly string[]
  * and the value goes in `env`, which docker reads for a name-only `-e` from
  * its own environment. An argv is readable by every user on the host (`ps`),
  * and the values here include API keys and a pasted account's token (#437-6).
- * An empty `KEY=` stays as is: it blanks a key and carries nothing. Only the
- * docker flags before `stopAt` (the image / container) are touched. Pure.
+ * An empty `KEY=` stays as is: it blanks a key and carries nothing. Only keys
+ * that name a secret move: anything else (`DOCKER_HOST`, `PATH`, `HOME`) would
+ * reconfigure the host's docker client if it rode its env. Only the docker
+ * flags before `stopAt` (the image / container) are touched. Pure.
  */
+const SECRET_ENV_KEY = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i;
+
 export function dockerEnvByName(
   argv: readonly string[],
   stopAt?: string,
@@ -119,7 +123,7 @@ export function dockerEnvByName(
     const next = argv[i + 1];
     if (a === '-e' && next !== undefined) {
       const eq = next.indexOf('=');
-      if (eq > 0 && eq < next.length - 1) {
+      if (eq > 0 && eq < next.length - 1 && SECRET_ENV_KEY.test(next.slice(0, eq))) {
         const key = next.slice(0, eq);
         env[key] = next.slice(eq + 1);
         out.push('-e', key);

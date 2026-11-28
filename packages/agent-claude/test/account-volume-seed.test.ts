@@ -109,7 +109,7 @@ describe('seeding a named account volume (llm-accounts Phase 2)', () => {
 describe('the shared projects volume (--resume across accounts)', () => {
   it('migrates a shared or named volume once into agentbox-claude-projects, never an isolated one', async () => {
     await ensureClaudeVolume(
-      { volume: 'agentbox-claude-config-acct-work' },
+      { volume: 'agentbox-claude-config-acct-other' },
       { syncFromHost: false, image: 'img' },
     );
     await ensureClaudeVolume(
@@ -120,12 +120,9 @@ describe('the shared projects volume (--resume across accounts)', () => {
       { volume: 'agentbox-claude-config-b1234abcd' },
       { syncFromHost: false, image: 'img' },
     );
-    expect(migrations.map((a) => a[a.length - 1])).toEqual([
-      'agentbox-claude-config-acct-work',
-      'agentbox-claude-config',
-    ]);
+    expect(migrations.map((a) => a[a.length - 1])).toEqual(['agentbox-claude-config-acct-other']);
     expect(migrations[0]).toContain('agentbox-claude-projects:/dst');
-    expect(migrations[0]).toContain('agentbox-claude-config-acct-work:/src:ro');
+    expect(migrations[0]).toContain('agentbox-claude-config-acct-other:/src:ro');
     // Never over a session already in the shared volume.
     expect(migrations[0]!.join(' ')).toContain('cp -a -n');
   });
@@ -136,7 +133,7 @@ describe('the shared projects volume (--resume across accounts)', () => {
       mount,
     );
     expect(
-      buildClaudeMounts({ volume: 'agentbox-claude-config-acct-work' }, {}).extraVolumes,
+      buildClaudeMounts({ volume: 'agentbox-claude-config-acct-other' }, {}).extraVolumes,
     ).toContain(mount);
     expect(
       buildClaudeMounts({ volume: 'agentbox-claude-config-b1234abcd' }, {}).extraVolumes,

@@ -66,6 +66,18 @@ describe('dockerEnvByName (#437-6)', () => {
     expect(r.argv.join(' ')).not.toContain('sk-secret');
   });
   it('keeps a value that itself contains =', () => {
-    expect(dockerEnvByName(['-e', 'K=a=b']).env).toEqual({ K: 'a=b' });
+    expect(dockerEnvByName(['-e', 'API_KEY=a=b']).env).toEqual({ API_KEY: 'a=b' });
+  });
+  it("leaves keys the host's docker client reads on the argv", () => {
+    const r = dockerEnvByName([
+      '-e',
+      'DOCKER_HOST=unix:///x',
+      '-e',
+      'PATH=/bin',
+      '-e',
+      'TERM=xterm',
+    ]);
+    expect(r.env).toEqual({});
+    expect(r.argv).toEqual(['-e', 'DOCKER_HOST=unix:///x', '-e', 'PATH=/bin', '-e', 'TERM=xterm']);
   });
 });

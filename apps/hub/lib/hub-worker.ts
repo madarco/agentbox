@@ -44,6 +44,7 @@ import {
   shouldAcceptCredentialUpdate,
   writeCredentialBackup,
   withAccountsLock,
+  readAccounts,
   STATE_DIR,
 } from '@agentbox/sandbox-core';
 import {
@@ -55,6 +56,7 @@ import {
   ACCOUNTS_CUSTODY_SEGMENT,
   accountIdProblem,
   accountSecretPath,
+  findAccount,
   isDefaultAccount,
   resolveAgentLauncher,
   toQueueKind,
@@ -169,6 +171,14 @@ async function seedAccountSecretsFromCustody(
         // writer of an account secret, so they cannot interleave.
         const verdict = await withAccountsLock(
           async () => {
+            // Only an account this machine's store still has: a secret for a
+            // removed account (`accounts rm` just ran) must not come back.
+            const row = findAccount(
+              await readAccounts({ path: join(stateDir, 'accounts.json'), stateDir }),
+              spec.id,
+              id,
+            );
+            if (!row) return { accept: false, reason: 'no such account in this store' };
             const existing = await readCredentialBackup(spec.id, { backupPath });
             // A pasted token has no expiry to order by: the latest push wins. A
             // login gets the same newest-wins gate as the default above.

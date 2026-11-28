@@ -293,15 +293,21 @@ async function syncNamedAccountCredential(
   const rel = cred.boxRelPath;
   const inVolume = (await readDockerVolumeFiles(choice.volume, image, [rel]))[rel] ?? null;
   const volumeReal = inVolume !== null && isRealAgentCredential(spec.id, inVolume);
+  const freshness = cred.freshness?.jsonPath;
   if (volumeReal) {
+    // Without a freshness rule "newer" cannot be told, and the volume is rarely
+    // the live copy now (each box has its own credential file, kept current by
+    // the fan-out): the volume only fills a store that has no login yet.
     const r = await writeAccountSecret(spec.id, account, inVolume, {
-      gate: (incoming, existing) => shouldAcceptCredentialUpdate(spec.id, incoming, existing),
+      gate: (incoming, existing) =>
+        !freshness && existing !== null
+          ? { accept: false, reason: 'no freshness rule; the stored login stays' }
+          : shouldAcceptCredentialUpdate(spec.id, incoming, existing),
     });
     if (r.written) return `extracted box ${agent} credentials to account '${account}'`;
   }
   const stored = await readAccountSecret(spec.id, account);
   if (stored === null || !isRealAgentCredential(spec.id, stored)) return null;
-  const freshness = cred.freshness?.jsonPath;
   if (
     volumeReal &&
     !(freshness && shouldAcceptCredentialBlob(freshness, stored, inVolume).accept)

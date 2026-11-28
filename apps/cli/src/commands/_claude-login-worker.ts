@@ -119,11 +119,11 @@ export const claudeLoginWorkerCommand = new Command('_claude-login-worker')
         setState({ ...held.done, phase: 'done' });
       } catch (err) {
         log.write(`account capture failed: ${(err as Error).message}`);
-        await dropOrphanAccountVolume('claude', req.account.id, volume);
         setState({
           phase: 'error',
           error: `could not store the account: ${(err as Error).message}`,
         });
+        await dropOrphanAccountVolume('claude', req.account.id, volume);
         log.close();
         process.exit(1);
       }

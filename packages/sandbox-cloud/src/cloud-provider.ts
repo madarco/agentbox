@@ -1243,14 +1243,18 @@ export function createCloudProvider(
         // a 0600 file the launcher sources: a VPS has no sandbox-wide env to
         // carry it, and the SDK providers get the same values either way, so a
         // failure is logged rather than failing a create that is otherwise up.
+        const authority = await cloudAccountAuthority(undefined, req.accounts ?? {});
         try {
-          await writeCloudAgentEnvFile(
-            backend,
-            handle,
-            agentVolumes.env,
-            await cloudAccountAuthority(undefined, req.accounts ?? {}),
-          );
+          await writeCloudAgentEnvFile(backend, handle, agentVolumes.env, authority);
         } catch (err) {
+          // A pasted account's token travels ONLY in this file (never the
+          // sandbox env), so without it the box has no auth at all: fail the
+          // create rather than hand over a box that asks to log in.
+          if (Object.keys(authority.set).length > 0) {
+            throw new Error(
+              `could not write the agent env holding the account's token: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
           log(
             `WARN: agent env not written (${err instanceof Error ? err.message : String(err)}); ` +
               'forwarded API keys and a named account token may be missing on a VPS box',

@@ -292,9 +292,15 @@ export function usesSharedProjects(volume: string): boolean {
  * later create skip the copy. Best-effort: a failure leaves no marker and is
  * retried next time.
  */
+const migratedProjects = new Set<string>();
+
 export async function migrateProjectsToShared(volume: string, image: string): Promise<boolean> {
+  // Once per process too: a long-lived hub creates many boxes.
+  if (migratedProjects.has(volume)) return false;
   const script =
-    'm="/dst/.agentbox-migrated-$1"; [ -e "$m" ] && { echo MIGRATED=skip; exit 0; }; ' +
+    // The shared volume is created here, so it must be the box user's even
+    // when there is nothing to copy (docker creates it root-owned).
+    'm="/dst/.agentbox-migrated-$1"; [ -e "$m" ] && { chown 1000:1000 /dst; echo MIGRATED=skip; exit 0; }; ' +
     'if [ -d /src/projects ]; then cp -a -n /src/projects/. /dst/ || exit 1; fi; ' +
     // Once per source volume, so the recursive chown is paid once: claude in
     // the box (uid 1000) must be able to append to every copied session.
@@ -319,7 +325,18 @@ export async function migrateProjectsToShared(volume: string, image: string): Pr
     ],
     { reject: false },
   );
-  return res.exitCode === 0 && /MIGRATED=yes/.test(res.stdout ?? '');
+  if (res.exitCode !== 0) {
+    // Fail the create: the box would mount a volume claude cannot write.
+    throw new Error(
+      `preparing ${CLAUDE_PROJECTS_VOLUME} from ${volume} failed: ${
+        String(res.stderr ?? '')
+          .trim()
+          .slice(-300) || `exit ${String(res.exitCode)}`
+      }`,
+    );
+  }
+  migratedProjects.add(volume);
+  return /MIGRATED=yes/.test(res.stdout ?? '');
 }
 
 async function ensureClaudeVolumeSeeded(
@@ -1492,9 +1509,10 @@ export async function resetVolumeAccountState(
   // every re-login of the account: the caller seeds a fresh one.
   const script =
     'f=/dst/_claude.json; [ -f "$f" ] || { echo RESET=absent; exit 0; }; ' +
-    `if jq '${accountStateJqDelete()}' "$f" > "$f.tmp" 2>/dev/null; then ` +
-    'mv "$f.tmp" "$f" && chown 1000:1000 "$f" && echo RESET=reset; ' +
-    'else rm -f "$f" "$f.tmp" && echo RESET=removed; fi';
+    // Only a file jq cannot PARSE is removed; a failed write (full disk)
+    // fails the reset and keeps the file.
+    'if ! jq -e . "$f" >/dev/null 2>&1; then rm -f "$f" && echo RESET=removed; exit 0; fi; ' +
+    `jq '${accountStateJqDelete()}' "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chown 1000:1000 "$f" && echo RESET=reset`;
   const res = await execa('docker', [
     'run',
     '--rm',

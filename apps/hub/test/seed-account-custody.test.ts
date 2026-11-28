@@ -11,6 +11,17 @@ const M = '11111111-2222-3333-4444-555555555555';
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'agentbox-seed-acct-'));
+  // The store's rows: the seed only refreshes an account this machine has.
+  writeFileSync(
+    join(dir, 'accounts.json'),
+    JSON.stringify({
+      version: 1,
+      accounts: [
+        { agent: 'claude', id: 'work', kind: 'login', createdAt: 't' },
+        { agent: 'claude', id: 'ci', kind: 'setup-token', createdAt: 't' },
+      ],
+    }),
+  );
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -108,5 +119,22 @@ describe('seedHostBackupsFromCustody per account (llm-accounts Phase 4)', () => 
       M,
     );
     expect(() => readFileSync(join(dir, 'credentials', 'claude', 'work.json'))).toThrow();
+  });
+});
+
+describe('seedHostBackupsFromCustody and a removed account', () => {
+  it('never brings back the secret of an account the store no longer has', async () => {
+    const logs: string[] = [];
+    await seedHostBackupsFromCustody(
+      custody({
+        'agents/claude/accounts/11111111-2222-3333-4444-555555555555/gone/.credentials.json':
+          blob(900),
+      }),
+      (l) => logs.push(l),
+      dir,
+      M,
+    );
+    expect(() => readFileSync(join(dir, 'credentials', 'claude', 'gone.json'))).toThrow();
+    expect(logs.join('\n')).toMatch(/no such account/);
   });
 });
