@@ -7229,6 +7229,16 @@ export function buildOpenApi(): Record<string, unknown> {
             createdAt: { type: 'number' },
             lastActivity: { type: 'number' },
             host: { type: 'string' },
+            size: {
+              type: 'string',
+              description:
+                "The size the box was created with, in the provider's own grammar (hetzner server type, DigitalOcean size slug, daytona cpu-mem-disk, vercel vCPUs). Absent when not recorded (docker, or a box created with the provider default).",
+            },
+            location: {
+              type: 'string',
+              description:
+                'Where the box runs, as the provider names it (hetzner location, DigitalOcean region, daytona region). The landed location: hetzner can fail over from the one asked for. Absent when the provider has no location or it was not recorded.',
+            },
             commits: { type: ['number', 'null'] },
             filesTouched: { type: ['number', 'null'] },
             error: { type: ['string', 'null'] },

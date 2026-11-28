@@ -488,6 +488,10 @@ function mapBox(
     lastActivity: createdAt,
     host: hostLabel(b),
     provider: b.provider ?? 'docker',
+    ...(b.cloud?.size ? { size: b.cloud.size } : {}),
+    ...((b.cloud?.landedLocation ?? b.cloud?.location)
+      ? { location: b.cloud?.landedLocation ?? b.cloud?.location }
+      : {}),
     commits: null,
     filesTouched: null,
     error: status === 'error' ? (firstSessionTitle(b) ?? 'Agent reported an error') : null,

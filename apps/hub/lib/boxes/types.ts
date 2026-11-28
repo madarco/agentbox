@@ -105,6 +105,19 @@ export interface Box {
   // Sandbox provider (docker | daytona | hetzner | vercel | e2b). Drives which
   // host "open in" targets are offered for this box on the detail page.
   provider: string;
+  /**
+   * The size the box was created with, in the provider's own grammar (hetzner
+   * server type, DigitalOcean size slug, daytona `cpu-mem-disk`, vercel vCPUs).
+   * Absent = not recorded (docker, or created with the provider default before
+   * a size was passed).
+   */
+  size?: string;
+  /**
+   * Where the box runs, as the provider names it (hetzner location, DigitalOcean
+   * region, daytona region). The LANDED location: hetzner can fail over from the
+   * one asked for. Absent = the provider has no location, or not recorded.
+   */
+  location?: string;
   // null when the metric has no host-side source yet (rendered as "—").
   commits: number | null;
   filesTouched: number | null;

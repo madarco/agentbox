@@ -1682,6 +1682,7 @@ export function createCloudProvider(
             // rather than the provider default.
             ...(size ? { size } : {}),
             ...((handle.location ?? location) ? { location: handle.location ?? location } : {}),
+            ...(handle.landedLocation ? { landedLocation: handle.landedLocation } : {}),
             // Only host-seeded boxes share a fork base with the host, so only
             // they can be resynced back to the host tip on session start (7.5).
             // inBoxClone / plane boxes clone from a leased URL — left unset.

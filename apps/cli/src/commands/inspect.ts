@@ -1,6 +1,6 @@
 import { log } from '@clack/prompts';
 import { agentConfigVolume, liveActivity, usageBreakdown, usageSummary } from '@agentbox/core';
-import { AGENT_SYNC_SPECS } from '@agentbox/sandbox-core';
+import { AGENT_SYNC_SPECS, resolveProviderDescriptor } from '@agentbox/sandbox-core';
 import {
   inspectBox,
   projectCheckpointImageBytes,
@@ -15,6 +15,7 @@ import { agentboxAliasFor, readAgentboxSshAlias } from '@agentbox/sandbox-core';
 import { watchRender } from '../watch.js';
 import { hubBoxState, type HubApiBox } from '../control-plane/hub-api-client.js';
 import { clip } from '../lib/sessions-format.js';
+import { providerTakesLocation } from '../lib/cloud-sizing.js';
 import { fetchBoxListing } from '../control-plane/hub-list.js';
 import { fetchLive, renderLiveSections, renderPersistedSections } from './_status-render.js';
 import { handleLifecycleError } from './_errors.js';
@@ -254,6 +255,7 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
     `name          ${box.name}`,
     `provider      ${box.provider ?? 'docker'}`,
     `sandboxId     ${box.cloud?.sandboxId ?? '(none)'}`,
+    ...cloudPlacementLines(box),
     `image         ${box.image}`,
     `state         ${state}`,
     `workspace     ${box.workspacePath}  (sandbox fs at /workspace)`,
@@ -284,6 +286,29 @@ async function renderCloudText(box: BoxRecord): Promise<string> {
     lines.push('', ...renderPersistedSections(persisted));
   }
   return lines.join('\n');
+}
+
+/**
+ * `size` / `location` as recorded at create. Each line appears only where the
+ * provider has the knob (or the record carries a value): remote-docker has no
+ * size, vercel/e2b no location. The location is where the box landed when the
+ * provider reported it, else the one asked for.
+ */
+export function cloudPlacementLines(box: Pick<BoxRecord, 'provider' | 'cloud'>): string[] {
+  const provider = box.provider ?? 'docker';
+  const descriptor = resolveProviderDescriptor(provider);
+  const lines: string[] = [];
+  const size = box.cloud?.size;
+  if (size || descriptor?.sizes?.length) {
+    // A bake-time size (daytona snapshots, e2b templates) is the baked one, not a default.
+    const unset = descriptor?.sizeAppliesAt === 'bake' ? '(set at bake)' : '(provider default)';
+    lines.push(`size          ${size ?? unset}`);
+  }
+  const location = box.cloud?.landedLocation ?? box.cloud?.location;
+  if (location || providerTakesLocation(provider)) {
+    lines.push(`location      ${location ?? '(provider default)'}`);
+  }
+  return lines;
 }
 
 function webPreviewLine(box: BoxRecord): string {

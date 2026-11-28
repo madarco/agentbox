@@ -192,6 +192,13 @@ export interface CloudHandle {
    * record stores this rather than the request.
    */
   location?: string;
+  /**
+   * Where the provider reports the box runs (DigitalOcean's droplet region,
+   * daytona's runner target), including when no location was asked for. Shown
+   * to users only: a clone replays `location`, never this, so a box made on the
+   * default region does not pin its clones there.
+   */
+  landedLocation?: string;
 }
 
 export type CloudState = 'running' | 'paused' | 'stopped' | 'missing';
