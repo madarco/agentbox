@@ -22,7 +22,6 @@ CLI, not the raw commits.
   enrolled computer, the web UI and the tray can create a box on any of them; one
   subscription signed in on two computers becomes one account, and a create the hub
   cannot sign in now fails before the box is built instead of starting signed out.
-
 - **Skills library in the hub.** The hub keeps one library of skills, seeded
   from your PC and managed with `agentbox skills` or the hub's Skills page. It
   is delivered to every box of every provider in each agent's own skill folder.
@@ -80,7 +79,6 @@ CLI, not the raw commits.
 - **After a create or a queued `-i` run, one line names the skills** that are
   not in sync with the hub (`skills.notice: false` turns it off). A skill can be
   marked never to sync on Settings > Skills.
-
 - **Node 22.12 or newer is required.** On an older Node, `agentbox` stops with
   one line saying which version it found and how to upgrade, instead of
   crashing inside a dependency.
@@ -99,16 +97,10 @@ CLI, not the raw commits.
 
 - The `agentbox credentials` menu comes back after a cancelled or failed sign-in
   instead of exiting.
-
-- **A box created through a remote hub commits as you**, not as the generic
-  `agentbox` identity. Every hub-routed create sends the project's
-  `user.name`/`user.email`. Creates from the hub's web UI or the tray use the
-  hub's default commit identity, set on Settings → General
-  (`git.identity.name`/`git.identity.email`). `hub login` and `hub setup` fill
-  it from your PC when it is empty, and never replace one already set. A
-  project with no complete identity gets a warning saying the box will commit
-  as the hub default.
-
+- **A box created or cloned through a remote hub commits as you**, not as the
+  generic `agentbox` identity. Creates from the web UI or the tray use the hub's
+  default identity (Settings → General), which `hub login`/`hub setup` fill from
+  your PC when it is empty.
 - **Accounts on docker and cloud:**
   - `claude --resume` finds a session started on another account: docker boxes
     share one `agentbox-claude-projects` volume, which each new box keeps up to
@@ -119,7 +111,6 @@ CLI, not the raw commits.
   - A pasted token never appears on a `docker` command line or in a cloud
     sandbox's create env.
   - A Daytona box on a named login gets the account's newest login.
-
 - **Accounts:** `agentbox credentials` lists `default` when the agent is signed
   in but no box backed its login up yet. It names a damaged `accounts.json`
   instead of hiding every named account. A setup token or API key saved as
@@ -139,7 +130,6 @@ CLI, not the raw commits.
   longer runs out of memory during a build (`box.swap` sets the size).
 - **`hub setup` names what it copies** ("Copy your credentials to the hub?")
   and its note fits an 80-column terminal.
-
 - **Generated dirs stay where they were built.** Untracked `node_modules`,
   `dist`, `build`, `.venv`, `__pycache__` and the like are skipped at any depth
   in both directions, whatever `.gitignore` says; `download --all` and
