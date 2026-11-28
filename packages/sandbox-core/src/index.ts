@@ -173,6 +173,7 @@ export {
   type CheckStatus,
   type CredSetResult,
   type CredStatusSummary,
+  type PlacementCheck,
   type ProviderModule,
 } from './doctor.js';
 export { maskSecret, secretsEnvPath, writeManagedSecrets } from './secrets.js';

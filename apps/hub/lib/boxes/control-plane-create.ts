@@ -57,6 +57,8 @@ export interface ControlPlaneCreateInput {
      */
     size?: string;
     location?: string;
+    /** `location` is a pin (web/tray create); travels as `providerOptions.locationPinned`. */
+    locationPinned?: boolean;
     inbound?: string;
     useBranch?: string;
     sessionName?: string;
@@ -91,6 +93,13 @@ function pickPortableOpts(opts: ControlPlaneCreateInput['opts']): CreateJobReque
     // meaning.
     if (Array.isArray(value) && value.length === 0) continue;
     out[key] = value;
+  }
+  // A web or tray create sends the pin as a field; the job carries it in
+  // `providerOptions`, where the worker reads it (the CLI already puts it
+  // there). Without this a chosen hetzner location could still fail over.
+  if (opts.locationPinned === true && opts.location) {
+    const prev = (out['providerOptions'] as Record<string, unknown> | undefined) ?? {};
+    out['providerOptions'] = { ...prev, locationPinned: true };
   }
   return out;
 }
@@ -197,6 +206,8 @@ export function controlPlaneCreateRequest(
   const portable = new Set<string>(PORTABLE_CREATE_OPT_KEYS);
   const dropped = Object.entries(input.opts ?? {})
     .filter(([k, v]) => v !== undefined && !portable.has(k) && !HOST_LOCAL_OPT_KEYS.has(k))
+    // Folded into providerOptions above, not dropped.
+    .filter(([k]) => !(k === 'locationPinned' && mappedOpts.providerOptions?.['locationPinned']))
     .map(([k]) => k);
   return {
     ok: true,

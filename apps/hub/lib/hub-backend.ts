@@ -14,6 +14,7 @@ import {
   isProviderKind,
   listProjectsConfigured,
   loadEffectiveConfig,
+  resolveBoxSize,
   pruneOrphanProjectConfigs,
   recordProjectLastUsed,
   registerProject,
@@ -3118,9 +3119,10 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     },
-    async checkProviderSize(id, size): Promise<ProviderSizeCheck> {
+    async checkProviderSize(id, size, query): Promise<ProviderSizeCheck> {
       const spec = size.trim();
-      if (spec.length === 0) return { rebakeRequired: false };
+      const where = query?.location?.trim() ?? '';
+      if (spec.length === 0 && where.length === 0) return { rebakeRequired: false };
       // Advisory, never fatal: an unknown provider, a plugin that fails to
       // import, or a backend without the hook all mean "nothing to say", and a
       // create form must not be blocked by a question it only asked to be
@@ -3128,8 +3130,31 @@ export function createHubBackend(handle: RelayServerHandle): HubBackend {
       try {
         if (!isRuntimeProviderName(id)) return { rebakeRequired: false };
         const mod = await loadProviderModuleByName(id);
-        const reason = mod.sizeIgnoredReason?.(spec) ?? null;
-        return reason ? { rebakeRequired: true, reason } : { rebakeRequired: false };
+        const reason = spec ? (mod.sizeIgnoredReason?.(spec) ?? null) : null;
+        const out: ProviderSizeCheck = reason
+          ? { rebakeRequired: true, reason }
+          : { rebakeRequired: false };
+        if (where && mod.checkPlacement) {
+          // An empty size is what the create would use: the project's
+          // configured one (global when no project), else the provider's own
+          // default, which the hook applies.
+          const root = query?.projectId ? await resolveProjectPath(query.projectId) : null;
+          const effective =
+            spec ||
+            (await loadEffectiveConfig(root ?? os.homedir())
+              .then((c) => resolveBoxSize(c.effective, id))
+              .catch(() => ''));
+          const verdict = await mod.checkPlacement({
+            size: effective,
+            location: where,
+            ...(query?.agent && query.agent !== 'none' ? { agents: [query.agent] } : {}),
+          });
+          if (verdict) {
+            out.offered = verdict.offered;
+            if (!verdict.offered && verdict.reason) out.offeredReason = verdict.reason;
+          }
+        }
+        return out;
       } catch {
         return { rebakeRequired: false };
       }

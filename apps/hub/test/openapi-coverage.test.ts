@@ -61,3 +61,37 @@ describe('OpenAPI route coverage', () => {
     expect(stale, `documented paths with no route file:\n${stale.join('\n')}`).toEqual([]);
   });
 });
+
+describe('OpenAPI documents the location fields', () => {
+  type Obj = Record<string, unknown>;
+  const at = (o: unknown, ...keys: string[]): Obj =>
+    keys.reduce<Obj>((acc, k) => (acc?.[k] ?? {}) as Obj, o as Obj);
+
+  it('size-check body names every key parseSizeCheck reads', () => {
+    const body = at(
+      buildOpenApi(),
+      'paths',
+      '/providers/{id}/size-check',
+      'post',
+      'requestBody',
+      'content',
+      'application/json',
+      'schema',
+      'properties',
+    );
+    expect(Object.keys(body).sort()).toEqual(['agent', 'location', 'projectId', 'size']);
+  });
+
+  it('the create body opts carry size, location and locationPinned', () => {
+    const opts = at(
+      buildOpenApi(),
+      'components',
+      'schemas',
+      'CreateBox',
+      'properties',
+      'opts',
+      'properties',
+    );
+    for (const k of ['size', 'location', 'locationPinned']) expect(opts, k).toHaveProperty(k);
+  });
+});

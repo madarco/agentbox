@@ -9,6 +9,7 @@ import type { Provider } from '@agentbox/core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
 import { digitaloceanBackend, DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF } from './backend.js';
+import { checkDigitalOceanPlacement } from './placement-check.js';
 import { prepareDigitalOceanProvider } from './prepare.js';
 import {
   currentDigitalOceanBaseFingerprintLive,
@@ -37,6 +38,7 @@ export const providerModule: ProviderModule = {
   setCredentials: setDigitalOceanCredentials,
   currentBaseFingerprintLive: () => currentDigitalOceanBaseFingerprintLive(),
   currentBaseFileHashes: () => currentDigitalOceanBaseFileHashes(),
+  checkPlacement: (q) => checkDigitalOceanPlacement(q),
   doctorChecks,
 };
 
@@ -45,6 +47,7 @@ export { digitaloceanBackend, DIGITALOCEAN_DEFAULT_BOX_IMAGE_REF };
 // the value the backend really falls back to (apps/cli/test/provider-sizes.test.ts).
 export { DIGITALOCEAN_DEFAULT_SIZE } from './backend.js';
 export { controlPlanePlacementWarnings } from './placement-rules.js';
+export { checkDigitalOceanPlacement, digitaloceanPlacementVerdict } from './placement-check.js';
 export { ensureDigitalOceanEnvLoaded } from './env-loader.js';
 export {
   ensureDigitalOceanCredentials,

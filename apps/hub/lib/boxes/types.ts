@@ -389,6 +389,14 @@ export interface ProviderSizeCheck {
   rebakeRequired: boolean;
   /** Why, in the provider's own words. Present only when `rebakeRequired`. */
   reason?: string;
+  /**
+   * Only when a `location` was asked about and the provider has a live catalog
+   * (hetzner, digitalocean, daytona): whether a box of this size (empty = the
+   * configured default) can be created there. Absent = nothing to say.
+   */
+  offered?: boolean;
+  /** Why not, and what is offered there instead. Present only when `offered` is false. */
+  offeredReason?: string;
 }
 
 export interface ProviderOption {

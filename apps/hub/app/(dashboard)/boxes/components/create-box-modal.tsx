@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
 import { defaultAgentFor, defaultProviderFor, usableProvider } from '@/lib/boxes/project-defaults';
+import { sizeAfterLocationChange, sizeChoicesFor } from '@/lib/boxes/region-sizes';
 import { Icons, type Icon } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -46,6 +47,8 @@ type Agent = CreateBoxInput['agent'];
 // (vercel's parser throws on anything outside it), so a custom value there could
 // only ever produce a failed create.
 const CUSTOM_SIZE = '__custom__';
+// Same, for the location picker, gated on `regionHint`.
+const CUSTOM_LOCATION = '__custom__';
 
 // Docker is always available; used when the server sent no provider list (the
 // hosted/Postgres path, where host readiness isn't known).
@@ -208,6 +211,15 @@ function CreateBoxModal({
   // For a provider that fixes resources at bake time (daytona, e2b): whether
   // THIS size would be discarded by a plain create. Null = not asked yet.
   const [sizeRebake, setSizeRebake] = useState<{ required: boolean; reason?: string } | null>(null);
+  // Location. '' = Automatic: no location is sent, so the hub's configured or
+  // the provider's default placement applies and hetzner may fail over within
+  // the zone. A chosen one is sent as a pin. Choices come from the descriptor's
+  // `regions`, never from `regions[0]` as a default.
+  const [location, setLocation] = useState('');
+  const [customLocation, setCustomLocation] = useState('');
+  // The provider's live-catalog answer to "does this size exist there?".
+  // Null = not asked (no location chosen) or nothing to say.
+  const [placement, setPlacement] = useState<{ offered: boolean; reason?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   // Questions the hub says this create needs approved, asked one at a time, and
@@ -436,6 +448,11 @@ function CreateBoxModal({
   const persistentByDefault = agents.find((a) => a.id === agent)?.surface === 'service';
   const persistent = (persistentChoice ?? persistentByDefault) && !persistentCapped;
   const chosenSize = (size === CUSTOM_SIZE ? customSize : size).trim();
+  const chosenLocation = (location === CUSTOM_LOCATION ? customLocation : location).trim();
+  // A region that does not offer the provider's sizes (hetzner's cx line is
+  // EU-only) declares its own list; its first entry is what a create there
+  // with no size gets, so "default" names it.
+  const { choices: sizeChoices, regionDefault } = sizeChoicesFor(providerOption, chosenLocation);
   // An in-flight bake job counts as "bake needed" too — the create must wait on it.
   // Never for a restore: the restore route enqueues its own create job, and this
   // form runs no bake phase for it — so promising a rebuild would be a claim the
@@ -454,7 +471,63 @@ function CreateBoxModal({
     setSize('');
     setCustomSize('');
     setSizeRebake(null);
+    setLocation('');
+    setCustomLocation('');
+    setPlacement(null);
   }, [providerId]);
+
+  // A picked size the new location's list does not carry would only fail the
+  // create: go back to that location's default. A custom value is the user's.
+  // Keyed on the location only: a size change must not undo itself.
+  useEffect(() => {
+    setSize((prev) => sizeAfterLocationChange(prev, sizeChoices, CUSTOM_SIZE));
+  }, [chosenLocation]);
+
+  // Not every size exists in every location (hetzner's cx line is EU-only), so
+  // once a location is chosen ask the hub, which asks the provider's live
+  // catalog. An empty size is checked as the default the create would use.
+  // Advisory and debounced like the bake check above.
+  // A bake-time size (daytona, e2b) is not what the create sends, so the check
+  // asks about the base the create would boot, not about that size.
+  const sizeForPlacement = providerOption?.sizeAppliesAt === 'bake' ? '' : chosenSize;
+  useEffect(() => {
+    // Drop the previous answer at once: it was about another size or location.
+    setPlacement(null);
+    if (chosenLocation.length === 0) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/v1/providers/${encodeURIComponent(providerId)}/size-check`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({
+                size: sizeForPlacement,
+                location: chosenLocation,
+                ...(agent !== 'none' ? { agent } : {}),
+                ...(projectId ? { projectId } : {}),
+              }),
+            },
+          );
+          if (!res.ok || cancelled) return;
+          const j = (await res.json()) as { offered?: boolean; offeredReason?: string };
+          if (cancelled) return;
+          setPlacement(
+            typeof j.offered === 'boolean' ? { offered: j.offered, reason: j.offeredReason } : null,
+          );
+        } catch {
+          // Advisory only: the create itself reports a refused placement.
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [providerId, sizeForPlacement, chosenLocation, agent, projectId]);
 
   // Daytona and e2b fix CPU/memory when the base is baked and discard anything
   // else at create, so ask the hub whether THIS size needs a re-bake first.
@@ -742,6 +815,8 @@ function CreateBoxModal({
         const opts: {
           persistent?: boolean;
           size?: string;
+          location?: string;
+          locationPinned?: boolean;
           promptAnswers?: PromptAnswer[];
           accounts?: Record<string, string>;
           skills?: { none?: boolean; include?: string[]; exclude?: string[] };
@@ -784,6 +859,12 @@ function CreateBoxModal({
         }
         if (chosenSize.length > 0 && providerOption?.sizeAppliesAt !== 'bake') {
           opts.size = chosenSize;
+        }
+        // A location the user picked is a pin: the box goes there or the create
+        // fails, never a silent failover. Automatic sends nothing.
+        if (chosenLocation.length > 0 && providerOption?.regions?.length) {
+          opts.location = chosenLocation;
+          opts.locationPinned = true;
         }
         return Object.keys(opts).length > 0 ? { opts } : {};
       })(),
@@ -1088,7 +1169,7 @@ function CreateBoxModal({
                 SSH (<span className="text-secondary-foreground">agentbox shell</span>).
               </p>
             ) : null}
-            {/* Advanced: size + initial prompt, collapsed to keep the form lean.
+            {/* Advanced: size, location + initial prompt, collapsed to keep the form lean.
                 Same two rows as the tray's Advanced section — keep them in step. */}
             <div className="flex flex-col gap-4">
               <button
@@ -1108,7 +1189,7 @@ function CreateBoxModal({
                       the provider, so a community plugin gets the same picker
                       by declaring `sizes`. Absent for docker, whose knobs are
                       box.memory / box.cpus. */}
-                  {providerOption?.sizes?.length ? (
+                  {providerOption && sizeChoices.length ? (
                     <div className="flex flex-col gap-1.5">
                       <Field label="Size">
                         <Select
@@ -1118,8 +1199,10 @@ function CreateBoxModal({
                             if (e.target.value !== CUSTOM_SIZE) setCustomSize('');
                           }}
                         >
-                          <option value="">Provider default</option>
-                          {providerOption.sizes.map((s) => (
+                          <option value="">
+                            {regionDefault ? `Default here (${regionDefault})` : 'Provider default'}
+                          </option>
+                          {sizeChoices.map((s) => (
                             <option key={s.key} value={s.key}>
                               {s.label}
                             </option>
@@ -1147,6 +1230,51 @@ function CreateBoxModal({
                             ? ` (about ${providerOption.bake.approxMinutes} min)`
                             : ''}
                           .
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {/* Location. Descriptor-driven like Size: shown only when the
+                      provider declares `regions`, Custom only with a
+                      `regionHint`. Automatic = send nothing. */}
+                  {providerOption?.regions?.length ? (
+                    <div className="flex flex-col gap-1.5">
+                      <Field label="Location">
+                        <Select
+                          value={location}
+                          onChange={(e) => {
+                            setLocation(e.target.value);
+                            if (e.target.value !== CUSTOM_LOCATION) setCustomLocation('');
+                          }}
+                        >
+                          <option value="">Automatic</option>
+                          {providerOption.regions.map((r) => (
+                            <option key={r.key} value={r.key}>
+                              {r.label}
+                            </option>
+                          ))}
+                          {providerOption.regionHint ? (
+                            <option value={CUSTOM_LOCATION}>Custom…</option>
+                          ) : null}
+                        </Select>
+                      </Field>
+                      {location === CUSTOM_LOCATION ? (
+                        <Input
+                          value={customLocation}
+                          onChange={(e) => setCustomLocation(e.target.value)}
+                          placeholder={providerOption.regionHint}
+                          autoFocus
+                        />
+                      ) : null}
+                      {placement && !placement.offered ? (
+                        <p className="font-mono text-xs text-amber-500">
+                          {placement.reason ?? `Not available in ${chosenLocation}.`}
+                        </p>
+                      ) : placement?.offered ? (
+                        <p className="font-mono text-xs text-secondary-foreground">
+                          {sizeForPlacement
+                            ? `${sizeForPlacement} is available in ${chosenLocation}.`
+                            : `A box can be created in ${chosenLocation}.`}
                         </p>
                       ) : null}
                     </div>

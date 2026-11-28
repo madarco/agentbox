@@ -37,3 +37,17 @@ fixed there. Newest last.
 - **The CLI shows size/location only from a local record.** `agentbox status` renders the local
   `BoxRecord`; a box that lives only on a remote hub shows them through `ls --json` / the Box
   payload, not `status`.
+- **Tray: per-region sizes.** The tray has the Location row, the pinned create payload, the
+  size-check advisory and the details rows (agentbox-tray f090f38). It does not yet read
+  `regions[].sizes`: when the picked region lists sizes, the Size list should show those
+  instead of `sizes` (first = that region's default; label the empty choice "Default here
+  (<key>)") and reset a picked size the new list lacks.
+- **`agentbox prepare --provider hetzner` still bakes on cx23.** `prepare.ts` hardcodes cx23 for
+  the temporary bake server, so a global `box.hetznerLocation: ash` (or hil/sin) with no size
+  fails the bake. It should use `defaultServerTypeFor(location)` from `@agentbox/sandbox-hetzner`.
+- **Hetzner details in CLI help text.** `control-plane.ts` (`hub deploy` help), `cloud-sizing.ts`
+  and `prepare.ts` still list Hetzner locations and the cpx defaults as literal text; build them
+  from the descriptor.
+- **The dialog's "Default here" label ignores a configured size.** With a project
+  `box.sizeHetzner: cx33`, the label still names the region default; the create uses cx33 (the
+  size-check does warn).

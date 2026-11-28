@@ -119,8 +119,35 @@ export interface ProviderModule {
    * Absent for backends that apply size live (hetzner, vercel, docker).
    */
   sizeIgnoredReason?: (size: string) => string | null;
+  /**
+   * Whether a box of `size` can be created at `location`, asked of the
+   * provider's LIVE catalog (hetzner server types, DigitalOcean sizes, the
+   * regions a daytona base snapshot exists in). Not every size exists in every
+   * location, and the static descriptor does not try to say which.
+   *
+   * An absent or empty `size` means the provider's default size, which is
+   * exactly the case worth catching (hetzner's default cx23 exists in the EU
+   * only). Network + credentials: call it on demand, never on a hot path.
+   * Resolves null when there is nothing to say (no catalog, no credential, a
+   * failed lookup): advisory, never fatal. Absent = no catalog. Implementations
+   * should run the create's own preflight rather than restate its rules.
+   */
+  checkPlacement?: (q: {
+    size?: string;
+    location: string;
+    /** The agents the box is created with: picks the variant snapshot the create boots. */
+    agents?: string[];
+  }) => Promise<PlacementCheck | null>;
   /** Local, offline-safe health probes for `agentbox doctor`. */
   doctorChecks: () => Promise<CheckResult[]>;
+}
+
+/** Answer of `ProviderModule.checkPlacement`. */
+export interface PlacementCheck {
+  /** False when the provider's catalog says this size cannot be created there. */
+  offered: boolean;
+  /** One sentence for the user: why not, and what is offered there instead. */
+  reason?: string;
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   parseHostUpsert,
   parseProject,
   parsePrune,
+  parseSizeCheck,
   parseManagerDetect,
   parseManagerMessage,
   parseManagerStart,
@@ -773,5 +774,31 @@ describe('parseCheckoutFilter', () => {
     expect(parseCheckoutFilter(new URLSearchParams('repoKey=github.com/acme/web')).ok).toBe(true);
     expect(parseCheckoutFilter(new URLSearchParams('machineId=nope')).ok).toBe(false);
     expect(parseCheckoutFilter(new URLSearchParams('')).ok && true).toBe(true);
+  });
+});
+
+describe('parseSizeCheck', () => {
+  it('takes a size alone, as before', () => {
+    expect(parseSizeCheck({ size: 'cx33' })).toEqual({ ok: true, value: { size: 'cx33' } });
+  });
+
+  it('takes a location alone: the default size is the question', () => {
+    expect(parseSizeCheck({ location: ' ash ' })).toEqual({
+      ok: true,
+      value: { size: '', location: 'ash' },
+    });
+  });
+
+  it('takes both', () => {
+    expect(parseSizeCheck({ size: 'cx23', location: 'hel1' })).toEqual({
+      ok: true,
+      value: { size: 'cx23', location: 'hel1' },
+    });
+  });
+
+  it('refuses neither, and a non-string location', () => {
+    expect(parseSizeCheck({}).ok).toBe(false);
+    expect(parseSizeCheck({ location: '  ' }).ok).toBe(false);
+    expect(parseSizeCheck({ size: 'cx23', location: 3 }).ok).toBe(false);
   });
 });

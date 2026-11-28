@@ -7,7 +7,12 @@
 import type { Provider } from '@agentbox/core';
 import type { ProviderModule } from '@agentbox/sandbox-core';
 import { createCloudProvider } from '@agentbox/sandbox-cloud';
-import { DAYTONA_DEFAULT_RESOURCES, daytonaBackend, DEFAULT_BOX_IMAGE_REF } from './backend.js';
+import {
+  checkDaytonaPlacement,
+  DAYTONA_DEFAULT_RESOURCES,
+  daytonaBackend,
+  DEFAULT_BOX_IMAGE_REF,
+} from './backend.js';
 import { makeDaytonaCheckpoint } from './checkpoint.js';
 import { prepareDaytona } from './prepare.js';
 import { currentDaytonaBaseFingerprintLive } from './prepared-state.js';
@@ -37,6 +42,7 @@ export const providerModule: ProviderModule = {
   setCredentials: setDaytonaCredentials,
   currentBaseFingerprintLive: () => currentDaytonaBaseFingerprintLive(),
   sizeIgnoredReason,
+  checkPlacement: (q) => checkDaytonaPlacement(q),
   doctorChecks,
 };
 

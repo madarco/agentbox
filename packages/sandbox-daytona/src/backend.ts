@@ -22,8 +22,9 @@ import type {
 import { resolveDockerfileContext } from './dockerfile-context.js';
 import { ensureDaytonaEnvLoaded } from './env-loader.js';
 import { preparedEntryFor, readPreparedDaytonaState } from './prepared-state.js';
-import { agentSetArg, normalizeAgentSet } from '@agentbox/sandbox-core';
+import { agentSetArg, normalizeAgentSet, type PlacementCheck } from '@agentbox/sandbox-core';
 import { waitForSnapshotActive } from './snapshot-wait.js';
+import { daytonaPlacementVerdict } from './placement-check.js';
 import { withDaytonaRetry } from './retry.js';
 
 /**
@@ -495,23 +496,18 @@ export const daytonaBackend: CloudBackend = {
         // client, measured 2026-11-28). Refuse here with the fix rather than
         // let the create fail as "snapshot missing" or "no runners".
         if (snapshotName && req.location && req.location.length > 0) {
-          if (sandboxClass === 'linux-vm' && region !== DAYTONA_VM_REGION) {
+          const regionIds =
+            sandboxClass === 'linux-vm' ? undefined : await snapshotRegionIds(client, snapshotName);
+          const verdict = daytonaPlacementVerdict({
+            region,
+            snapshot: snapshotName,
+            sandboxClass,
+            regionIds,
+          });
+          if (!verdict.offered) {
             throw new Error(
-              `daytona: the base is a linux-vm snapshot, which runs only in ${DAYTONA_VM_REGION}, ` +
-                `but region '${region}' was asked for. Drop --location (or box.daytonaRegion), or ` +
-                `re-bake as a container: \`agentbox config set box.daytonaClass container\` then ` +
-                `\`agentbox prepare --provider daytona --force\`.`,
-            );
-          }
-          const regionIds = await client.snapshot
-            .get(snapshotName)
-            .then((snap) => (snap as { regionIds?: unknown }).regionIds)
-            .catch(() => undefined);
-          if (Array.isArray(regionIds) && regionIds.length > 0 && !regionIds.includes(region)) {
-            throw new Error(
-              `daytona: base snapshot '${snapshotName}' exists in ${regionIds.join(', ')}, not in ` +
-                `'${region}'. Create without --location, or bake one there: ` +
-                `\`agentbox prepare --provider daytona --location ${region} --force\`.`,
+              `${verdict.reason ?? `The daytona base cannot boot in '${region}'.`} ` +
+                'Or create without --location.',
             );
           }
         }
@@ -973,3 +969,42 @@ export const daytonaBackend: CloudBackend = {
     });
   },
 };
+
+/** The regions a snapshot was built in, or undefined when unknown. */
+async function snapshotRegionIds(client: Daytona, name: string): Promise<unknown> {
+  return client.snapshot
+    .get(name)
+    .then((snap) => (snap as { regionIds?: unknown }).regionIds)
+    .catch(() => undefined);
+}
+
+/**
+ * `ProviderModule.checkPlacement` for daytona: can the prepared base boot in
+ * `location`? Null without a prepared base or a credential, or on a failed
+ * lookup.
+ */
+export async function checkDaytonaPlacement(q: {
+  size?: string;
+  location: string;
+  agents?: string[];
+}): Promise<PlacementCheck | null> {
+  const region = q.location.trim();
+  const prepared = readPreparedDaytonaState();
+  // The snapshot the create would boot: the agent's variant, else the base.
+  const entry =
+    preparedEntryFor(prepared, agentSetArg(normalizeAgentSet(q.agents))) ??
+    preparedEntryFor(prepared, '');
+  const snapshot = entry?.imageRef ?? prepared?.base?.imageRef;
+  if (!region || !snapshot) return null;
+  try {
+    const sandboxClass = entry?.extras?.class ?? prepared?.extras?.class ?? 'container';
+    // The same region-targeted client the create looks the snapshot up with.
+    const regionIds =
+      sandboxClass === 'linux-vm'
+        ? undefined
+        : await snapshotRegionIds(getClient(region), snapshot);
+    return daytonaPlacementVerdict({ region, snapshot, sandboxClass, regionIds });
+  } catch {
+    return null;
+  }
+}
