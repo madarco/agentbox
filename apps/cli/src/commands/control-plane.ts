@@ -2798,9 +2798,10 @@ export async function syncAgentCredentialsIfChanged(url?: string): Promise<void>
 async function finalizeControlBoxState(url: string | undefined): Promise<void> {
   // The shared keys in control-plane.env stay on this (the operator's) machine.
   // Every other computer enrolls with its own revocable token instead.
-  const hubUrl =
-    url ??
-    (await loadEffectiveConfig(process.cwd()).catch(() => null))?.effective.relay.controlPlaneUrl;
+  const configuredUrl =
+    (await loadEffectiveConfig(process.cwd()).catch(() => null))?.effective.relay.controlPlaneUrl ??
+    undefined;
+  const hubUrl = url ?? configuredUrl;
   if (hubUrl) {
     log.info(
       `To use this hub from another computer, run \`agentbox hub login ${hubUrl}\` there and approve it on ${hubUrl.replace(/\/+$/, '')}/settings/devices — don't copy ~/.agentbox/control-plane.`,
@@ -2837,7 +2838,8 @@ async function finalizeControlBoxState(url: string | undefined): Promise<void> {
       `could not set up the control box's docker engine as a target: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  if (hubUrl) await enrollThisMachine(hubUrl);
+  // `url` is undefined only for a hub exposed on this machine: nothing to enroll on.
+  if (url) await enrollThisMachine(url, configuredUrl);
 }
 
 /**
@@ -2845,8 +2847,20 @@ async function finalizeControlBoxState(url: string | undefined): Promise<void> {
  * hub can reach it over host-reach like any other PC (the skills comparison
  * needs that). Best-effort: a failure prints the manual command.
  */
-async function enrollThisMachine(hubUrl: string): Promise<void> {
-  const url = hubUrl.replace(/\/+$/, '');
+async function enrollThisMachine(
+  deployUrl: string,
+  configuredUrl: string | undefined,
+): Promise<void> {
+  const url = deployUrl.replace(/\/+$/, '');
+  // The device token is presented only to the URL it was saved under, matched
+  // against relay.controlPlaneUrl. Enrolling under another name for the same hub
+  // would rotate a working token into one this CLI never uses.
+  if ((configuredUrl ?? '').replace(/\/+$/, '') !== url) {
+    log.info(
+      `relay.controlPlaneUrl is not ${url}, so this computer is not enrolled there. Run \`agentbox hub login ${url}\` to enroll it.`,
+    );
+    return;
+  }
   try {
     const [{ enrollOperatorDevice }, { readOwnerCredentials }, { controlBoxIsThisMachine }] =
       await Promise.all([

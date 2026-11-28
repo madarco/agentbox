@@ -129,7 +129,12 @@ export async function enrollOperatorDevice(
   let localTokenValid = false;
   if (mine && !mine.revokedAt && cred && cred.hubUrl === url && cred.deviceId === deviceId) {
     const probe = await call<{ current: string | null }>('/api/v1/devices', { bearer: cred.token });
-    localTokenValid = probe.status === 200 && probe.body.current === deviceId;
+    // Only a refusal proves the token dead. A restarting hub's 502/503 must not
+    // rotate it: a rotation closes every stream this PC holds open.
+    if (probe.status === 200) localTokenValid = probe.body.current === deviceId;
+    else if (probe.status !== 401 && probe.status !== 403) {
+      throw unexpected('GET /api/v1/devices (device token)', probe);
+    }
   }
 
   const decision = decideOperatorEnrollment({
@@ -151,7 +156,17 @@ export async function enrollOperatorDevice(
     adminToken: owner.adminToken,
     body: { userCode: started.body.userCode },
   });
-  if (approved.status !== 200) throw unexpected('POST /api/v1/devices/approve', approved);
+  if (approved.status !== 200) {
+    // Withdraw the code, or each failed setup leaves one more waiting code
+    // labelled like this computer (and three of them rate-limit `hub login`).
+    await call('/api/v1/devices/deny', {
+      method: 'POST',
+      bearer: owner.apiKey,
+      adminToken: owner.adminToken,
+      body: { userCode: started.body.userCode },
+    }).catch(() => undefined);
+    throw unexpected('POST /api/v1/devices/approve', approved);
+  }
   const claimed = await call<{ token: string; device: WireDevice }>('/api/v1/devices/token', {
     method: 'POST',
     body: { deviceCode: started.body.deviceCode },

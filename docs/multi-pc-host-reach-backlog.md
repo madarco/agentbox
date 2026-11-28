@@ -184,15 +184,17 @@ for teams PCs must never hold it (device tokens only).
   `resolveHubTarget`, and `loadControlPlaneEnv` had put the device token into
   `AGENTBOX_RELAY_ADMIN_TOKEN` too, so approve answered 403 ("only the hub owner").
   `hub devices approve|revoke|rename` now read the API key and admin token from
-  `control-plane.env` (`readOwnerCredentials`) and send both whenever this machine
-  holds them.
+  `control-plane.env` (`ownerCredentialsFor`) and send both, only to the hub the
+  deploy record names (or one on this machine).
 - **The operator PC was never a device (fixed 2026-11-28, same branch).** `hub setup`
   / `hub deploy` / `hub update` left the deploying machine on the shared keys, so
   `GET /api/v1/skill-machines` was empty and the Skills page could not compare with
   it. `finalizeControlBoxState` now enrolls it (`enrollOperatorDevice`), approving
   the code with its own API key + admin token; skipped for `hub expose`, a no-op
-  when already enrolled, and a revoked machine stays revoked. No local hub restart:
-  the running relay's poller already names this machine in `X-Agentbox-Device`.
+  when already enrolled, a revoked machine stays revoked, and skipped when
+  `relay.controlPlaneUrl` names another URL (the token is matched against it). A failed
+  approve withdraws its code. No local hub restart: the running relay's poller already
+  names this machine in `X-Agentbox-Device`.
 
 ## From the real-Hetzner sign-off of #429 / #432, noted, not fixed
 

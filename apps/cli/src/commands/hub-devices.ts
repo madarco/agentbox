@@ -215,11 +215,16 @@ const logoutSub = new Command('logout')
   });
 
 /** The hub `/api/v1` target + Bearer the rest of the CLI uses. */
-async function target(): Promise<{ url: string; token: string; mode: 'local' | 'remote' }> {
+async function target(): Promise<{
+  url: string;
+  token: string;
+  mode: 'local' | 'remote';
+  onThisMachine: boolean;
+}> {
   const { resolveHubTarget } = await import('./hub.js');
   const t = await resolveHubTarget();
   lastTarget = { url: t.url, mode: t.mode };
-  return { url: t.url, token: t.token, mode: t.mode };
+  return { url: t.url, token: t.token, mode: t.mode, onThisMachine: t.onThisMachine };
 }
 let lastTarget: { url: string; mode: 'local' | 'remote' } | undefined;
 
@@ -234,8 +239,8 @@ let lastTarget: { url: string; mode: 'local' | 'remote' } | undefined;
 async function ownerTarget(): Promise<{ url: string; token: string; adminToken?: string }> {
   const t = await target();
   if (t.mode !== 'remote') return { url: t.url, token: t.token };
-  const { readOwnerCredentials } = await import('../control-plane/owner-credentials.js');
-  const owner = readOwnerCredentials();
+  const { ownerCredentialsFor } = await import('../control-plane/owner-credentials.js');
+  const owner = ownerCredentialsFor(t.url, { onThisMachine: t.onThisMachine });
   return owner
     ? { url: t.url, token: owner.apiKey, adminToken: owner.adminToken }
     : { url: t.url, token: t.token };

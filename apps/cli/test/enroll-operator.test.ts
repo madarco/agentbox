@@ -19,7 +19,10 @@ import {
   decideOperatorEnrollment,
   enrollOperatorDevice,
 } from '../src/control-plane/enroll-operator.js';
-import { readOwnerCredentials } from '../src/control-plane/owner-credentials.js';
+import {
+  ownerCredentialsFor,
+  readOwnerCredentials,
+} from '../src/control-plane/owner-credentials.js';
 
 const URL = 'https://hub.example.test';
 const OWNER = { apiKey: 'api-key-1', adminToken: 'admin-token-1' };
@@ -96,10 +99,13 @@ describe('readOwnerCredentials', () => {
     expect(readOwnerCredentials(env, p)).toEqual({ apiKey: 'k', adminToken: 't' });
   });
 
-  it('lets an exported shared key win', () => {
+  it('lets an exported pair win, but never mixes one exported key with the file', () => {
     const p = envFile('AGENTBOX_HUB_API_KEY=k\nAGENTBOX_RELAY_ADMIN_TOKEN=t\n');
+    expect(
+      readOwnerCredentials({ AGENTBOX_HUB_API_KEY: 'k2', AGENTBOX_RELAY_ADMIN_TOKEN: 't2' }, p),
+    ).toEqual({ apiKey: 'k2', adminToken: 't2' });
     expect(readOwnerCredentials({ AGENTBOX_HUB_API_KEY: 'k2' }, p)).toEqual({
-      apiKey: 'k2',
+      apiKey: 'k',
       adminToken: 't',
     });
   });
@@ -110,8 +116,44 @@ describe('readOwnerCredentials', () => {
   });
 });
 
+describe('ownerCredentialsFor', () => {
+  const dir = (): string => mkdtempSync(join(tmpdir(), 'agentbox-owner-for-'));
+  const setup = (deployUrl: string | null) => {
+    const d = dir();
+    const envPath = join(d, 'control-plane.env');
+    writeFileSync(envPath, 'AGENTBOX_HUB_API_KEY=k\nAGENTBOX_RELAY_ADMIN_TOKEN=t\n');
+    const deployPath = join(d, 'deploy.json');
+    if (deployUrl)
+      writeFileSync(deployPath, JSON.stringify({ provider: 'hetzner', url: deployUrl }));
+    return { env: {}, envPath, deployPath };
+  };
+
+  it('gives the keys to the hub the deploy record names', () => {
+    expect(ownerCredentialsFor(`${URL}/`, { onThisMachine: false, ...setup(URL) })).toEqual({
+      apiKey: 'k',
+      adminToken: 't',
+    });
+  });
+
+  it('never sends them to another hub', () => {
+    expect(
+      ownerCredentialsFor('https://other.example.test', { onThisMachine: false, ...setup(URL) }),
+    ).toBeNull();
+  });
+
+  it('gives them to a hub on this machine, and to the configured hub with no record', () => {
+    expect(
+      ownerCredentialsFor('http://127.0.0.1:8787', { onThisMachine: true, ...setup(URL) }),
+    ).not.toBeNull();
+    expect(ownerCredentialsFor(URL, { onThisMachine: false, ...setup(null) })).not.toBeNull();
+  });
+});
+
 /** A fake hub: the four device routes, with the owner gate the real one applies. */
-function fakeHub(initial: { id: string; label: string; revokedAt: string | null }[] = []) {
+function fakeHub(
+  initial: { id: string; label: string; revokedAt: string | null }[] = [],
+  opts: { deviceProbeStatus?: number; approveStatus?: number } = {},
+) {
   const devices = new Map(initial.map((d) => [d.id, { ...d, token: '' }]));
   const pending = new Map<string, { deviceId: string; label: string; approved: boolean }>();
   const calls: string[] = [];
@@ -126,6 +168,9 @@ function fakeHub(initial: { id: string; label: string; revokedAt: string | null 
       new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
     const byToken = [...devices.values()].find((d) => d.token && d.token === bearer);
     if (path === '/api/v1/devices' && method === 'GET') {
+      if (bearer !== OWNER.apiKey && opts.deviceProbeStatus) {
+        return json(opts.deviceProbeStatus, { error: { code: 'unavailable' } });
+      }
       if (bearer !== OWNER.apiKey && !byToken)
         return json(401, { error: { code: 'unauthorized' } });
       return json(200, {
@@ -143,6 +188,7 @@ function fakeHub(initial: { id: string; label: string; revokedAt: string | null 
       return json(201, { deviceCode: `dc-${userCode}`, userCode });
     }
     if (path === '/api/v1/devices/approve') {
+      if (opts.approveStatus) return json(opts.approveStatus, { error: { code: 'internal' } });
       if (bearer !== OWNER.apiKey || headers['x-agentbox-admin-token'] !== OWNER.adminToken) {
         return json(403, { error: { code: 'forbidden' } });
       }
@@ -150,6 +196,12 @@ function fakeHub(initial: { id: string; label: string; revokedAt: string | null 
       if (!p) return json(404, { error: { code: 'not_found' } });
       p.approved = true;
       return json(200, { device: { id: p.deviceId, label: p.label, revokedAt: null } });
+    }
+    if (path === '/api/v1/devices/deny') {
+      if (bearer !== OWNER.apiKey || headers['x-agentbox-admin-token'] !== OWNER.adminToken) {
+        return json(403, { error: { code: 'forbidden' } });
+      }
+      return json(pending.delete(body.userCode!) ? 200 : 404, {});
     }
     if (path === '/api/v1/devices/token') {
       const p = pending.get(body.deviceCode!.replace(/^dc-/, ''));
@@ -160,7 +212,7 @@ function fakeHub(initial: { id: string; label: string; revokedAt: string | null 
     }
     return json(404, {});
   }) as typeof fetch;
-  return { fetchImpl, calls, devices };
+  return { fetchImpl, calls, devices, pending };
 }
 
 describe('enrollOperatorDevice', () => {
@@ -241,5 +293,27 @@ describe('enrollOperatorDevice', () => {
       }),
     ).rejects.toThrow(/approve answered 403/);
     expect(readDeviceCredential(h)).toBeNull();
+  });
+  it('withdraws the code when approve fails', async () => {
+    const h = freshHome();
+    const hub = fakeHub([], { approveStatus: 500 });
+    await expect(enrollOperatorDevice(deps(h, hub.fetchImpl))).rejects.toThrow(
+      /approve answered 500/,
+    );
+    expect(hub.calls).toContain('POST /api/v1/devices/deny');
+    expect(hub.pending.size).toBe(0);
+    expect(readDeviceCredential(h)).toBeNull();
+  });
+
+  it('does not rotate a token when the hub only fails to answer the probe', async () => {
+    const h = freshHome();
+    writeDeviceCredential(
+      { hubUrl: URL, deviceId: ID, label: 'mac', token: 'abdev_live', enrolledAt: '' },
+      h,
+    );
+    const hub = fakeHub([{ id: ID, label: 'mac', revokedAt: null }], { deviceProbeStatus: 503 });
+    await expect(enrollOperatorDevice(deps(h, hub.fetchImpl))).rejects.toThrow(/answered 503/);
+    expect(hub.calls).not.toContain('POST /api/v1/devices/code');
+    expect(readDeviceCredential(h)?.token).toBe('abdev_live');
   });
 });
