@@ -1,11 +1,12 @@
 // GET /api/v1/accounts[?project=<abs folder>] — the LLM accounts of THIS hub's
 //   machine (its `~/.agentbox/accounts.json`), plus the agents that can hold them:
-//   `{ accounts: [{agent, id, label?, kind, identity?, hasSecret, boxes, limits?,
+//   `{ accounts: [{agent, id, kind, identity?, hasSecret, boxes, limits?,
 //      auth: {state, since?, box?, detail?}, default?: {global?, project?}}],
-//      agents: [{id, kinds}], defaults: {<agent>: {account, source, ...}} }`.
+//      agents: [{id, kinds}], defaults: {<agent>: {account, source, ...}},
+//      storeError? }` — `storeError` names an untrustworthy accounts.json.
 //   `project` adds that project's setting to `defaults` and `default`. Never a secret.
 // POST /api/v1/accounts — add a PASTEABLE account:
-//   `{ agent, id, kind: 'api-key' | 'setup-token', token, label? }` → the account.
+//   `{ agent, id, kind: 'api-key' | 'setup-token', token, replace? }` → the account.
 //   A `login` is signed in through `POST /api/v1/accounts/:agent/:id/login` (or `agentbox credentials add <agent>/<id> --login`).
 import { backendOrNull } from '../lib/backend';
 import { fail, ok } from '../lib/envelope';

@@ -104,7 +104,7 @@ import { BoxRegistry, EventBuffer } from './registry.js';
 import {
   CREDENTIALS_UPDATED_EVENT,
   CredentialsFanout,
-  stateBoxAccount,
+  registrationBoxAccount,
 } from './credentials-fanout.js';
 import { CREDENTIALS_DEAD_EVENT, handleCredentialsDead } from './credentials-dead.js';
 import type {
@@ -628,9 +628,7 @@ export function createRelayServer(opts: RelayServerOptions): RelayServerHandle {
           // only record a Store-only box has. Then the PC's own record.
           originMachineFor: async (boxId) =>
             (await store.getBox(boxId).catch(() => undefined))?.originMachineId,
-          boxAccountFor: async (boxId, agent) =>
-            namedAccounts((await store.getBox(boxId).catch(() => undefined))?.accounts)?.[agent] ??
-            (await stateBoxAccount(boxId, agent)),
+          boxAccountFor: (boxId, agent) => registrationBoxAccount(store, boxId, agent),
         });
   if (mode === 'box' && (!opts.bridgeToken || opts.bridgeToken.length === 0)) {
     throw new Error("relay mode='box' requires a non-empty bridgeToken");
